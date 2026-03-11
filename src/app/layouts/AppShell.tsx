@@ -45,11 +45,13 @@ const AppShell: Component<AppShellProps> = (props) => {
       <SidebarNav />
       <div class="shell-main">
         <Topbar title={title()} />
-        <div class="shell-body">
-          <MainContent>{props.children}</MainContent>
-          <aside class="shell-right-panel" aria-hidden="true" />
+        <div class="shell-content-wrapper">
+          <div class="shell-body">
+            <MainContent>{props.children}</MainContent>
+            <aside class="shell-right-panel" aria-hidden="true" />
+          </div>
+          <section class="shell-bottom-panel" aria-hidden="true" />
         </div>
-        <section class="shell-bottom-panel" aria-hidden="true" />
       </div>
     </div>
   );

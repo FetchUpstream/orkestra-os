@@ -136,11 +136,20 @@ textarea::placeholder {
   background: var(--bg);
 }
 
+.shell-content-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .shell-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .topbar {
@@ -182,7 +191,7 @@ textarea::placeholder {
 .main-content-inner {
   width: 100%;
   max-width: 100%;
-  padding: 16px 20px;
+  padding: 24px 28px;
 }
 
 .shell-right-panel {
@@ -633,9 +642,16 @@ textarea::placeholder {
   max-width: 400px;
 }
 
+/* Project Detail Container */
+.project-detail-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
 /* Navigation - compact inline with hero */
 .project-detail-nav {
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 
 .project-detail-back-link {
@@ -666,15 +682,15 @@ textarea::placeholder {
 
 /* Project Identity Hero - compact */
 .project-detail-hero {
-  margin-bottom: 12px;
+  padding: 8px 0 16px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .project-identity-card {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 0 10px;
-  border-bottom: 1px solid var(--border-subtle);
+  align-items: flex-start;
+  gap: 14px;
 }
 
 .project-identity-main {
@@ -712,7 +728,7 @@ textarea::placeholder {
   font-weight: 800;
   color: var(--text);
   letter-spacing: -0.03em;
-  line-height: 1.1;
+  line-height: 1.2;
 }
 
 .project-name--fallback {
@@ -721,14 +737,14 @@ textarea::placeholder {
 }
 
 .project-meta-line {
-  margin: 0;
+  margin: 4px 0 0;
   font-size: 0.85rem;
   color: var(--text-muted);
   font-weight: 400;
 }
 
 .project-description {
-  margin: 0;
+  margin: 8px 0 0;
   font-size: 0.9rem;
   color: var(--text-muted);
   line-height: 1.5;
@@ -749,8 +765,8 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
-  min-height: 28px;
+  margin-bottom: 12px;
+  min-height: 32px;
 }
 
 .project-section-title {
@@ -767,11 +783,11 @@ textarea::placeholder {
   border: 1px solid var(--border);
   background: var(--surface);
   border-radius: var(--radius-lg);
-  padding: 14px;
-  margin-bottom: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
 }
 
-.projects-panel:last-of-type {
+.projects-panel:last-child {
   margin-bottom: 0;
 }
 
@@ -779,8 +795,8 @@ textarea::placeholder {
 .projects-panel--repos {
   background: transparent;
   border-color: var(--border-subtle);
-  padding: 10px 12px;
-  margin-bottom: 16px;
+  padding: 12px 16px;
+  margin-bottom: 20px;
 }
 
 /* Task List - v2 with stronger separation */
@@ -939,8 +955,8 @@ textarea::placeholder {
 /* Project Placeholders - v2 Compact */
 .project-placeholders {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 12px;
+  margin-top: 4px;
 }
 
 .project-placeholder-compact {
@@ -1089,7 +1105,7 @@ textarea::placeholder {
   }
 
   .main-content-inner {
-    padding: 20px 16px;
+    padding: 20px 20px;
   }
 
   .projects-layout {

@@ -149,19 +149,19 @@ const ProjectDetailPage: Component = () => {
             </div>
           }>
             {(projectValue) => (
-              <>
+              <div class="project-detail-container">
                 {/* Navigation */}
-                <div class="project-detail-nav">
+                <nav class="project-detail-nav" aria-label="Project navigation">
                   <A href="/projects" class="project-detail-back-link">
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                       <path d="M10 12L6 8L10 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
                     Back to Projects
                   </A>
-                </div>
+                </nav>
 
                 {/* Project Identity Hero - compact with dominant name */}
-                <section class="project-detail-hero" aria-labelledby="project-name">
+                <header class="project-detail-hero" aria-labelledby="project-name">
                   <div class="project-identity-card">
                     <span
                       class={`project-key-badge${projectValue().key?.trim() ? "" : " project-key-badge--fallback"}`}
@@ -184,7 +184,7 @@ const ProjectDetailPage: Component = () => {
                       </Show>
                     </div>
                   </div>
-                </section>
+                </header>
 
                 {/* Repositories Section - lighter visual weight */}
                 <section class="projects-panel projects-panel--repos" aria-labelledby="repositories-heading">
@@ -332,7 +332,7 @@ const ProjectDetailPage: Component = () => {
                     </div>
                   </div>
                 </Show>
-              </>
+              </div>
             )}
           </Show>
         </Show>
