@@ -52,15 +52,34 @@ const ProjectDetailPage: Component = () => {
           }>
             {(projectValue) => (
               <>
-                {/* Project Identity Card */}
-                <section class="project-identity-card" aria-labelledby="project-name">
-                  <div class="project-key-badge">{projectValue().key}</div>
-                  <h1 id="project-name" class="project-name">{projectValue().name}</h1>
-                  <Show when={projectValue().description?.trim()} fallback={
-                    <p class="project-description">No description provided.</p>
-                  }>
-                    {(desc) => <p class="project-description">{desc()}</p>}
-                  </Show>
+                <section class="project-detail-top" aria-labelledby="project-name">
+                  <div class="project-identity-card">
+                    <div class="project-key-badge">{projectValue().key}</div>
+                    <h1 id="project-name" class="project-name">{projectValue().name}</h1>
+                    <Show when={projectValue().description?.trim()} fallback={
+                      <p class="project-description project-description-empty">No description yet.</p>
+                    }>
+                      {(desc) => <p class="project-description">{desc()}</p>}
+                    </Show>
+                  </div>
+
+                  <div class="projects-panel project-meta-card" aria-label="Project meta">
+                    <div class="project-meta-grid">
+                      <div class="project-meta-item">
+                        <p class="project-meta-label">Default repository</p>
+                        <p class="project-meta-value">
+                          {defaultRepo()?.name || defaultRepo()?.path || "Not set"}
+                        </p>
+                      </div>
+                      <div class="project-meta-item">
+                        <p class="project-meta-label">Linked repositories</p>
+                        <p class="project-meta-value">{projectValue().repositories.length}</p>
+                      </div>
+                    </div>
+                    <div class="project-action-placeholder" aria-hidden="true">
+                      Project actions coming soon
+                    </div>
+                  </div>
                 </section>
 
                 {/* Repositories Section */}
@@ -81,7 +100,7 @@ const ProjectDetailPage: Component = () => {
                       {/* Default repository first */}
                       <Show when={defaultRepo()}>
                         {(repo) => (
-                          <li class="projects-list-item" style={{ "border-color": "var(--accent)" }}>
+                          <li class="projects-list-item projects-list-item-default">
                             <div>
                               <p class="projects-list-name">{repo().name || repo().path}</p>
                               <p class="projects-list-meta">{repo().path}</p>
@@ -106,11 +125,18 @@ const ProjectDetailPage: Component = () => {
                   </Show>
                 </section>
 
-                {/* Stats or Additional Info Placeholder */}
-                <section class="projects-panel" aria-labelledby="activity-heading" style={{ "margin-top": "24px" }}>
-                  <h2 id="activity-heading" class="project-section-title">Recent Activity</h2>
-                  <div class="project-detail-empty" style={{ padding: "40px 24px" }}>
-                    <p class="project-detail-empty-text">Activity tracking coming soon. This section will show recent tasks, runs, and updates for this project.</p>
+                <section class="project-placeholders" aria-label="Project scoped sections">
+                  <div class="projects-panel project-placeholder-card" aria-labelledby="tasks-heading">
+                    <h2 id="tasks-heading" class="project-section-title">Tasks</h2>
+                    <p class="project-placeholder-text">Project tasks will appear here when task workflows are added.</p>
+                  </div>
+                  <div class="projects-panel project-placeholder-card" aria-labelledby="runs-heading">
+                    <h2 id="runs-heading" class="project-section-title">Runs</h2>
+                    <p class="project-placeholder-text">Run activity for this project will be shown here in a future update.</p>
+                  </div>
+                  <div class="projects-panel project-placeholder-card" aria-labelledby="settings-heading">
+                    <h2 id="settings-heading" class="project-section-title">Settings</h2>
+                    <p class="project-placeholder-text">Project-specific settings will live here once configuration controls are available.</p>
                   </div>
                 </section>
               </>

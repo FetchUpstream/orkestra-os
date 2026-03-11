@@ -611,7 +611,56 @@ textarea::placeholder {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 24px;
+}
+
+.project-detail-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr);
+  gap: 16px;
   margin-bottom: 24px;
+}
+
+.project-meta-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.project-meta-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.project-meta-item {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-alt);
+  padding: 12px;
+}
+
+.project-meta-label {
+  margin: 0 0 4px;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-subtle);
+}
+
+.project-meta-value {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--text);
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.project-action-placeholder {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-subtle);
+  font-size: 0.82rem;
+  text-align: center;
+  padding: 12px;
 }
 
 .project-key-badge {
@@ -642,6 +691,10 @@ textarea::placeholder {
   line-height: 1.6;
 }
 
+.project-description-empty {
+  color: var(--text-subtle);
+}
+
 .project-section {
   margin-top: 24px;
 }
@@ -662,6 +715,29 @@ textarea::placeholder {
   letter-spacing: 0.05em;
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+.projects-list-item-default {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-subtle);
+}
+
+.project-placeholders {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.project-placeholder-card {
+  min-height: 140px;
+}
+
+.project-placeholder-text {
+  margin: 8px 0 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 /* Responsive */
@@ -726,6 +802,14 @@ textarea::placeholder {
 
   .projects-panel {
     padding: 16px;
+  }
+
+  .project-detail-top {
+    grid-template-columns: 1fr;
+  }
+
+  .project-placeholders {
+    grid-template-columns: 1fr;
   }
 }
 
