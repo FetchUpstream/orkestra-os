@@ -19,7 +19,12 @@ describe("app routing and shell", () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") return Promise.resolve([{ id: "p-1", name: "Alpha", key: "ALP", repositories: [] }]);
       if (command === "get_project") return Promise.resolve({ id: "p-1", name: "Alpha", key: "ALP", repositories: [] });
-      if (command === "create_project") return Promise.resolve({ id: "p-2", name: "Beta", key: "BET", repositories: [] });
+      if (command === "create_project") {
+        return Promise.resolve({
+          project: { id: "p-2", name: "Beta", key: "BET", description: null },
+          repositories: [{ id: "r-1", name: "Beta", repo_path: "/repo/beta", is_default: true }],
+        });
+      }
       return Promise.resolve(null);
     });
   });
@@ -110,5 +115,52 @@ describe("app routing and shell", () => {
 
     expect(screen.getByText("Select exactly one default repository.")).toBeTruthy();
     expect(invokeMock).not.toHaveBeenCalledWith("create_project", expect.anything());
+  });
+
+  it("maps create payload repository path to repo_path", async () => {
+    renderAt("/projects");
+
+    await fireEvent.input(screen.getByLabelText("Project name"), {
+      target: { value: "Demo Project" },
+    });
+    await fireEvent.input(screen.getByPlaceholderText("Repository path"), {
+      target: { value: "/repo/demo" },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("create_project", {
+        input: {
+          name: "Demo Project",
+          key: "DEM",
+          description: undefined,
+          repositories: [{ repo_path: "/repo/demo", name: "/repo/demo", is_default: true }],
+        },
+      });
+    });
+  });
+
+  it("shows backend message when create fails with validation error", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") return Promise.resolve([]);
+      if (command === "create_project") return Promise.reject("project key already exists");
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects");
+
+    await fireEvent.input(screen.getByLabelText("Project name"), {
+      target: { value: "Demo Project" },
+    });
+    await fireEvent.input(screen.getByPlaceholderText("Repository path"), {
+      target: { value: "/repo/demo" },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to create project. project key already exists")).toBeTruthy();
+    });
   });
 });

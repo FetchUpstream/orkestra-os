@@ -11,6 +11,19 @@ type RepoInput = {
 
 const emptyRepo = (): RepoInput => ({ path: "", name: "" });
 
+const getCreateProjectErrorMessage = (error: unknown): string | null => {
+  const message =
+    typeof error === "string"
+      ? error
+      : error && typeof error === "object" && "message" in error && typeof error.message === "string"
+        ? error.message
+        : null;
+
+  if (!message) return null;
+  if (message.toLowerCase().includes("database error")) return null;
+  return message;
+};
+
 const ProjectsPage: Component = () => {
   const navigate = useNavigate();
   const [projects, setProjects] = createSignal<Project[]>([]);
@@ -135,8 +148,9 @@ const ProjectsPage: Component = () => {
       await loadProjects();
       resetForm();
       navigate(`/projects/${createdProject.id}`);
-    } catch {
-      setError("Failed to create project. Please try again.");
+    } catch (error) {
+      const backendMessage = getCreateProjectErrorMessage(error);
+      setError(backendMessage ? `Failed to create project. ${backendMessage}` : "Failed to create project. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
