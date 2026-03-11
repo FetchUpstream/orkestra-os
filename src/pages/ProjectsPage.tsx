@@ -1,5 +1,5 @@
 import { A, useNavigate } from "@solidjs/router";
-import { createMemo, createSignal, For, onMount, Show, type Component, type JSX } from "solid-js";
+import { createMemo, createSignal, For, Index, onMount, Show, type Component, type JSX } from "solid-js";
 import { createProject, listProjects, type Project } from "../app/lib/projects";
 import { isValidProjectKey, normalizeProjectKey, recommendProjectKey } from "../app/lib/projectKey";
 import PageHeader from "../components/layout/PageHeader";
@@ -241,30 +241,30 @@ const ProjectsPage: Component = () => {
                   </button>
                 </div>
                 <div class="projects-repo-list" role="list">
-                  <For each={repositories()}>
+                  <Index each={repositories()}>
                     {(repo, index) => (
                       <div class="projects-repo-row" role="listitem">
                         <input
                           placeholder="Repository path"
-                          value={repo.path}
-                          onInput={(event) => updateRepository(index(), "path", event.currentTarget.value)}
+                          value={repo().path}
+                          onInput={(event) => updateRepository(index, "path", event.currentTarget.value)}
                           required
-                          aria-label={`Repository ${index() + 1} path`}
+                          aria-label={`Repository ${index + 1} path`}
                           aria-required="true"
                         />
                         <input
                           placeholder="Display name (optional)"
-                          value={repo.name}
-                          onInput={(event) => updateRepository(index(), "name", event.currentTarget.value)}
-                          aria-label={`Repository ${index() + 1} display name`}
+                          value={repo().name}
+                          onInput={(event) => updateRepository(index, "name", event.currentTarget.value)}
+                          aria-label={`Repository ${index + 1} display name`}
                         />
                         <label class="projects-default-label">
                           <input
                             type="radio"
                             name="default-repository"
-                            checked={defaultRepoIndex() === index()}
-                            onChange={() => setDefaultRepoIndex(index())}
-                            aria-label={`Set repository ${index() + 1} as default`}
+                            checked={defaultRepoIndex() === index}
+                            onChange={() => setDefaultRepoIndex(index)}
+                            aria-label={`Set repository ${index + 1} as default`}
                           />
                           Default
                         </label>
@@ -272,7 +272,7 @@ const ProjectsPage: Component = () => {
                           <button
                             type="button"
                             class="projects-button-danger"
-                            onClick={() => removeRepository(index())}
+                            onClick={() => removeRepository(index)}
                             disabled={repositories().length === 1}
                             title={repositories().length === 1 ? "Cannot remove the only repository" : "Remove repository"}
                           >
@@ -281,7 +281,7 @@ const ProjectsPage: Component = () => {
                         </div>
                       </div>
                     )}
-                  </For>
+                  </Index>
                 </div>
               </div>
             </div>
