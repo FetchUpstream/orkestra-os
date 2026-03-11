@@ -19,6 +19,7 @@ const AppRoutes: Component = () => {
         <Route path="/" component={BoardPage} />
         <Route path="/board" component={BoardPage} />
         <Route path="/tasks/:taskId" component={TaskDetailPage} />
+        <Route path="/projects/:projectId/tasks/:taskId" component={TaskDetailPage} />
         <Route path="/runs/:runId" component={RunDetailPage} />
         <Route path="/agents" component={AgentsPage} />
         <Route path="/projects" component={ProjectsPage} />

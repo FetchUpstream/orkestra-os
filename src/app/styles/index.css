@@ -367,7 +367,8 @@ textarea::placeholder {
 }
 
 .projects-field input,
-.projects-field textarea {
+.projects-field textarea,
+.projects-field select {
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -379,12 +380,14 @@ textarea::placeholder {
 }
 
 .projects-field input:hover,
-.projects-field textarea:hover {
+.projects-field textarea:hover,
+.projects-field select:hover {
   border-color: var(--text-subtle);
 }
 
 .projects-field input:focus,
-.projects-field textarea:focus {
+.projects-field textarea:focus,
+.projects-field select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-subtle);
   outline: none;
@@ -740,6 +743,60 @@ textarea::placeholder {
   line-height: 1.5;
 }
 
+.projects-task-item {
+  align-items: flex-start;
+}
+
+.projects-task-link {
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.projects-task-link:hover {
+  color: var(--accent);
+}
+
+.projects-task-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.projects-task-status {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+}
+
+.projects-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1000;
+  padding: 16px;
+}
+
+.projects-modal {
+  width: min(560px, 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 20px;
+}
+
 /* Responsive */
 @media (max-width: 900px) {
   .app-shell {
@@ -810,6 +867,14 @@ textarea::placeholder {
 
   .project-placeholders {
     grid-template-columns: 1fr;
+  }
+
+  .projects-task-meta {
+    align-items: flex-start;
+  }
+
+  .projects-task-item {
+    flex-direction: column;
   }
 }
 

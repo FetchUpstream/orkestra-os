@@ -34,6 +34,7 @@ const AppShell: Component<AppShellProps> = (props) => {
 
   const title = () => {
     if (location.pathname.startsWith("/tasks/")) return "Task Detail";
+    if (location.pathname.includes("/tasks/")) return "Task Detail";
     if (location.pathname.startsWith("/runs/")) return "Run Detail";
     if (location.pathname.startsWith("/projects/")) return "Project Detail";
     return topbarTitleByPath[location.pathname] ?? "OrkestraOS";
