@@ -68,4 +68,44 @@ export const createProject = async (input: CreateProjectInput): Promise<Project>
   };
 };
 
-export const getProject = (id: string) => invoke<Project>("get_project", { id });
+type ProjectResponse =
+  | Project
+  | {
+      project: {
+        id: string;
+        name: string;
+        key: string;
+        description?: string | null;
+      };
+      repositories: Array<{
+        id?: string;
+        name?: string | null;
+        path?: string;
+        repo_path?: string;
+        is_default?: boolean;
+      }>;
+    };
+
+const normalizeProject = (response: ProjectResponse): Project => {
+  if ("project" in response) {
+    return {
+      id: response.project.id,
+      name: response.project.name,
+      key: response.project.key,
+      description: response.project.description,
+      repositories: response.repositories.map((repository) => ({
+        id: repository.id,
+        path: repository.path ?? repository.repo_path ?? "",
+        name: repository.name,
+        is_default: repository.is_default,
+      })),
+    };
+  }
+
+  return response;
+};
+
+export const getProject = async (id: string): Promise<Project> => {
+  const response = await invoke<ProjectResponse>("get_project", { id });
+  return normalizeProject(response);
+};
