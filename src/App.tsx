@@ -7,16 +7,16 @@ function App() {
   const [status, setStatus] = createSignal("waiting");
 
   onMount(async () => {
+    const unlisten = await listen<string>("app://runtime-status", (event) => {
+      setStatus(event.payload);
+    });
+
     try {
       const result = await invoke<string>("health_check");
       setMessage(result);
     } catch (error) {
       setMessage(`Error: ${String(error)}`);
     }
-
-    const unlisten = await listen<string>("app://runtime-status", (event) => {
-      setStatus(event.payload);
-    });
 
     onCleanup(() => {
       unlisten();
