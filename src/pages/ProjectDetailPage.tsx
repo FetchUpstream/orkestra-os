@@ -7,7 +7,6 @@ import {
   type Task,
   type TaskStatus,
 } from "../app/lib/tasks";
-import PageHeader from "../components/layout/PageHeader";
 
 const TASK_STATUSES: TaskStatus[] = ["todo", "doing", "review", "done"];
 
@@ -131,8 +130,6 @@ const ProjectDetailPage: Component = () => {
 
   return (
     <>
-      <PageHeader title="Project Detail" />
-
       <Show when={!error()} fallback={
         <div class="projects-panel" role="alert" aria-live="assertive">
           <div class="projects-error">{error()}</div>
@@ -153,49 +150,40 @@ const ProjectDetailPage: Component = () => {
           }>
             {(projectValue) => (
               <>
-                <section class="project-detail-top" aria-labelledby="project-name">
+                {/* Navigation */}
+                <div class="project-detail-nav">
+                  <A href="/projects" class="project-detail-back-link">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                      <path d="M10 12L6 8L10 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    Back to Projects
+                  </A>
+                </div>
+
+                {/* Project Identity Hero */}
+                <section class="project-detail-hero" aria-labelledby="project-name">
                   <div class="project-identity-card">
-                    <div class="project-key-badge">{projectValue().key}</div>
+                    <div class="project-identity-header">
+                      <div class="project-key-badge">{projectValue().key}</div>
+                    </div>
                     <h1 id="project-name" class="project-name">{projectValue().name}</h1>
-                    <Show when={projectValue().description?.trim()} fallback={
-                      <p class="project-description project-description-empty">No description yet.</p>
-                    }>
+                    <p class="project-meta-line">
+                      {projectValue().repositories.length} repositories · Default: {defaultRepo()?.name || defaultRepo()?.path || "—"}
+                    </p>
+                    <Show when={projectValue().description?.trim()}>
                       {(desc) => <p class="project-description">{desc()}</p>}
                     </Show>
-                  </div>
-
-                  <div class="projects-panel project-meta-card" aria-label="Project meta">
-                    <div class="project-meta-grid">
-                      <div class="project-meta-item">
-                        <p class="project-meta-label">Default repository</p>
-                        <p class="project-meta-value">
-                          {defaultRepo()?.name || defaultRepo()?.path || "Not set"}
-                        </p>
-                      </div>
-                      <div class="project-meta-item">
-                        <p class="project-meta-label">Linked repositories</p>
-                        <p class="project-meta-value">{projectValue().repositories.length}</p>
-                      </div>
-                    </div>
-                    <div class="project-action-placeholder" aria-hidden="true">
-                      Project actions coming soon
-                    </div>
                   </div>
                 </section>
 
                 {/* Repositories Section */}
                 <section class="projects-panel" aria-labelledby="repositories-heading">
                   <div class="project-section-header">
-                    <h2 id="repositories-heading" class="project-section-title">Repositories</h2>
-                    <span class="projects-list-meta">
-                      {projectValue().repositories.length} {projectValue().repositories.length === 1 ? "repository" : "repositories"}
-                    </span>
+                    <h2 id="repositories-heading" class="project-section-title">Repositories ({projectValue().repositories.length})</h2>
                   </div>
 
                   <Show when={projectValue().repositories.length > 0} fallback={
-                    <div class="project-detail-empty" style={{ padding: "32px 24px" }}>
-                      <p class="project-detail-empty-text">No repositories configured for this project yet.</p>
-                    </div>
+                    <p class="project-placeholder-text">No repositories linked.</p>
                   }>
                     <ul class="projects-list" role="list">
                       {/* Default repository first */}
@@ -228,7 +216,7 @@ const ProjectDetailPage: Component = () => {
 
                 <section class="projects-panel" aria-labelledby="tasks-heading">
                   <div class="project-section-header">
-                    <h2 id="tasks-heading" class="project-section-title">Tasks</h2>
+                    <h2 id="tasks-heading" class="project-section-title">Tasks ({tasks().length})</h2>
                     <button
                       type="button"
                       class="projects-button-primary"
@@ -237,42 +225,43 @@ const ProjectDetailPage: Component = () => {
                         setIsModalOpen(true);
                       }}
                     >
-                      Create task
+                      Add task
                     </button>
                   </div>
 
                   <Show when={!taskError()} fallback={<p class="projects-error">{taskError()}</p>}>
-                    <Show when={!isTasksLoading()} fallback={<p class="page-placeholder">Loading tasks...</p>}>
-                      <Show when={tasks().length > 0} fallback={<p class="project-placeholder-text">No tasks in this project yet.</p>}>
-                        <ul class="projects-list" role="list">
+                    <Show when={!isTasksLoading()} fallback={<p class="project-placeholder-text">Loading...</p>}>
+                      <Show when={tasks().length > 0} fallback={<p class="project-placeholder-text">No tasks yet.</p>}>
+                        <ul class="project-task-list" role="list">
                           <For each={tasks()}>
                             {(task) => (
-                              <li class="projects-list-item projects-task-item">
-                                <div>
-                                  <A href={`/projects/${params.projectId}/tasks/${task.id}`} class="projects-task-link">{task.title}</A>
-                                  <p class="projects-list-meta">{task.targetRepositoryName || task.targetRepositoryPath || "No repository"}</p>
+                              <li class="project-task-item">
+                                <div class="project-task-main">
+                                  <A href={`/projects/${params.projectId}/tasks/${task.id}`} class="project-task-title">{task.title}</A>
+                                  <p class="project-task-repo">{task.targetRepositoryName || task.targetRepositoryPath || "No repository"}</p>
                                 </div>
-                                <div class="projects-task-meta">
-                                  <span class="projects-task-status">{task.status}</span>
-                                  <span class="projects-list-meta">Updated {formatUpdatedAt(task.updatedAt)}</span>
+                                <div class="project-task-meta">
+                                  <span class={`project-task-status project-task-status--${task.status}`}>{task.status}</span>
+                                  <span class="project-task-updated">{formatUpdatedAt(task.updatedAt)}</span>
                                 </div>
                               </li>
                             )}
-                          </For>
+          </For>
                         </ul>
                       </Show>
                     </Show>
                   </Show>
                 </section>
 
-                <section class="project-placeholders" aria-label="Project scoped sections">
-                  <div class="projects-panel project-placeholder-card" aria-labelledby="runs-heading">
-                    <h2 id="runs-heading" class="project-section-title">Runs</h2>
-                    <p class="project-placeholder-text">Run activity for this project will be shown here in a future update.</p>
+                {/* Placeholders */}
+                <section class="project-placeholders" aria-label="Coming soon">
+                  <div class="project-placeholder-compact">
+                    <span class="project-placeholder-label">Runs</span>
+                    <span class="project-placeholder-soon">Soon</span>
                   </div>
-                  <div class="projects-panel project-placeholder-card" aria-labelledby="settings-heading">
-                    <h2 id="settings-heading" class="project-section-title">Settings</h2>
-                    <p class="project-placeholder-text">Project-specific settings will live here once configuration controls are available.</p>
+                  <div class="project-placeholder-compact">
+                    <span class="project-placeholder-label">Settings</span>
+                    <span class="project-placeholder-soon">Soon</span>
                   </div>
                 </section>
 

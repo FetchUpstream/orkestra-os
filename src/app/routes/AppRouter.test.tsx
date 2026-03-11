@@ -188,16 +188,17 @@ describe("app routing and shell", () => {
   it("shows tasks section in project detail", async () => {
     renderAt("/projects/p-1");
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Tasks" })).toBeTruthy();
-      expect(screen.getByText("Create task")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: /Tasks/ })).toBeTruthy();
+      expect(screen.getByText("Add task")).toBeTruthy();
+      expect(screen.getByRole("link", { name: /Back to Projects/i })).toBeTruthy();
     });
   });
 
   it("enforces title required for create-task modal", async () => {
     renderAt("/projects/p-1");
 
-    await fireEvent.click(await screen.findByRole("button", { name: "Create task" }));
-    await fireEvent.click(screen.getAllByRole("button", { name: "Create task" })[1]);
+    await fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create task" }));
 
     expect(screen.getByText("Title is required.")).toBeTruthy();
     expect(invokeMock).not.toHaveBeenCalledWith("create_task", expect.anything());
@@ -206,7 +207,7 @@ describe("app routing and shell", () => {
   it("shows project-scoped repository options in create-task modal", async () => {
     renderAt("/projects/p-1");
 
-    await fireEvent.click(await screen.findByRole("button", { name: "Create task" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
 
     const repositoryField = screen.getByLabelText("Target repository") as HTMLSelectElement;
     const options = Array.from(repositoryField.options).map((option) => option.textContent);
@@ -238,9 +239,9 @@ describe("app routing and shell", () => {
 
     renderAt("/projects/p-1");
 
-    await fireEvent.click(await screen.findByRole("button", { name: "Create task" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
     await fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Created task" } });
-    await fireEvent.click(screen.getAllByRole("button", { name: "Create task" })[1]);
+    await fireEvent.click(screen.getByRole("button", { name: "Create task" }));
 
     await waitFor(() => {
       expect(listCallCount).toBe(2);
@@ -276,9 +277,9 @@ describe("app routing and shell", () => {
 
     renderAt("/projects/p-1");
 
-    await fireEvent.click(await screen.findByRole("button", { name: "Create task" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
     await fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Created task" } });
-    await fireEvent.click(screen.getAllByRole("button", { name: "Create task" })[1]);
+    await fireEvent.click(screen.getByRole("button", { name: "Create task" }));
 
     await waitFor(() => {
       expect(screen.getByText("Failed to create task. invalid task status")).toBeTruthy();
@@ -303,9 +304,9 @@ describe("app routing and shell", () => {
 
     renderAt("/projects/p-1");
 
-    await fireEvent.click(await screen.findByRole("button", { name: "Create task" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
     await fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Created task" } });
-    await fireEvent.click(screen.getAllByRole("button", { name: "Create task" })[1]);
+    await fireEvent.click(screen.getByRole("button", { name: "Create task" }));
 
     await waitFor(() => {
       expect(screen.getByText("Failed to create task. Please try again.")).toBeTruthy();

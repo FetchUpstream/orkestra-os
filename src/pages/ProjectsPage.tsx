@@ -169,12 +169,14 @@ const ProjectsPage: Component = () => {
               <For each={projects()}>
                 {(project) => (
                   <li class="projects-list-item">
-                    <div>
-                      <p class="projects-list-name">{project.name}</p>
-                      <p class="projects-list-meta">{project.key}</p>
-                    </div>
-                    <A href={`/projects/${project.id}`} class="projects-open-link">
-                      Open
+                    <A href={`/projects/${project.id}`} class="projects-card-link" aria-label={`Open project ${project.name} (${project.key})`}>
+                      <span class="projects-card-content">
+                        <span class="projects-card-info">
+                          <span class="projects-list-name">{project.name}</span>
+                          <span class="projects-list-meta">{project.key}</span>
+                        </span>
+                        <span class="projects-open-cue" aria-hidden="true">Open</span>
+                      </span>
                     </A>
                   </li>
                 )}
