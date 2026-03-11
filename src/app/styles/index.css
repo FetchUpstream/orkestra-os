@@ -165,6 +165,152 @@ body {
   margin-top: 12px;
 }
 
+.projects-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.projects-panel {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.projects-section-title {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.projects-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.projects-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--surface-alt);
+}
+
+.projects-list-name {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.projects-list-meta {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.projects-open-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+.projects-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.projects-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.projects-field input,
+.projects-field textarea,
+.projects-repo-row input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.projects-repos-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.projects-repos-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.projects-repo-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.projects-default-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.projects-button-muted,
+.projects-button-primary {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.projects-button-primary {
+  background: var(--accent);
+  color: #0a1120;
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.projects-button-muted:disabled,
+.projects-button-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.projects-error {
+  margin: 0;
+  color: #ff8d8d;
+  font-size: 0.85rem;
+}
+
+.projects-default-badge {
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -213,5 +359,13 @@ body {
 
   .main-content-inner {
     padding: 20px 16px;
+  }
+
+  .projects-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .projects-repo-row {
+    grid-template-columns: 1fr;
   }
 }
