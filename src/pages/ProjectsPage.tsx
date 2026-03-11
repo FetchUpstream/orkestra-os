@@ -22,6 +22,7 @@ const ProjectsPage: Component = () => {
   const [error, setError] = createSignal("");
   const [isSubmitting, setIsSubmitting] = createSignal(false);
   const [isKeyEdited, setIsKeyEdited] = createSignal(false);
+  const [touched, setTouched] = createSignal<Record<string, boolean>>({});
 
   const loadProjects = async () => {
     const nextProjects = await listProjects();
@@ -31,8 +32,9 @@ const ProjectsPage: Component = () => {
   onMount(loadProjects);
 
   const projectKeyError = createMemo(() => {
-    if (!key().trim()) return "Project key is required.";
-    if (!isValidProjectKey(key())) return "Project key must be 2 to 4 letters or numbers.";
+    if (!touched().key && !key().trim()) return "";
+    if (!key().trim()) return "Project key is required";
+    if (!isValidProjectKey(key())) return "Must be 2-4 letters or numbers";
     return "";
   });
 
@@ -48,6 +50,7 @@ const ProjectsPage: Component = () => {
     setRepositories([emptyRepo()]);
     setDefaultRepoIndex(0);
     setIsKeyEdited(false);
+    setTouched({});
     setError("");
   };
 
@@ -61,6 +64,7 @@ const ProjectsPage: Component = () => {
   const updateKey = (value: string) => {
     setIsKeyEdited(true);
     setKey(normalizeProjectKey(value));
+    setTouched((prev) => ({ ...prev, key: true }));
   };
 
   const addRepository = () => {
@@ -91,11 +95,13 @@ const ProjectsPage: Component = () => {
 
     if (!name().trim()) {
       setError("Project name is required.");
+      setTouched((prev) => ({ ...prev, name: true }));
       return;
     }
 
-    if (projectKeyError()) {
-      setError(projectKeyError());
+    if (projectKeyError() || !key().trim()) {
+      setError(projectKeyError() || "Project key is required.");
+      setTouched((prev) => ({ ...prev, key: true }));
       return;
     }
 
@@ -130,7 +136,7 @@ const ProjectsPage: Component = () => {
       resetForm();
       navigate(`/projects/${createdProject.id}`);
     } catch {
-      setError("Failed to create project.");
+      setError("Failed to create project. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -140,10 +146,12 @@ const ProjectsPage: Component = () => {
     <>
       <PageHeader title="Projects" />
       <div class="projects-layout">
-        <section class="projects-panel">
-          <h3 class="projects-section-title">Existing projects</h3>
-          <Show when={projects().length > 0} fallback={<p class="page-placeholder">No projects yet.</p>}>
-            <ul class="projects-list">
+        <section class="projects-panel" aria-labelledby="existing-projects-heading">
+          <h2 id="existing-projects-heading" class="projects-section-title">
+            Existing Projects
+          </h2>
+          <Show when={projects().length > 0} fallback={<p class="page-placeholder">No projects yet. Create your first project to get started.</p>}>
+            <ul class="projects-list" role="list">
               <For each={projects()}>
                 {(project) => (
                   <li class="projects-list-item">
@@ -161,84 +169,134 @@ const ProjectsPage: Component = () => {
           </Show>
         </section>
 
-        <section class="projects-panel">
-          <h3 class="projects-section-title">Create project</h3>
+        <section class="projects-panel" aria-labelledby="create-project-heading">
+          <h2 id="create-project-heading" class="projects-section-title">
+            Create Project
+          </h2>
           <form class="projects-form" onSubmit={onSubmit}>
-            <label class="projects-field">
-              <span>Project name</span>
-              <input value={name()} onInput={(event) => updateName(event.currentTarget.value)} required />
-            </label>
-
-            <label class="projects-field">
-              <span>Project key (2-4)</span>
-              <input
-                value={key()}
-                onInput={(event) => updateKey(event.currentTarget.value)}
-                minlength={2}
-                maxlength={4}
-                required
-              />
-            </label>
-
-            <label class="projects-field">
-              <span>Description (optional)</span>
-              <textarea
-                value={description()}
-                onInput={(event) => setDescription(event.currentTarget.value)}
-                rows={3}
-              />
-            </label>
-
-            <div class="projects-repos-block">
-              <div class="projects-repos-head">
-                <span>Repositories</span>
-                <button type="button" class="projects-button-muted" onClick={addRepository}>
-                  Add repo
-                </button>
+            <div class="form-section">
+              <div>
+                <h3 class="form-section-title">Project Identity</h3>
+                <p class="form-section-subtitle">Define the basic information for your project.</p>
               </div>
-              <For each={repositories()}>
-                {(repo, index) => (
-                  <div class="projects-repo-row">
-                    <input
-                      placeholder="Repository path"
-                      value={repo.path}
-                      onInput={(event) => updateRepository(index(), "path", event.currentTarget.value)}
-                      required
-                    />
-                    <input
-                      placeholder="Display name (optional)"
-                      value={repo.name}
-                      onInput={(event) => updateRepository(index(), "name", event.currentTarget.value)}
-                    />
-                    <label class="projects-default-label">
-                      <input
-                        type="radio"
-                        name="default-repository"
-                        checked={defaultRepoIndex() === index()}
-                        onChange={() => setDefaultRepoIndex(index())}
-                      />
-                      Default
-                    </label>
-                    <button
-                      type="button"
-                      class="projects-button-muted"
-                      onClick={() => removeRepository(index())}
-                      disabled={repositories().length === 1}
-                    >
-                      Remove
-                    </button>
+
+              <label class="projects-field">
+                <span class="field-label">
+                  <span class="field-label-text">Project name</span>
+                </span>
+                <input
+                  value={name()}
+                  onInput={(event) => updateName(event.currentTarget.value)}
+                  onBlur={() => setTouched((prev) => ({ ...prev, name: true }))}
+                  placeholder="Enter project name"
+                  required
+                  aria-required="true"
+                />
+              </label>
+
+              <label class="projects-field">
+                <span class="field-label">
+                  <span class="field-label-text">Project key</span>
+                </span>
+                <input
+                  value={key()}
+                  onInput={(event) => updateKey(event.currentTarget.value)}
+                  onBlur={() => setTouched((prev) => ({ ...prev, key: true }))}
+                  minlength={2}
+                  maxlength={4}
+                  placeholder="e.g., PROJ"
+                  required
+                  aria-required="true"
+                  aria-invalid={!!projectKeyError()}
+                  aria-describedby={projectKeyError() ? "key-error" : "key-help"}
+                />
+                <Show when={projectKeyError()} fallback={<p id="key-help" class="field-help">A short identifier used in references. Auto-generated from the project name.</p>}>
+                  <p id="key-error" class="field-error">{projectKeyError()}</p>
+                </Show>
+              </label>
+
+              <label class="projects-field">
+                <span class="field-label">
+                  <span class="field-label-text">Description</span>
+                  <span class="field-optional">optional</span>
+                </span>
+                <textarea
+                  value={description()}
+                  onInput={(event) => setDescription(event.currentTarget.value)}
+                  placeholder="Brief description of the project"
+                  rows={3}
+                />
+              </label>
+            </div>
+
+            <div class="form-section">
+              <div class="projects-repos-block">
+                <div class="projects-repos-head">
+                  <div>
+                    <h3 class="projects-repos-title">Repositories</h3>
+                    <p class="projects-repos-subtitle">Add code repositories to track with this project.</p>
                   </div>
-                )}
-              </For>
+                  <button type="button" class="projects-button-muted" onClick={addRepository}>
+                    Add repository
+                  </button>
+                </div>
+                <div class="projects-repo-list" role="list">
+                  <For each={repositories()}>
+                    {(repo, index) => (
+                      <div class="projects-repo-row" role="listitem">
+                        <input
+                          placeholder="Repository path"
+                          value={repo.path}
+                          onInput={(event) => updateRepository(index(), "path", event.currentTarget.value)}
+                          required
+                          aria-label={`Repository ${index() + 1} path`}
+                          aria-required="true"
+                        />
+                        <input
+                          placeholder="Display name (optional)"
+                          value={repo.name}
+                          onInput={(event) => updateRepository(index(), "name", event.currentTarget.value)}
+                          aria-label={`Repository ${index() + 1} display name`}
+                        />
+                        <label class="projects-default-label">
+                          <input
+                            type="radio"
+                            name="default-repository"
+                            checked={defaultRepoIndex() === index()}
+                            onChange={() => setDefaultRepoIndex(index())}
+                            aria-label={`Set repository ${index() + 1} as default`}
+                          />
+                          Default
+                        </label>
+                        <div class="repo-actions">
+                          <button
+                            type="button"
+                            class="projects-button-danger"
+                            onClick={() => removeRepository(index())}
+                            disabled={repositories().length === 1}
+                            title={repositories().length === 1 ? "Cannot remove the only repository" : "Remove repository"}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </div>
             </div>
 
             <Show when={error()}>
-              <p class="projects-error">{error()}</p>
+              <div class="projects-error" role="alert" aria-live="polite">
+                {error()}
+              </div>
             </Show>
 
-            <button type="submit" class="projects-button-primary" disabled={isSubmitting()}>
-              {isSubmitting() ? "Creating..." : "Create project"}
-            </button>
+            <div class="form-actions">
+              <button type="submit" class="projects-button-primary" disabled={isSubmitting()}>
+                {isSubmitting() ? "Creating project..." : "Create project"}
+              </button>
+            </div>
           </form>
         </section>
       </div>

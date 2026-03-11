@@ -73,7 +73,7 @@ describe("app routing and shell", () => {
     expect(screen.getByRole("main")).toBeTruthy();
     expect(screen.getAllByRole("heading", { name: "Projects" })).toHaveLength(2);
     await waitFor(() => {
-      expect(screen.getByText("Existing projects")).toBeTruthy();
+      expect(screen.getByText("Existing Projects")).toBeTruthy();
     });
   });
 
@@ -99,7 +99,7 @@ describe("app routing and shell", () => {
     await fireEvent.input(screen.getByPlaceholderText("Repository path"), {
       target: { value: "/repo/one" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Add repo" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Add repository" }));
     await fireEvent.input(screen.getAllByPlaceholderText("Repository path")[1], {
       target: { value: "/repo/two" },
     });
