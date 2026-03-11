@@ -633,9 +633,9 @@ textarea::placeholder {
   max-width: 400px;
 }
 
-/* Navigation */
+/* Navigation - compact inline with hero */
 .project-detail-nav {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .project-detail-back-link {
@@ -664,58 +664,75 @@ textarea::placeholder {
   outline-offset: 2px;
 }
 
-/* Project Identity Hero */
+/* Project Identity Hero - compact */
 .project-detail-hero {
   margin-bottom: 16px;
 }
 
 .project-identity-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
 }
 
-.project-identity-header {
-  margin-bottom: 12px;
+.project-identity-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
 }
 
 .project-key-badge {
   display: inline-flex;
   align-items: center;
-  padding: 6px 12px;
-  background: var(--accent);
-  color: #0a1120;
+  padding: 4px 10px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.9rem;
-  font-weight: 700;
+  font-size: 0.8rem;
+  font-weight: 600;
   border-radius: var(--radius-sm);
   letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.project-key-badge--fallback {
+  background: var(--danger-subtle);
+  border-color: rgba(255, 107, 107, 0.3);
+  color: var(--danger);
 }
 
 .project-name {
-  margin: 0 0 10px;
-  font-size: 2.25rem;
-  font-weight: 700;
+  margin: 0;
+  font-size: 2.5rem;
+  font-weight: 800;
   color: var(--text);
-  letter-spacing: -0.02em;
-  line-height: 1.15;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.project-name--fallback {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .project-meta-line {
-  margin: 0 0 14px;
-  font-size: 0.9rem;
+  margin: 0;
+  font-size: 0.85rem;
   color: var(--text-muted);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .project-description {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   color: var(--text-muted);
-  line-height: 1.6;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
+  line-height: 1.5;
+  max-width: 600px;
 }
 
 /* Legacy - remove old layout */
@@ -756,6 +773,13 @@ textarea::placeholder {
 
 .projects-panel:last-of-type {
   margin-bottom: 0;
+}
+
+/* Repositories section - lighter visual weight */
+.projects-panel--repos {
+  background: transparent;
+  border-color: var(--border-subtle);
+  padding: 12px 16px;
 }
 
 /* Task List - v2 with stronger separation */
@@ -1080,7 +1104,10 @@ textarea::placeholder {
   }
 
   .project-identity-card {
-    padding: 16px 20px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 0;
   }
 
   .project-placeholders {

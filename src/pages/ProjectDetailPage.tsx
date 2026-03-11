@@ -160,24 +160,34 @@ const ProjectDetailPage: Component = () => {
                   </A>
                 </div>
 
-                {/* Project Identity Hero */}
+                {/* Project Identity Hero - compact with dominant name */}
                 <section class="project-detail-hero" aria-labelledby="project-name">
                   <div class="project-identity-card">
-                    <div class="project-identity-header">
-                      <div class="project-key-badge">{projectValue().key}</div>
+                    <span
+                      class={`project-key-badge${projectValue().key?.trim() ? "" : " project-key-badge--fallback"}`}
+                      aria-label={`Project key: ${projectValue().key?.trim() || "not set"}`}
+                    >
+                      {projectValue().key?.trim() || "NO-KEY"}
+                    </span>
+                    <div class="project-identity-main">
+                      <h1
+                        id="project-name"
+                        class={`project-name${projectValue().name?.trim() ? "" : " project-name--fallback"}`}
+                      >
+                        {projectValue().name?.trim() || "Untitled project"}
+                      </h1>
+                      <p class="project-meta-line">
+                        {projectValue().repositories.length} repositories · Default: {defaultRepo()?.name || defaultRepo()?.path || "—"}
+                      </p>
+                      <Show when={projectValue().description?.trim()}>
+                        {(desc) => <p class="project-description">{desc()}</p>}
+                      </Show>
                     </div>
-                    <h1 id="project-name" class="project-name">{projectValue().name}</h1>
-                    <p class="project-meta-line">
-                      {projectValue().repositories.length} repositories · Default: {defaultRepo()?.name || defaultRepo()?.path || "—"}
-                    </p>
-                    <Show when={projectValue().description?.trim()}>
-                      {(desc) => <p class="project-description">{desc()}</p>}
-                    </Show>
                   </div>
                 </section>
 
-                {/* Repositories Section */}
-                <section class="projects-panel" aria-labelledby="repositories-heading">
+                {/* Repositories Section - lighter visual weight */}
+                <section class="projects-panel projects-panel--repos" aria-labelledby="repositories-heading">
                   <div class="project-section-header">
                     <h2 id="repositories-heading" class="project-section-title">Repositories ({projectValue().repositories.length})</h2>
                   </div>
