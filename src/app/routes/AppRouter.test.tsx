@@ -246,5 +246,69 @@ describe("app routing and shell", () => {
       expect(listCallCount).toBe(2);
       expect(screen.getByRole("link", { name: "Created task" })).toBeTruthy();
     });
+
+    expect(invokeMock).toHaveBeenCalledWith("create_task", {
+      input: {
+        project_id: "p-1",
+        title: "Created task",
+        description: undefined,
+        status: "todo",
+        repository_id: "r-1",
+      },
+    });
+  });
+
+  it("shows backend validation message when task create fails", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") return Promise.resolve([{ id: "p-1", name: "Alpha", key: "ALP", repositories: [{ id: "r-1", name: "Main", path: "/repo/main", is_default: true }] }]);
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [{ id: "r-1", name: "Main", path: "/repo/main", is_default: true }],
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      if (command === "create_task") return Promise.reject("invalid task status");
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects/p-1");
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Create task" }));
+    await fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Created task" } });
+    await fireEvent.click(screen.getAllByRole("button", { name: "Create task" })[1]);
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to create task. invalid task status")).toBeTruthy();
+    });
+  });
+
+  it("hides internal task-create errors behind generic message", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") return Promise.resolve([{ id: "p-1", name: "Alpha", key: "ALP", repositories: [{ id: "r-1", name: "Main", path: "/repo/main", is_default: true }] }]);
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [{ id: "r-1", name: "Main", path: "/repo/main", is_default: true }],
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      if (command === "create_task") return Promise.reject("database error: constraint failed");
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects/p-1");
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Create task" }));
+    await fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Created task" } });
+    await fireEvent.click(screen.getAllByRole("button", { name: "Create task" })[1]);
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to create task. Please try again.")).toBeTruthy();
+    });
   });
 });

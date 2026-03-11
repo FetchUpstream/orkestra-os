@@ -11,6 +11,19 @@ import PageHeader from "../components/layout/PageHeader";
 
 const TASK_STATUSES: TaskStatus[] = ["todo", "doing", "review", "done"];
 
+const getCreateTaskErrorMessage = (error: unknown): string | null => {
+  const message =
+    typeof error === "string"
+      ? error
+      : error && typeof error === "object" && "message" in error && typeof error.message === "string"
+        ? error.message
+        : null;
+
+  if (!message) return null;
+  if (message.toLowerCase().includes("database error")) return null;
+  return message;
+};
+
 const formatUpdatedAt = (value?: string | null): string => {
   if (!value) return "-";
   const date = new Date(value);
@@ -104,8 +117,13 @@ const ProjectDetailPage: Component = () => {
       resetTaskForm();
       setTaskError("");
       await loadTasks(projectId);
-    } catch {
-      setTaskFormError("Failed to create task. Please try again.");
+    } catch (error) {
+      const backendMessage = getCreateTaskErrorMessage(error);
+      setTaskFormError(
+        backendMessage
+          ? `Failed to create task. ${backendMessage}`
+          : "Failed to create task. Please try again.",
+      );
     } finally {
       setIsSubmittingTask(false);
     }

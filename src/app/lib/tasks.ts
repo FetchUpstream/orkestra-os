@@ -27,6 +27,8 @@ type TaskResponse = {
   title: string;
   description?: string | null;
   status: TaskStatus;
+  repository_id?: string | null;
+  repositoryId?: string | null;
   project_id?: string;
   projectId?: string;
   target_repository_id?: string | null;
@@ -45,7 +47,11 @@ const toTask = (task: TaskResponse): Task => ({
   description: task.description,
   status: task.status,
   projectId: task.project_id ?? task.projectId,
-  targetRepositoryId: task.target_repository_id ?? task.targetRepositoryId,
+  targetRepositoryId:
+    task.target_repository_id ??
+    task.targetRepositoryId ??
+    task.repository_id ??
+    task.repositoryId,
   targetRepositoryName: task.target_repository_name ?? task.targetRepositoryName,
   targetRepositoryPath: task.target_repository_path ?? task.targetRepositoryPath,
   updatedAt: task.updated_at ?? task.updatedAt,
@@ -58,7 +64,7 @@ export const createTask = async (input: CreateTaskInput): Promise<Task> => {
       title: input.title,
       description: input.description,
       status: input.status,
-      target_repository_id: input.targetRepositoryId,
+      repository_id: input.targetRepositoryId,
     },
   });
   return toTask(response);
