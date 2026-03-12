@@ -52,8 +52,10 @@ const toTask = (task: TaskResponse): Task => ({
     task.targetRepositoryId ??
     task.repository_id ??
     task.repositoryId,
-  targetRepositoryName: task.target_repository_name ?? task.targetRepositoryName,
-  targetRepositoryPath: task.target_repository_path ?? task.targetRepositoryPath,
+  targetRepositoryName:
+    task.target_repository_name ?? task.targetRepositoryName,
+  targetRepositoryPath:
+    task.target_repository_path ?? task.targetRepositoryPath,
   updatedAt: task.updated_at ?? task.updatedAt,
 });
 
@@ -71,11 +73,13 @@ export const createTask = async (input: CreateTaskInput): Promise<Task> => {
 };
 
 export const listProjectTasks = async (projectId: string): Promise<Task[]> => {
-  const response = await invoke<TaskResponse[]>("list_project_tasks", { projectId });
+  const response = await invoke<TaskResponse[]>("list_project_tasks", {
+    projectId,
+  });
   return response.map(toTask);
 };
 
 export const getTask = async (taskId: string): Promise<Task> => {
-  const response = await invoke<TaskResponse>("get_task", { taskId });
+  const response = await invoke<TaskResponse>("get_task", { id: taskId });
   return toTask(response);
 };

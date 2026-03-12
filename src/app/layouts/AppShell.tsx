@@ -29,7 +29,9 @@ const AppShell: Component<AppShellProps> = (props) => {
       if (projects.length === 0 && location.pathname !== "/projects") {
         navigate("/projects", { replace: true });
       }
-    } catch {}
+    } catch (error) {
+      console.warn("Failed to load projects during startup", error);
+    }
   });
 
   const title = () => {
