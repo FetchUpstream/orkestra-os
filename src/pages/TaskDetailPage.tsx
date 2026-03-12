@@ -1,15 +1,16 @@
 import { A, useNavigate, useParams } from "@solidjs/router";
 import {
+  createEffect,
   createMemo,
   createSignal,
   For,
-  onMount,
   Show,
   type Component,
 } from "solid-js";
 import { getProject } from "../app/lib/projects";
 import {
   addTaskDependency,
+  createTask,
   deleteTask,
   getTask,
   listProjectTasks,
@@ -24,6 +25,7 @@ import {
   type TaskStatus,
 } from "../app/lib/tasks";
 import MarkdownContent from "../components/ui/MarkdownContent";
+import TaskMarkdownEditor from "../components/ui/TaskMarkdownEditor";
 
 const formatStatus = (status: Task["status"]) => {
   if (status === "todo") return "To do";
@@ -79,6 +81,26 @@ const getActionErrorMessage = (prefix: string, error: unknown): string => {
   return `${prefix} ${message}`;
 };
 
+const EditIcon: Component = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M3 17.25V21h3.75L18.81 8.94l-3.75-3.75L3 17.25zm17.71-10.04a.996.996 0 0 0 0-1.41L18.2 3.29a.996.996 0 1 0-1.41 1.41l2.5 2.5c.39.39 1.03.39 1.42.01z" />
+  </svg>
+);
+
+const StatusIcon: Component = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M17.65 6.35A7.95 7.95 0 0 0 12 4V1L7 6l5 5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 12.65-5.65z" />
+  </svg>
+);
+
+const DeleteIcon: Component = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M6 7h12l-1 14H7L6 7zm3-4h6l1 2h4v2H4V5h4l1-2z" />
+  </svg>
+);
+
+type DependencyCreateDirection = "parent" | "child";
+
 const TaskDetailPage: Component = () => {
   const navigate = useNavigate();
   const params = useParams();
@@ -112,10 +134,34 @@ const TaskDetailPage: Component = () => {
   const [isMoving, setIsMoving] = createSignal(false);
   const [isDeleting, setIsDeleting] = createSignal(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = createSignal(false);
+  const [isCreateDependencyModalOpen, setIsCreateDependencyModalOpen] =
+    createSignal(false);
+  const [createDependencyDirection, setCreateDependencyDirection] =
+    createSignal<DependencyCreateDirection>("parent");
+  const [createDependencyTitle, setCreateDependencyTitle] = createSignal("");
+  const [createDependencyDescription, setCreateDependencyDescription] =
+    createSignal("");
+  const [createDependencyStatus, setCreateDependencyStatus] =
+    createSignal<TaskStatus>("todo");
+  const [isCreatingDependency, setIsCreatingDependency] = createSignal(false);
+  const [defaultProjectRepositoryId, setDefaultProjectRepositoryId] =
+    createSignal("");
 
   const backHref = createMemo(() =>
     projectId() ? `/projects/${projectId()}` : "/projects",
   );
+
+  const dependencyTaskHref = (dependencyTaskId: string) => {
+    const scopedProjectId =
+      projectId() || task()?.projectId || params.projectId;
+    return scopedProjectId
+      ? `/projects/${scopedProjectId}/tasks/${dependencyTaskId}`
+      : `/tasks/${dependencyTaskId}`;
+  };
+
+  const navigateToDependencyTask = (dependencyTaskId: string) => {
+    navigate(dependencyTaskHref(dependencyTaskId));
+  };
 
   const backLabel = createMemo(() => (projectId() ? "project" : "projects"));
   const canMoveTask = createMemo(() => projectRepositories().length > 1);
@@ -178,6 +224,7 @@ const TaskDetailPage: Component = () => {
       setProjectName(null);
       setProjectRepositories([]);
       setMoveRepositoryId("");
+      setDefaultProjectRepositoryId("");
       return;
     }
 
@@ -206,36 +253,118 @@ const TaskDetailPage: Component = () => {
         );
         setMoveRepositoryId(defaultRepository?.id || repositories[0]?.id || "");
       }
+      const defaultRepository = project.repositories.find(
+        (repository) => repository.is_default && repository.id,
+      );
+      setDefaultProjectRepositoryId(
+        defaultRepository?.id || repositories[0]?.id || "",
+      );
     } catch {
       setProjectName(null);
       setProjectRepositories([]);
       setMoveRepositoryId("");
+      setDefaultProjectRepositoryId("");
     }
   };
 
-  onMount(async () => {
-    if (!params.taskId) {
+  const onOpenCreateDependencyModal = (
+    direction: DependencyCreateDirection,
+  ) => {
+    setActionError("");
+    setCreateDependencyDirection(direction);
+    setCreateDependencyTitle("");
+    setCreateDependencyDescription("");
+    setCreateDependencyStatus("todo");
+    setIsCreateDependencyModalOpen(true);
+  };
+
+  const onCancelCreateDependency = () => {
+    if (isCreatingDependency()) return;
+    setIsCreateDependencyModalOpen(false);
+  };
+
+  const onSubmitCreateDependency = async () => {
+    const taskValue = task();
+    const resolvedProjectId = projectId() || taskValue?.projectId || null;
+    if (!taskValue || !resolvedProjectId) return;
+
+    const title = createDependencyTitle().trim();
+    if (!title) {
+      setActionError("Title is required.");
+      return;
+    }
+
+    const targetRepositoryId =
+      taskValue.targetRepositoryId || defaultProjectRepositoryId();
+    if (!targetRepositoryId) {
+      setActionError(
+        "Failed to create dependency task. No repository available.",
+      );
+      return;
+    }
+
+    setActionError("");
+    setIsCreatingDependency(true);
+    try {
+      const created = await createTask({
+        projectId: resolvedProjectId,
+        title,
+        description: createDependencyDescription().trim() || undefined,
+        status: createDependencyStatus(),
+        targetRepositoryId,
+      });
+      if (createDependencyDirection() === "parent") {
+        await addTaskDependency(created.id, taskValue.id);
+      } else {
+        await addTaskDependency(taskValue.id, created.id);
+      }
+      await Promise.all([
+        refreshDependencies(taskValue.id),
+        loadDependencyCandidates(resolvedProjectId),
+      ]);
+      setIsCreateDependencyModalOpen(false);
+    } catch (mutationError) {
+      setActionError(
+        getActionErrorMessage(
+          "Failed to create dependency task.",
+          mutationError,
+        ),
+      );
+    } finally {
+      setIsCreatingDependency(false);
+    }
+  };
+
+  createEffect(() => {
+    const activeTaskId = params.taskId;
+    if (!activeTaskId) {
       setError("Missing task ID.");
       setIsLoading(false);
       return;
     }
-    try {
-      const detail = await getTask(params.taskId);
-      setTask(detail);
-      setEditTitle(detail.title);
-      setEditDescription(detail.description || "");
 
-      const resolvedProjectId = detail.projectId || params.projectId || null;
-      await Promise.all([
-        loadProjectContext(resolvedProjectId),
-        refreshDependencies(detail.id),
-        loadDependencyCandidates(resolvedProjectId),
-      ]);
-    } catch {
-      setError("Failed to load task details.");
-    } finally {
-      setIsLoading(false);
-    }
+    void (async () => {
+      setIsLoading(true);
+      setError("");
+      setActionError("");
+      try {
+        const detail = await getTask(activeTaskId);
+        setTask(detail);
+        setEditTitle(detail.title);
+        setEditDescription(detail.description || "");
+
+        const resolvedProjectId = detail.projectId || params.projectId || null;
+        await Promise.all([
+          loadProjectContext(resolvedProjectId),
+          refreshDependencies(detail.id),
+          loadDependencyCandidates(resolvedProjectId),
+        ]);
+      } catch {
+        setError("Failed to load task details.");
+      } finally {
+        setIsLoading(false);
+      }
+    })();
   });
 
   const onSaveEdit = async () => {
@@ -446,30 +575,65 @@ const TaskDetailPage: Component = () => {
                         ? `/projects/${params.projectId}`
                         : "/projects"
                     }
-                    class="project-detail-back-link"
+                    class="project-detail-back-link project-detail-back-link--icon"
+                    aria-label={`Back to ${backLabel()}`}
+                    title={`Back to ${backLabel()}`}
                   >
-                    Back to {backLabel()}
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M10 12L6 8L10 4"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
                   </A>
                 </section>
               }
             >
               {(taskValue) => (
                 <div class="task-detail-workspace">
-                  <header class="projects-panel task-detail-hero-panel">
-                    <div class="task-detail-header-row">
-                      <div class="task-detail-header-main">
+                  <div class="task-detail-columns">
+                    <div class="task-detail-main-column">
+                      <section class="projects-panel task-detail-main-card">
                         <A
                           href={backHref()}
-                          class="project-detail-back-link task-detail-back-link"
+                          class="project-detail-back-link project-detail-back-link--icon task-detail-back-link"
+                          aria-label={`Back to ${backLabel()}`}
+                          title={`Back to ${backLabel()}`}
                         >
-                          <span
-                            class="task-detail-back-link-icon"
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="none"
                             aria-hidden="true"
                           >
-                            {"<"}
-                          </span>
-                          Back to {backLabel()}
+                            <path
+                              d="M10 12L6 8L10 4"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            />
+                          </svg>
                         </A>
+                        <Show when={actionError()}>
+                          <div
+                            class="projects-error"
+                            role="alert"
+                            aria-live="polite"
+                          >
+                            {actionError()}
+                          </div>
+                        </Show>
                         <Show
                           when={!isEditing()}
                           fallback={
@@ -499,498 +663,546 @@ const TaskDetailPage: Component = () => {
                             {formatStatus(taskValue().status)}
                           </span>
                         </div>
-                      </div>
-                      <div class="task-detail-header-actions">
-                        <Show
-                          when={isEditing()}
-                          fallback={
-                            <button
-                              type="button"
-                              class="projects-button-muted"
-                              onClick={() => {
-                                setActionError("");
-                                setIsEditing(true);
-                              }}
-                            >
-                              Edit
-                            </button>
-                          }
-                        >
-                          <button
-                            type="button"
-                            class="projects-button-primary"
-                            onClick={onSaveEdit}
-                            disabled={isSavingEdit()}
-                          >
-                            {isSavingEdit() ? "Saving..." : "Save"}
-                          </button>
-                          <button
-                            type="button"
-                            class="projects-button-muted"
-                            onClick={onCancelEdit}
-                            disabled={isSavingEdit()}
-                          >
-                            Cancel
-                          </button>
-                        </Show>
-                        <button
-                          type="button"
-                          class="projects-button-muted"
-                          onClick={onAdvanceStatus}
-                          disabled={isChangingStatus()}
-                        >
-                          {isChangingStatus()
-                            ? "Updating..."
-                            : `Move to ${formatStatus(nextStatus(taskValue().status))}`}
-                        </button>
-                        <button
-                          type="button"
-                          class="projects-button-danger"
-                          onClick={onRequestDeleteTask}
-                          disabled={isDeleting()}
-                        >
-                          {isDeleting() ? "Deleting..." : "Delete"}
-                        </button>
-                      </div>
-                    </div>
-                    <Show when={actionError()}>
-                      <div
-                        class="projects-error"
-                        role="alert"
-                        aria-live="polite"
-                      >
-                        {actionError()}
-                      </div>
-                    </Show>
-                    <div class="task-detail-summary-strip">
-                      <div class="task-detail-summary-item">
-                        <span class="task-detail-summary-label">Project</span>
-                        <span class="task-detail-summary-value">
-                          {projectLabel(projectName())}
-                        </span>
-                      </div>
-                      <div class="task-detail-summary-item">
-                        <span class="task-detail-summary-label">
-                          Repository scope
-                        </span>
-                        <span class="task-detail-summary-value">
-                          {repositoryLabel(taskValue())}
-                        </span>
-                      </div>
-                      <div class="task-detail-summary-item">
-                        <span class="task-detail-summary-label">Updated</span>
-                        <span class="task-detail-summary-value">
-                          {formatDateTime(taskValue().updatedAt)}
-                        </span>
-                      </div>
-                    </div>
-                  </header>
-
-                  <div class="task-detail-columns">
-                    <div class="task-detail-main-column">
-                      <section class="projects-panel task-detail-description-panel">
-                        <h2 class="project-section-title task-detail-description-title">
-                          Description
-                        </h2>
-                        <Show
-                          when={isEditing()}
-                          fallback={
-                            <Show
-                              when={taskValue().description?.trim()}
-                              fallback={
-                                <p class="project-placeholder-text task-detail-description-text">
-                                  No description yet
-                                </p>
-                              }
-                            >
-                              {(description) => (
-                                <MarkdownContent
-                                  content={description()}
-                                  class="task-detail-description-text"
-                                />
-                              )}
-                            </Show>
-                          }
-                        >
-                          <label class="projects-field">
-                            <span class="field-label">
-                              <span class="field-label-text">Description</span>
+                        <div class="task-detail-summary-strip">
+                          <div class="task-detail-summary-item">
+                            <span class="task-detail-summary-label">
+                              Project
                             </span>
-                            <textarea
+                            <span class="task-detail-summary-value">
+                              {projectLabel(projectName())}
+                            </span>
+                          </div>
+                          <div class="task-detail-summary-item">
+                            <span class="task-detail-summary-label">
+                              Repository scope
+                            </span>
+                            <span class="task-detail-summary-value">
+                              {repositoryLabel(taskValue())}
+                            </span>
+                          </div>
+                          <div class="task-detail-summary-item">
+                            <span class="task-detail-summary-label">
+                              Updated
+                            </span>
+                            <span class="task-detail-summary-value">
+                              {formatDateTime(taskValue().updatedAt)}
+                            </span>
+                          </div>
+                        </div>
+                        <div class="task-detail-description-block">
+                          <h2 class="project-section-title task-detail-description-title">
+                            Description
+                          </h2>
+                          <Show
+                            when={isEditing()}
+                            fallback={
+                              <Show
+                                when={taskValue().description?.trim()}
+                                fallback={
+                                  <p class="project-placeholder-text task-detail-description-text">
+                                    No description yet
+                                  </p>
+                                }
+                              >
+                                {(description) => (
+                                  <MarkdownContent
+                                    content={description()}
+                                    class="task-detail-description-text"
+                                  />
+                                )}
+                              </Show>
+                            }
+                          >
+                            <TaskMarkdownEditor
                               value={editDescription()}
-                              onInput={(event) =>
-                                setEditDescription(event.currentTarget.value)
-                              }
-                              rows={4}
-                              aria-label="Task description"
+                              onChange={setEditDescription}
+                              ariaLabel="Task description"
+                              disabled={isSavingEdit()}
                             />
-                          </label>
-                        </Show>
-                      </section>
-
-                      <section class="projects-panel task-detail-secondary-panel">
-                        <h2 class="project-section-title">
-                          Notes and criteria
-                        </h2>
-                        <p class="project-placeholder-text">
-                          Add acceptance notes, constraints, and delivery
-                          criteria.
-                        </p>
-                      </section>
-
-                      <section class="projects-panel task-detail-secondary-panel">
-                        <h2 class="project-section-title">
-                          Activity and comments
-                        </h2>
-                        <p class="project-placeholder-text">
-                          Team discussion and timeline activity will appear
-                          here.
-                        </p>
+                          </Show>
+                        </div>
                       </section>
                     </div>
 
                     <aside class="task-detail-inspector-column">
-                      <section class="projects-panel">
-                        <h2 class="project-section-title">Context</h2>
-                        <dl class="task-detail-definition-list">
-                          <div>
-                            <dt>Project</dt>
-                            <dd>{projectLabel(projectName())}</dd>
-                          </div>
-                          <div>
-                            <dt>Repository scope</dt>
-                            <dd>{repositoryLabel(taskValue())}</dd>
-                          </div>
-                        </dl>
-                      </section>
-
-                      <section class="projects-panel">
-                        <h2 class="project-section-title">Runs</h2>
-                        <p class="project-placeholder-text">
-                          Task runs will be listed here once execution wiring
-                          lands.
-                        </p>
-                      </section>
-
-                      <section class="projects-panel task-dependencies-panel">
-                        <h2 class="project-section-title">Dependencies</h2>
-                        <Show
-                          when={!dependenciesError()}
-                          fallback={
-                            <div class="task-dependencies-error-block">
-                              <p class="project-placeholder-text">
-                                {dependenciesError()}
-                              </p>
+                      <section class="projects-panel task-detail-inspector-panel">
+                        <div class="task-detail-panel-section">
+                          <h2 class="project-section-title">Task controls</h2>
+                          <div class="task-detail-header-actions task-detail-controls-actions">
+                            <Show
+                              when={isEditing()}
+                              fallback={
+                                <button
+                                  type="button"
+                                  class="task-control-icon-button"
+                                  onClick={() => {
+                                    setActionError("");
+                                    setIsEditing(true);
+                                  }}
+                                  aria-label="Edit task"
+                                  title="Edit task"
+                                >
+                                  <EditIcon />
+                                </button>
+                              }
+                            >
+                              <button
+                                type="button"
+                                class="projects-button-primary"
+                                onClick={onSaveEdit}
+                                disabled={isSavingEdit()}
+                              >
+                                {isSavingEdit() ? "Saving..." : "Save"}
+                              </button>
                               <button
                                 type="button"
                                 class="projects-button-muted"
-                                onClick={() => {
-                                  const taskValue = task();
-                                  if (!taskValue) return;
-                                  void refreshDependencies(taskValue.id);
-                                }}
+                                onClick={onCancelEdit}
+                                disabled={isSavingEdit()}
                               >
-                                Retry
+                                Cancel
                               </button>
-                            </div>
-                          }
-                        >
-                          <Show
-                            when={!isLoadingDependencies() && dependencies()}
-                            fallback={
-                              <p class="project-placeholder-text">
-                                Loading dependencies.
-                              </p>
-                            }
-                          >
-                            {(dependencyState) => (
-                              <div class="task-dependencies-content">
-                                <div class="task-dependencies-section">
-                                  <h3 class="task-dependencies-heading">
-                                    Blocked by
-                                  </h3>
-                                  <Show
-                                    when={dependencyState().parents.length > 0}
-                                    fallback={
-                                      <p class="project-placeholder-text">
-                                        No prerequisites yet.
-                                      </p>
-                                    }
-                                  >
-                                    <ul class="task-dependencies-list">
-                                      <For each={dependencyState().parents}>
-                                        {(dependencyTask) => (
-                                          <li class="task-dependency-row">
-                                            <div class="task-dependency-main">
-                                              <p class="task-dependency-title">
-                                                {dependencyDisplayLabel(
-                                                  dependencyTask,
-                                                )}
-                                              </p>
-                                              <div class="task-dependency-meta">
-                                                <span
-                                                  class={`project-task-status project-task-status--${dependencyTask.status}`}
-                                                >
-                                                  {formatStatus(
-                                                    dependencyTask.status,
-                                                  )}
-                                                </span>
-                                                <span class="task-dependency-scope">
-                                                  {dependencyScopeLabel(
-                                                    dependencyTask,
-                                                  )}
-                                                </span>
-                                              </div>
-                                            </div>
-                                            <button
-                                              type="button"
-                                              class="projects-button-muted task-dependency-action"
-                                              onClick={() =>
-                                                onRemoveDependency(
-                                                  dependencyTask.id,
-                                                  taskValue().id,
-                                                )
-                                              }
-                                              disabled={
-                                                removingDependencyKey() ===
-                                                `${dependencyTask.id}:${taskValue().id}`
-                                              }
-                                            >
-                                              Remove
-                                            </button>
-                                          </li>
-                                        )}
-                                      </For>
-                                    </ul>
-                                  </Show>
-                                  <div class="task-dependency-controls">
-                                    <label class="projects-field task-dependency-selector-field">
-                                      <span class="field-label">
-                                        <span class="field-label-text">
-                                          Add parent dependency
-                                        </span>
-                                      </span>
-                                      <select
-                                        value={selectedParentTaskId()}
-                                        onChange={(event) =>
-                                          setSelectedParentTaskId(
-                                            event.currentTarget.value,
-                                          )
-                                        }
-                                        disabled={isAddingParent()}
-                                        aria-label="Add parent dependency"
-                                      >
-                                        <option value="">Select task</option>
-                                        <For each={availableParentCandidates()}>
-                                          {(candidateTask) => (
-                                            <option value={candidateTask.id}>
-                                              {dependencyDisplayLabel({
-                                                id: candidateTask.id,
-                                                displayKey:
-                                                  candidateTask.displayKey ||
-                                                  "",
-                                                title: candidateTask.title,
-                                                status: candidateTask.status,
-                                                targetRepositoryName:
-                                                  candidateTask.targetRepositoryName,
-                                                targetRepositoryPath:
-                                                  candidateTask.targetRepositoryPath,
-                                                updatedAt:
-                                                  candidateTask.updatedAt,
-                                              })}
-                                            </option>
-                                          )}
-                                        </For>
-                                      </select>
-                                    </label>
-                                    <button
-                                      type="button"
-                                      class="projects-button-muted"
-                                      onClick={onAddParentDependency}
-                                      disabled={
-                                        !selectedParentTaskId() ||
-                                        isAddingParent()
-                                      }
-                                    >
-                                      {isAddingParent()
-                                        ? "Adding..."
-                                        : "Add parent"}
-                                    </button>
-                                  </div>
-                                </div>
-
-                                <div class="task-dependencies-section">
-                                  <h3 class="task-dependencies-heading">
-                                    Blocking
-                                  </h3>
-                                  <Show
-                                    when={dependencyState().children.length > 0}
-                                    fallback={
-                                      <p class="project-placeholder-text">
-                                        No downstream tasks yet.
-                                      </p>
-                                    }
-                                  >
-                                    <ul class="task-dependencies-list">
-                                      <For each={dependencyState().children}>
-                                        {(dependencyTask) => (
-                                          <li class="task-dependency-row">
-                                            <div class="task-dependency-main">
-                                              <p class="task-dependency-title">
-                                                {dependencyDisplayLabel(
-                                                  dependencyTask,
-                                                )}
-                                              </p>
-                                              <div class="task-dependency-meta">
-                                                <span
-                                                  class={`project-task-status project-task-status--${dependencyTask.status}`}
-                                                >
-                                                  {formatStatus(
-                                                    dependencyTask.status,
-                                                  )}
-                                                </span>
-                                                <span class="task-dependency-scope">
-                                                  {dependencyScopeLabel(
-                                                    dependencyTask,
-                                                  )}
-                                                </span>
-                                              </div>
-                                            </div>
-                                            <button
-                                              type="button"
-                                              class="projects-button-muted task-dependency-action"
-                                              onClick={() =>
-                                                onRemoveDependency(
-                                                  taskValue().id,
-                                                  dependencyTask.id,
-                                                )
-                                              }
-                                              disabled={
-                                                removingDependencyKey() ===
-                                                `${taskValue().id}:${dependencyTask.id}`
-                                              }
-                                            >
-                                              Remove
-                                            </button>
-                                          </li>
-                                        )}
-                                      </For>
-                                    </ul>
-                                  </Show>
-                                  <div class="task-dependency-controls">
-                                    <label class="projects-field task-dependency-selector-field">
-                                      <span class="field-label">
-                                        <span class="field-label-text">
-                                          Add blocked task
-                                        </span>
-                                      </span>
-                                      <select
-                                        value={selectedChildTaskId()}
-                                        onChange={(event) =>
-                                          setSelectedChildTaskId(
-                                            event.currentTarget.value,
-                                          )
-                                        }
-                                        disabled={isAddingChild()}
-                                        aria-label="Add child dependency"
-                                      >
-                                        <option value="">Select task</option>
-                                        <For each={availableChildCandidates()}>
-                                          {(candidateTask) => (
-                                            <option value={candidateTask.id}>
-                                              {dependencyDisplayLabel({
-                                                id: candidateTask.id,
-                                                displayKey:
-                                                  candidateTask.displayKey ||
-                                                  "",
-                                                title: candidateTask.title,
-                                                status: candidateTask.status,
-                                                targetRepositoryName:
-                                                  candidateTask.targetRepositoryName,
-                                                targetRepositoryPath:
-                                                  candidateTask.targetRepositoryPath,
-                                                updatedAt:
-                                                  candidateTask.updatedAt,
-                                              })}
-                                            </option>
-                                          )}
-                                        </For>
-                                      </select>
-                                    </label>
-                                    <button
-                                      type="button"
-                                      class="projects-button-muted"
-                                      onClick={onAddChildDependency}
-                                      disabled={
-                                        !selectedChildTaskId() ||
-                                        isAddingChild()
-                                      }
-                                    >
-                                      {isAddingChild()
-                                        ? "Adding..."
-                                        : "Add child"}
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </Show>
-                        </Show>
-                      </section>
-
-                      <section class="projects-panel">
-                        <h2 class="project-section-title">Quick actions</h2>
-                        <div class="task-detail-quick-actions">
-                          <Show
-                            when={canMoveTask()}
-                            fallback={
-                              <Show
-                                when={projectRepositories().length === 1}
-                                fallback={
-                                  <p class="project-placeholder-text">
-                                    Repository options are unavailable for this
-                                    task.
-                                  </p>
-                                }
-                              >
-                                <p class="project-placeholder-text">
-                                  Move is available when a project has multiple
-                                  repositories.
-                                </p>
-                              </Show>
-                            }
-                          >
-                            <label class="projects-field">
-                              <span class="field-label">
-                                <span class="field-label-text">
-                                  Move task to repository
-                                </span>
-                              </span>
-                              <select
-                                value={moveRepositoryId()}
-                                onChange={(event) =>
-                                  setMoveRepositoryId(event.currentTarget.value)
-                                }
-                                disabled={isMoving()}
-                                aria-label="Move task repository"
-                              >
-                                <For each={projectRepositories()}>
-                                  {(repository) => (
-                                    <option value={repository.id}>
-                                      {repository.name}
-                                    </option>
-                                  )}
-                                </For>
-                              </select>
-                            </label>
+                            </Show>
                             <button
                               type="button"
-                              class="projects-button-muted"
-                              onClick={onMoveTask}
-                              disabled={!moveRepositoryId() || isMoving()}
+                              class="task-control-icon-button"
+                              onClick={onAdvanceStatus}
+                              disabled={isChangingStatus()}
+                              aria-label={
+                                isChangingStatus()
+                                  ? "Updating task status"
+                                  : `Move task status to ${formatStatus(nextStatus(taskValue().status))}`
+                              }
+                              title={
+                                isChangingStatus()
+                                  ? "Updating task status"
+                                  : `Move status to ${formatStatus(nextStatus(taskValue().status))}`
+                              }
                             >
-                              {isMoving() ? "Moving..." : "Move"}
+                              <StatusIcon />
                             </button>
+                            <button
+                              type="button"
+                              class="task-control-icon-button task-control-icon-button-danger"
+                              onClick={onRequestDeleteTask}
+                              disabled={isDeleting()}
+                              aria-label={
+                                isDeleting() ? "Deleting task" : "Delete task"
+                              }
+                              title={
+                                isDeleting() ? "Deleting task" : "Delete task"
+                              }
+                            >
+                              <DeleteIcon />
+                            </button>
+                          </div>
+                          <div class="task-detail-quick-actions">
+                            <Show when={canMoveTask()}>
+                              <label class="projects-field">
+                                <span class="field-label">
+                                  <span class="field-label-text">
+                                    Move task to repository
+                                  </span>
+                                </span>
+                                <select
+                                  value={moveRepositoryId()}
+                                  onChange={(event) =>
+                                    setMoveRepositoryId(
+                                      event.currentTarget.value,
+                                    )
+                                  }
+                                  disabled={isMoving()}
+                                  aria-label="Move task repository"
+                                >
+                                  <For each={projectRepositories()}>
+                                    {(repository) => (
+                                      <option value={repository.id}>
+                                        {repository.name}
+                                      </option>
+                                    )}
+                                  </For>
+                                </select>
+                              </label>
+                              <button
+                                type="button"
+                                class="projects-button-muted"
+                                onClick={onMoveTask}
+                                disabled={!moveRepositoryId() || isMoving()}
+                              >
+                                {isMoving() ? "Moving..." : "Move"}
+                              </button>
+                            </Show>
+                          </div>
+                        </div>
+                        <div
+                          class="task-detail-panel-separator"
+                          aria-hidden="true"
+                        />
+                        <div class="task-detail-panel-section task-dependencies-panel">
+                          <h2 class="project-section-title">Dependencies</h2>
+                          <Show
+                            when={!dependenciesError()}
+                            fallback={
+                              <div class="task-dependencies-error-block">
+                                <p class="project-placeholder-text">
+                                  {dependenciesError()}
+                                </p>
+                                <button
+                                  type="button"
+                                  class="projects-button-muted"
+                                  onClick={() => {
+                                    const taskValue = task();
+                                    if (!taskValue) return;
+                                    void refreshDependencies(taskValue.id);
+                                  }}
+                                >
+                                  Retry
+                                </button>
+                              </div>
+                            }
+                          >
+                            <Show
+                              when={!isLoadingDependencies() && dependencies()}
+                              fallback={
+                                <p class="project-placeholder-text">
+                                  Loading dependencies.
+                                </p>
+                              }
+                            >
+                              {(dependencyState) => (
+                                <div class="task-dependencies-content">
+                                  <div class="task-dependencies-section">
+                                    <div class="task-dependencies-heading-row">
+                                      <h3 class="task-dependencies-heading">
+                                        Blocked by
+                                      </h3>
+                                      <button
+                                        type="button"
+                                        class="task-dependencies-add-button"
+                                        onClick={() =>
+                                          onOpenCreateDependencyModal("parent")
+                                        }
+                                        aria-label="Create and add parent dependency"
+                                        title="Create parent dependency"
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+                                    <Show
+                                      when={
+                                        dependencyState().parents.length > 0
+                                      }
+                                      fallback={
+                                        <p class="project-placeholder-text">
+                                          No prerequisites yet.
+                                        </p>
+                                      }
+                                    >
+                                      <ul class="task-dependencies-list">
+                                        <For each={dependencyState().parents}>
+                                          {(dependencyTask) => (
+                                            <li
+                                              class="task-dependency-row task-dependency-row--clickable"
+                                              role="button"
+                                              tabindex={0}
+                                              onClick={() =>
+                                                navigateToDependencyTask(
+                                                  dependencyTask.id,
+                                                )
+                                              }
+                                              onKeyDown={(event) => {
+                                                if (
+                                                  event.currentTarget !==
+                                                  event.target
+                                                )
+                                                  return;
+                                                if (
+                                                  event.key === "Enter" ||
+                                                  event.key === " "
+                                                ) {
+                                                  event.preventDefault();
+                                                  navigateToDependencyTask(
+                                                    dependencyTask.id,
+                                                  );
+                                                }
+                                              }}
+                                            >
+                                              <div class="task-dependency-main task-dependency-link">
+                                                <p class="task-dependency-title">
+                                                  {dependencyDisplayLabel(
+                                                    dependencyTask,
+                                                  )}
+                                                </p>
+                                                <div class="task-dependency-meta">
+                                                  <span
+                                                    class={`project-task-status project-task-status--${dependencyTask.status}`}
+                                                  >
+                                                    {formatStatus(
+                                                      dependencyTask.status,
+                                                    )}
+                                                  </span>
+                                                  <span class="task-dependency-scope">
+                                                    {dependencyScopeLabel(
+                                                      dependencyTask,
+                                                    )}
+                                                  </span>
+                                                </div>
+                                              </div>
+                                              <button
+                                                type="button"
+                                                class="projects-button-muted task-dependency-action"
+                                                onClick={(event) => {
+                                                  event.stopPropagation();
+                                                  void onRemoveDependency(
+                                                    dependencyTask.id,
+                                                    taskValue().id,
+                                                  );
+                                                }}
+                                                onKeyDown={(event) => {
+                                                  if (
+                                                    event.key === "Enter" ||
+                                                    event.key === " "
+                                                  ) {
+                                                    event.stopPropagation();
+                                                  }
+                                                }}
+                                                disabled={
+                                                  removingDependencyKey() ===
+                                                  `${dependencyTask.id}:${taskValue().id}`
+                                                }
+                                              >
+                                                Remove
+                                              </button>
+                                            </li>
+                                          )}
+                                        </For>
+                                      </ul>
+                                    </Show>
+                                    <div class="task-dependency-controls">
+                                      <label class="projects-field task-dependency-selector-field">
+                                        <span class="field-label">
+                                          <span class="field-label-text">
+                                            Add parent dependency
+                                          </span>
+                                        </span>
+                                        <select
+                                          value={selectedParentTaskId()}
+                                          onChange={(event) =>
+                                            setSelectedParentTaskId(
+                                              event.currentTarget.value,
+                                            )
+                                          }
+                                          disabled={isAddingParent()}
+                                          aria-label="Add parent dependency"
+                                        >
+                                          <option value="">Select task</option>
+                                          <For
+                                            each={availableParentCandidates()}
+                                          >
+                                            {(candidateTask) => (
+                                              <option value={candidateTask.id}>
+                                                {dependencyDisplayLabel({
+                                                  id: candidateTask.id,
+                                                  displayKey:
+                                                    candidateTask.displayKey ||
+                                                    "",
+                                                  title: candidateTask.title,
+                                                  status: candidateTask.status,
+                                                  targetRepositoryName:
+                                                    candidateTask.targetRepositoryName,
+                                                  targetRepositoryPath:
+                                                    candidateTask.targetRepositoryPath,
+                                                  updatedAt:
+                                                    candidateTask.updatedAt,
+                                                })}
+                                              </option>
+                                            )}
+                                          </For>
+                                        </select>
+                                      </label>
+                                      <button
+                                        type="button"
+                                        class="projects-button-muted"
+                                        onClick={onAddParentDependency}
+                                        disabled={
+                                          !selectedParentTaskId() ||
+                                          isAddingParent()
+                                        }
+                                      >
+                                        {isAddingParent()
+                                          ? "Adding..."
+                                          : "Add parent"}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div class="task-dependencies-section">
+                                    <div class="task-dependencies-heading-row">
+                                      <h3 class="task-dependencies-heading">
+                                        Blocking
+                                      </h3>
+                                      <button
+                                        type="button"
+                                        class="task-dependencies-add-button"
+                                        onClick={() =>
+                                          onOpenCreateDependencyModal("child")
+                                        }
+                                        aria-label="Create and add blocked task"
+                                        title="Create blocked task"
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+                                    <Show
+                                      when={
+                                        dependencyState().children.length > 0
+                                      }
+                                      fallback={
+                                        <p class="project-placeholder-text">
+                                          No downstream tasks yet.
+                                        </p>
+                                      }
+                                    >
+                                      <ul class="task-dependencies-list">
+                                        <For each={dependencyState().children}>
+                                          {(dependencyTask) => (
+                                            <li
+                                              class="task-dependency-row task-dependency-row--clickable"
+                                              role="button"
+                                              tabindex={0}
+                                              onClick={() =>
+                                                navigateToDependencyTask(
+                                                  dependencyTask.id,
+                                                )
+                                              }
+                                              onKeyDown={(event) => {
+                                                if (
+                                                  event.currentTarget !==
+                                                  event.target
+                                                )
+                                                  return;
+                                                if (
+                                                  event.key === "Enter" ||
+                                                  event.key === " "
+                                                ) {
+                                                  event.preventDefault();
+                                                  navigateToDependencyTask(
+                                                    dependencyTask.id,
+                                                  );
+                                                }
+                                              }}
+                                            >
+                                              <div class="task-dependency-main task-dependency-link">
+                                                <p class="task-dependency-title">
+                                                  {dependencyDisplayLabel(
+                                                    dependencyTask,
+                                                  )}
+                                                </p>
+                                                <div class="task-dependency-meta">
+                                                  <span
+                                                    class={`project-task-status project-task-status--${dependencyTask.status}`}
+                                                  >
+                                                    {formatStatus(
+                                                      dependencyTask.status,
+                                                    )}
+                                                  </span>
+                                                  <span class="task-dependency-scope">
+                                                    {dependencyScopeLabel(
+                                                      dependencyTask,
+                                                    )}
+                                                  </span>
+                                                </div>
+                                              </div>
+                                              <button
+                                                type="button"
+                                                class="projects-button-muted task-dependency-action"
+                                                onClick={(event) => {
+                                                  event.stopPropagation();
+                                                  void onRemoveDependency(
+                                                    taskValue().id,
+                                                    dependencyTask.id,
+                                                  );
+                                                }}
+                                                onKeyDown={(event) => {
+                                                  if (
+                                                    event.key === "Enter" ||
+                                                    event.key === " "
+                                                  ) {
+                                                    event.stopPropagation();
+                                                  }
+                                                }}
+                                                disabled={
+                                                  removingDependencyKey() ===
+                                                  `${taskValue().id}:${dependencyTask.id}`
+                                                }
+                                              >
+                                                Remove
+                                              </button>
+                                            </li>
+                                          )}
+                                        </For>
+                                      </ul>
+                                    </Show>
+                                    <div class="task-dependency-controls">
+                                      <label class="projects-field task-dependency-selector-field">
+                                        <span class="field-label">
+                                          <span class="field-label-text">
+                                            Add blocked task
+                                          </span>
+                                        </span>
+                                        <select
+                                          value={selectedChildTaskId()}
+                                          onChange={(event) =>
+                                            setSelectedChildTaskId(
+                                              event.currentTarget.value,
+                                            )
+                                          }
+                                          disabled={isAddingChild()}
+                                          aria-label="Add child dependency"
+                                        >
+                                          <option value="">Select task</option>
+                                          <For
+                                            each={availableChildCandidates()}
+                                          >
+                                            {(candidateTask) => (
+                                              <option value={candidateTask.id}>
+                                                {dependencyDisplayLabel({
+                                                  id: candidateTask.id,
+                                                  displayKey:
+                                                    candidateTask.displayKey ||
+                                                    "",
+                                                  title: candidateTask.title,
+                                                  status: candidateTask.status,
+                                                  targetRepositoryName:
+                                                    candidateTask.targetRepositoryName,
+                                                  targetRepositoryPath:
+                                                    candidateTask.targetRepositoryPath,
+                                                  updatedAt:
+                                                    candidateTask.updatedAt,
+                                                })}
+                                              </option>
+                                            )}
+                                          </For>
+                                        </select>
+                                      </label>
+                                      <button
+                                        type="button"
+                                        class="projects-button-muted"
+                                        onClick={onAddChildDependency}
+                                        disabled={
+                                          !selectedChildTaskId() ||
+                                          isAddingChild()
+                                        }
+                                      >
+                                        {isAddingChild()
+                                          ? "Adding..."
+                                          : "Add child"}
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </Show>
                           </Show>
                         </div>
                       </section>
@@ -1048,6 +1260,94 @@ const TaskDetailPage: Component = () => {
             </section>
           </div>
         )}
+      </Show>
+      <Show when={isCreateDependencyModalOpen()}>
+        <div
+          class="projects-modal-backdrop"
+          role="presentation"
+          onClick={onCancelCreateDependency}
+        >
+          <section
+            class="projects-modal task-create-dependency-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="task-create-dependency-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2
+              id="task-create-dependency-modal-title"
+              class="task-delete-modal-title"
+            >
+              {createDependencyDirection() === "parent"
+                ? "Create blocking prerequisite"
+                : "Create blocked task"}
+            </h2>
+            <label class="projects-field">
+              <span class="field-label">
+                <span class="field-label-text">Title</span>
+              </span>
+              <input
+                value={createDependencyTitle()}
+                onInput={(event) =>
+                  setCreateDependencyTitle(event.currentTarget.value)
+                }
+                aria-label="Dependency task title"
+              />
+            </label>
+            <label class="projects-field">
+              <span class="field-label">
+                <span class="field-label-text">Description</span>
+                <span class="field-optional">Optional</span>
+              </span>
+              <textarea
+                rows={3}
+                value={createDependencyDescription()}
+                onInput={(event) =>
+                  setCreateDependencyDescription(event.currentTarget.value)
+                }
+                aria-label="Dependency task description"
+              />
+            </label>
+            <label class="projects-field">
+              <span class="field-label">
+                <span class="field-label-text">Status</span>
+                <span class="field-optional">Optional</span>
+              </span>
+              <select
+                value={createDependencyStatus()}
+                onChange={(event) =>
+                  setCreateDependencyStatus(
+                    event.currentTarget.value as TaskStatus,
+                  )
+                }
+                aria-label="Dependency task status"
+              >
+                <option value="todo">To do</option>
+                <option value="doing">In progress</option>
+                <option value="review">In review</option>
+                <option value="done">Done</option>
+              </select>
+            </label>
+            <div class="task-delete-modal-actions">
+              <button
+                type="button"
+                class="projects-button-muted"
+                onClick={onCancelCreateDependency}
+                disabled={isCreatingDependency()}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="projects-button-primary"
+                onClick={onSubmitCreateDependency}
+                disabled={isCreatingDependency()}
+              >
+                {isCreatingDependency() ? "Creating..." : "Create and link"}
+              </button>
+            </div>
+          </section>
+        </div>
       </Show>
     </>
   );

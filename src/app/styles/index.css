@@ -686,7 +686,7 @@ textarea::placeholder {
 .project-detail-back-link {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
   padding: 5px 10px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
@@ -710,6 +710,17 @@ textarea::placeholder {
 .project-detail-back-link:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.project-detail-back-link--icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.project-detail-back-link--icon svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* Project Identity Hero - compact */
@@ -954,6 +965,20 @@ textarea::placeholder {
   border: 1px solid rgba(107, 207, 127, 0.3);
 }
 
+.project-task-blocked {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-subtle);
+  color: var(--danger);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+}
+
 .project-task-updated {
   font-size: 0.75rem;
   color: var(--text-subtle);
@@ -1145,22 +1170,16 @@ textarea::placeholder {
 .task-detail-workspace {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-}
-
-.task-detail-hero-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .task-detail-back-link {
-  width: fit-content;
+  width: 32px;
+  height: 32px;
   background: var(--surface-alt);
   border-color: var(--border);
   color: var(--text-muted);
-  font-size: 0.78rem;
-  padding: 6px 11px;
+  padding: 0;
 }
 
 .task-detail-back-link:hover {
@@ -1172,19 +1191,6 @@ textarea::placeholder {
 .task-detail-back-link-icon {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.76rem;
-}
-
-.task-detail-header-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
-}
-
-.task-detail-header-main {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
 }
 
 .task-detail-title {
@@ -1222,18 +1228,18 @@ textarea::placeholder {
 
 .task-detail-header-actions {
   display: flex;
-  gap: 10px;
-  align-items: flex-start;
+  gap: 8px;
+  align-items: stretch;
   flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 .task-detail-summary-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
   border-top: 1px solid var(--border-subtle);
-  padding-top: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 10px 0;
 }
 
 .task-detail-summary-item {
@@ -1257,17 +1263,26 @@ textarea::placeholder {
     ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
-.task-detail-description-panel {
+.task-detail-main-card {
   border-color: var(--border);
   background: linear-gradient(
     180deg,
     var(--surface) 0%,
     var(--surface-alt) 100%
   );
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.task-detail-description-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .task-detail-description-title {
-  margin-bottom: 10px;
+  margin: 0;
   color: var(--text);
 }
 
@@ -1275,6 +1290,87 @@ textarea::placeholder {
   font-size: 0.9rem;
   line-height: 1.55;
   color: var(--text);
+}
+
+.task-markdown-editor {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.task-markdown-editor .cm-editor {
+  background: transparent;
+  color: var(--text);
+}
+
+.task-markdown-editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+.task-markdown-editor:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+.task-markdown-editor .cm-editor .cm-scroller {
+  color: var(--text);
+  caret-color: #f8fafc;
+}
+
+.task-markdown-editor .cm-editor .cm-content {
+  min-height: 180px;
+}
+
+.task-markdown-editor .cm-editor .cm-placeholder {
+  color: var(--text-subtle);
+}
+
+.task-markdown-editor .cm-editor .cm-gutters {
+  background: transparent;
+  border-right: 1px solid var(--border-subtle);
+  color: var(--text-subtle);
+}
+
+.task-markdown-editor .cm-editor .cm-activeLineGutter,
+.task-markdown-editor .cm-editor .cm-activeLine {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.task-markdown-editor .cm-editor .cm-selectionBackground,
+.task-markdown-editor .cm-editor.cm-focused .cm-selectionBackground,
+.task-markdown-editor .cm-editor .cm-content ::selection {
+  background: rgba(91, 138, 255, 0.45);
+}
+
+.task-markdown-editor .cm-editor.cm-focused .cm-cursor,
+.task-markdown-editor .cm-editor.cm-focused .cm-dropCursor {
+  border-left-color: #f8fafc;
+}
+
+.task-markdown-editor .cm-editor.cm-focused .cm-cursor {
+  border-left-width: 2px;
+}
+
+.task-detail-edit-description-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.task-detail-live-description {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: 10px 12px;
+  min-height: 84px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.task-detail-live-description-empty {
+  font-size: 0.85rem;
 }
 
 .markdown-content {
@@ -1366,15 +1462,10 @@ textarea::placeholder {
   color: var(--accent-hover);
 }
 
-.task-detail-secondary-panel {
-  border-color: var(--border-subtle);
-  background: color-mix(in srgb, var(--surface) 86%, var(--bg));
-}
-
 .task-detail-columns {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 4fr) minmax(260px, 1fr);
+  gap: 18px;
   align-items: start;
 }
 
@@ -1383,6 +1474,90 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.task-detail-controls-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.task-detail-inspector-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.task-detail-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.task-detail-panel-separator {
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+.task-detail-controls-actions {
+  justify-content: stretch;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.task-detail-controls-actions .projects-button-primary {
+  width: 100%;
+}
+
+.task-control-icon-button {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.05s ease;
+}
+
+.task-control-icon-button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--text-subtle);
+  color: var(--text);
+}
+
+.task-control-icon-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.task-control-icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.task-control-icon-button svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.task-control-icon-button-danger {
+  border-color: rgba(255, 107, 107, 0.3);
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.task-control-icon-button-danger:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.2);
+  border-color: var(--danger);
 }
 
 .task-detail-definition-list {
@@ -1420,6 +1595,10 @@ textarea::placeholder {
   gap: 10px;
 }
 
+.task-detail-quick-actions .projects-button-danger {
+  width: 100%;
+}
+
 .task-dependencies-panel {
   display: flex;
   flex-direction: column;
@@ -1446,6 +1625,45 @@ textarea::placeholder {
   color: var(--text-subtle);
 }
 
+.task-dependencies-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-dependencies-add-button {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  font-size: 1rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.task-dependencies-add-button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.task-create-dependency-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .task-dependencies-list {
   margin: 0;
   padding: 0;
@@ -1466,11 +1684,40 @@ textarea::placeholder {
   gap: 10px;
 }
 
+.task-dependency-row--clickable {
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.task-dependency-row--clickable:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  box-shadow: 0 0 0 1px var(--accent-subtle);
+}
+
+.task-dependency-row--clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.task-dependency-row--clickable:hover .task-dependency-title,
+.task-dependency-row--clickable:focus-visible .task-dependency-title {
+  color: var(--accent);
+}
+
 .task-dependency-main {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.task-dependency-link {
+  color: inherit;
+  text-decoration: none;
 }
 
 .task-dependency-title {
@@ -1610,15 +1857,6 @@ textarea::placeholder {
     gap: 12px;
   }
 
-  .task-detail-header-row {
-    flex-direction: column;
-    gap: 14px;
-  }
-
-  .task-detail-header-actions {
-    justify-content: flex-start;
-  }
-
   .task-detail-title {
     font-size: 1.4rem;
   }
@@ -1629,6 +1867,10 @@ textarea::placeholder {
 
   .task-detail-columns {
     grid-template-columns: 1fr;
+  }
+
+  .task-detail-edit-description-flow {
+    gap: 8px;
   }
 }
 

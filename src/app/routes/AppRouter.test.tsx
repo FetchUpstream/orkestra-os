@@ -14,6 +14,29 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
 
+vi.mock("../../components/ui/TaskMarkdownEditor", () => ({
+  default: (props: {
+    value: string;
+    onChange: (next: string) => void;
+    ariaLabel?: string;
+    disabled?: boolean;
+  }) => (
+    <div>
+      <label for="task-markdown-editor">
+        {props.ariaLabel || "Description"}
+      </label>
+      <textarea
+        id="task-markdown-editor"
+        role="textbox"
+        aria-label={props.ariaLabel || "Task description"}
+        value={props.value}
+        disabled={props.disabled}
+        onInput={(event) => props.onChange(event.currentTarget.value)}
+      />
+    </div>
+  ),
+}));
+
 const renderAt = (path: string) => {
   window.history.pushState({}, "", path);
   return render(() => <AppRouter />);
@@ -189,6 +212,19 @@ describe("app routing and shell", () => {
     expect(screen.getByRole("heading", { name: "Task Detail" })).toBeTruthy();
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("get_task", { id: "task-123" });
+      const inspectorColumn = document.querySelector(
+        ".task-detail-inspector-column",
+      ) as HTMLElement | null;
+      expect(inspectorColumn).toBeTruthy();
+      const panels = inspectorColumn?.querySelectorAll(".projects-panel") ?? [];
+      expect(panels.length).toBe(1);
+      const panel = panels[0] as HTMLElement;
+      expect(
+        within(panel).getByRole("heading", { name: "Task controls" }),
+      ).toBeTruthy();
+      expect(
+        within(panel).getByRole("heading", { name: "Dependencies" }),
+      ).toBeTruthy();
     });
   });
 
@@ -220,19 +256,35 @@ describe("app routing and shell", () => {
       expect(screen.getByRole("heading", { name: "Sample task" })).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+
+    expect(
+      screen.getByRole("textbox", { name: "Task description" }),
+    ).toBeTruthy();
+
     await fireEvent.input(screen.getByLabelText("Task title"), {
       target: { value: "Updated task" },
     });
-    await fireEvent.input(screen.getByLabelText("Task description"), {
-      target: { value: "Updated details" },
-    });
+    await fireEvent.input(
+      screen.getByRole("textbox", { name: "Task description" }),
+      {
+        target: {
+          value:
+            "### Updated checklist\n- **Ship** update\n- [Docs](https://example.com)",
+        },
+      },
+    );
+
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("update_task", {
         id: "task-123",
-        input: { title: "Updated task", description: "Updated details" },
+        input: {
+          title: "Updated task",
+          description:
+            "### Updated checklist\n- **Ship** update\n- [Docs](https://example.com)",
+        },
       });
       expect(
         screen.getByRole("heading", { name: "Updated task" }),
@@ -240,7 +292,7 @@ describe("app routing and shell", () => {
     });
 
     await fireEvent.click(
-      screen.getByRole("button", { name: "Move to In progress" }),
+      screen.getByRole("button", { name: "Move task status to In progress" }),
     );
 
     await waitFor(() => {
@@ -263,7 +315,7 @@ describe("app routing and shell", () => {
       expect(screen.getByText("Tools")).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete task" }));
 
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: "Delete task?" })).toBeTruthy();
@@ -278,7 +330,7 @@ describe("app routing and shell", () => {
       id: "task-123",
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete task" }));
 
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: "Delete task?" })).toBeTruthy();
@@ -293,7 +345,7 @@ describe("app routing and shell", () => {
       id: "task-123",
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete task" }));
 
     const deleteDialog = await screen.findByRole("dialog", {
       name: "Delete task?",
@@ -363,10 +415,10 @@ describe("app routing and shell", () => {
     expect(screen.queryByLabelText("Move task repository")).toBeNull();
     expect(screen.queryByRole("button", { name: "Move" })).toBeNull();
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Move is available when a project has multiple repositories.",
       ),
-    ).toBeTruthy();
+    ).toBeNull();
   });
 
   it("renders dynamic run title for run route", () => {
@@ -396,7 +448,30 @@ describe("app routing and shell", () => {
             { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
           ],
         });
-      if (command === "get_task")
+      if (command === "get_task") {
+        const taskId = (args as { id?: string } | undefined)?.id;
+        if (taskId === "task-parent-1") {
+          return Promise.resolve({
+            id: "task-parent-1",
+            title: "Seed data",
+            description: "Parent dependency task",
+            status: "done",
+            project_id: "p-1",
+            target_repository_name: "Main",
+            display_key: "ALP-5",
+          });
+        }
+        if (taskId === "task-child-1") {
+          return Promise.resolve({
+            id: "task-child-1",
+            title: "Wire dashboard",
+            description: "Child dependency task",
+            status: "todo",
+            project_id: "p-1",
+            target_repository_name: "Main",
+            display_key: "ALP-8",
+          });
+        }
         return Promise.resolve({
           id: "task-123",
           title: "Sample task",
@@ -406,6 +481,7 @@ describe("app routing and shell", () => {
           target_repository_name: "Main",
           display_key: "ALP-7",
         });
+      }
       if (command === "list_project_tasks")
         return Promise.resolve([
           {
@@ -487,6 +563,7 @@ describe("app routing and shell", () => {
     });
     const childRow = screen.getByText("ALP-8 - Wire dashboard").closest("li");
     expect(childRow).toBeTruthy();
+    const pathBeforeRemove = window.location.pathname;
     await fireEvent.click(
       within(childRow as HTMLElement).getByRole("button", { name: "Remove" }),
     );
@@ -495,6 +572,23 @@ describe("app routing and shell", () => {
       expect(invokeMock).toHaveBeenCalledWith("remove_task_dependency", {
         input: { parent_task_id: "task-123", child_task_id: "task-child-1" },
       });
+    });
+    expect(window.location.pathname).toBe(pathBeforeRemove);
+
+    await waitFor(() => {
+      expect(screen.getByText("ALP-5 - Seed data")).toBeTruthy();
+    });
+
+    const parentDependencyRow = screen
+      .getByText("ALP-5 - Seed data")
+      .closest("li");
+    expect(parentDependencyRow).toBeTruthy();
+    await fireEvent.click(parentDependencyRow as HTMLElement);
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(
+        "/projects/p-1/tasks/task-parent-1",
+      );
+      expect(screen.getByRole("heading", { name: "Seed data" })).toBeTruthy();
     });
   });
 
@@ -546,6 +640,175 @@ describe("app routing and shell", () => {
       expect(screen.getByText("No prerequisites yet.")).toBeTruthy();
       expect(screen.getByText("No downstream tasks yet.")).toBeTruthy();
     });
+  });
+
+  it("creates and links dependency tasks from Blocked by and Blocking headers", async () => {
+    let createdTaskCounter = 0;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects")
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      if (command === "get_project")
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      if (command === "get_task")
+        return Promise.resolve({
+          id: "task-123",
+          title: "Sample task",
+          description: "Task details",
+          status: "todo",
+          project_id: "p-1",
+          target_repository_id: "r-1",
+          target_repository_name: "Main",
+          display_key: "ALP-7",
+        });
+      if (command === "list_task_dependencies")
+        return Promise.resolve({
+          task_id: "task-123",
+          parents: [],
+          children: [],
+        });
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      if (command === "create_task") {
+        createdTaskCounter += 1;
+        return Promise.resolve({
+          id: `task-new-${createdTaskCounter}`,
+          title: `Created ${createdTaskCounter}`,
+          status: "todo",
+        });
+      }
+      if (command === "add_task_dependency") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects/p-1/tasks/task-123");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Dependencies" }),
+      ).toBeTruthy();
+    });
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create and add parent dependency" }),
+    );
+    await fireEvent.input(screen.getByLabelText("Dependency task title"), {
+      target: { value: "Parent via plus" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create and link" }),
+    );
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("create_task", {
+        input: {
+          project_id: "p-1",
+          title: "Parent via plus",
+          description: undefined,
+          status: "todo",
+          repository_id: "r-1",
+        },
+      });
+      expect(invokeMock).toHaveBeenCalledWith("add_task_dependency", {
+        input: { parent_task_id: "task-new-1", child_task_id: "task-123" },
+      });
+      expect(
+        screen.queryByRole("dialog", { name: "Create blocking prerequisite" }),
+      ).toBeNull();
+    });
+
+    const parentCreateIndex = invokeMock.mock.calls.findIndex(
+      ([cmd, args]) =>
+        cmd === "create_task" &&
+        (args as { input?: { title?: string } }).input?.title ===
+          "Parent via plus",
+    );
+    const parentLinkIndex = invokeMock.mock.calls.findIndex(
+      ([cmd, args]) =>
+        cmd === "add_task_dependency" &&
+        (
+          args as {
+            input?: { parent_task_id?: string; child_task_id?: string };
+          }
+        ).input?.parent_task_id === "task-new-1" &&
+        (
+          args as {
+            input?: { parent_task_id?: string; child_task_id?: string };
+          }
+        ).input?.child_task_id === "task-123",
+    );
+    expect(parentCreateIndex).toBeGreaterThanOrEqual(0);
+    expect(parentLinkIndex).toBeGreaterThan(parentCreateIndex);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Create and add blocked task" }),
+      ).toBeTruthy();
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create and add blocked task" }),
+    );
+    await fireEvent.input(screen.getByLabelText("Dependency task title"), {
+      target: { value: "Child via plus" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create and link" }),
+    );
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("create_task", {
+        input: {
+          project_id: "p-1",
+          title: "Child via plus",
+          description: undefined,
+          status: "todo",
+          repository_id: "r-1",
+        },
+      });
+      expect(invokeMock).toHaveBeenCalledWith("add_task_dependency", {
+        input: { parent_task_id: "task-123", child_task_id: "task-new-2" },
+      });
+      expect(
+        screen.queryByRole("dialog", { name: "Create blocked task" }),
+      ).toBeNull();
+    });
+
+    const childCreateIndex = invokeMock.mock.calls.findIndex(
+      ([cmd, args]) =>
+        cmd === "create_task" &&
+        (args as { input?: { title?: string } }).input?.title ===
+          "Child via plus",
+    );
+    const childLinkIndex = invokeMock.mock.calls.findIndex(
+      ([cmd, args]) =>
+        cmd === "add_task_dependency" &&
+        (
+          args as {
+            input?: { parent_task_id?: string; child_task_id?: string };
+          }
+        ).input?.parent_task_id === "task-123" &&
+        (
+          args as {
+            input?: { parent_task_id?: string; child_task_id?: string };
+          }
+        ).input?.child_task_id === "task-new-2",
+    );
+    expect(childCreateIndex).toBeGreaterThanOrEqual(0);
+    expect(childLinkIndex).toBeGreaterThan(childCreateIndex);
   });
 
   it("renders not-found fallback page", () => {
@@ -680,7 +943,7 @@ describe("app routing and shell", () => {
       expect(screen.getByRole("heading", { name: /Tasks/ })).toBeTruthy();
       expect(screen.getByText("Add task")).toBeTruthy();
       expect(
-        screen.getByRole("link", { name: /Back to Projects/i }),
+        screen.getByRole("link", { name: "Back to projects" }),
       ).toBeTruthy();
     });
   });
@@ -716,6 +979,7 @@ describe("app routing and shell", () => {
             title: "Created task",
             status: "todo",
             display_key: "ALP-1",
+            is_blocked: true,
           },
         ]);
       }
@@ -727,6 +991,7 @@ describe("app routing and shell", () => {
     await waitFor(() => {
       expect(screen.getByText("ALP-1")).toBeTruthy();
       expect(screen.getByRole("link", { name: /Created task/i })).toBeTruthy();
+      expect(screen.getByText("Blocked")).toBeTruthy();
     });
   });
 
