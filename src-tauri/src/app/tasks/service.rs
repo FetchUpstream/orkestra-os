@@ -1,7 +1,13 @@
 use crate::app::db::repositories::tasks::TasksRepository;
 use crate::app::errors::AppError;
-use crate::app::tasks::dto::{CreateTaskRequest, TaskDto};
-use crate::app::tasks::models::NewTask;
+use crate::app::tasks::dto::{
+    AddTaskDependencyRequest, CreateTaskRequest, DeleteTaskResponse, MoveTaskRequest,
+    RemoveTaskDependencyRequest, RemoveTaskDependencyResponse, SetTaskStatusRequest,
+    TaskDependenciesDto, TaskDependencyEdgeDto, TaskDependencyTaskDto, TaskDto, UpdateTaskRequest,
+};
+use crate::app::tasks::models::{
+    MoveTaskRepository, NewTask, Task, TaskDependencyTask, UpdateTaskDetails, UpdateTaskStatus,
+};
 use chrono::Utc;
 
 #[derive(Clone, Debug)]
@@ -56,20 +62,7 @@ impl TasksService {
             })
             .await?;
 
-        Ok(TaskDto {
-            id: created.id,
-            project_id: created.project_id,
-            repository_id: created.repository_id,
-            task_number: created.task_number,
-            display_key: created.display_key,
-            title: created.title,
-            description: created.description,
-            status: created.status,
-            target_repository_name: created.target_repository_name,
-            target_repository_path: created.target_repository_path,
-            created_at: created.created_at,
-            updated_at: created.updated_at,
-        })
+        Ok(Self::to_dto(created))
     }
 
     pub async fn list_project_tasks(&self, project_id: &str) -> Result<Vec<TaskDto>, AppError> {
@@ -78,23 +71,7 @@ impl TasksService {
         }
 
         let tasks = self.repository.list_project_tasks(project_id).await?;
-        Ok(tasks
-            .into_iter()
-            .map(|task| TaskDto {
-                id: task.id,
-                project_id: task.project_id,
-                repository_id: task.repository_id,
-                task_number: task.task_number,
-                display_key: task.display_key,
-                title: task.title,
-                description: task.description,
-                status: task.status,
-                target_repository_name: task.target_repository_name,
-                target_repository_path: task.target_repository_path,
-                created_at: task.created_at,
-                updated_at: task.updated_at,
-            })
-            .collect())
+        Ok(tasks.into_iter().map(Self::to_dto).collect())
     }
 
     pub async fn get_task(&self, id: &str) -> Result<TaskDto, AppError> {
@@ -104,7 +81,226 @@ impl TasksService {
             .await?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
-        Ok(TaskDto {
+        Ok(Self::to_dto(task))
+    }
+
+    pub async fn update_task(&self, id: &str, mut input: UpdateTaskRequest) -> Result<TaskDto, AppError> {
+        input.title = input.title.trim().to_string();
+        input.description = input.description.map(|value| value.trim().to_string());
+
+        if input.title.is_empty() {
+            return Err(AppError::validation("task title is required"));
+        }
+
+        let updated = self
+            .repository
+            .update_task_details(
+                id,
+                UpdateTaskDetails {
+                    title: input.title,
+                    description: input.description,
+                    updated_at: Utc::now().to_rfc3339(),
+                },
+            )
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+
+        Ok(Self::to_dto(updated))
+    }
+
+    pub async fn set_task_status(&self, id: &str, mut input: SetTaskStatusRequest) -> Result<TaskDto, AppError> {
+        input.status = input.status.trim().to_string();
+        Self::validate_status(&input.status)?;
+
+        let updated = self
+            .repository
+            .update_task_status(
+                id,
+                UpdateTaskStatus {
+                    status: input.status,
+                    updated_at: Utc::now().to_rfc3339(),
+                },
+            )
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+
+        Ok(Self::to_dto(updated))
+    }
+
+    pub async fn move_task(&self, id: &str, mut input: MoveTaskRequest) -> Result<TaskDto, AppError> {
+        input.repository_id = input.repository_id.trim().to_string();
+
+        let existing_task = self
+            .repository
+            .get_task(id)
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+
+        if !self
+            .repository
+            .repository_belongs_to_project(&input.repository_id, &existing_task.project_id)
+            .await?
+        {
+            return Err(AppError::validation(
+                "repository must belong to the specified project",
+            ));
+        }
+
+        let updated = self
+            .repository
+            .move_task_repository(
+                id,
+                MoveTaskRepository {
+                    repository_id: input.repository_id,
+                    updated_at: Utc::now().to_rfc3339(),
+                },
+            )
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+
+        Ok(Self::to_dto(updated))
+    }
+
+    pub async fn delete_task(&self, id: &str) -> Result<DeleteTaskResponse, AppError> {
+        let deleted = self.repository.delete_task(id).await?;
+        if !deleted {
+            return Err(AppError::not_found("task not found"));
+        }
+
+        Ok(DeleteTaskResponse { id: id.to_string() })
+    }
+
+    pub async fn list_task_dependencies(&self, task_id: &str) -> Result<TaskDependenciesDto, AppError> {
+        let task_id = task_id.trim().to_string();
+
+        self
+            .repository
+            .get_task(&task_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+
+        let dependencies = self
+            .repository
+            .list_task_dependencies(&task_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+
+        Ok(TaskDependenciesDto {
+            task_id,
+            parents: dependencies
+                .parents
+                .into_iter()
+                .map(Self::to_dependency_task_dto)
+                .collect(),
+            children: dependencies
+                .children
+                .into_iter()
+                .map(Self::to_dependency_task_dto)
+                .collect(),
+        })
+    }
+
+    pub async fn add_task_dependency(&self, mut input: AddTaskDependencyRequest) -> Result<TaskDependencyEdgeDto, AppError> {
+        input.parent_task_id = input.parent_task_id.trim().to_string();
+        input.child_task_id = input.child_task_id.trim().to_string();
+
+        if input.parent_task_id == input.child_task_id {
+            return Err(AppError::validation("task cannot depend on itself"));
+        }
+
+        let parent_task = self
+            .repository
+            .get_task(&input.parent_task_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+        let child_task = self
+            .repository
+            .get_task(&input.child_task_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+
+        if parent_task.project_id != child_task.project_id {
+            return Err(AppError::validation(
+                "dependency tasks must belong to the same project",
+            ));
+        }
+
+        if self
+            .repository
+            .dependency_exists(&input.parent_task_id, &input.child_task_id)
+            .await?
+        {
+            return Err(AppError::validation("dependency already exists"));
+        }
+
+        if self
+            .repository
+            .dependency_would_create_cycle(&input.parent_task_id, &input.child_task_id)
+            .await?
+        {
+            return Err(AppError::validation("dependency would create a cycle"));
+        }
+
+        let created_at = Utc::now().to_rfc3339();
+        let edge = self
+            .repository
+            .add_task_dependency(
+                &parent_task.project_id,
+                &input.parent_task_id,
+                &input.child_task_id,
+                &created_at,
+            )
+            .await?;
+
+        Ok(TaskDependencyEdgeDto {
+            parent_task_id: edge.parent_task_id,
+            child_task_id: edge.child_task_id,
+            created_at: edge.created_at,
+        })
+    }
+
+    pub async fn remove_task_dependency(
+        &self,
+        mut input: RemoveTaskDependencyRequest,
+    ) -> Result<RemoveTaskDependencyResponse, AppError> {
+        input.parent_task_id = input.parent_task_id.trim().to_string();
+        input.child_task_id = input.child_task_id.trim().to_string();
+
+        if input.parent_task_id == input.child_task_id {
+            return Err(AppError::validation("task cannot depend on itself"));
+        }
+
+        let parent_task = self
+            .repository
+            .get_task(&input.parent_task_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+        let child_task = self
+            .repository
+            .get_task(&input.child_task_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+
+        if parent_task.project_id != child_task.project_id {
+            return Err(AppError::validation(
+                "dependency tasks must belong to the same project",
+            ));
+        }
+
+        let removed = self
+            .repository
+            .remove_task_dependency(&input.parent_task_id, &input.child_task_id)
+            .await?;
+
+        Ok(RemoveTaskDependencyResponse {
+            parent_task_id: input.parent_task_id,
+            child_task_id: input.child_task_id,
+            removed,
+        })
+    }
+
+    fn to_dto(task: Task) -> TaskDto {
+        TaskDto {
             id: task.id,
             project_id: task.project_id,
             repository_id: task.repository_id,
@@ -117,7 +313,19 @@ impl TasksService {
             target_repository_path: task.target_repository_path,
             created_at: task.created_at,
             updated_at: task.updated_at,
-        })
+        }
+    }
+
+    fn to_dependency_task_dto(task: TaskDependencyTask) -> TaskDependencyTaskDto {
+        TaskDependencyTaskDto {
+            id: task.id,
+            display_key: task.display_key,
+            title: task.title,
+            status: task.status,
+            target_repository_name: task.target_repository_name,
+            target_repository_path: task.target_repository_path,
+            updated_at: task.updated_at,
+        }
     }
 
     fn validate_status(status: &str) -> Result<(), AppError> {

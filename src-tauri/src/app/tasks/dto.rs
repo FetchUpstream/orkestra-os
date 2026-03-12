@@ -10,6 +10,27 @@ pub struct CreateTaskRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateTaskRequest {
+    pub title: String,
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SetTaskStatusRequest {
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MoveTaskRequest {
+    pub repository_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeleteTaskResponse {
+    pub id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TaskDto {
     pub id: String,
     pub project_id: String,
@@ -23,4 +44,48 @@ pub struct TaskDto {
     pub target_repository_path: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskDependencyTaskDto {
+    pub id: String,
+    pub display_key: String,
+    pub title: String,
+    pub status: String,
+    pub target_repository_name: Option<String>,
+    pub target_repository_path: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskDependenciesDto {
+    pub task_id: String,
+    pub parents: Vec<TaskDependencyTaskDto>,
+    pub children: Vec<TaskDependencyTaskDto>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AddTaskDependencyRequest {
+    pub parent_task_id: String,
+    pub child_task_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskDependencyEdgeDto {
+    pub parent_task_id: String,
+    pub child_task_id: String,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoveTaskDependencyRequest {
+    pub parent_task_id: String,
+    pub child_task_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoveTaskDependencyResponse {
+    pub parent_task_id: String,
+    pub child_task_id: String,
+    pub removed: bool,
 }

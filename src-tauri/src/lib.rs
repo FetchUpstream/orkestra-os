@@ -32,6 +32,13 @@ pub fn run() {
             app::commands::tasks::create_task,
             app::commands::tasks::list_project_tasks,
             app::commands::tasks::get_task,
+            app::commands::tasks::update_task,
+            app::commands::tasks::set_task_status,
+            app::commands::tasks::move_task,
+            app::commands::tasks::delete_task,
+            app::commands::tasks::list_task_dependencies,
+            app::commands::tasks::add_task_dependency,
+            app::commands::tasks::remove_task_dependency,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
