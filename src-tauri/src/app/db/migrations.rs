@@ -1,13 +1,26 @@
 use crate::app::errors::AppError;
+use sqlx::Row;
 use sqlx::SqlitePool;
 
 const MIGRATION_0001: &str = include_str!("../../../migrations/0001_init_projects.sql");
 const MIGRATION_0002: &str = include_str!("../../../migrations/0002_init_core_tables.sql");
 const MIGRATION_0003: &str = include_str!("../../../migrations/0003_init_tasks.sql");
+const MIGRATION_0004: &str = include_str!("../../../migrations/0004_add_task_display_key.sql");
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(MIGRATION_0001).execute(pool).await?;
     sqlx::query(MIGRATION_0002).execute(pool).await?;
     sqlx::query(MIGRATION_0003).execute(pool).await?;
+
+    let has_task_number = sqlx::query("PRAGMA table_info(tasks)")
+        .fetch_all(pool)
+        .await?
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "task_number");
+
+    if !has_task_number {
+        sqlx::query(MIGRATION_0004).execute(pool).await?;
+    }
+
     Ok(())
 }

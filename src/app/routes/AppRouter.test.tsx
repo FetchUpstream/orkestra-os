@@ -264,6 +264,51 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("shows task display key prefix on task cards", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-1",
+            title: "Created task",
+            status: "todo",
+            display_key: "ALP-1",
+          },
+        ]);
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects/p-1");
+
+    await waitFor(() => {
+      expect(screen.getByText("ALP-1")).toBeTruthy();
+      expect(screen.getByRole("link", { name: /Created task/i })).toBeTruthy();
+    });
+  });
+
   it("renders project name/key from wrapped get_project response", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") {

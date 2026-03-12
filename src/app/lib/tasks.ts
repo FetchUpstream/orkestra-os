@@ -7,6 +7,8 @@ export type Task = {
   title: string;
   description?: string | null;
   status: TaskStatus;
+  taskNumber?: number | null;
+  displayKey?: string | null;
   projectId?: string;
   targetRepositoryId?: string | null;
   targetRepositoryName?: string | null;
@@ -27,6 +29,10 @@ type TaskResponse = {
   title: string;
   description?: string | null;
   status: TaskStatus;
+  task_number?: number;
+  taskNumber?: number;
+  display_key?: string;
+  displayKey?: string;
   repository_id?: string | null;
   repositoryId?: string | null;
   project_id?: string;
@@ -46,6 +52,8 @@ const toTask = (task: TaskResponse): Task => ({
   title: task.title,
   description: task.description,
   status: task.status,
+  taskNumber: task.task_number ?? task.taskNumber,
+  displayKey: task.display_key ?? task.displayKey,
   projectId: task.project_id ?? task.projectId,
   targetRepositoryId:
     task.target_repository_id ??

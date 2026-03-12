@@ -30,7 +30,14 @@ body {
   min-height: 100vh;
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color-scheme: dark;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -107,7 +114,9 @@ textarea::placeholder {
   color: var(--text-muted);
   text-decoration: none;
   font-size: 0.9rem;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .nav-item:hover {
@@ -261,7 +270,10 @@ textarea::placeholder {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-alt);
-  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .projects-list-item:hover {
@@ -310,7 +322,8 @@ textarea::placeholder {
   margin: 0;
   color: var(--text-muted);
   font-size: 0.8rem;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 .projects-open-cue {
@@ -409,7 +422,18 @@ textarea::placeholder {
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   font-size: 0.9rem;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.projects-field select {
+  color-scheme: dark;
+}
+
+.projects-field select option {
+  background: var(--bg);
+  color: var(--text);
 }
 
 .projects-field input:hover,
@@ -493,7 +517,9 @@ textarea::placeholder {
   border-radius: var(--radius-sm);
   padding: 8px 10px;
   font-size: 0.85rem;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .projects-repo-row input:hover {
@@ -536,7 +562,10 @@ textarea::placeholder {
   font-size: 0.85rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.05s ease;
   white-space: nowrap;
 }
 
@@ -666,7 +695,10 @@ textarea::placeholder {
   font-size: 0.8rem;
   font-weight: 500;
   text-decoration: none;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .project-detail-back-link:hover {
@@ -708,7 +740,8 @@ textarea::placeholder {
   background: var(--surface-alt);
   border: 1px solid var(--border);
   color: var(--text-muted);
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 0.8rem;
   font-weight: 600;
   border-radius: var(--radius-sm);
@@ -847,6 +880,15 @@ textarea::placeholder {
   line-height: 1.4;
 }
 
+.project-task-key {
+  margin-right: 8px;
+  color: var(--text-muted);
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+}
+
 .project-task-title:hover {
   color: var(--accent);
 }
@@ -855,7 +897,8 @@ textarea::placeholder {
   margin: 0;
   color: var(--text-subtle);
   font-size: 0.8rem;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 .project-task-meta {
@@ -904,7 +947,8 @@ textarea::placeholder {
 .project-task-updated {
   font-size: 0.75rem;
   color: var(--text-subtle);
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 /* Legacy task styles - hide */
@@ -918,6 +962,7 @@ textarea::placeholder {
 .projects-list-item-default {
   border-color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent-subtle);
+  padding: 10px;
 }
 
 .project-placeholder-row {
