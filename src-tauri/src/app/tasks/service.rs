@@ -309,6 +309,8 @@ impl TasksService {
             title: task.title,
             description: task.description,
             status: task.status,
+            blocked_by_count: task.blocked_by_count,
+            is_blocked: task.is_blocked,
             target_repository_name: task.target_repository_name,
             target_repository_path: task.target_repository_path,
             created_at: task.created_at,

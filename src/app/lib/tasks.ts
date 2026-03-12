@@ -7,6 +7,8 @@ export type Task = {
   title: string;
   description?: string | null;
   status: TaskStatus;
+  blockedByCount?: number | null;
+  isBlocked?: boolean | null;
   taskNumber?: number | null;
   displayKey?: string | null;
   projectId?: string;
@@ -58,6 +60,10 @@ type TaskResponse = {
   title: string;
   description?: string | null;
   status: TaskStatus;
+  blocked_by_count?: number | null;
+  blockedByCount?: number | null;
+  is_blocked?: boolean | null;
+  isBlocked?: boolean | null;
   task_number?: number;
   taskNumber?: number;
   display_key?: string;
@@ -102,6 +108,8 @@ const toTask = (task: TaskResponse): Task => ({
   title: task.title,
   description: task.description,
   status: task.status,
+  blockedByCount: task.blocked_by_count ?? task.blockedByCount,
+  isBlocked: task.is_blocked ?? task.isBlocked,
   taskNumber: task.task_number ?? task.taskNumber,
   displayKey: task.display_key ?? task.displayKey,
   projectId: task.project_id ?? task.projectId,

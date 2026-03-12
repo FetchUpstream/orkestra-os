@@ -91,6 +91,7 @@ impl TasksRepository {
                 t.title,
                 t.description,
                 t.status,
+                (SELECT COUNT(*) FROM task_dependencies td WHERE td.child_task_id = t.id) AS blocked_by_count,
                 r.name AS target_repository_name,
                 r.repo_path AS target_repository_path,
                 t.created_at,
@@ -110,6 +111,7 @@ impl TasksRepository {
             .map(|row| {
                 let project_key: String = row.get("project_key");
                 let task_number: i64 = row.get("task_number");
+                let blocked_by_count: i64 = row.get("blocked_by_count");
                 Task {
                     id: row.get("id"),
                     project_id: row.get("project_id"),
@@ -119,6 +121,8 @@ impl TasksRepository {
                     title: row.get("title"),
                     description: row.get("description"),
                     status: row.get("status"),
+                    blocked_by_count,
+                    is_blocked: blocked_by_count > 0,
                     target_repository_name: row.get("target_repository_name"),
                     target_repository_path: row.get("target_repository_path"),
                     created_at: row.get("created_at"),
@@ -139,6 +143,7 @@ impl TasksRepository {
                 t.title,
                 t.description,
                 t.status,
+                (SELECT COUNT(*) FROM task_dependencies td WHERE td.child_task_id = t.id) AS blocked_by_count,
                 r.name AS target_repository_name,
                 r.repo_path AS target_repository_path,
                 t.created_at,
@@ -155,6 +160,7 @@ impl TasksRepository {
         Ok(row.map(|row| {
             let project_key: String = row.get("project_key");
             let task_number: i64 = row.get("task_number");
+            let blocked_by_count: i64 = row.get("blocked_by_count");
             Task {
                 id: row.get("id"),
                 project_id: row.get("project_id"),
@@ -164,6 +170,8 @@ impl TasksRepository {
                 title: row.get("title"),
                 description: row.get("description"),
                 status: row.get("status"),
+                blocked_by_count,
+                is_blocked: blocked_by_count > 0,
                 target_repository_name: row.get("target_repository_name"),
                 target_repository_path: row.get("target_repository_path"),
                 created_at: row.get("created_at"),

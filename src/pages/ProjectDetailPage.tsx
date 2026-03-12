@@ -40,6 +40,9 @@ const formatUpdatedAt = (value?: string | null): string => {
   return date.toLocaleString();
 };
 
+const isTaskBlocked = (task: Task): boolean =>
+  task.isBlocked === true || (task.blockedByCount ?? 0) > 0;
+
 const ProjectDetailPage: Component = () => {
   const params = useParams();
   const [project, setProject] = createSignal<Project | null>(null);
@@ -189,7 +192,12 @@ const ProjectDetailPage: Component = () => {
               <div class="project-detail-container">
                 {/* Navigation */}
                 <nav class="project-detail-nav" aria-label="Project navigation">
-                  <A href="/projects" class="project-detail-back-link">
+                  <A
+                    href="/projects"
+                    class="project-detail-back-link project-detail-back-link--icon"
+                    aria-label="Back to projects"
+                    title="Back to projects"
+                  >
                     <svg
                       width="16"
                       height="16"
@@ -205,7 +213,6 @@ const ProjectDetailPage: Component = () => {
                         stroke-linejoin="round"
                       />
                     </svg>
-                    Back to Projects
                   </A>
                 </nav>
 
@@ -356,6 +363,11 @@ const ProjectDetailPage: Component = () => {
                                     >
                                       {formatTaskStatus(task.status)}
                                     </span>
+                                    <Show when={isTaskBlocked(task)}>
+                                      <span class="project-task-blocked">
+                                        Blocked
+                                      </span>
+                                    </Show>
                                     <span class="project-task-updated">
                                       {formatUpdatedAt(task.updatedAt)}
                                     </span>

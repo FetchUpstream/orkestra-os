@@ -8,6 +8,8 @@ pub struct Task {
     pub title: String,
     pub description: Option<String>,
     pub status: String,
+    pub blocked_by_count: i64,
+    pub is_blocked: bool,
     pub target_repository_name: Option<String>,
     pub target_repository_path: Option<String>,
     pub created_at: String,
