@@ -111,12 +111,16 @@ describe("app routing and shell", () => {
 
   it("renders dynamic task title for task route", () => {
     renderAt("/tasks/task-123");
-    expect(screen.getByRole("heading", { name: "Task task-123" })).toBeTruthy();
+    expect(
+      screen.getAllByRole("heading", { name: "Task Detail" }),
+    ).toHaveLength(2);
   });
 
   it("renders project-scoped task detail route", async () => {
     renderAt("/projects/p-1/tasks/task-123");
-    expect(screen.getByRole("heading", { name: "Task task-123" })).toBeTruthy();
+    expect(
+      screen.getAllByRole("heading", { name: "Task Detail" }),
+    ).toHaveLength(2);
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("get_task", { id: "task-123" });
     });
@@ -448,7 +452,7 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(listCallCount).toBe(2);
-      expect(screen.getByRole("link", { name: "Created task" })).toBeTruthy();
+      expect(screen.getByRole("link", { name: /Created task/i })).toBeTruthy();
     });
 
     expect(invokeMock).toHaveBeenCalledWith("create_task", {

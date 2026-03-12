@@ -322,36 +322,38 @@ const ProjectDetailPage: Component = () => {
                           <For each={tasks()}>
                             {(task) => (
                               <li class="project-task-item">
-                                <div class="project-task-main">
-                                  <A
-                                    href={`/projects/${params.projectId}/tasks/${task.id}`}
-                                    class="project-task-title"
-                                  >
-                                    <Show when={taskDisplayKey(task)}>
-                                      {(displayKey) => (
-                                        <span class="project-task-key">
-                                          {displayKey()}
-                                        </span>
-                                      )}
-                                    </Show>
-                                    {task.title}
-                                  </A>
-                                  <p class="project-task-repo">
-                                    {task.targetRepositoryName ||
-                                      task.targetRepositoryPath ||
-                                      "No repository"}
-                                  </p>
-                                </div>
-                                <div class="project-task-meta">
-                                  <span
-                                    class={`project-task-status project-task-status--${task.status}`}
-                                  >
-                                    {task.status}
-                                  </span>
-                                  <span class="project-task-updated">
-                                    {formatUpdatedAt(task.updatedAt)}
-                                  </span>
-                                </div>
+                                <A
+                                  href={`/projects/${params.projectId}/tasks/${task.id}`}
+                                  class="project-task-link"
+                                >
+                                  <div class="project-task-main">
+                                    <p class="project-task-title">
+                                      <Show when={taskDisplayKey(task)}>
+                                        {(displayKey) => (
+                                          <span class="project-task-key">
+                                            {displayKey()}
+                                          </span>
+                                        )}
+                                      </Show>
+                                      {task.title}
+                                    </p>
+                                    <p class="project-task-repo">
+                                      {task.targetRepositoryName ||
+                                        task.targetRepositoryPath ||
+                                        "No repository"}
+                                    </p>
+                                  </div>
+                                  <div class="project-task-meta">
+                                    <span
+                                      class={`project-task-status project-task-status--${task.status}`}
+                                    >
+                                      {task.status}
+                                    </span>
+                                    <span class="project-task-updated">
+                                      {formatUpdatedAt(task.updatedAt)}
+                                    </span>
+                                  </div>
+                                </A>
                               </li>
                             )}
                           </For>
