@@ -16,12 +16,41 @@ export type Task = {
   updatedAt?: string | null;
 };
 
+export type TaskDependencyTask = {
+  id: string;
+  displayKey: string;
+  title: string;
+  status: TaskStatus;
+  targetRepositoryName?: string | null;
+  targetRepositoryPath?: string | null;
+  updatedAt?: string | null;
+};
+
+export type TaskDependencies = {
+  taskId: string;
+  parents: TaskDependencyTask[];
+  children: TaskDependencyTask[];
+};
+
 export type CreateTaskInput = {
   projectId: string;
   title: string;
   description?: string;
   status: TaskStatus;
   targetRepositoryId?: string;
+};
+
+export type UpdateTaskInput = {
+  title: string;
+  description?: string;
+};
+
+export type SetTaskStatusInput = {
+  status: TaskStatus;
+};
+
+export type MoveTaskInput = {
+  targetRepositoryId: string;
 };
 
 type TaskResponse = {
@@ -47,6 +76,27 @@ type TaskResponse = {
   updatedAt?: string | null;
 };
 
+type TaskDependencyTaskResponse = {
+  id: string;
+  display_key?: string | null;
+  displayKey?: string | null;
+  title: string;
+  status: TaskStatus;
+  target_repository_name?: string | null;
+  targetRepositoryName?: string | null;
+  target_repository_path?: string | null;
+  targetRepositoryPath?: string | null;
+  updated_at?: string | null;
+  updatedAt?: string | null;
+};
+
+type TaskDependenciesResponse = {
+  task_id?: string;
+  taskId?: string;
+  parents?: TaskDependencyTaskResponse[];
+  children?: TaskDependencyTaskResponse[];
+};
+
 const toTask = (task: TaskResponse): Task => ({
   id: task.id,
   title: task.title,
@@ -65,6 +115,26 @@ const toTask = (task: TaskResponse): Task => ({
   targetRepositoryPath:
     task.target_repository_path ?? task.targetRepositoryPath,
   updatedAt: task.updated_at ?? task.updatedAt,
+});
+
+const toDependencyTask = (
+  dependencyTask: TaskDependencyTaskResponse,
+): TaskDependencyTask => ({
+  id: dependencyTask.id,
+  displayKey: (
+    dependencyTask.display_key ??
+    dependencyTask.displayKey ??
+    ""
+  ).trim(),
+  title: dependencyTask.title,
+  status: dependencyTask.status,
+  targetRepositoryName:
+    dependencyTask.target_repository_name ??
+    dependencyTask.targetRepositoryName,
+  targetRepositoryPath:
+    dependencyTask.target_repository_path ??
+    dependencyTask.targetRepositoryPath,
+  updatedAt: dependencyTask.updated_at ?? dependencyTask.updatedAt,
 });
 
 export const createTask = async (input: CreateTaskInput): Promise<Task> => {
@@ -90,4 +160,86 @@ export const listProjectTasks = async (projectId: string): Promise<Task[]> => {
 export const getTask = async (taskId: string): Promise<Task> => {
   const response = await invoke<TaskResponse>("get_task", { id: taskId });
   return toTask(response);
+};
+
+export const updateTask = async (
+  taskId: string,
+  input: UpdateTaskInput,
+): Promise<Task> => {
+  const response = await invoke<TaskResponse>("update_task", {
+    id: taskId,
+    input: {
+      title: input.title,
+      description: input.description,
+    },
+  });
+  return toTask(response);
+};
+
+export const setTaskStatus = async (
+  taskId: string,
+  input: SetTaskStatusInput,
+): Promise<Task> => {
+  const response = await invoke<TaskResponse>("set_task_status", {
+    id: taskId,
+    input: {
+      status: input.status,
+    },
+  });
+  return toTask(response);
+};
+
+export const moveTask = async (
+  taskId: string,
+  input: MoveTaskInput,
+): Promise<Task> => {
+  const response = await invoke<TaskResponse>("move_task", {
+    id: taskId,
+    input: {
+      repository_id: input.targetRepositoryId,
+    },
+  });
+  return toTask(response);
+};
+
+export const deleteTask = async (taskId: string): Promise<void> => {
+  await invoke("delete_task", { id: taskId });
+};
+
+export const listTaskDependencies = async (
+  taskId: string,
+): Promise<TaskDependencies> => {
+  const response = await invoke<TaskDependenciesResponse>(
+    "list_task_dependencies",
+    { taskId },
+  );
+  return {
+    taskId: response.task_id ?? response.taskId ?? taskId,
+    parents: (response.parents ?? []).map(toDependencyTask),
+    children: (response.children ?? []).map(toDependencyTask),
+  };
+};
+
+export const addTaskDependency = async (
+  parentTaskId: string,
+  childTaskId: string,
+): Promise<void> => {
+  await invoke("add_task_dependency", {
+    input: {
+      parent_task_id: parentTaskId,
+      child_task_id: childTaskId,
+    },
+  });
+};
+
+export const removeTaskDependency = async (
+  parentTaskId: string,
+  childTaskId: string,
+): Promise<void> => {
+  await invoke("remove_task_dependency", {
+    input: {
+      parent_task_id: parentTaskId,
+      child_task_id: childTaskId,
+    },
+  });
 };

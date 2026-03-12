@@ -10,6 +10,13 @@ import {
 
 const TASK_STATUSES: TaskStatus[] = ["todo", "doing", "review", "done"];
 
+const formatTaskStatus = (status: TaskStatus): string => {
+  if (status === "todo") return "To do";
+  if (status === "doing") return "In progress";
+  if (status === "review") return "In review";
+  return "Done";
+};
+
 const getCreateTaskErrorMessage = (error: unknown): string | null => {
   const message =
     typeof error === "string"
@@ -347,7 +354,7 @@ const ProjectDetailPage: Component = () => {
                                     <span
                                       class={`project-task-status project-task-status--${task.status}`}
                                     >
-                                      {task.status}
+                                      {formatTaskStatus(task.status)}
                                     </span>
                                     <span class="project-task-updated">
                                       {formatUpdatedAt(task.updatedAt)}
@@ -456,7 +463,9 @@ const ProjectDetailPage: Component = () => {
                           >
                             <For each={TASK_STATUSES}>
                               {(status) => (
-                                <option value={status}>{status}</option>
+                                <option value={status}>
+                                  {formatTaskStatus(status)}
+                                </option>
                               )}
                             </For>
                           </select>
