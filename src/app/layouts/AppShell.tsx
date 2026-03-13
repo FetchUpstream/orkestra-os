@@ -1,9 +1,15 @@
 import { useLocation, useNavigate } from "@solidjs/router";
-import { onMount, type Component, type JSX } from "solid-js";
+import {
+  createEffect,
+  createSignal,
+  onCleanup,
+  onMount,
+  type Component,
+  type JSX,
+} from "solid-js";
 import { listProjects } from "../lib/projects";
 import MainContent from "../../components/layout/MainContent";
 import SidebarNav from "../../components/layout/SidebarNav";
-import Topbar from "../../components/layout/Topbar";
 
 const topbarTitleByPath: Record<string, string> = {
   "/": "Board",
@@ -22,8 +28,40 @@ type AppShellProps = {
 const AppShell: Component<AppShellProps> = (props) => {
   const location = useLocation();
   const navigate = useNavigate();
+  let expandButtonRef: HTMLButtonElement | undefined;
+  let mobileMenuButtonRef: HTMLButtonElement | undefined;
+  let shellRootRef: HTMLDivElement | undefined;
+
+  const [isMobile, setIsMobile] = createSignal(false);
+  const [desktopCollapsed, setDesktopCollapsed] = createSignal(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = createSignal(false);
+
+  const isSidebarVisible = () =>
+    isMobile() ? mobileSidebarOpen() : !desktopCollapsed();
 
   onMount(async () => {
+    const mediaQuery = window.matchMedia("(max-width: 900px)");
+    const updateMobileMode = (matches: boolean) => {
+      setIsMobile(matches);
+      if (matches) {
+        setMobileSidebarOpen(false);
+      } else {
+        setDesktopCollapsed(false);
+      }
+    };
+
+    updateMobileMode(mediaQuery.matches);
+
+    const handleMediaChange = (event: MediaQueryListEvent) => {
+      updateMobileMode(event.matches);
+    };
+
+    mediaQuery.addEventListener("change", handleMediaChange);
+
+    onCleanup(() => {
+      mediaQuery.removeEventListener("change", handleMediaChange);
+    });
+
     try {
       const projects = await listProjects();
       if (projects.length === 0 && location.pathname !== "/projects") {
@@ -34,6 +72,82 @@ const AppShell: Component<AppShellProps> = (props) => {
     }
   });
 
+  createEffect(() => {
+    if (isMobile()) {
+      location.pathname;
+      setMobileSidebarOpen(false);
+    }
+  });
+
+  createEffect(() => {
+    if (!isMobile() && desktopCollapsed()) {
+      const activeElement = document.activeElement;
+      const sidebarElement = document.getElementById("app-sidebar");
+      if (
+        sidebarElement &&
+        activeElement &&
+        sidebarElement.contains(activeElement)
+      ) {
+        expandButtonRef?.focus();
+      }
+    }
+  });
+
+  createEffect(() => {
+    if (isMobile() && !mobileSidebarOpen()) {
+      if (
+        document.activeElement &&
+        shellRootRef?.contains(document.activeElement)
+      ) {
+        mobileMenuButtonRef?.focus();
+      }
+    }
+  });
+
+  createEffect(() => {
+    if (isSidebarVisible()) {
+      queueMicrotask(() => {
+        const firstNavLink = document.querySelector(
+          "#app-sidebar .sidebar-nav a",
+        ) as HTMLAnchorElement | null;
+        if (firstNavLink && document.activeElement?.tagName === "BUTTON") {
+          const active = document.activeElement as HTMLElement;
+          if (
+            active.getAttribute("aria-label") === "Expand navigation" ||
+            active.getAttribute("aria-label") === "Open navigation menu"
+          ) {
+            firstNavLink.focus();
+          }
+        }
+      });
+    }
+  });
+
+  const onDesktopCollapse = () => {
+    setDesktopCollapsed(true);
+  };
+
+  const onDesktopExpand = () => {
+    setDesktopCollapsed(false);
+  };
+
+  const onMobileOpen = () => {
+    setMobileSidebarOpen(true);
+  };
+
+  const onMobileClose = () => {
+    setMobileSidebarOpen(false);
+  };
+
+  const handleShellKeyDown: JSX.EventHandler<HTMLDivElement, KeyboardEvent> = (
+    event,
+  ) => {
+    if (event.key === "Escape" && isMobile() && mobileSidebarOpen()) {
+      event.preventDefault();
+      onMobileClose();
+    }
+  };
+
   const title = () => {
     if (location.pathname.startsWith("/tasks/")) return "Task Detail";
     if (location.pathname.includes("/tasks/")) return "Task Detail";
@@ -43,10 +157,57 @@ const AppShell: Component<AppShellProps> = (props) => {
   };
 
   return (
-    <div class="app-shell">
-      <SidebarNav />
+    <div class="app-shell" ref={shellRootRef} onKeyDown={handleShellKeyDown}>
+      {isMobile() ? (
+        <>
+          <div
+            class="sidebar-backdrop"
+            classList={{ "sidebar-backdrop-open": mobileSidebarOpen() }}
+            aria-hidden={mobileSidebarOpen() ? "false" : "true"}
+            onClick={onMobileClose}
+          />
+          <SidebarNav isVisible={isSidebarVisible} onNavigate={onMobileClose} />
+        </>
+      ) : (
+        <SidebarNav
+          isVisible={isSidebarVisible}
+          showCollapseToggle={!desktopCollapsed()}
+          onCollapse={onDesktopCollapse}
+        />
+      )}
       <div class="shell-main">
-        <Topbar title={title()} />
+        <header class="topbar" role="banner">
+          <div class="topbar-leading">
+            {!isMobile() && desktopCollapsed() ? (
+              <button
+                ref={expandButtonRef}
+                type="button"
+                class="sidebar-toggle"
+                aria-label="Expand navigation"
+                aria-controls="app-sidebar"
+                aria-expanded={isSidebarVisible() ? "true" : "false"}
+                onClick={onDesktopExpand}
+              >
+                Expand
+              </button>
+            ) : null}
+            {isMobile() ? (
+              <button
+                ref={mobileMenuButtonRef}
+                type="button"
+                class="sidebar-toggle"
+                aria-label="Open navigation menu"
+                aria-controls="app-sidebar"
+                aria-expanded={isSidebarVisible() ? "true" : "false"}
+                onClick={onMobileOpen}
+              >
+                Menu
+              </button>
+            ) : null}
+            <h1 class="topbar-title">{title()}</h1>
+          </div>
+          <div class="topbar-actions" />
+        </header>
         <div class="shell-content-wrapper">
           <div class="shell-body">
             <MainContent>{props.children}</MainContent>

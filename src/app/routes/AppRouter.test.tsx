@@ -42,8 +42,25 @@ const renderAt = (path: string) => {
   return render(() => <AppRouter />);
 };
 
+const setViewportMobile = (isMobile: boolean) => {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query === "(max-width: 900px)" ? isMobile : false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+};
+
 describe("app routing and shell", () => {
   beforeEach(() => {
+    setViewportMobile(false);
     invokeMock.mockReset();
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects")
@@ -207,6 +224,65 @@ describe("app routing and shell", () => {
       });
       expect(link.getAttribute("href")).toBe(href);
     }
+  });
+
+  it("toggles desktop sidebar visibility with accessibility attributes", async () => {
+    renderAt("/board");
+
+    const collapseButton = screen.getByRole("button", {
+      name: "Collapse navigation",
+    });
+    expect(collapseButton.getAttribute("aria-controls")).toBe("app-sidebar");
+    expect(collapseButton.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("link", { name: "Board" })).toBeTruthy();
+
+    await fireEvent.click(collapseButton);
+
+    expect(screen.queryByRole("link", { name: "Board" })).toBeNull();
+
+    const expandButton = screen.getByRole("button", {
+      name: "Expand navigation",
+    });
+    expect(expandButton.getAttribute("aria-controls")).toBe("app-sidebar");
+    expect(expandButton.getAttribute("aria-expanded")).toBe("false");
+
+    await fireEvent.click(expandButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "Board" })).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "Collapse navigation" }),
+      ).toBeTruthy();
+    });
+  });
+
+  it("opens and closes mobile overlay navigation", async () => {
+    setViewportMobile(true);
+    renderAt("/board");
+
+    expect(screen.queryByRole("link", { name: "Board" })).toBeNull();
+
+    const openButton = screen.getByRole("button", {
+      name: "Open navigation menu",
+    });
+    expect(openButton.getAttribute("aria-controls")).toBe("app-sidebar");
+    expect(openButton.getAttribute("aria-expanded")).toBe("false");
+
+    await fireEvent.click(openButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "Board" })).toBeTruthy();
+    });
+
+    const backdrop = document.querySelector(
+      ".sidebar-backdrop-open",
+    ) as HTMLElement;
+    expect(backdrop).toBeTruthy();
+    await fireEvent.click(backdrop);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("link", { name: "Board" })).toBeNull();
+    });
   });
 
   it("switches routes while keeping shell layout visible", async () => {
