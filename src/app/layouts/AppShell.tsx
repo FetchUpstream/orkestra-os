@@ -28,7 +28,6 @@ type AppShellProps = {
 const AppShell: Component<AppShellProps> = (props) => {
   const location = useLocation();
   const navigate = useNavigate();
-  let expandButtonRef: HTMLButtonElement | undefined;
   let mobileMenuButtonRef: HTMLButtonElement | undefined;
   let shellRootRef: HTMLDivElement | undefined;
 
@@ -88,7 +87,11 @@ const AppShell: Component<AppShellProps> = (props) => {
         activeElement &&
         sidebarElement.contains(activeElement)
       ) {
-        expandButtonRef?.focus();
+        (
+          document.querySelector(
+            '#app-sidebar button[aria-label="Expand sidebar"]',
+          ) as HTMLButtonElement | null
+        )?.focus();
       }
     }
   });
@@ -113,7 +116,7 @@ const AppShell: Component<AppShellProps> = (props) => {
         if (firstNavLink && document.activeElement?.tagName === "BUTTON") {
           const active = document.activeElement as HTMLElement;
           if (
-            active.getAttribute("aria-label") === "Expand navigation" ||
+            active.getAttribute("aria-label") === "Expand sidebar" ||
             active.getAttribute("aria-label") === "Open navigation menu"
           ) {
             firstNavLink.focus();
@@ -157,7 +160,17 @@ const AppShell: Component<AppShellProps> = (props) => {
   };
 
   return (
-    <div class="app-shell" ref={shellRootRef} onKeyDown={handleShellKeyDown}>
+    <div
+      class="app-shell"
+      classList={{
+        "app-shell--desktop-collapsed": !isMobile() && desktopCollapsed(),
+      }}
+      data-desktop-collapsed={
+        !isMobile() && desktopCollapsed() ? "true" : "false"
+      }
+      ref={shellRootRef}
+      onKeyDown={handleShellKeyDown}
+    >
       {isMobile() ? (
         <>
           <div
@@ -170,27 +183,15 @@ const AppShell: Component<AppShellProps> = (props) => {
         </>
       ) : (
         <SidebarNav
-          isVisible={isSidebarVisible}
-          showCollapseToggle={!desktopCollapsed()}
+          isVisible={() => true}
+          desktopCollapsed={desktopCollapsed}
           onCollapse={onDesktopCollapse}
+          onExpand={onDesktopExpand}
         />
       )}
       <div class="shell-main">
         <header class="topbar" role="banner">
           <div class="topbar-leading">
-            {!isMobile() && desktopCollapsed() ? (
-              <button
-                ref={expandButtonRef}
-                type="button"
-                class="sidebar-toggle"
-                aria-label="Expand navigation"
-                aria-controls="app-sidebar"
-                aria-expanded={isSidebarVisible() ? "true" : "false"}
-                onClick={onDesktopExpand}
-              >
-                Expand
-              </button>
-            ) : null}
             {isMobile() ? (
               <button
                 ref={mobileMenuButtonRef}

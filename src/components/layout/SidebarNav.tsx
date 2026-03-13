@@ -4,8 +4,9 @@ import NavItem from "../ui/NavItem";
 
 type SidebarNavProps = {
   onCollapse?: () => void;
+  onExpand?: () => void;
   onNavigate?: () => void;
-  showCollapseToggle?: boolean;
+  desktopCollapsed?: Accessor<boolean>;
   isVisible?: Accessor<boolean>;
 };
 
@@ -14,38 +15,58 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
     <aside
       id="app-sidebar"
       class="sidebar"
-      classList={{ "sidebar-hidden": !props.isVisible?.() }}
+      classList={{
+        "sidebar-hidden": !props.isVisible?.(),
+        "sidebar-collapsed": props.desktopCollapsed?.() ?? false,
+      }}
       aria-hidden={props.isVisible && !props.isVisible() ? "true" : undefined}
     >
-      <div class="sidebar-header">
-        <div class="sidebar-brand">OrkestraOS</div>
-        {props.showCollapseToggle ? (
-          <button
-            type="button"
-            class="sidebar-toggle"
-            aria-label="Collapse navigation"
-            aria-controls="app-sidebar"
-            aria-expanded="true"
-            onClick={() => props.onCollapse?.()}
+      {!(props.desktopCollapsed?.() ?? false) ? (
+        <>
+          <div class="sidebar-header">
+            <div class="sidebar-brand">OrkestraOS</div>
+          </div>
+          <nav
+            class="sidebar-nav"
+            aria-label="Main navigation"
+            onClick={(event) => {
+              const target = event.target as HTMLElement;
+              if (target.closest("a")) {
+                props.onNavigate?.();
+              }
+            }}
           >
-            Collapse
-          </button>
-        ) : null}
-      </div>
-      <nav
-        class="sidebar-nav"
-        aria-label="Main navigation"
-        onClick={(event) => {
-          const target = event.target as HTMLElement;
-          if (target.closest("a")) {
-            props.onNavigate?.();
+            {navItems.map((item) => (
+              <NavItem href={item.href} label={item.label} />
+            ))}
+          </nav>
+        </>
+      ) : null}
+      {props.onCollapse || props.onExpand ? (
+        <button
+          type="button"
+          class="sidebar-edge-toggle"
+          aria-label={
+            props.desktopCollapsed?.() ? "Expand sidebar" : "Collapse sidebar"
           }
-        }}
-      >
-        {navItems.map((item) => (
-          <NavItem href={item.href} label={item.label} />
-        ))}
-      </nav>
+          title={
+            props.desktopCollapsed?.() ? "Expand sidebar" : "Collapse sidebar"
+          }
+          aria-controls="app-sidebar"
+          aria-expanded={props.desktopCollapsed?.() ? "false" : "true"}
+          onClick={() => {
+            if (props.desktopCollapsed?.()) {
+              props.onExpand?.();
+              return;
+            }
+            props.onCollapse?.();
+          }}
+        >
+          <span class="sidebar-chevron" aria-hidden="true">
+            {props.desktopCollapsed?.() ? "›" : "‹"}
+          </span>
+        </button>
+      ) : null}
     </aside>
   );
 };

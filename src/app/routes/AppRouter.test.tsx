@@ -226,22 +226,29 @@ describe("app routing and shell", () => {
     }
   });
 
-  it("toggles desktop sidebar visibility with accessibility attributes", async () => {
+  it("toggles desktop sidebar state with shell collapse class", async () => {
     renderAt("/board");
 
     const collapseButton = screen.getByRole("button", {
-      name: "Collapse navigation",
+      name: "Collapse sidebar",
     });
     expect(collapseButton.getAttribute("aria-controls")).toBe("app-sidebar");
     expect(collapseButton.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByRole("link", { name: "Board" })).toBeTruthy();
+    const appShell = document.querySelector(".app-shell") as HTMLElement;
+    expect(appShell.classList.contains("app-shell--desktop-collapsed")).toBe(
+      false,
+    );
 
     await fireEvent.click(collapseButton);
 
     expect(screen.queryByRole("link", { name: "Board" })).toBeNull();
+    expect(appShell.classList.contains("app-shell--desktop-collapsed")).toBe(
+      true,
+    );
 
     const expandButton = screen.getByRole("button", {
-      name: "Expand navigation",
+      name: "Expand sidebar",
     });
     expect(expandButton.getAttribute("aria-controls")).toBe("app-sidebar");
     expect(expandButton.getAttribute("aria-expanded")).toBe("false");
@@ -251,8 +258,11 @@ describe("app routing and shell", () => {
     await waitFor(() => {
       expect(screen.getByRole("link", { name: "Board" })).toBeTruthy();
       expect(
-        screen.getByRole("button", { name: "Collapse navigation" }),
+        screen.getByRole("button", { name: "Collapse sidebar" }),
       ).toBeTruthy();
+      expect(appShell.classList.contains("app-shell--desktop-collapsed")).toBe(
+        false,
+      );
     });
   });
 

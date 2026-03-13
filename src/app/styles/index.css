@@ -83,14 +83,23 @@ textarea::placeholder {
   height: 100vh;
 }
 
+.app-shell--desktop-collapsed {
+  grid-template-columns: 22px 1fr;
+}
+
 .sidebar {
   border-right: 1px solid var(--border);
   background: var(--surface);
   padding: 20px 16px;
-  position: sticky;
+  position: relative;
   top: 0;
   height: 100vh;
   overflow: auto;
+}
+
+.sidebar-collapsed {
+  padding: 0;
+  overflow: visible;
 }
 
 .sidebar-hidden {
@@ -117,6 +126,37 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.sidebar-edge-toggle {
+  position: absolute;
+  top: 16px;
+  right: -13px;
+  width: 24px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  border-left: 0;
+  background: var(--surface);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 2;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.sidebar-edge-toggle:hover {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.sidebar-chevron {
+  font-size: 1rem;
+  line-height: 1;
 }
 
 .nav-item {
@@ -2044,6 +2084,15 @@ textarea::placeholder {
     padding: 20px 16px;
     z-index: 30;
     box-shadow: var(--shadow-md);
+  }
+
+  .sidebar-collapsed {
+    padding: 20px 16px;
+    overflow: auto;
+  }
+
+  .sidebar-edge-toggle {
+    display: none;
   }
 
   .sidebar-nav {
