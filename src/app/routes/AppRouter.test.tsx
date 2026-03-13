@@ -845,6 +845,31 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("keeps shell content stable when startup project load fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects")
+        return Promise.reject("database error: startup failed");
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    expect(screen.getByRole("banner")).toBeTruthy();
+    expect(screen.getByRole("main")).toBeTruthy();
+    expect(screen.getByText("Task board view coming soon.")).toBeTruthy();
+
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledWith(
+        "Failed to load projects during startup",
+        "database error: startup failed",
+      );
+    });
+    expect(window.location.pathname).toBe("/board");
+
+    warnSpy.mockRestore();
+  });
+
   it("enforces default repository selection on create form", async () => {
     renderAt("/projects");
 
@@ -937,6 +962,37 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("hides internal project-create errors behind generic message", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") return Promise.resolve([]);
+      if (command === "create_project")
+        return Promise.reject("database error: sqlx query failed");
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects");
+
+    await fireEvent.input(screen.getByLabelText("Project name"), {
+      target: { value: "Demo Project" },
+    });
+    await fireEvent.input(screen.getByPlaceholderText("Repository path"), {
+      target: { value: "/repo/demo" },
+    });
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create project" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Failed to create project. Please try again."),
+      ).toBeTruthy();
+      expect(
+        screen.queryByText("database error: sqlx query failed"),
+      ).toBeNull();
+    });
+  });
+
   it("shows tasks section in project detail", async () => {
     renderAt("/projects/p-1");
     await waitFor(() => {
@@ -992,6 +1048,99 @@ describe("app routing and shell", () => {
       expect(screen.getByText("ALP-1")).toBeTruthy();
       expect(screen.getByRole("link", { name: /Created task/i })).toBeTruthy();
       expect(screen.getByText("Blocked")).toBeTruthy();
+    });
+  });
+
+  it("uses display keys in task labels and does not render raw UUIDs", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "550e8400-e29b-41d4-a716-446655440000",
+            title: "Created task",
+            status: "todo",
+            display_key: "ORK-12",
+          },
+        ]);
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects/p-1");
+
+    await waitFor(() => {
+      expect(screen.getByText("ORK-12")).toBeTruthy();
+      expect(
+        screen.queryByText("550e8400-e29b-41d4-a716-446655440000"),
+      ).toBeNull();
+    });
+  });
+
+  it("falls back to project-key task-number labels and suppresses raw UUID text", async () => {
+    const taskId = "550e8400-e29b-41d4-a716-446655440000";
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: taskId,
+            title: "Task without display key",
+            status: "todo",
+            task_number: 12,
+          },
+        ]);
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects/p-1");
+
+    await waitFor(() => {
+      expect(screen.getByText("ALP-12")).toBeTruthy();
+      expect(screen.queryByText(taskId)).toBeNull();
     });
   });
 

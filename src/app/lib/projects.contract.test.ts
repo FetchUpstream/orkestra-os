@@ -1,0 +1,124 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createProject,
+  getProject,
+  type CreateProjectInput,
+  type Project,
+} from "./projects";
+
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: invokeMock,
+}));
+
+describe("projects contract", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it("sends repo_path in create_project repository payload", async () => {
+    invokeMock.mockResolvedValue({
+      project: { id: "project-1", name: "Orkestra", key: "ORK" },
+      repositories: [
+        {
+          id: "repo-1",
+          name: "Main",
+          repo_path: "/repo/main",
+          is_default: true,
+        },
+      ],
+    });
+
+    const input: CreateProjectInput = {
+      name: "Orkestra",
+      key: "ORK",
+      repositories: [{ path: "/repo/main", is_default: true }],
+    };
+
+    await createProject(input);
+
+    expect(invokeMock).toHaveBeenCalledWith("create_project", {
+      input: {
+        name: "Orkestra",
+        key: "ORK",
+        description: undefined,
+        repositories: [
+          {
+            repo_path: "/repo/main",
+            name: "/repo/main",
+            is_default: true,
+          },
+        ],
+      },
+    });
+  });
+
+  it("normalizes wrapped get_project repository path for path and repo_path variants", async () => {
+    invokeMock
+      .mockResolvedValueOnce({
+        project: {
+          id: "project-path",
+          name: "Path Project",
+          key: "PAT",
+          description: null,
+        },
+        repositories: [
+          {
+            id: "repo-path",
+            name: "Main",
+            path: "/repo/path-variant",
+            is_default: true,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        project: {
+          id: "project-repo-path",
+          name: "Repo Path Project",
+          key: "RPP",
+          description: null,
+        },
+        repositories: [
+          {
+            id: "repo-repo-path",
+            name: "Tools",
+            repo_path: "/repo/repo-path-variant",
+            is_default: false,
+          },
+        ],
+      });
+
+    const withPath = await getProject("project-path");
+    const withRepoPath = await getProject("project-repo-path");
+
+    expect(withPath).toEqual({
+      id: "project-path",
+      name: "Path Project",
+      key: "PAT",
+      description: null,
+      repositories: [
+        {
+          id: "repo-path",
+          path: "/repo/path-variant",
+          name: "Main",
+          is_default: true,
+        },
+      ],
+    } satisfies Project);
+    expect(withRepoPath).toEqual({
+      id: "project-repo-path",
+      name: "Repo Path Project",
+      key: "RPP",
+      description: null,
+      repositories: [
+        {
+          id: "repo-repo-path",
+          path: "/repo/repo-path-variant",
+          name: "Tools",
+          is_default: false,
+        },
+      ],
+    } satisfies Project);
+  });
+});
