@@ -45,6 +45,21 @@ export const nextStatus = (status: TaskStatus): TaskStatus => {
   return "todo";
 };
 
+export const canTransitionStatus = (
+  from: TaskStatus,
+  to: TaskStatus,
+): boolean => {
+  if (from === "review") {
+    return ["todo", "doing", "done"].includes(to);
+  }
+
+  if (from === "doing") {
+    return ["review", "todo"].includes(to);
+  }
+
+  return nextStatus(from) === to;
+};
+
 export const getActionErrorMessage = (
   prefix: string,
   error: unknown,

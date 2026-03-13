@@ -298,6 +298,403 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("prefers app drag payload when text/plain contains a URL", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-1",
+            title: "Drag payload preference",
+            status: "todo",
+            display_key: "ALP-1",
+          },
+        ]);
+      }
+      if (command === "set_task_status") {
+        return Promise.resolve({
+          id: "task-1",
+          title: "Drag payload preference",
+          status: "doing",
+          display_key: "ALP-1",
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+    });
+
+    const inProgressSection = screen
+      .getByRole("heading", { name: "In Progress (0)" })
+      .closest("section") as HTMLElement;
+    const taskCard = screen
+      .getByRole("link", { name: /Drag payload preference/i })
+      .closest("li") as HTMLElement;
+
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData(format: string, value: string) {
+        this.data[format] = value;
+      },
+      getData(format: string) {
+        return this.data[format] ?? "";
+      },
+      setDragImage() {
+        return;
+      },
+    };
+
+    await fireEvent.dragStart(taskCard, { dataTransfer });
+    dataTransfer.setData("text/plain", "https://example.com/tasks/task-1");
+    await fireEvent.dragOver(inProgressSection, { dataTransfer });
+    await fireEvent.drop(inProgressSection, { dataTransfer });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (1)" }),
+      ).toBeTruthy();
+      expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
+        id: "task-1",
+        input: { status: "doing" },
+      });
+    });
+  });
+
+  it("allows board drag transition from review to in progress", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-review-doing",
+            title: "Review to in progress",
+            status: "review",
+            display_key: "ALP-11",
+          },
+        ]);
+      }
+      if (command === "set_task_status") {
+        return Promise.resolve({
+          id: "task-review-doing",
+          title: "Review to in progress",
+          status: "doing",
+          display_key: "ALP-11",
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Review (1)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (0)" }),
+      ).toBeTruthy();
+    });
+
+    const inProgressSection = screen
+      .getByRole("heading", { name: "In Progress (0)" })
+      .closest("section") as HTMLElement;
+    const taskCard = screen
+      .getByRole("link", { name: /Review to in progress/i })
+      .closest("li") as HTMLElement;
+
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData(format: string, value: string) {
+        this.data[format] = value;
+      },
+      getData(format: string) {
+        return this.data[format] ?? "";
+      },
+    };
+
+    await fireEvent.dragStart(taskCard, { dataTransfer });
+    await fireEvent.dragOver(inProgressSection, { dataTransfer });
+    await fireEvent.drop(inProgressSection, { dataTransfer });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Review (0)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (1)" }),
+      ).toBeTruthy();
+      expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
+        id: "task-review-doing",
+        input: { status: "doing" },
+      });
+    });
+  });
+
+  it("allows board drag transition from review to todo", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-review-todo",
+            title: "Review to todo",
+            status: "review",
+            display_key: "ALP-12",
+          },
+        ]);
+      }
+      if (command === "set_task_status") {
+        return Promise.resolve({
+          id: "task-review-todo",
+          title: "Review to todo",
+          status: "todo",
+          display_key: "ALP-12",
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Review (1)" })).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+    });
+
+    const todoSection = screen
+      .getByRole("heading", { name: "Todo (0)" })
+      .closest("section") as HTMLElement;
+    const taskCard = screen
+      .getByRole("link", { name: /Review to todo/i })
+      .closest("li") as HTMLElement;
+
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData(format: string, value: string) {
+        this.data[format] = value;
+      },
+      getData(format: string) {
+        return this.data[format] ?? "";
+      },
+    };
+
+    await fireEvent.dragStart(taskCard, { dataTransfer });
+    await fireEvent.dragOver(todoSection, { dataTransfer });
+    await fireEvent.drop(todoSection, { dataTransfer });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Review (0)" })).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+      expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
+        id: "task-review-todo",
+        input: { status: "todo" },
+      });
+    });
+  });
+
+  it("allows board drag transition from doing to todo", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-doing-todo",
+            title: "Doing to todo",
+            status: "doing",
+            display_key: "ALP-13",
+          },
+        ]);
+      }
+      if (command === "set_task_status") {
+        return Promise.resolve({
+          id: "task-doing-todo",
+          title: "Doing to todo",
+          status: "todo",
+          display_key: "ALP-13",
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "In Progress (1)" }),
+      ).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+    });
+
+    const todoSection = screen
+      .getByRole("heading", { name: "Todo (0)" })
+      .closest("section") as HTMLElement;
+    const taskCard = screen
+      .getByRole("link", { name: /Doing to todo/i })
+      .closest("li") as HTMLElement;
+
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData(format: string, value: string) {
+        this.data[format] = value;
+      },
+      getData(format: string) {
+        return this.data[format] ?? "";
+      },
+    };
+
+    await fireEvent.dragStart(taskCard, { dataTransfer });
+    await fireEvent.dragOver(todoSection, { dataTransfer });
+    await fireEvent.drop(todoSection, { dataTransfer });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "In Progress (0)" }),
+      ).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+      expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
+        id: "task-doing-todo",
+        input: { status: "todo" },
+      });
+    });
+  });
+
+  it("ignores invalid board drag transitions and does not persist status", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-1",
+            title: "Invalid transition candidate",
+            status: "todo",
+            display_key: "ALP-1",
+          },
+        ]);
+      }
+      if (command === "set_task_status") {
+        return Promise.resolve({
+          id: "task-1",
+          title: "Invalid transition candidate",
+          status: "review",
+          display_key: "ALP-1",
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Review (0)" })).toBeTruthy();
+    });
+
+    const reviewSection = screen
+      .getByRole("heading", { name: "Review (0)" })
+      .closest("section") as HTMLElement;
+    const taskCard = screen
+      .getByRole("link", { name: /Invalid transition candidate/i })
+      .closest("li") as HTMLElement;
+
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData(format: string, value: string) {
+        this.data[format] = value;
+      },
+      getData(format: string) {
+        return this.data[format] ?? "";
+      },
+      setDragImage() {
+        return;
+      },
+    };
+
+    await fireEvent.dragStart(taskCard, { dataTransfer });
+    await fireEvent.dragOver(reviewSection, { dataTransfer });
+
+    expect(reviewSection.classList.contains("board-column--drop-active")).toBe(
+      false,
+    );
+
+    await fireEvent.drop(reviewSection, { dataTransfer });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Review (0)" })).toBeTruthy();
+    });
+
+    const statusCalls = invokeMock.mock.calls.filter(
+      ([command]) => command === "set_task_status",
+    );
+    expect(statusCalls).toHaveLength(0);
+  });
+
   it("rolls back optimistic board move when status persist fails", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") {

@@ -112,6 +112,16 @@ impl TasksService {
         input.status = input.status.trim().to_string();
         Self::validate_status(&input.status)?;
 
+        let existing_task = self
+            .repository
+            .get_task(id)
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+
+        if !Self::can_transition_status(&existing_task.status, &input.status) {
+            return Err(AppError::validation("invalid task status transition"));
+        }
+
         let updated = self
             .repository
             .update_task_status(
@@ -336,5 +346,197 @@ impl TasksService {
         } else {
             Err(AppError::validation("invalid task status"))
         }
+    }
+
+    fn next_status(status: &str) -> Option<&'static str> {
+        match status {
+            "todo" => Some("doing"),
+            "doing" => Some("review"),
+            "review" => Some("done"),
+            "done" => Some("todo"),
+            _ => None,
+        }
+    }
+
+    fn can_transition_status(from: &str, to: &str) -> bool {
+        if from == "review" {
+            return ["todo", "doing", "done"].contains(&to);
+        }
+
+        if from == "doing" {
+            return ["review", "todo"].contains(&to);
+        }
+
+        Self::next_status(from) == Some(to)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::db::migrations::run_migrations;
+    use sqlx::SqlitePool;
+
+    async fn setup_service() -> (TasksService, SqlitePool) {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let repository = TasksRepository::new(pool.clone());
+        (TasksService::new(repository), pool)
+    }
+
+    async fn seed_task(pool: &SqlitePool, task_status: &str) {
+        let project_id = "project-1";
+        let repository_id = "repo-1";
+
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(project_id)
+        .bind("Alpha")
+        .bind("ALP")
+        .bind(Option::<String>::None)
+        .bind(repository_id)
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(repository_id)
+        .bind(project_id)
+        .bind("Main")
+        .bind("/repo/main")
+        .bind(1)
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("task-1")
+        .bind(project_id)
+        .bind(repository_id)
+        .bind(1)
+        .bind("Task")
+        .bind(Option::<String>::None)
+        .bind(task_status)
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn transition_matrix_allows_review_backflow_and_preserves_other_rules() {
+        assert!(TasksService::can_transition_status("todo", "doing"));
+        assert!(TasksService::can_transition_status("doing", "review"));
+        assert!(TasksService::can_transition_status("doing", "todo"));
+        assert!(TasksService::can_transition_status("review", "done"));
+        assert!(TasksService::can_transition_status("review", "doing"));
+        assert!(TasksService::can_transition_status("review", "todo"));
+        assert!(TasksService::can_transition_status("done", "todo"));
+
+        assert!(!TasksService::can_transition_status("todo", "review"));
+        assert!(!TasksService::can_transition_status("todo", "done"));
+        assert!(!TasksService::can_transition_status("todo", "todo"));
+        assert!(!TasksService::can_transition_status("doing", "done"));
+        assert!(!TasksService::can_transition_status("invalid", "todo"));
+    }
+
+    #[tokio::test]
+    async fn set_task_status_allows_review_to_doing() {
+        let (service, pool) = setup_service().await;
+        seed_task(&pool, "review").await;
+
+        let result = service
+            .set_task_status(
+                "task-1",
+                SetTaskStatusRequest {
+                    status: "doing".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.status, "doing");
+
+        let task = service.get_task("task-1").await.unwrap();
+        assert_eq!(task.status, "doing");
+    }
+
+    #[tokio::test]
+    async fn set_task_status_allows_review_to_todo() {
+        let (service, pool) = setup_service().await;
+        seed_task(&pool, "review").await;
+
+        let result = service
+            .set_task_status(
+                "task-1",
+                SetTaskStatusRequest {
+                    status: "todo".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.status, "todo");
+
+        let task = service.get_task("task-1").await.unwrap();
+        assert_eq!(task.status, "todo");
+    }
+
+    #[tokio::test]
+    async fn set_task_status_allows_doing_to_todo() {
+        let (service, pool) = setup_service().await;
+        seed_task(&pool, "doing").await;
+
+        let result = service
+            .set_task_status(
+                "task-1",
+                SetTaskStatusRequest {
+                    status: "todo".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.status, "todo");
+
+        let task = service.get_task("task-1").await.unwrap();
+        assert_eq!(task.status, "todo");
+    }
+
+    #[tokio::test]
+    async fn set_task_status_rejects_invalid_transition_and_keeps_state() {
+        let (service, pool) = setup_service().await;
+        seed_task(&pool, "todo").await;
+
+        let result = service
+            .set_task_status(
+                "task-1",
+                SetTaskStatusRequest {
+                    status: "review".to_string(),
+                },
+            )
+            .await;
+
+        match result {
+            Err(AppError::Validation(message)) => {
+                assert_eq!(message, "invalid task status transition")
+            }
+            _ => panic!("expected validation error for invalid transition"),
+        }
+
+        let task = service.get_task("task-1").await.unwrap();
+        assert_eq!(task.status, "todo");
     }
 }
