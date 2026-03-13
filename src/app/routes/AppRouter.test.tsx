@@ -1421,6 +1421,29 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("returns to the same run when task detail is opened from run detail", async () => {
+    renderAt("/runs/run-456");
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: /Sample task/i })).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("link", { name: /Sample task/i }));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/projects/p-1/tasks/task-123");
+      expect(window.location.search).toBe("?origin=run&runId=run-456");
+      expect(screen.getByRole("link", { name: "Back to run" })).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("link", { name: "Back to run" }));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/runs/run-456");
+      expect(screen.getByRole("heading", { name: "Current run" })).toBeTruthy();
+    });
+  });
+
   it("renders run not found state when get_run returns not found", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") {

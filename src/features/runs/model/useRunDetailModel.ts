@@ -34,11 +34,15 @@ export const useRunDetailModel = () => {
 
   const taskHref = createMemo(() => {
     const taskValue = task();
+    const runId = params.runId;
     if (!taskValue) return "";
+    const originSearch = runId
+      ? `?origin=run&runId=${encodeURIComponent(runId)}`
+      : "";
     if (taskValue.projectId) {
-      return `/projects/${taskValue.projectId}/tasks/${taskValue.id}`;
+      return `/projects/${taskValue.projectId}/tasks/${taskValue.id}${originSearch}`;
     }
-    return `/tasks/${taskValue.id}`;
+    return `/tasks/${taskValue.id}${originSearch}`;
   });
 
   createEffect(() => {

@@ -75,11 +75,19 @@ export const useTaskDetailModel = () => {
     const searchParams = new URLSearchParams(location.search);
     return searchParams.get("origin")?.trim().toLowerCase() || "";
   });
+  const taskDetailRunId = createMemo(() => {
+    const searchParams = new URLSearchParams(location.search);
+    return searchParams.get("runId")?.trim() || "";
+  });
   const backHref = createMemo(() => {
+    if (taskDetailOrigin() === "run" && taskDetailRunId()) {
+      return `/runs/${taskDetailRunId()}`;
+    }
     if (taskDetailOrigin() === "board") return "/board";
     return projectId() ? `/projects/${projectId()}` : "/projects";
   });
   const backLabel = createMemo(() => {
+    if (taskDetailOrigin() === "run" && taskDetailRunId()) return "run";
     if (taskDetailOrigin() === "board") return "board";
     return projectId() ? "project" : "projects";
   });
@@ -91,6 +99,9 @@ export const useTaskDetailModel = () => {
     const baseHref = scopedProjectId
       ? `/projects/${scopedProjectId}/tasks/${dependencyTaskId}`
       : `/tasks/${dependencyTaskId}`;
+    if (taskDetailOrigin() === "run" && taskDetailRunId()) {
+      return `${baseHref}?origin=run&runId=${encodeURIComponent(taskDetailRunId())}`;
+    }
     if (taskDetailOrigin() === "board") {
       return `${baseHref}?origin=board`;
     }
