@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from "@solidjs/router";
+import { useLocation, useNavigate, useParams } from "@solidjs/router";
 import { createEffect, createMemo, createSignal } from "solid-js";
 import { getProject } from "../../../app/lib/projects";
 import {
@@ -23,6 +23,7 @@ export type DependencyCreateDirection = "parent" | "child";
 export const useTaskDetailModel = () => {
   const navigate = useNavigate();
   const params = useParams();
+  const location = useLocation();
   const [task, setTask] = createSignal<Task | null>(null);
   const [projectId, setProjectId] = createSignal<string | null>(null);
   const [projectName, setProjectName] = createSignal<string | null>(null);
@@ -65,10 +66,18 @@ export const useTaskDetailModel = () => {
   const [defaultProjectRepositoryId, setDefaultProjectRepositoryId] =
     createSignal("");
 
-  const backHref = createMemo(() =>
-    projectId() ? `/projects/${projectId()}` : "/projects",
-  );
-  const backLabel = createMemo(() => (projectId() ? "project" : "projects"));
+  const taskDetailOrigin = createMemo(() => {
+    const searchParams = new URLSearchParams(location.search);
+    return searchParams.get("origin")?.trim().toLowerCase() || "";
+  });
+  const backHref = createMemo(() => {
+    if (taskDetailOrigin() === "board") return "/board";
+    return projectId() ? `/projects/${projectId()}` : "/projects";
+  });
+  const backLabel = createMemo(() => {
+    if (taskDetailOrigin() === "board") return "board";
+    return projectId() ? "project" : "projects";
+  });
   const canMoveTask = createMemo(() => projectRepositories().length > 1);
 
   const dependencyTaskHref = (dependencyTaskId: string) => {

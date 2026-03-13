@@ -30,7 +30,10 @@ const BoardTaskCard: Component<Props> = (props) => {
       onDragStart={(event) => props.onDragStart?.(props.task.id, event)}
       onDragEnd={() => props.onDragEnd?.()}
     >
-      <A href={`/tasks/${props.task.id}`} class="project-task-link">
+      <A
+        href={`/tasks/${props.task.id}?origin=board`}
+        class="project-task-link"
+      >
         <div class="project-task-main">
           <p class="project-task-title">{props.task.title}</p>
           <p class="project-task-repo">
