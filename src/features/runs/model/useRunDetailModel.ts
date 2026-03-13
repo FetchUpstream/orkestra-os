@@ -69,6 +69,64 @@ export const useRunDetailModel = () => {
     return backHref() === "/projects" ? "projects" : "task";
   });
 
+  const runLabel = createMemo(() => {
+    const runValue = run();
+    if (!runValue) return "Current run";
+
+    const displayKey = runValue.displayKey?.trim();
+    if (displayKey) return displayKey;
+
+    if (
+      typeof runValue.runNumber === "number" &&
+      Number.isFinite(runValue.runNumber)
+    ) {
+      return `Run #${runValue.runNumber}`;
+    }
+
+    const match = runValue.id.match(/(?:^|[^0-9])(\d+)(?:[^0-9]|$)/);
+    if (match?.[1]) {
+      return `Run #${match[1]}`;
+    }
+
+    return "Current run";
+  });
+
+  const repositorySummary = createMemo(() => {
+    const taskValue = task();
+    const runValue = run();
+    const repository =
+      taskValue?.targetRepositoryName?.trim() || "Repository unavailable";
+    const branch =
+      runValue?.status === "running" ? "active branch" : "branch unavailable";
+    const worktree = runValue?.worktreeId?.trim() || "worktree unavailable";
+    return `${repository} / ${branch} / ${worktree}`;
+  });
+
+  const durationLabel = createMemo(() => {
+    const runValue = run();
+    if (!runValue?.startedAt) return "Not started";
+
+    const started = Date.parse(runValue.startedAt);
+    const finished = runValue.finishedAt
+      ? Date.parse(runValue.finishedAt)
+      : Date.now();
+    if (Number.isNaN(started) || Number.isNaN(finished) || finished < started) {
+      return "Unavailable";
+    }
+
+    const totalSeconds = Math.floor((finished - started) / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    const hours = Math.floor(minutes / 60);
+    const minutePart = minutes % 60;
+
+    if (hours > 0) {
+      return `${hours}h ${minutePart}m`;
+    }
+
+    return `${minutes}m ${seconds}s`;
+  });
+
   createEffect(() => {
     const runId = params.runId;
     const requestVersion = ++activeRunRequestVersion;
@@ -142,5 +200,8 @@ export const useRunDetailModel = () => {
     taskHref,
     backHref,
     backLabel,
+    runLabel,
+    repositorySummary,
+    durationLabel,
   };
 };

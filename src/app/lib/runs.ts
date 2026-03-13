@@ -15,6 +15,8 @@ export type Run = {
   id: string;
   taskId: string;
   projectId: string;
+  runNumber?: number | null;
+  displayKey?: string | null;
   targetRepoId?: string | null;
   status: RunStatus;
   triggeredBy: string;
@@ -31,6 +33,10 @@ type RunResponse = {
   id: string;
   task_id?: string;
   taskId?: string;
+  run_number?: number | null;
+  runNumber?: number | null;
+  display_key?: string | null;
+  displayKey?: string | null;
   project_id?: string;
   projectId?: string;
   target_repo_id?: string | null;
@@ -67,6 +73,8 @@ const toRun = (run: RunResponse): Run => ({
   id: run.id,
   taskId: pick(run.task_id, run.taskId) ?? "",
   projectId: pick(run.project_id, run.projectId) ?? "",
+  runNumber: pick(run.run_number, run.runNumber),
+  displayKey: pick(run.display_key, run.displayKey),
   targetRepoId: pick(run.target_repo_id, run.targetRepoId),
   status: toRunStatus(run.status),
   triggeredBy: pick(run.triggered_by, run.triggeredBy) ?? "",

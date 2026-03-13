@@ -1594,18 +1594,32 @@ describe("app routing and shell", () => {
     ).toBeNull();
   });
 
-  it("renders foundational run detail surface for run route", async () => {
+  it("renders conversation-first run detail scaffold for run route", async () => {
     renderAt("/runs/run-456");
 
     await waitFor(() => {
       expect(screen.getByRole("link", { name: "Back to task" })).toBeTruthy();
-      expect(screen.getByRole("heading", { name: "Current run" })).toBeTruthy();
-      expect(screen.getByText("Running")).toBeTruthy();
-      expect(screen.getByText("Linked task:", { exact: false })).toBeTruthy();
-      expect(screen.getByText("Logs")).toBeTruthy();
-      expect(screen.getByText("Events")).toBeTruthy();
-      expect(screen.getByText("Files")).toBeTruthy();
-      expect(screen.getByText("Review")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Run #456" })).toBeTruthy();
+      expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
+      expect(
+        screen.getByRole("region", { name: "Conversation transcript" }),
+      ).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
+      expect(
+        screen.getByRole("complementary", { name: "Run operations" }),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole("tablist", { name: "Run detail tab list" }),
+      ).toBeTruthy();
+      expect(
+        screen
+          .getByRole("tab", { name: "Conversation" })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(screen.getByRole("tab", { name: "Logs" })).toBeTruthy();
+      expect(screen.getByRole("tab", { name: "Files Changed" })).toBeTruthy();
+      expect(screen.getByRole("tab", { name: "Diff" })).toBeTruthy();
+      expect(screen.getByRole("tab", { name: "Timeline" })).toBeTruthy();
       expect(screen.queryByText("run-456")).toBeNull();
     });
   });
@@ -1692,7 +1706,7 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/runs/run-456");
-      expect(screen.getByRole("heading", { name: "Current run" })).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Run #456" })).toBeTruthy();
     });
   });
 
@@ -1782,7 +1796,7 @@ describe("app routing and shell", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Running")).toBeTruthy();
+      expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
     });
 
     resolveRunOne?.({
@@ -1798,7 +1812,7 @@ describe("app routing and shell", () => {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     expect(screen.queryByText("Completed")).toBeNull();
-    expect(screen.getByText("Running")).toBeTruthy();
+    expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
   });
 
   it("creates a run from task detail, lists it, and navigates to run detail", async () => {
@@ -1940,7 +1954,7 @@ describe("app routing and shell", () => {
     await waitFor(() => {
       expect(window.location.pathname).toBe("/runs/run-new");
       expect(screen.getByRole("heading", { name: "Current run" })).toBeTruthy();
-      expect(screen.getByText("Running")).toBeTruthy();
+      expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
     });
   });
 
