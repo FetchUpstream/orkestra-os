@@ -1877,9 +1877,20 @@ textarea::placeholder {
 }
 
 .task-runs-item {
+  position: relative;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-alt);
+}
+
+.task-runs-delete-button {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
 }
 
 .task-runs-link {
@@ -1894,6 +1905,10 @@ textarea::placeholder {
     border-color 0.15s ease,
     background 0.15s ease,
     box-shadow 0.15s ease;
+}
+
+.task-runs-link--with-action {
+  padding-right: 50px;
 }
 
 .task-runs-link:hover {
@@ -2150,6 +2165,14 @@ textarea::placeholder {
   .task-runs-created-at {
     margin-left: 0;
     width: 100%;
+  }
+
+  .task-runs-link--with-action {
+    padding-right: 44px;
+  }
+
+  .task-runs-delete-button {
+    right: 8px;
   }
 
   .run-detail-placeholders {

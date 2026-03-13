@@ -93,3 +93,7 @@ export const getRun = async (runId: string): Promise<Run> => {
   const response = await invoke<RunResponse>("get_run", { runId });
   return toRun(response);
 };
+
+export const deleteRun = async (runId: string): Promise<void> => {
+  await invoke("delete_run", { runId });
+};

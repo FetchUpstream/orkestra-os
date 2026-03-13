@@ -16,7 +16,12 @@ import {
   type Task,
   type TaskStatus,
 } from "../../../app/lib/tasks";
-import { createRun, listTaskRuns, type Run } from "../../../app/lib/runs";
+import {
+  createRun,
+  deleteRun,
+  listTaskRuns,
+  type Run,
+} from "../../../app/lib/runs";
 import {
   getActionErrorMessage,
   getValidTransitionTargets,
@@ -73,6 +78,7 @@ export const useTaskDetailModel = () => {
   const [runsError, setRunsError] = createSignal("");
   const [isLoadingRuns, setIsLoadingRuns] = createSignal(false);
   const [isCreatingRun, setIsCreatingRun] = createSignal(false);
+  const [deletingRunId, setDeletingRunId] = createSignal("");
 
   const taskDetailOrigin = createMemo(() => {
     const searchParams = new URLSearchParams(location.search);
@@ -505,6 +511,25 @@ export const useTaskDetailModel = () => {
     }
   };
 
+  const onDeleteRun = async (runId: string) => {
+    const taskValue = task();
+    if (!taskValue || !runId || deletingRunId()) return;
+    setActionError("");
+    setDeletingRunId(runId);
+    try {
+      await deleteRun(runId);
+      setRuns((currentRuns) =>
+        currentRuns.filter((runItem) => runItem.id !== runId),
+      );
+    } catch (mutationError) {
+      setActionError(
+        getActionErrorMessage("Failed to delete run.", mutationError),
+      );
+    } finally {
+      setDeletingRunId("");
+    }
+  };
+
   return {
     params,
     task,
@@ -521,6 +546,7 @@ export const useTaskDetailModel = () => {
     runsError,
     isLoadingRuns,
     isCreatingRun,
+    deletingRunId,
     selectedParentTaskId,
     selectedChildTaskId,
     isAddingParent,
@@ -574,5 +600,6 @@ export const useTaskDetailModel = () => {
     onAddChildDependency,
     onRemoveDependency,
     onCreateRun,
+    onDeleteRun,
   };
 };

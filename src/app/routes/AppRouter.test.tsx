@@ -1858,6 +1858,107 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("renders run delete actions and removes a run without opening details", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "get_task") {
+        const taskId = (args as { id?: string } | undefined)?.id;
+        if (taskId === "task-123") {
+          return Promise.resolve({
+            id: "task-123",
+            title: "Sample task",
+            description: "Task details",
+            status: "todo",
+            project_id: "p-1",
+            target_repository_name: "Main",
+            display_key: "ALP-7",
+          });
+        }
+        return Promise.resolve(null);
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-123",
+          parents: [],
+          children: [],
+        });
+      }
+      if (command === "list_task_runs") {
+        return Promise.resolve([
+          {
+            id: "run-delete",
+            task_id: "task-123",
+            project_id: "p-1",
+            status: "queued",
+            triggered_by: "user",
+            created_at: "2026-01-03T00:00:00.000Z",
+          },
+          {
+            id: "run-keep",
+            task_id: "task-123",
+            project_id: "p-1",
+            status: "completed",
+            triggered_by: "user",
+            created_at: "2026-01-01T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (command === "delete_run") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects/p-1/tasks/task-123");
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: "Delete run" }),
+      ).toHaveLength(2);
+      expect(screen.getByText("Queued")).toBeTruthy();
+      expect(screen.getByText("Completed")).toBeTruthy();
+    });
+
+    const pathBeforeDelete = window.location.pathname;
+    const runToDelete = screen.getByText("Queued").closest("li");
+    expect(runToDelete).toBeTruthy();
+
+    await fireEvent.click(
+      within(runToDelete as HTMLElement).getByRole("button", {
+        name: "Delete run",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("delete_run", {
+        runId: "run-delete",
+      });
+      expect(screen.queryByText("Queued")).toBeNull();
+      expect(screen.getByText("Completed")).toBeTruthy();
+      expect(window.location.pathname).toBe(pathBeforeDelete);
+    });
+  });
+
   it("renders dependencies and wires add/remove payloads", async () => {
     invokeMock.mockImplementation((command: string, args?: unknown) => {
       if (command === "list_projects")

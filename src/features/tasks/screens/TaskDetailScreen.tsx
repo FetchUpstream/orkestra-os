@@ -54,6 +54,7 @@ const TaskDetailScreen: Component = () => {
     runsError,
     isLoadingRuns,
     isCreatingRun,
+    deletingRunId,
     selectedParentTaskId,
     selectedChildTaskId,
     isAddingParent,
@@ -107,6 +108,7 @@ const TaskDetailScreen: Component = () => {
     onAddChildDependency,
     onRemoveDependency,
     onCreateRun,
+    onDeleteRun,
   } = useTaskDetailModel();
   const [isTransitionMenuOpen, setIsTransitionMenuOpen] = createSignal(false);
 
@@ -443,9 +445,33 @@ const TaskDetailScreen: Component = () => {
                                   <For each={runs()}>
                                     {(runItem) => (
                                       <li class="task-runs-item">
+                                        <button
+                                          type="button"
+                                          class="task-control-icon-button task-control-icon-button-danger task-runs-delete-button"
+                                          onClick={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            void onDeleteRun(runItem.id);
+                                          }}
+                                          disabled={
+                                            deletingRunId() === runItem.id
+                                          }
+                                          aria-label={
+                                            deletingRunId() === runItem.id
+                                              ? "Deleting run"
+                                              : "Delete run"
+                                          }
+                                          title={
+                                            deletingRunId() === runItem.id
+                                              ? "Deleting run"
+                                              : "Delete run"
+                                          }
+                                        >
+                                          <DeleteIcon />
+                                        </button>
                                         <A
                                           href={`/runs/${runItem.id}`}
-                                          class="task-runs-link"
+                                          class="task-runs-link task-runs-link--with-action"
                                         >
                                           <span class="task-runs-link-copy">
                                             Open run details
