@@ -373,6 +373,231 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("rolls back only the failed task when another optimistic move succeeds", async () => {
+    let taskOnePersist:
+      | {
+          resolve: (value: unknown) => void;
+          reject: (reason?: unknown) => void;
+        }
+      | undefined;
+    let taskTwoPersist:
+      | {
+          resolve: (value: unknown) => void;
+          reject: (reason?: unknown) => void;
+        }
+      | undefined;
+
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-1",
+            title: "Task one",
+            status: "todo",
+            display_key: "ALP-1",
+          },
+          {
+            id: "task-2",
+            title: "Task two",
+            status: "todo",
+            display_key: "ALP-2",
+          },
+        ]);
+      }
+      if (command === "set_task_status") {
+        const taskId = (args as { id?: string } | undefined)?.id;
+        return new Promise((resolve, reject) => {
+          if (taskId === "task-1") {
+            taskOnePersist = { resolve, reject };
+            return;
+          }
+          taskTwoPersist = { resolve, reject };
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (2)" })).toBeTruthy();
+    });
+
+    const inProgressSection = screen
+      .getByRole("heading", { name: "In Progress (0)" })
+      .closest("section") as HTMLElement;
+
+    const createDataTransfer = () => ({
+      data: {} as Record<string, string>,
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData(format: string, value: string) {
+        this.data[format] = value;
+      },
+      getData(format: string) {
+        return this.data[format] ?? "";
+      },
+      setDragImage() {
+        return;
+      },
+    });
+
+    const taskOneCard = screen
+      .getByRole("link", { name: /Task one/i })
+      .closest("li") as HTMLElement;
+    const firstTransfer = createDataTransfer();
+    await fireEvent.dragStart(taskOneCard, { dataTransfer: firstTransfer });
+    await fireEvent.dragOver(inProgressSection, {
+      dataTransfer: firstTransfer,
+    });
+    await fireEvent.drop(inProgressSection, { dataTransfer: firstTransfer });
+
+    const taskTwoCard = screen
+      .getByRole("link", { name: /Task two/i })
+      .closest("li") as HTMLElement;
+    const secondTransfer = createDataTransfer();
+    await fireEvent.dragStart(taskTwoCard, { dataTransfer: secondTransfer });
+    await fireEvent.dragOver(inProgressSection, {
+      dataTransfer: secondTransfer,
+    });
+    await fireEvent.drop(inProgressSection, { dataTransfer: secondTransfer });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (2)" }),
+      ).toBeTruthy();
+    });
+
+    taskOnePersist?.resolve({
+      id: "task-1",
+      title: "Task one",
+      status: "doing",
+      display_key: "ALP-1",
+    });
+    taskTwoPersist?.reject(new Error("save failed"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (1)" }),
+      ).toBeTruthy();
+      const inProgressList = screen
+        .getByRole("heading", { name: "In Progress (1)" })
+        .closest("section") as HTMLElement;
+      expect(within(inProgressList).getByText("Task one")).toBeTruthy();
+      expect(
+        screen.getByText("Failed to update task status. Please try again."),
+      ).toBeTruthy();
+    });
+  });
+
+  it("ignores stale board task responses when switching projects quickly", async () => {
+    let projectOneCallCount = 0;
+    let resolveProjectOneLatest: ((value: unknown) => void) | undefined;
+    let resolveProjectTwoTasks: ((value: unknown) => void) | undefined;
+
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+          {
+            id: "p-2",
+            name: "Beta",
+            key: "BET",
+            repositories: [
+              { id: "r-2", name: "Beta", path: "/repo/beta", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        const projectId =
+          (args as { projectId?: string } | undefined)?.projectId || "";
+        if (projectId === "p-1") {
+          projectOneCallCount += 1;
+          if (projectOneCallCount === 1) {
+            return Promise.resolve([
+              {
+                id: "task-alpha-initial",
+                title: "Alpha initial task",
+                status: "todo",
+                display_key: "ALP-1",
+              },
+            ]);
+          }
+        }
+        return new Promise((resolve) => {
+          if (projectId === "p-1") {
+            resolveProjectOneLatest = resolve;
+            return;
+          }
+          resolveProjectTwoTasks = resolve;
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByText("Alpha initial task")).toBeTruthy();
+    });
+
+    const projectSelect = (await screen.findByLabelText(
+      "Project",
+    )) as HTMLSelectElement;
+    await fireEvent.change(projectSelect, { target: { value: "p-2" } });
+    await fireEvent.change(projectSelect, { target: { value: "p-1" } });
+
+    resolveProjectOneLatest?.([
+      {
+        id: "task-alpha-latest",
+        title: "Alpha latest task",
+        status: "todo",
+        display_key: "ALP-2",
+      },
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByText("Alpha latest task")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+    });
+
+    resolveProjectTwoTasks?.([
+      {
+        id: "task-beta-1",
+        title: "Beta task",
+        status: "todo",
+        display_key: "BET-1",
+      },
+    ]);
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Beta task")).toBeNull();
+    expect(screen.getByText("Alpha latest task")).toBeTruthy();
+  });
+
   it("renders dynamic task title for task route", () => {
     renderAt("/tasks/task-123");
     expect(screen.getByRole("heading", { name: "Task Detail" })).toBeTruthy();
@@ -445,6 +670,89 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/board");
+    });
+  });
+
+  it("preserves board origin when navigating to dependency task from board context", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_task") {
+        const taskId = (args as { id?: string } | undefined)?.id;
+        if (taskId === "task-parent-1") {
+          return Promise.resolve({
+            id: "task-parent-1",
+            title: "Seed data",
+            description: "Parent dependency task",
+            status: "done",
+            project_id: "p-1",
+            target_repository_name: "Main",
+            display_key: "ALP-5",
+          });
+        }
+        return Promise.resolve({
+          id: "task-123",
+          title: "Sample task",
+          description: "Task details",
+          status: "todo",
+          project_id: "p-1",
+          target_repository_name: "Main",
+          display_key: "ALP-7",
+        });
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-123",
+          parents: [
+            {
+              id: "task-parent-1",
+              display_key: "ALP-5",
+              title: "Seed data",
+              status: "done",
+              target_repository_name: "Main",
+            },
+          ],
+          children: [],
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/tasks/task-123?origin=board");
+
+    await waitFor(() => {
+      expect(screen.getByText("ALP-5 - Seed data")).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByText("ALP-5 - Seed data"));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(
+        "/projects/p-1/tasks/task-parent-1",
+      );
+      expect(window.location.search).toBe("?origin=board");
+      expect(screen.getByRole("link", { name: "Back to board" })).toBeTruthy();
     });
   });
 

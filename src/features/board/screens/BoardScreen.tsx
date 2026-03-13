@@ -13,6 +13,7 @@ const BoardScreen: Component = () => {
     createSignal<TaskStatus | null>(null);
 
   const onTaskDragStart = (taskId: string, event: DragEvent) => {
+    event.stopPropagation();
     setDraggingTaskId(taskId);
     if (!event.dataTransfer) return;
     event.dataTransfer.setData("text/plain", taskId);
@@ -27,10 +28,11 @@ const BoardScreen: Component = () => {
 
   const onColumnDrop = (status: TaskStatus, event: DragEvent) => {
     event.preventDefault();
+    event.stopPropagation();
     const droppedTaskId =
-      draggingTaskId() ||
       event.dataTransfer?.getData("application/x-orkestra-task") ||
-      event.dataTransfer?.getData("text/plain");
+      event.dataTransfer?.getData("text/plain") ||
+      draggingTaskId();
     resetDragState();
     if (!droppedTaskId) return;
     void model.moveTaskToStatus(droppedTaskId, status);

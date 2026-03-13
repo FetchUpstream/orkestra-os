@@ -16,6 +16,7 @@ export const useBoardModel = () => {
   const [isProjectsLoading, setIsProjectsLoading] = createSignal(true);
   const [isTasksLoading, setIsTasksLoading] = createSignal(false);
   const [error, setError] = createSignal("");
+  let activeTasksRequestVersion = 0;
 
   const selectedProject = createMemo(
     () =>
@@ -25,17 +26,32 @@ export const useBoardModel = () => {
   const groupedTasks = createMemo(() => groupTasksByStatus(tasks()));
 
   const loadTasks = async (projectId: string) => {
+    const requestVersion = ++activeTasksRequestVersion;
     setIsTasksLoading(true);
     setError("");
 
     try {
       const loadedTasks = await listProjectTasks(projectId);
+      if (
+        requestVersion !== activeTasksRequestVersion ||
+        selectedProjectId() !== projectId
+      ) {
+        return;
+      }
       setTasks(loadedTasks);
     } catch {
+      if (
+        requestVersion !== activeTasksRequestVersion ||
+        selectedProjectId() !== projectId
+      ) {
+        return;
+      }
       setTasks([]);
       setError("Failed to load project tasks. Please refresh.");
     } finally {
-      setIsTasksLoading(false);
+      if (requestVersion === activeTasksRequestVersion) {
+        setIsTasksLoading(false);
+      }
     }
   };
 
@@ -53,14 +69,15 @@ export const useBoardModel = () => {
   ): Promise<void> => {
     if (isTaskStatusUpdating(taskId)) return;
 
-    const previousTasks = tasks();
-    const taskToMove = previousTasks.find((task) => task.id === taskId);
+    const currentTasks = tasks();
+    const taskToMove = currentTasks.find((task) => task.id === taskId);
     if (!taskToMove || taskToMove.status === targetStatus) return;
+    const previousStatus = taskToMove.status;
 
     setUpdatingTaskIds((current) => [...current, taskId]);
     setError("");
     setTasks(
-      previousTasks.map((task) =>
+      currentTasks.map((task) =>
         task.id === taskId ? { ...task, status: targetStatus } : task,
       ),
     );
@@ -73,7 +90,11 @@ export const useBoardModel = () => {
         ),
       );
     } catch {
-      setTasks(previousTasks);
+      setTasks((currentAfterFailure) =>
+        currentAfterFailure.map((task) =>
+          task.id === taskId ? { ...task, status: previousStatus } : task,
+        ),
+      );
       setError("Failed to update task status. Please try again.");
     } finally {
       setUpdatingTaskIds((current) => current.filter((id) => id !== taskId));

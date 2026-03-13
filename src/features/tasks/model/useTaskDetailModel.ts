@@ -83,9 +83,13 @@ export const useTaskDetailModel = () => {
   const dependencyTaskHref = (dependencyTaskId: string) => {
     const scopedProjectId =
       projectId() || task()?.projectId || params.projectId;
-    return scopedProjectId
+    const baseHref = scopedProjectId
       ? `/projects/${scopedProjectId}/tasks/${dependencyTaskId}`
       : `/tasks/${dependencyTaskId}`;
+    if (taskDetailOrigin() === "board") {
+      return `${baseHref}?origin=board`;
+    }
+    return baseHref;
   };
 
   const navigateToDependencyTask = (dependencyTaskId: string) => {

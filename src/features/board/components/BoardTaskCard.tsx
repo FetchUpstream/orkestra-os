@@ -1,5 +1,5 @@
 import { A } from "@solidjs/router";
-import { Show, type Component } from "solid-js";
+import { Show, createSignal, type Component } from "solid-js";
 import type { Project } from "../../../app/lib/projects";
 import type { Task } from "../../../app/lib/tasks";
 import { taskDisplayKey } from "../../projects/utils/projectDetail";
@@ -15,8 +15,28 @@ type Props = {
 };
 
 const BoardTaskCard: Component<Props> = (props) => {
+  const [dragJustEnded, setDragJustEnded] = createSignal(false);
   const repositoryTag = () =>
     props.task.targetRepositoryName || props.task.targetRepositoryPath || "";
+
+  const onDragStart = (event: DragEvent) => {
+    setDragJustEnded(false);
+    if (event.dataTransfer) {
+      const dragImage = document.createElement("canvas");
+      dragImage.width = 1;
+      dragImage.height = 1;
+      if (typeof event.dataTransfer.setDragImage === "function") {
+        event.dataTransfer.setDragImage(dragImage, 0, 0);
+      }
+    }
+    props.onDragStart?.(props.task.id, event);
+  };
+
+  const onDragEnd = () => {
+    setDragJustEnded(true);
+    window.setTimeout(() => setDragJustEnded(false), 0);
+    props.onDragEnd?.();
+  };
 
   return (
     <li
@@ -27,12 +47,29 @@ const BoardTaskCard: Component<Props> = (props) => {
         transition: "opacity 0.2s ease",
         cursor: props.isStatusUpdating ? "wait" : "grab",
       }}
-      onDragStart={(event) => props.onDragStart?.(props.task.id, event)}
-      onDragEnd={() => props.onDragEnd?.()}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
     >
+      <div
+        aria-hidden="true"
+        style={{
+          "font-size": "0.75rem",
+          opacity: "0.7",
+          "margin-bottom": "4px",
+          "user-select": "none",
+        }}
+      >
+        Drag to move
+      </div>
       <A
         href={`/tasks/${props.task.id}?origin=board`}
         class="project-task-link"
+        onClick={(event) => {
+          if (dragJustEnded() || props.isDragging) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }}
       >
         <div class="project-task-main">
           <p class="project-task-title">{props.task.title}</p>
