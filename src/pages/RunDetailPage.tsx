@@ -1,15 +1,8 @@
 import type { Component } from "solid-js";
-import { useParams } from "@solidjs/router";
-import PageHeader from "../components/layout/PageHeader";
+import RunDetailScreen from "../features/runs/screens/RunDetailScreen";
 
 const RunDetailPage: Component = () => {
-  const params = useParams();
-  return (
-    <>
-      <PageHeader title={`Run ${params.runId}`} />
-      <p class="page-placeholder">Run logs and status.</p>
-    </>
-  );
+  return <RunDetailScreen />;
 };
 
 export default RunDetailPage;

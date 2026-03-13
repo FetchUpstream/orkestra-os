@@ -96,6 +96,29 @@ describe("app routing and shell", () => {
             },
           ],
         });
+      if (command === "list_task_runs") return Promise.resolve([]);
+      if (command === "create_run")
+        return Promise.resolve({
+          id: "run-new",
+          task_id: "task-123",
+          project_id: "p-1",
+          status: "queued",
+          triggered_by: "user",
+          created_at: "2026-01-03T00:00:00.000Z",
+        });
+      if (command === "get_run")
+        return Promise.resolve({
+          id: "run-456",
+          task_id: "task-123",
+          project_id: "p-1",
+          status: "running",
+          triggered_by: "user",
+          created_at: "2026-01-02T00:00:00.000Z",
+          started_at: "2026-01-02T00:01:00.000Z",
+          finished_at: null,
+          summary: null,
+          error_message: null,
+        });
       if (command === "add_task_dependency") return Promise.resolve(null);
       if (command === "remove_task_dependency") return Promise.resolve(null);
       if (command === "get_task")
@@ -1383,9 +1406,162 @@ describe("app routing and shell", () => {
     ).toBeNull();
   });
 
-  it("renders dynamic run title for run route", () => {
+  it("renders foundational run detail surface for run route", async () => {
     renderAt("/runs/run-456");
-    expect(screen.getByRole("heading", { name: "Run run-456" })).toBeTruthy();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Current run" })).toBeTruthy();
+      expect(screen.getByText("Running")).toBeTruthy();
+      expect(screen.getByText("Linked task:", { exact: false })).toBeTruthy();
+      expect(screen.getByText("Logs")).toBeTruthy();
+      expect(screen.getByText("Events")).toBeTruthy();
+      expect(screen.getByText("Files")).toBeTruthy();
+      expect(screen.getByText("Review")).toBeTruthy();
+      expect(screen.queryByText("run-456")).toBeNull();
+    });
+  });
+
+  it("creates a run from task detail, lists it, and navigates to run detail", async () => {
+    let listRunsCallCount = 0;
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "get_task") {
+        const taskId = (args as { id?: string } | undefined)?.id;
+        if (taskId === "task-99") {
+          return Promise.resolve({
+            id: "task-99",
+            title: "Run target task",
+            status: "todo",
+            project_id: "p-1",
+            target_repository_name: "Main",
+            display_key: "ALP-99",
+          });
+        }
+        return Promise.resolve({
+          id: "task-123",
+          title: "Sample task",
+          description: "Task details",
+          status: "todo",
+          project_id: "p-1",
+          target_repository_name: "Main",
+          display_key: "ALP-7",
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-123",
+          parents: [],
+          children: [],
+        });
+      }
+      if (command === "list_task_runs") {
+        listRunsCallCount += 1;
+        if (listRunsCallCount === 1) {
+          return Promise.resolve([
+            {
+              id: "run-old",
+              task_id: "task-123",
+              project_id: "p-1",
+              status: "completed",
+              triggered_by: "user",
+              created_at: "2026-01-01T00:00:00.000Z",
+            },
+          ]);
+        }
+        return Promise.resolve([
+          {
+            id: "run-new",
+            task_id: "task-99",
+            project_id: "p-1",
+            status: "queued",
+            triggered_by: "user",
+            created_at: "2026-01-03T00:00:00.000Z",
+          },
+          {
+            id: "run-old",
+            task_id: "task-123",
+            project_id: "p-1",
+            status: "completed",
+            triggered_by: "user",
+            created_at: "2026-01-01T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (command === "create_run") {
+        return Promise.resolve({
+          id: "run-new",
+          task_id: "task-123",
+          project_id: "p-1",
+          status: "queued",
+          triggered_by: "user",
+          created_at: "2026-01-03T00:00:00.000Z",
+        });
+      }
+      if (command === "get_run") {
+        return Promise.resolve({
+          id: "run-new",
+          task_id: "task-99",
+          project_id: "p-1",
+          status: "running",
+          triggered_by: "user",
+          created_at: "2026-01-03T00:00:00.000Z",
+          started_at: "2026-01-03T00:01:00.000Z",
+          finished_at: null,
+          summary: "In progress",
+          error_message: null,
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects/p-1/tasks/task-123");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Runs" })).toBeTruthy();
+      expect(screen.getByText("Completed")).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "New Run" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("create_run", {
+        taskId: "task-123",
+      });
+      expect(listRunsCallCount).toBe(2);
+      expect(screen.getByText("Queued")).toBeTruthy();
+    });
+
+    await fireEvent.click(
+      screen.getAllByRole("link", { name: /Open run details/i })[0],
+    );
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/runs/run-new");
+      expect(screen.getByRole("heading", { name: "Current run" })).toBeTruthy();
+      expect(screen.getByText("Running")).toBeTruthy();
+    });
   });
 
   it("renders dependencies and wires add/remove payloads", async () => {

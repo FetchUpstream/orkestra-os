@@ -13,6 +13,7 @@ import {
   dependencyDisplayLabel,
   dependencyScopeLabel,
   formatDateTime,
+  formatRunStatus,
   formatStatus,
   nextStatus,
   projectLabel,
@@ -49,6 +50,10 @@ const TaskDetailScreen: Component = () => {
     dependencies,
     dependenciesError,
     isLoadingDependencies,
+    runs,
+    runsError,
+    isLoadingRuns,
+    isCreatingRun,
     selectedParentTaskId,
     selectedChildTaskId,
     isAddingParent,
@@ -76,6 +81,7 @@ const TaskDetailScreen: Component = () => {
     availableChildCandidates,
     navigateToDependencyTask,
     refreshDependencies,
+    refreshRuns,
     setActionError,
     setIsEditing,
     setEditTitle,
@@ -99,6 +105,7 @@ const TaskDetailScreen: Component = () => {
     onAddParentDependency,
     onAddChildDependency,
     onRemoveDependency,
+    onCreateRun,
   } = useTaskDetailModel();
 
   return (
@@ -353,6 +360,87 @@ const TaskDetailScreen: Component = () => {
                               </button>
                             </Show>
                           </div>
+                        </div>
+                        <div
+                          class="task-detail-panel-separator"
+                          aria-hidden="true"
+                        />
+                        <div class="task-detail-panel-section task-runs-panel">
+                          <div class="task-dependencies-heading-row">
+                            <h2 class="project-section-title">Runs</h2>
+                            <button
+                              type="button"
+                              class="projects-button-primary"
+                              onClick={onCreateRun}
+                              disabled={isCreatingRun()}
+                            >
+                              {isCreatingRun() ? "Starting..." : "New Run"}
+                            </button>
+                          </div>
+                          <Show
+                            when={!runsError()}
+                            fallback={
+                              <div class="task-dependencies-error-block">
+                                <p class="project-placeholder-text">
+                                  {runsError()}
+                                </p>
+                                <button
+                                  type="button"
+                                  class="projects-button-muted"
+                                  onClick={() => {
+                                    const currentTask = task();
+                                    if (!currentTask) return;
+                                    void refreshRuns(currentTask.id);
+                                  }}
+                                >
+                                  Retry
+                                </button>
+                              </div>
+                            }
+                          >
+                            <Show
+                              when={!isLoadingRuns()}
+                              fallback={
+                                <p class="project-placeholder-text">
+                                  Loading runs.
+                                </p>
+                              }
+                            >
+                              <Show
+                                when={runs().length > 0}
+                                fallback={
+                                  <p class="project-placeholder-text">
+                                    No runs yet.
+                                  </p>
+                                }
+                              >
+                                <ul class="task-runs-list">
+                                  <For each={runs()}>
+                                    {(runItem) => (
+                                      <li class="task-runs-item">
+                                        <A
+                                          href={`/runs/${runItem.id}`}
+                                          class="task-runs-link"
+                                        >
+                                          <span class="task-runs-link-copy">
+                                            Open run details
+                                          </span>
+                                          <span
+                                            class={`project-task-status project-task-status--${runItem.status}`}
+                                          >
+                                            {formatRunStatus(runItem.status)}
+                                          </span>
+                                          <span class="task-runs-created-at">
+                                            {formatDateTime(runItem.createdAt)}
+                                          </span>
+                                        </A>
+                                      </li>
+                                    )}
+                                  </For>
+                                </ul>
+                              </Show>
+                            </Show>
+                          </Show>
                         </div>
                         <div
                           class="task-detail-panel-separator"

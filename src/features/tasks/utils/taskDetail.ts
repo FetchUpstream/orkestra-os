@@ -3,6 +3,7 @@ import type {
   TaskDependencyTask,
   TaskStatus,
 } from "../../../app/lib/tasks";
+import type { RunStatus } from "../../../app/lib/runs";
 
 export const formatStatus = (status: Task["status"]) => {
   if (status === "todo") return "To do";
@@ -58,6 +59,15 @@ export const canTransitionStatus = (
   }
 
   return nextStatus(from) === to;
+};
+
+export const formatRunStatus = (status: RunStatus) => {
+  if (status === "queued") return "Queued";
+  if (status === "preparing") return "Preparing";
+  if (status === "running") return "Running";
+  if (status === "completed") return "Completed";
+  if (status === "failed") return "Failed";
+  return "Cancelled";
 };
 
 export const getActionErrorMessage = (

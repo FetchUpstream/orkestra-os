@@ -16,6 +16,7 @@ import {
   type Task,
   type TaskStatus,
 } from "../../../app/lib/tasks";
+import { createRun, listTaskRuns, type Run } from "../../../app/lib/runs";
 import { getActionErrorMessage, nextStatus } from "../utils/taskDetail";
 
 export type DependencyCreateDirection = "parent" | "child";
@@ -65,6 +66,10 @@ export const useTaskDetailModel = () => {
   const [isCreatingDependency, setIsCreatingDependency] = createSignal(false);
   const [defaultProjectRepositoryId, setDefaultProjectRepositoryId] =
     createSignal("");
+  const [runs, setRuns] = createSignal<Run[]>([]);
+  const [runsError, setRunsError] = createSignal("");
+  const [isLoadingRuns, setIsLoadingRuns] = createSignal(false);
+  const [isCreatingRun, setIsCreatingRun] = createSignal(false);
 
   const taskDetailOrigin = createMemo(() => {
     const searchParams = new URLSearchParams(location.search);
@@ -134,6 +139,20 @@ export const useTaskDetailModel = () => {
       setDependenciesError("Failed to load dependencies.");
     } finally {
       setIsLoadingDependencies(false);
+    }
+  };
+
+  const refreshRuns = async (taskId: string) => {
+    setIsLoadingRuns(true);
+    setRunsError("");
+    try {
+      const loadedRuns = await listTaskRuns(taskId);
+      setRuns(loadedRuns);
+    } catch {
+      setRunsError("Failed to load runs.");
+      setRuns([]);
+    } finally {
+      setIsLoadingRuns(false);
     }
   };
 
@@ -283,6 +302,7 @@ export const useTaskDetailModel = () => {
         await Promise.all([
           loadProjectContext(resolvedProjectId),
           refreshDependencies(detail.id),
+          refreshRuns(detail.id),
           loadDependencyCandidates(resolvedProjectId),
         ]);
       } catch {
@@ -451,6 +471,23 @@ export const useTaskDetailModel = () => {
     }
   };
 
+  const onCreateRun = async () => {
+    const taskValue = task();
+    if (!taskValue) return;
+    setActionError("");
+    setIsCreatingRun(true);
+    try {
+      await createRun(taskValue.id);
+      await refreshRuns(taskValue.id);
+    } catch (mutationError) {
+      setActionError(
+        getActionErrorMessage("Failed to create run.", mutationError),
+      );
+    } finally {
+      setIsCreatingRun(false);
+    }
+  };
+
   return {
     params,
     task,
@@ -463,6 +500,10 @@ export const useTaskDetailModel = () => {
     dependencies,
     dependenciesError,
     isLoadingDependencies,
+    runs,
+    runsError,
+    isLoadingRuns,
+    isCreatingRun,
     selectedParentTaskId,
     selectedChildTaskId,
     isAddingParent,
@@ -490,6 +531,7 @@ export const useTaskDetailModel = () => {
     availableChildCandidates,
     navigateToDependencyTask,
     refreshDependencies,
+    refreshRuns,
     setActionError,
     setIsEditing,
     setEditTitle,
@@ -513,5 +555,6 @@ export const useTaskDetailModel = () => {
     onAddParentDependency,
     onAddChildDependency,
     onRemoveDependency,
+    onCreateRun,
   };
 };
