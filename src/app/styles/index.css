@@ -130,7 +130,9 @@ textarea::placeholder {
 
 .sidebar-edge-toggle {
   position: absolute;
-  top: 16px;
+  top: auto;
+  bottom: 40%;
+  transform: translateY(50%);
   right: -13px;
   width: 24px;
   height: 40px;
@@ -155,8 +157,18 @@ textarea::placeholder {
 }
 
 .sidebar-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
   font-size: 1rem;
   line-height: 1;
+  transform-origin: center;
+}
+
+.sidebar-edge-toggle--collapsed .sidebar-chevron {
+  transform: rotate(180deg);
 }
 
 .nav-item {

@@ -46,6 +46,10 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
         <button
           type="button"
           class="sidebar-edge-toggle"
+          classList={{
+            "sidebar-edge-toggle--collapsed":
+              props.desktopCollapsed?.() ?? false,
+          }}
           aria-label={
             props.desktopCollapsed?.() ? "Expand sidebar" : "Collapse sidebar"
           }
@@ -63,7 +67,7 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
           }}
         >
           <span class="sidebar-chevron" aria-hidden="true">
-            {props.desktopCollapsed?.() ? "›" : "‹"}
+            ‹
           </span>
         </button>
       ) : null}
