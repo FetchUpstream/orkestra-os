@@ -1421,6 +1421,111 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("renders run not found state when get_run returns not found", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_run") {
+        return Promise.reject(new Error("run not found"));
+      }
+      if (command === "get_task") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/runs/missing-run");
+
+    await waitFor(() => {
+      expect(screen.getByText("Run not found.")).toBeTruthy();
+      expect(screen.queryByText("Failed to load run details.")).toBeNull();
+    });
+  });
+
+  it("ignores stale run detail responses when switching run routes quickly", async () => {
+    let resolveRunOne: ((value: unknown) => void) | undefined;
+    let resolveRunTwo: ((value: unknown) => void) | undefined;
+
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_run") {
+        const runId = (args as { runId?: string } | undefined)?.runId;
+        return new Promise((resolve) => {
+          if (runId === "run-1") {
+            resolveRunOne = resolve;
+            return;
+          }
+          resolveRunTwo = resolve;
+        });
+      }
+
+      if (command === "get_task") {
+        return Promise.resolve(null);
+      }
+
+      return Promise.resolve(null);
+    });
+
+    renderAt("/runs/run-1");
+
+    window.history.pushState({}, "", "/runs/run-2");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    window.dispatchEvent(new Event("popstate"));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("get_run", { runId: "run-2" });
+    });
+
+    resolveRunTwo?.({
+      id: "run-2",
+      task_id: "task-2",
+      project_id: "p-1",
+      status: "running",
+      triggered_by: "user",
+      created_at: "2026-01-02T00:00:00.000Z",
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Running")).toBeTruthy();
+    });
+
+    resolveRunOne?.({
+      id: "run-1",
+      task_id: "task-1",
+      project_id: "p-1",
+      status: "completed",
+      triggered_by: "user",
+      created_at: "2026-01-01T00:00:00.000Z",
+      finished_at: "2026-01-01T00:05:00.000Z",
+    });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Completed")).toBeNull();
+    expect(screen.getByText("Running")).toBeTruthy();
+  });
+
   it("creates a run from task detail, lists it, and navigates to run detail", async () => {
     let listRunsCallCount = 0;
     invokeMock.mockImplementation((command: string, args?: unknown) => {

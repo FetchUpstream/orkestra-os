@@ -9,6 +9,28 @@ export const useRunDetailModel = () => {
   const [task, setTask] = createSignal<Task | null>(null);
   const [isLoading, setIsLoading] = createSignal(true);
   const [error, setError] = createSignal("");
+  let activeRunRequestVersion = 0;
+
+  const isNotFoundError = (value: unknown): boolean => {
+    if (value instanceof Error) {
+      return value.message.toLowerCase().includes("not found");
+    }
+
+    if (typeof value === "string") {
+      return value.toLowerCase().includes("not found");
+    }
+
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+
+    const maybeMessage = (value as { message?: unknown }).message;
+    if (typeof maybeMessage === "string") {
+      return maybeMessage.toLowerCase().includes("not found");
+    }
+
+    return false;
+  };
 
   const taskHref = createMemo(() => {
     const taskValue = task();
@@ -21,6 +43,7 @@ export const useRunDetailModel = () => {
 
   createEffect(() => {
     const runId = params.runId;
+    const requestVersion = ++activeRunRequestVersion;
     if (!runId) {
       setError("Missing run ID.");
       setIsLoading(false);
@@ -36,17 +59,49 @@ export const useRunDetailModel = () => {
       setTask(null);
       try {
         const loadedRun = await getRun(runId);
+        if (
+          requestVersion !== activeRunRequestVersion ||
+          params.runId !== runId
+        ) {
+          return;
+        }
         setRun(loadedRun);
         try {
           const loadedTask = await getTask(loadedRun.taskId);
+          if (
+            requestVersion !== activeRunRequestVersion ||
+            params.runId !== runId
+          ) {
+            return;
+          }
           setTask(loadedTask);
         } catch {
+          if (
+            requestVersion !== activeRunRequestVersion ||
+            params.runId !== runId
+          ) {
+            return;
+          }
           setTask(null);
         }
-      } catch {
+      } catch (loadError) {
+        if (
+          requestVersion !== activeRunRequestVersion ||
+          params.runId !== runId
+        ) {
+          return;
+        }
+        if (isNotFoundError(loadError)) {
+          setError("");
+          setRun(null);
+          setTask(null);
+          return;
+        }
         setError("Failed to load run details.");
       } finally {
-        setIsLoading(false);
+        if (requestVersion === activeRunRequestVersion) {
+          setIsLoading(false);
+        }
       }
     })();
   });

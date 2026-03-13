@@ -182,6 +182,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_run_returns_validation_error_for_empty_task_id() {
+        let (service, _) = setup_service().await;
+
+        let result = service.create_run("   ").await;
+
+        match result {
+            Err(AppError::Validation(message)) => assert_eq!(message, "task_id is required"),
+            _ => panic!("expected validation error"),
+        }
+    }
+
+    #[tokio::test]
     async fn list_task_runs_orders_by_created_at_desc() {
         let (service, pool) = setup_service().await;
         seed_task(&pool, "task-1").await;
@@ -224,6 +236,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_task_runs_returns_not_found_for_missing_task() {
+        let (service, _) = setup_service().await;
+
+        let result = service.list_task_runs("missing-task").await;
+
+        match result {
+            Err(AppError::NotFound(message)) => assert_eq!(message, "task not found"),
+            _ => panic!("expected not found error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_task_runs_returns_validation_error_for_empty_task_id() {
+        let (service, _) = setup_service().await;
+
+        let result = service.list_task_runs(" ").await;
+
+        match result {
+            Err(AppError::Validation(message)) => assert_eq!(message, "task_id is required"),
+            _ => panic!("expected validation error"),
+        }
+    }
+
+    #[tokio::test]
     async fn get_run_returns_not_found_for_missing_run() {
         let (service, _) = setup_service().await;
 
@@ -232,6 +268,18 @@ mod tests {
         match result {
             Err(AppError::NotFound(message)) => assert_eq!(message, "run not found"),
             _ => panic!("expected not found error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_run_returns_validation_error_for_empty_run_id() {
+        let (service, _) = setup_service().await;
+
+        let result = service.get_run("   ").await;
+
+        match result {
+            Err(AppError::Validation(message)) => assert_eq!(message, "run_id is required"),
+            _ => panic!("expected validation error"),
         }
     }
 
