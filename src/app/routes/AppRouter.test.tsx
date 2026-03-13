@@ -1410,6 +1410,7 @@ describe("app routing and shell", () => {
     renderAt("/runs/run-456");
 
     await waitFor(() => {
+      expect(screen.getByRole("link", { name: "Back to task" })).toBeTruthy();
       expect(screen.getByRole("heading", { name: "Current run" })).toBeTruthy();
       expect(screen.getByText("Running")).toBeTruthy();
       expect(screen.getByText("Linked task:", { exact: false })).toBeTruthy();
@@ -1418,6 +1419,69 @@ describe("app routing and shell", () => {
       expect(screen.getByText("Files")).toBeTruthy();
       expect(screen.getByText("Review")).toBeTruthy();
       expect(screen.queryByText("run-456")).toBeNull();
+    });
+  });
+
+  it("navigates back from run detail to linked task detail", async () => {
+    renderAt("/runs/run-456");
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "Back to task" })).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("link", { name: "Back to task" }));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/projects/p-1/tasks/task-123");
+      expect(window.location.search).toBe("");
+    });
+  });
+
+  it("falls back to projects back target when run has no task context", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_run") {
+        return Promise.resolve({
+          id: "run-no-task",
+          task_id: "",
+          project_id: "p-1",
+          status: "running",
+          triggered_by: "user",
+          created_at: "2026-01-02T00:00:00.000Z",
+        });
+      }
+      if (command === "get_task") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/runs/run-no-task");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("link", { name: "Back to projects" }),
+      ).toBeTruthy();
+    });
+
+    await fireEvent.click(
+      screen.getByRole("link", { name: "Back to projects" }),
+    );
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/projects");
+      expect(window.location.search).toBe("");
     });
   });
 

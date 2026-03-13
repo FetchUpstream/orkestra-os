@@ -1,5 +1,6 @@
-import { A } from "@solidjs/router";
 import { For, Show, type Component } from "solid-js";
+import BackIconLink from "../../../components/ui/BackIconLink";
+import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
 import MarkdownContent from "../../../components/ui/MarkdownContent";
 import TaskMarkdownEditor from "../../../components/ui/TaskMarkdownEditor";
@@ -130,28 +131,11 @@ const TaskDetailScreen: Component = () => {
                   <div class="task-detail-columns">
                     <div class="task-detail-main-column">
                       <section class="projects-panel task-detail-main-card">
-                        <A
+                        <BackIconLink
                           href={backHref()}
+                          label={backLabel()}
                           class="project-detail-back-link project-detail-back-link--icon task-detail-back-link"
-                          aria-label={`Back to ${backLabel()}`}
-                          title={`Back to ${backLabel()}`}
-                        >
-                          <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 16 16"
-                            fill="none"
-                            aria-hidden="true"
-                          >
-                            <path
-                              d="M10 12L6 8L10 4"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                            />
-                          </svg>
-                        </A>
+                        />
                         <Show when={actionError()}>
                           <div
                             class="projects-error"

@@ -1,5 +1,6 @@
 import { A } from "@solidjs/router";
 import { Show, type Component } from "solid-js";
+import BackIconLink from "../../../components/ui/BackIconLink";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime, formatRunStatus } from "../../tasks/utils/taskDetail";
 
@@ -35,6 +36,11 @@ const RunDetailScreen: Component = () => {
             {(runValue) => (
               <>
                 <section class="projects-panel run-detail-card">
+                  <BackIconLink
+                    href={model.backHref()}
+                    label={model.backLabel()}
+                    class="project-detail-back-link project-detail-back-link--icon task-detail-back-link"
+                  />
                   <div class="run-detail-header-row">
                     <h1 class="run-detail-title">Current run</h1>
                     <span

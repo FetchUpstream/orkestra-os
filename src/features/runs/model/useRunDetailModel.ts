@@ -45,6 +45,30 @@ export const useRunDetailModel = () => {
     return `/tasks/${taskValue.id}${originSearch}`;
   });
 
+  const backHref = createMemo(() => {
+    const taskValue = task();
+    if (taskValue?.id) {
+      if (taskValue.projectId) {
+        return `/projects/${taskValue.projectId}/tasks/${taskValue.id}`;
+      }
+      return `/tasks/${taskValue.id}`;
+    }
+
+    const runValue = run();
+    if (runValue?.taskId) {
+      if (runValue.projectId) {
+        return `/projects/${runValue.projectId}/tasks/${runValue.taskId}`;
+      }
+      return `/tasks/${runValue.taskId}`;
+    }
+
+    return "/projects";
+  });
+
+  const backLabel = createMemo(() => {
+    return backHref() === "/projects" ? "projects" : "task";
+  });
+
   createEffect(() => {
     const runId = params.runId;
     const requestVersion = ++activeRunRequestVersion;
@@ -116,5 +140,7 @@ export const useRunDetailModel = () => {
     isLoading,
     error,
     taskHref,
+    backHref,
+    backLabel,
   };
 };
