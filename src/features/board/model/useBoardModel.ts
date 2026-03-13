@@ -1,12 +1,18 @@
 import { createMemo, createSignal, onMount } from "solid-js";
 import { listProjects, type Project } from "../../../app/lib/projects";
-import { listProjectTasks, type Task } from "../../../app/lib/tasks";
+import {
+  listProjectTasks,
+  setTaskStatus,
+  type Task,
+  type TaskStatus,
+} from "../../../app/lib/tasks";
 import { groupTasksByStatus } from "../utils/board";
 
 export const useBoardModel = () => {
   const [projects, setProjects] = createSignal<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = createSignal("");
   const [tasks, setTasks] = createSignal<Task[]>([]);
+  const [updatingTaskIds, setUpdatingTaskIds] = createSignal<string[]>([]);
   const [isProjectsLoading, setIsProjectsLoading] = createSignal(true);
   const [isTasksLoading, setIsTasksLoading] = createSignal(false);
   const [error, setError] = createSignal("");
@@ -36,6 +42,42 @@ export const useBoardModel = () => {
   const onProjectChange = async (projectId: string) => {
     setSelectedProjectId(projectId);
     await loadTasks(projectId);
+  };
+
+  const isTaskStatusUpdating = (taskId: string): boolean =>
+    updatingTaskIds().includes(taskId);
+
+  const moveTaskToStatus = async (
+    taskId: string,
+    targetStatus: TaskStatus,
+  ): Promise<void> => {
+    if (isTaskStatusUpdating(taskId)) return;
+
+    const previousTasks = tasks();
+    const taskToMove = previousTasks.find((task) => task.id === taskId);
+    if (!taskToMove || taskToMove.status === targetStatus) return;
+
+    setUpdatingTaskIds((current) => [...current, taskId]);
+    setError("");
+    setTasks(
+      previousTasks.map((task) =>
+        task.id === taskId ? { ...task, status: targetStatus } : task,
+      ),
+    );
+
+    try {
+      const updatedTask = await setTaskStatus(taskId, { status: targetStatus });
+      setTasks((currentTasks) =>
+        currentTasks.map((task) =>
+          task.id === taskId ? { ...task, ...updatedTask } : task,
+        ),
+      );
+    } catch {
+      setTasks(previousTasks);
+      setError("Failed to update task status. Please try again.");
+    } finally {
+      setUpdatingTaskIds((current) => current.filter((id) => id !== taskId));
+    }
   };
 
   onMount(async () => {
@@ -71,5 +113,7 @@ export const useBoardModel = () => {
     isTasksLoading,
     error,
     onProjectChange,
+    isTaskStatusUpdating,
+    moveTaskToStatus,
   };
 };

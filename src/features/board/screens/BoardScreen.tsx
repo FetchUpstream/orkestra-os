@@ -1,12 +1,40 @@
-import { For, Show, type Component } from "solid-js";
+import { For, Show, createSignal, type Component } from "solid-js";
 import { A } from "@solidjs/router";
 import PageHeader from "../../../components/layout/PageHeader";
 import BoardTaskCard from "../components/BoardTaskCard";
 import { useBoardModel } from "../model/useBoardModel";
 import { BOARD_COLUMNS } from "../utils/board";
+import type { TaskStatus } from "../../../app/lib/tasks";
 
 const BoardScreen: Component = () => {
   const model = useBoardModel();
+  const [draggingTaskId, setDraggingTaskId] = createSignal<string | null>(null);
+  const [activeDropStatus, setActiveDropStatus] =
+    createSignal<TaskStatus | null>(null);
+
+  const onTaskDragStart = (taskId: string, event: DragEvent) => {
+    setDraggingTaskId(taskId);
+    if (!event.dataTransfer) return;
+    event.dataTransfer.setData("text/plain", taskId);
+    event.dataTransfer.setData("application/x-orkestra-task", taskId);
+    event.dataTransfer.effectAllowed = "move";
+  };
+
+  const resetDragState = () => {
+    setDraggingTaskId(null);
+    setActiveDropStatus(null);
+  };
+
+  const onColumnDrop = (status: TaskStatus, event: DragEvent) => {
+    event.preventDefault();
+    const droppedTaskId =
+      draggingTaskId() ||
+      event.dataTransfer?.getData("application/x-orkestra-task") ||
+      event.dataTransfer?.getData("text/plain");
+    resetDragState();
+    if (!droppedTaskId) return;
+    void model.moveTaskToStatus(droppedTaskId, status);
+  };
 
   return (
     <>
@@ -68,6 +96,27 @@ const BoardScreen: Component = () => {
               <section
                 class="projects-panel"
                 aria-labelledby={`board-column-${column.status}`}
+                data-board-status={column.status}
+                style={{
+                  transition: "box-shadow 0.2s ease",
+                  "box-shadow":
+                    activeDropStatus() === column.status
+                      ? "inset 0 0 0 2px var(--accent)"
+                      : "none",
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  if (event.dataTransfer) {
+                    event.dataTransfer.dropEffect = "move";
+                  }
+                  setActiveDropStatus(column.status);
+                }}
+                onDragLeave={() => {
+                  if (activeDropStatus() === column.status) {
+                    setActiveDropStatus(null);
+                  }
+                }}
+                onDrop={(event) => onColumnDrop(column.status, event)}
               >
                 <div class="project-section-header">
                   <h3
@@ -93,6 +142,12 @@ const BoardScreen: Component = () => {
                           <BoardTaskCard
                             task={task}
                             project={model.selectedProject()}
+                            isDragging={draggingTaskId() === task.id}
+                            isStatusUpdating={model.isTaskStatusUpdating(
+                              task.id,
+                            )}
+                            onDragStart={onTaskDragStart}
+                            onDragEnd={resetDragState}
                           />
                         )}
                       </For>

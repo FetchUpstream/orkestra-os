@@ -210,6 +210,169 @@ describe("app routing and shell", () => {
     expect(screen.getByText("Manage and configure agents.")).toBeTruthy();
   });
 
+  it("optimistically moves board cards across columns and persists status", async () => {
+    let resolveStatusUpdate: ((value: unknown) => void) | undefined;
+    const statusUpdatePromise = new Promise((resolve) => {
+      resolveStatusUpdate = resolve;
+    });
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-1",
+            title: "Draft onboarding flow",
+            status: "todo",
+            display_key: "ALP-1",
+          },
+        ]);
+      }
+      if (command === "set_task_status") return statusUpdatePromise;
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (0)" }),
+      ).toBeTruthy();
+    });
+
+    const inProgressSection = screen
+      .getByRole("heading", { name: "In Progress (0)" })
+      .closest("section") as HTMLElement;
+    const taskCard = screen
+      .getByRole("link", { name: /Draft onboarding flow/i })
+      .closest("li") as HTMLElement;
+
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData(format: string, value: string) {
+        this.data[format] = value;
+      },
+      getData(format: string) {
+        return this.data[format] ?? "";
+      },
+    };
+
+    await fireEvent.dragStart(taskCard, { dataTransfer });
+    await fireEvent.dragOver(inProgressSection, { dataTransfer });
+    await fireEvent.drop(inProgressSection, { dataTransfer });
+
+    expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "In Progress (1)" }),
+    ).toBeTruthy();
+    expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
+      id: "task-1",
+      input: { status: "doing" },
+    });
+
+    resolveStatusUpdate?.({
+      id: "task-1",
+      title: "Draft onboarding flow",
+      status: "doing",
+      display_key: "ALP-1",
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "In Progress (1)" }),
+      ).toBeTruthy();
+    });
+  });
+
+  it("rolls back optimistic board move when status persist fails", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-rollback",
+            title: "Rollback candidate",
+            status: "todo",
+            display_key: "ALP-2",
+          },
+        ]);
+      }
+      if (command === "set_task_status") {
+        return Promise.reject(new Error("save failed"));
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+    });
+
+    const inProgressSection = screen
+      .getByRole("heading", { name: "In Progress (0)" })
+      .closest("section") as HTMLElement;
+    const taskCard = screen
+      .getByRole("link", { name: /Rollback candidate/i })
+      .closest("li") as HTMLElement;
+
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData(format: string, value: string) {
+        this.data[format] = value;
+      },
+      getData(format: string) {
+        return this.data[format] ?? "";
+      },
+    };
+
+    await fireEvent.dragStart(taskCard, { dataTransfer });
+    await fireEvent.dragOver(inProgressSection, { dataTransfer });
+    await fireEvent.drop(inProgressSection, { dataTransfer });
+
+    expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "In Progress (1)" }),
+    ).toBeTruthy();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (0)" }),
+      ).toBeTruthy();
+      expect(
+        screen.getByText("Failed to update task status. Please try again."),
+      ).toBeTruthy();
+    });
+  });
+
   it("renders dynamic task title for task route", () => {
     renderAt("/tasks/task-123");
     expect(screen.getByRole("heading", { name: "Task Detail" })).toBeTruthy();

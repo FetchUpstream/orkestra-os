@@ -8,6 +8,10 @@ import { taskPriorityLabel } from "../utils/board";
 type Props = {
   task: Task;
   project: Project | null;
+  isDragging?: boolean;
+  isStatusUpdating?: boolean;
+  onDragStart?: (taskId: string, event: DragEvent) => void;
+  onDragEnd?: () => void;
 };
 
 const BoardTaskCard: Component<Props> = (props) => {
@@ -15,7 +19,17 @@ const BoardTaskCard: Component<Props> = (props) => {
     props.task.targetRepositoryName || props.task.targetRepositoryPath || "";
 
   return (
-    <li class="project-task-item">
+    <li
+      class="project-task-item"
+      draggable={!props.isStatusUpdating}
+      style={{
+        opacity: props.isDragging ? "0.5" : "1",
+        transition: "opacity 0.2s ease",
+        cursor: props.isStatusUpdating ? "wait" : "grab",
+      }}
+      onDragStart={(event) => props.onDragStart?.(props.task.id, event)}
+      onDragEnd={() => props.onDragEnd?.()}
+    >
       <A href={`/tasks/${props.task.id}`} class="project-task-link">
         <div class="project-task-main">
           <p class="project-task-title">{props.task.title}</p>

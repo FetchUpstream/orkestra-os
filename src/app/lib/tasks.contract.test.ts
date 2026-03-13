@@ -3,6 +3,7 @@ import {
   createTask,
   listTaskDependencies,
   listProjectTasks,
+  setTaskStatus,
   type CreateTaskInput,
   type Task,
   type TaskStatus,
@@ -191,6 +192,21 @@ describe("tasks contract", () => {
       taskId: "task-fallback",
       parents: [],
       children: [],
+    });
+  });
+
+  it("sends status update payload in set_task_status command", async () => {
+    invokeMock.mockResolvedValue({
+      id: "task-123",
+      title: "Task",
+      status: "doing" satisfies TaskStatus,
+    });
+
+    await setTaskStatus("task-123", { status: "doing" });
+
+    expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
+      id: "task-123",
+      input: { status: "doing" },
     });
   });
 });
