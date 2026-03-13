@@ -22,7 +22,7 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
       aria-hidden={props.isVisible && !props.isVisible() ? "true" : undefined}
     >
       {!(props.desktopCollapsed?.() ?? false) ? (
-        <>
+        <div class="sidebar-scroll-region">
           <div class="sidebar-header">
             <div class="sidebar-brand">OrkestraOS</div>
           </div>
@@ -40,7 +40,7 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
               <NavItem href={item.href} label={item.label} />
             ))}
           </nav>
-        </>
+        </div>
       ) : null}
       {props.onCollapse || props.onExpand ? (
         <button
