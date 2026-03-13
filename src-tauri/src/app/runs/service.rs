@@ -1,0 +1,259 @@
+use crate::app::db::repositories::runs::RunsRepository;
+use crate::app::errors::AppError;
+use crate::app::runs::dto::RunDto;
+use crate::app::runs::models::{NewRun, Run};
+use chrono::Utc;
+
+#[derive(Clone, Debug)]
+pub struct RunsService {
+    repository: RunsRepository,
+}
+
+impl RunsService {
+    pub fn new(repository: RunsRepository) -> Self {
+        Self { repository }
+    }
+
+    pub async fn create_run(&self, task_id: &str) -> Result<RunDto, AppError> {
+        let task_id = task_id.trim();
+        if task_id.is_empty() {
+            return Err(AppError::validation("task_id is required"));
+        }
+
+        let task_context = self
+            .repository
+            .get_task_run_context(task_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+
+        let created = self
+            .repository
+            .create_run(NewRun {
+                id: uuid::Uuid::new_v4().to_string(),
+                task_id: task_id.to_string(),
+                project_id: task_context.project_id,
+                target_repo_id: Some(task_context.repository_id),
+                status: "queued".to_string(),
+                triggered_by: "user".to_string(),
+                created_at: Utc::now().to_rfc3339(),
+            })
+            .await?;
+
+        Ok(Self::to_dto(created))
+    }
+
+    pub async fn list_task_runs(&self, task_id: &str) -> Result<Vec<RunDto>, AppError> {
+        let task_id = task_id.trim();
+        if task_id.is_empty() {
+            return Err(AppError::validation("task_id is required"));
+        }
+
+        self.repository
+            .get_task_run_context(task_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+
+        let runs = self.repository.list_task_runs(task_id).await?;
+        Ok(runs.into_iter().map(Self::to_dto).collect())
+    }
+
+    pub async fn get_run(&self, run_id: &str) -> Result<RunDto, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let run = self
+            .repository
+            .get_run(run_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("run not found"))?;
+
+        Ok(Self::to_dto(run))
+    }
+
+    fn to_dto(run: Run) -> RunDto {
+        RunDto {
+            id: run.id,
+            task_id: run.task_id,
+            project_id: run.project_id,
+            target_repo_id: run.target_repo_id,
+            status: run.status,
+            triggered_by: run.triggered_by,
+            created_at: run.created_at,
+            started_at: run.started_at,
+            finished_at: run.finished_at,
+            summary: run.summary,
+            error_message: run.error_message,
+            worktree_id: run.worktree_id,
+            agent_id: run.agent_id,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::db::migrations::run_migrations;
+    use sqlx::SqlitePool;
+
+    async fn setup_service() -> (RunsService, SqlitePool) {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let repository = RunsRepository::new(pool.clone());
+        (RunsService::new(repository), pool)
+    }
+
+    async fn seed_task(pool: &SqlitePool, task_id: &str) {
+        let project_id = "project-1";
+        let repository_id = "repo-1";
+
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(project_id)
+        .bind("Alpha")
+        .bind("ALP")
+        .bind(Option::<String>::None)
+        .bind(repository_id)
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(repository_id)
+        .bind(project_id)
+        .bind("Main")
+        .bind("/repo/main")
+        .bind(1)
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(task_id)
+        .bind(project_id)
+        .bind(repository_id)
+        .bind(1)
+        .bind("Task")
+        .bind(Option::<String>::None)
+        .bind("todo")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn create_run_happy_path_sets_queued_and_task_context() {
+        let (service, pool) = setup_service().await;
+        seed_task(&pool, "task-1").await;
+
+        let run = service.create_run("task-1").await.unwrap();
+
+        assert_eq!(run.task_id, "task-1");
+        assert_eq!(run.project_id, "project-1");
+        assert_eq!(run.target_repo_id, Some("repo-1".to_string()));
+        assert_eq!(run.status, "queued");
+        assert_eq!(run.triggered_by, "user");
+    }
+
+    #[tokio::test]
+    async fn create_run_returns_not_found_for_missing_task() {
+        let (service, _) = setup_service().await;
+
+        let result = service.create_run("missing-task").await;
+
+        match result {
+            Err(AppError::NotFound(message)) => assert_eq!(message, "task not found"),
+            _ => panic!("expected not found error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_task_runs_orders_by_created_at_desc() {
+        let (service, pool) = setup_service().await;
+        seed_task(&pool, "task-1").await;
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-1")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("queued")
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-2")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("running")
+        .bind("user")
+        .bind("2024-01-02T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let runs = service.list_task_runs("task-1").await.unwrap();
+
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].id, "run-2");
+        assert_eq!(runs[1].id, "run-1");
+    }
+
+    #[tokio::test]
+    async fn get_run_returns_not_found_for_missing_run() {
+        let (service, _) = setup_service().await;
+
+        let result = service.get_run("missing-run").await;
+
+        match result {
+            Err(AppError::NotFound(message)) => assert_eq!(message, "run not found"),
+            _ => panic!("expected not found error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn migration_rejects_invalid_run_status() {
+        let (_, pool) = setup_service().await;
+        seed_task(&pool, "task-1").await;
+
+        let result = sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-invalid")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("unknown")
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&pool)
+        .await;
+
+        assert!(result.is_err());
+    }
+}

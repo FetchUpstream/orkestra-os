@@ -2,5 +2,6 @@ pub mod commands;
 pub mod db;
 pub mod errors;
 pub mod projects;
+pub mod runs;
 pub mod state;
 pub mod tasks;

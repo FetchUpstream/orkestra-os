@@ -7,6 +7,7 @@ const MIGRATION_0002: &str = include_str!("../../../migrations/0002_init_core_ta
 const MIGRATION_0003: &str = include_str!("../../../migrations/0003_init_tasks.sql");
 const MIGRATION_0004: &str = include_str!("../../../migrations/0004_add_task_display_key.sql");
 const MIGRATION_0005: &str = include_str!("../../../migrations/0005_task_dependencies.sql");
+const MIGRATION_0006: &str = include_str!("../../../migrations/0006_init_runs.sql");
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(MIGRATION_0001).execute(pool).await?;
@@ -32,6 +33,17 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
 
     if !has_task_dependencies {
         sqlx::query(MIGRATION_0005).execute(pool).await?;
+    }
+
+    let has_runs = sqlx::query(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?
+    .is_some();
+
+    if !has_runs {
+        sqlx::query(MIGRATION_0006).execute(pool).await?;
     }
 
     Ok(())
