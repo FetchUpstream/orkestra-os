@@ -192,7 +192,15 @@ describe("app routing and shell", () => {
     expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("main")).toBeTruthy();
     expect(screen.getAllByRole("heading", { name: "Board" })).toHaveLength(2);
-    expect(screen.getByText("Task board view coming soon.")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByLabelText("Project")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (0)" }),
+      ).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Review (0)" })).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Done (0)" })).toBeTruthy();
+    });
 
     await fireEvent.click(screen.getByRole("link", { name: "Agents" }));
 
@@ -857,13 +865,18 @@ describe("app routing and shell", () => {
 
     expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("main")).toBeTruthy();
-    expect(screen.getByText("Task board view coming soon.")).toBeTruthy();
 
     await waitFor(() => {
       expect(warnSpy).toHaveBeenCalledWith(
         "Failed to load projects during startup",
         "database error: startup failed",
       );
+      expect(
+        screen.getByText("Failed to load projects. Please refresh."),
+      ).toBeTruthy();
+      expect(
+        screen.getByText("No projects yet.", { exact: false }),
+      ).toBeTruthy();
     });
     expect(window.location.pathname).toBe("/board");
 
