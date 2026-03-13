@@ -4,17 +4,15 @@ use crate::app::tasks::dto::{
     RemoveTaskDependencyRequest, RemoveTaskDependencyResponse, SetTaskStatusRequest,
     TaskDependenciesDto, TaskDependencyEdgeDto, TaskDto, UpdateTaskRequest,
 };
+use crate::app::{commands::context, commands::error_mapping::map_result};
 
 #[tauri::command]
 pub async fn create_task(
     state: tauri::State<'_, AppState>,
     input: CreateTaskRequest,
 ) -> Result<TaskDto, String> {
-    let service = state
-        .tasks_service
-        .as_ref()
-        .ok_or_else(|| "tasks service unavailable".to_string())?;
-    service.create_task(input).await.map_err(|err| err.to_string())
+    let service = context::tasks_service(&state);
+    map_result(service.create_task(input).await)
 }
 
 #[tauri::command]
@@ -22,23 +20,14 @@ pub async fn list_project_tasks(
     state: tauri::State<'_, AppState>,
     project_id: String,
 ) -> Result<Vec<TaskDto>, String> {
-    let service = state
-        .tasks_service
-        .as_ref()
-        .ok_or_else(|| "tasks service unavailable".to_string())?;
-    service
-        .list_project_tasks(&project_id)
-        .await
-        .map_err(|err| err.to_string())
+    let service = context::tasks_service(&state);
+    map_result(service.list_project_tasks(&project_id).await)
 }
 
 #[tauri::command]
 pub async fn get_task(state: tauri::State<'_, AppState>, id: String) -> Result<TaskDto, String> {
-    let service = state
-        .tasks_service
-        .as_ref()
-        .ok_or_else(|| "tasks service unavailable".to_string())?;
-    service.get_task(&id).await.map_err(|err| err.to_string())
+    let service = context::tasks_service(&state);
+    map_result(service.get_task(&id).await)
 }
 
 #[tauri::command]
@@ -47,14 +36,8 @@ pub async fn update_task(
     id: String,
     input: UpdateTaskRequest,
 ) -> Result<TaskDto, String> {
-    let service = state
-        .tasks_service
-        .as_ref()
-        .ok_or_else(|| "tasks service unavailable".to_string())?;
-    service
-        .update_task(&id, input)
-        .await
-        .map_err(|err| err.to_string())
+    let service = context::tasks_service(&state);
+    map_result(service.update_task(&id, input).await)
 }
 
 #[tauri::command]
@@ -63,14 +46,8 @@ pub async fn set_task_status(
     id: String,
     input: SetTaskStatusRequest,
 ) -> Result<TaskDto, String> {
-    let service = state
-        .tasks_service
-        .as_ref()
-        .ok_or_else(|| "tasks service unavailable".to_string())?;
-    service
-        .set_task_status(&id, input)
-        .await
-        .map_err(|err| err.to_string())
+    let service = context::tasks_service(&state);
+    map_result(service.set_task_status(&id, input).await)
 }
 
 #[tauri::command]
@@ -79,14 +56,8 @@ pub async fn move_task(
     id: String,
     input: MoveTaskRequest,
 ) -> Result<TaskDto, String> {
-    let service = state
-        .tasks_service
-        .as_ref()
-        .ok_or_else(|| "tasks service unavailable".to_string())?;
-    service
-        .move_task(&id, input)
-        .await
-        .map_err(|err| err.to_string())
+    let service = context::tasks_service(&state);
+    map_result(service.move_task(&id, input).await)
 }
 
 #[tauri::command]
@@ -94,11 +65,8 @@ pub async fn delete_task(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<DeleteTaskResponse, String> {
-    let service = state
-        .tasks_service
-        .as_ref()
-        .ok_or_else(|| "tasks service unavailable".to_string())?;
-    service.delete_task(&id).await.map_err(|err| err.to_string())
+    let service = context::tasks_service(&state);
+    map_result(service.delete_task(&id).await)
 }
 
 #[tauri::command]
@@ -106,14 +74,8 @@ pub async fn list_task_dependencies(
     state: tauri::State<'_, AppState>,
     task_id: String,
 ) -> Result<TaskDependenciesDto, String> {
-    let service = state
-        .tasks_service
-        .as_ref()
-        .ok_or_else(|| "tasks service unavailable".to_string())?;
-    service
-        .list_task_dependencies(&task_id)
-        .await
-        .map_err(|err| err.to_string())
+    let service = context::tasks_service(&state);
+    map_result(service.list_task_dependencies(&task_id).await)
 }
 
 #[tauri::command]
@@ -121,14 +83,8 @@ pub async fn add_task_dependency(
     state: tauri::State<'_, AppState>,
     input: AddTaskDependencyRequest,
 ) -> Result<TaskDependencyEdgeDto, String> {
-    let service = state
-        .tasks_service
-        .as_ref()
-        .ok_or_else(|| "tasks service unavailable".to_string())?;
-    service
-        .add_task_dependency(input)
-        .await
-        .map_err(|err| err.to_string())
+    let service = context::tasks_service(&state);
+    map_result(service.add_task_dependency(input).await)
 }
 
 #[tauri::command]
@@ -136,12 +92,6 @@ pub async fn remove_task_dependency(
     state: tauri::State<'_, AppState>,
     input: RemoveTaskDependencyRequest,
 ) -> Result<RemoveTaskDependencyResponse, String> {
-    let service = state
-        .tasks_service
-        .as_ref()
-        .ok_or_else(|| "tasks service unavailable".to_string())?;
-    service
-        .remove_task_dependency(input)
-        .await
-        .map_err(|err| err.to_string())
+    let service = context::tasks_service(&state);
+    map_result(service.remove_task_dependency(input).await)
 }

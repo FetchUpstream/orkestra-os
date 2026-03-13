@@ -14,9 +14,7 @@ pub fn run() {
             let app_state = tauri::async_runtime::block_on(async {
                 let pool = app::db::connection::connect(&db_path).await?;
                 app::db::migrations::run_migrations(&pool).await?;
-                Ok::<app::state::AppState, app::errors::AppError>(
-                    app::state::AppState::new_with_pool(pool),
-                )
+                Ok::<app::state::AppState, app::errors::AppError>(app::state::AppState::new(pool))
             })?;
 
             app.manage(app_state);
