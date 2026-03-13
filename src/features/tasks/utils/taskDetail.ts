@@ -61,6 +61,15 @@ export const canTransitionStatus = (
   return nextStatus(from) === to;
 };
 
+const TASK_STATUS_ORDER: TaskStatus[] = ["todo", "doing", "review", "done"];
+
+export const getValidTransitionTargets = (status: TaskStatus): TaskStatus[] =>
+  TASK_STATUS_ORDER.filter(
+    (candidateStatus) =>
+      candidateStatus !== status &&
+      canTransitionStatus(status, candidateStatus),
+  );
+
 export const formatRunStatus = (status: RunStatus) => {
   if (status === "queued") return "Queued";
   if (status === "preparing") return "Preparing";

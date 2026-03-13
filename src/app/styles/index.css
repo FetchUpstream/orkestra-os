@@ -1563,6 +1563,7 @@ textarea::placeholder {
   justify-content: stretch;
   flex-wrap: nowrap;
   align-items: center;
+  position: relative;
 }
 
 .task-detail-controls-actions .projects-button-primary {
@@ -1618,6 +1619,45 @@ textarea::placeholder {
 .task-control-icon-button-danger:hover:not(:disabled) {
   background: rgba(255, 107, 107, 0.2);
   border-color: var(--danger);
+}
+
+.task-status-transition-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 48px;
+  z-index: 20;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.task-status-transition-option {
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.task-status-transition-option:hover {
+  background: var(--surface-hover);
+}
+
+.task-status-transition-empty {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 0.8rem;
+  padding: 6px;
 }
 
 .task-detail-definition-list {

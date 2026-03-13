@@ -1,4 +1,4 @@
-import { For, Show, type Component } from "solid-js";
+import { For, Show, createSignal, type Component } from "solid-js";
 import BackIconLink from "../../../components/ui/BackIconLink";
 import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
@@ -16,7 +16,6 @@ import {
   formatDateTime,
   formatRunStatus,
   formatStatus,
-  nextStatus,
   projectLabel,
   repositoryLabel,
 } from "../utils/taskDetail";
@@ -27,9 +26,9 @@ const EditIcon: Component = () => (
   </svg>
 );
 
-const StatusIcon: Component = () => (
+const StatusTransitionIcon: Component = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M17.65 6.35A7.95 7.95 0 0 0 12 4V1L7 6l5 5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 12.65-5.65z" />
+    <path d="M5 11h11.17l-3.58-3.59L14 6l6 6-6 6-1.41-1.41L16.17 13H5z" />
   </svg>
 );
 
@@ -78,6 +77,7 @@ const TaskDetailScreen: Component = () => {
     backHref,
     backLabel,
     canMoveTask,
+    validTransitionOptions,
     availableParentCandidates,
     availableChildCandidates,
     navigateToDependencyTask,
@@ -98,7 +98,7 @@ const TaskDetailScreen: Component = () => {
     onSubmitCreateDependency,
     onSaveEdit,
     onCancelEdit,
-    onAdvanceStatus,
+    onSetStatus,
     onMoveTask,
     onRequestDeleteTask,
     onCancelDeleteTask,
@@ -108,6 +108,7 @@ const TaskDetailScreen: Component = () => {
     onRemoveDependency,
     onCreateRun,
   } = useTaskDetailModel();
+  const [isTransitionMenuOpen, setIsTransitionMenuOpen] = createSignal(false);
 
   return (
     <>
@@ -277,21 +278,61 @@ const TaskDetailScreen: Component = () => {
                             <button
                               type="button"
                               class="task-control-icon-button"
-                              onClick={onAdvanceStatus}
+                              onClick={() =>
+                                setIsTransitionMenuOpen((current) => !current)
+                              }
                               disabled={isChangingStatus()}
                               aria-label={
                                 isChangingStatus()
                                   ? "Updating task status"
-                                  : `Move task status to ${formatStatus(nextStatus(taskValue().status))}`
+                                  : "Open status transitions"
                               }
                               title={
                                 isChangingStatus()
                                   ? "Updating task status"
-                                  : `Move status to ${formatStatus(nextStatus(taskValue().status))}`
+                                  : "Change task status"
+                              }
+                              aria-haspopup="menu"
+                              aria-expanded={isTransitionMenuOpen()}
+                            >
+                              <StatusTransitionIcon />
+                            </button>
+                            <Show
+                              when={
+                                isTransitionMenuOpen() && !isChangingStatus()
                               }
                             >
-                              <StatusIcon />
-                            </button>
+                              <div
+                                class="task-status-transition-menu"
+                                role="menu"
+                                aria-label="Valid status transitions"
+                              >
+                                <Show
+                                  when={validTransitionOptions().length > 0}
+                                  fallback={
+                                    <p class="task-status-transition-empty">
+                                      No transitions available.
+                                    </p>
+                                  }
+                                >
+                                  <For each={validTransitionOptions()}>
+                                    {(statusOption) => (
+                                      <button
+                                        type="button"
+                                        class="task-status-transition-option"
+                                        role="menuitem"
+                                        onClick={() => {
+                                          setIsTransitionMenuOpen(false);
+                                          void onSetStatus(statusOption);
+                                        }}
+                                      >
+                                        {formatStatus(statusOption)}
+                                      </button>
+                                    )}
+                                  </For>
+                                </Show>
+                              </div>
+                            </Show>
                             <button
                               type="button"
                               class="task-control-icon-button task-control-icon-button-danger"

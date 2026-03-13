@@ -1277,7 +1277,15 @@ describe("app routing and shell", () => {
     });
 
     await fireEvent.click(
-      screen.getByRole("button", { name: "Move task status to In progress" }),
+      screen.getByRole("button", { name: "Open status transitions" }),
+    );
+
+    expect(
+      screen.getByRole("menu", { name: "Valid status transitions" }),
+    ).toBeTruthy();
+
+    await fireEvent.click(
+      screen.getByRole("menuitem", { name: "In progress" }),
     );
 
     await waitFor(() => {
@@ -1344,6 +1352,100 @@ describe("app routing and shell", () => {
         id: "task-123",
       });
       expect(window.location.pathname).toBe("/projects/p-1");
+    });
+  });
+
+  it("shows only valid transition options and applies selected status", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects")
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      if (command === "list_task_dependencies")
+        return Promise.resolve({
+          task_id: "task-123",
+          parents: [],
+          children: [],
+        });
+      if (command === "list_task_runs") return Promise.resolve([]);
+      if (command === "get_task")
+        return Promise.resolve({
+          id: "task-123",
+          title: "Review task",
+          description: "Task details",
+          status: "review",
+          project_id: "p-1",
+          target_repository_id: "r-1",
+          target_repository_name: "Main",
+          display_key: "ALP-7",
+        });
+      if (command === "set_task_status")
+        return Promise.resolve({
+          id: "task-123",
+          title: "Review task",
+          description: "Task details",
+          status: "doing",
+          project_id: "p-1",
+          target_repository_id: "r-1",
+          target_repository_name: "Main",
+          display_key: "ALP-7",
+        });
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects/p-1/tasks/task-123");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Review task" })).toBeTruthy();
+    });
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Open status transitions" }),
+    );
+
+    const transitionMenu = screen.getByRole("menu", {
+      name: "Valid status transitions",
+    });
+    expect(
+      within(transitionMenu).getByRole("menuitem", { name: "To do" }),
+    ).toBeTruthy();
+    expect(
+      within(transitionMenu).getByRole("menuitem", { name: "In progress" }),
+    ).toBeTruthy();
+    expect(
+      within(transitionMenu).getByRole("menuitem", { name: "Done" }),
+    ).toBeTruthy();
+    expect(
+      within(transitionMenu).queryByRole("menuitem", { name: "In review" }),
+    ).toBeNull();
+
+    await fireEvent.click(
+      within(transitionMenu).getByRole("menuitem", { name: "In progress" }),
+    );
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
+        id: "task-123",
+        input: { status: "doing" },
+      });
     });
   });
 

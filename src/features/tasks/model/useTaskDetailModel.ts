@@ -17,7 +17,10 @@ import {
   type TaskStatus,
 } from "../../../app/lib/tasks";
 import { createRun, listTaskRuns, type Run } from "../../../app/lib/runs";
-import { getActionErrorMessage, nextStatus } from "../utils/taskDetail";
+import {
+  getActionErrorMessage,
+  getValidTransitionTargets,
+} from "../utils/taskDetail";
 
 export type DependencyCreateDirection = "parent" | "child";
 
@@ -92,6 +95,11 @@ export const useTaskDetailModel = () => {
     return projectId() ? "project" : "projects";
   });
   const canMoveTask = createMemo(() => projectRepositories().length > 1);
+  const validTransitionOptions = createMemo(() => {
+    const taskValue = task();
+    if (!taskValue) return [];
+    return getValidTransitionTargets(taskValue.status);
+  });
 
   const dependencyTaskHref = (dependencyTaskId: string) => {
     const scopedProjectId =
@@ -361,15 +369,13 @@ export const useTaskDetailModel = () => {
     setIsEditing(false);
   };
 
-  const onAdvanceStatus = async () => {
+  const onSetStatus = async (status: TaskStatus) => {
     const taskValue = task();
     if (!taskValue) return;
     setActionError("");
     setIsChangingStatus(true);
     try {
-      const updated = await setTaskStatus(taskValue.id, {
-        status: nextStatus(taskValue.status),
-      });
+      const updated = await setTaskStatus(taskValue.id, { status });
       setTask(updated);
     } catch (mutationError) {
       setActionError(
@@ -538,6 +544,7 @@ export const useTaskDetailModel = () => {
     backHref,
     backLabel,
     canMoveTask,
+    validTransitionOptions,
     availableParentCandidates,
     availableChildCandidates,
     navigateToDependencyTask,
@@ -558,7 +565,7 @@ export const useTaskDetailModel = () => {
     onSubmitCreateDependency,
     onSaveEdit,
     onCancelEdit,
-    onAdvanceStatus,
+    onSetStatus,
     onMoveTask,
     onRequestDeleteTask,
     onCancelDeleteTask,
