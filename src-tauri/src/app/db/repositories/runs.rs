@@ -104,6 +104,15 @@ impl RunsRepository {
         Ok(row.map(Self::map_row_to_run))
     }
 
+    pub async fn delete_run(&self, run_id: &str) -> Result<bool, AppError> {
+        let result = sqlx::query("DELETE FROM runs WHERE id = ?")
+            .bind(run_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     fn map_row_to_run(row: sqlx::sqlite::SqliteRow) -> Run {
         Run {
             id: row.get("id"),

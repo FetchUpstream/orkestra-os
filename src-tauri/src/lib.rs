@@ -31,6 +31,7 @@ pub fn run() {
             app::commands::runs::create_run,
             app::commands::runs::list_task_runs,
             app::commands::runs::get_run,
+            app::commands::runs::delete_run,
             app::commands::tasks::list_project_tasks,
             app::commands::tasks::get_task,
             app::commands::tasks::update_task,

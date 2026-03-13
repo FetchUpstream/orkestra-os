@@ -72,6 +72,20 @@ impl RunsService {
         Ok(Self::to_dto(run))
     }
 
+    pub async fn delete_run(&self, run_id: &str) -> Result<(), AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let deleted = self.repository.delete_run(run_id).await?;
+        if !deleted {
+            return Err(AppError::not_found("run not found"));
+        }
+
+        Ok(())
+    }
+
     fn to_dto(run: Run) -> RunDto {
         RunDto {
             id: run.id,
@@ -149,6 +163,23 @@ mod tests {
         .bind(Option::<String>::None)
         .bind("todo")
         .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_run(pool: &SqlitePool, run_id: &str, task_id: &str) {
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(run_id)
+        .bind(task_id)
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("queued")
+        .bind("user")
         .bind("2024-01-01T00:00:00Z")
         .execute(pool)
         .await
@@ -280,6 +311,31 @@ mod tests {
         match result {
             Err(AppError::Validation(message)) => assert_eq!(message, "run_id is required"),
             _ => panic!("expected validation error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_run_succeeds_for_existing_run() {
+        let (service, pool) = setup_service().await;
+        seed_task(&pool, "task-1").await;
+        seed_run(&pool, "run-1", "task-1").await;
+
+        let result = service.delete_run("run-1").await;
+
+        assert!(result.is_ok());
+        let found = service.get_run("run-1").await;
+        assert!(matches!(found, Err(AppError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn delete_run_returns_not_found_for_missing_run() {
+        let (service, _) = setup_service().await;
+
+        let result = service.delete_run("missing-run").await;
+
+        match result {
+            Err(AppError::NotFound(message)) => assert_eq!(message, "run not found"),
+            _ => panic!("expected not found error"),
         }
     }
 
