@@ -1955,7 +1955,7 @@ describe("app routing and shell", () => {
       });
       expect(listRunsCallCount).toBe(2);
       expect(screen.getByText("Run #13")).toBeTruthy();
-      expect(screen.getByText("Queued")).toBeTruthy();
+      expect(screen.getAllByText("Queued").length).toBeGreaterThan(0);
       expect(
         screen.getByText("Waiting for an available runner to start execution."),
       ).toBeTruthy();
@@ -2050,12 +2050,12 @@ describe("app routing and shell", () => {
         screen.getAllByRole("button", { name: "Delete run" }),
       ).toHaveLength(2);
       expect(screen.getByText("Run #5")).toBeTruthy();
-      expect(screen.getByText("Queued")).toBeTruthy();
+      expect(screen.getAllByText("Queued").length).toBeGreaterThan(0);
       expect(screen.getByText("Completed")).toBeTruthy();
     });
 
     const pathBeforeDelete = window.location.pathname;
-    const runToDelete = screen.getByText("Queued").closest("li");
+    const runToDelete = screen.getByText("Run #5").closest("li");
     expect(runToDelete).toBeTruthy();
 
     await fireEvent.click(
@@ -2068,7 +2068,7 @@ describe("app routing and shell", () => {
       expect(invokeMock).toHaveBeenCalledWith("delete_run", {
         runId: "run-delete",
       });
-      expect(screen.queryByText("Queued")).toBeNull();
+      expect(screen.queryByText("Run #5")).toBeNull();
       expect(screen.getByText("Completed")).toBeTruthy();
       expect(window.location.pathname).toBe(pathBeforeDelete);
     });

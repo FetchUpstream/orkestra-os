@@ -40,7 +40,11 @@ const getRunTimingCopy = (runItem: {
   createdAt: string;
   startedAt?: string | null;
   finishedAt?: string | null;
+  status: string;
 }) => {
+  if (runItem.status === "queued") {
+    return null;
+  }
   const startedAt = runItem.startedAt ? new Date(runItem.startedAt) : null;
   const finishedAt = runItem.finishedAt ? new Date(runItem.finishedAt) : null;
   if (
@@ -54,7 +58,7 @@ const getRunTimingCopy = (runItem: {
   if (startedAt && !Number.isNaN(startedAt.getTime())) {
     return `Elapsed ${formatRunDuration(Date.now() - startedAt.getTime())}`;
   }
-  return `Queued ${formatDateTime(runItem.createdAt)}`;
+  return null;
 };
 
 const getRunSummaryFallback = (status: string) => {
@@ -558,9 +562,15 @@ const TaskDetailScreen: Component = () => {
                                                   runItem.createdAt,
                                                 )}
                                               </span>
-                                              <span class="task-runs-timing-copy">
-                                                {getRunTimingCopy(runItem)}
-                                              </span>
+                                              <Show
+                                                when={getRunTimingCopy(runItem)}
+                                              >
+                                                {(timingCopy) => (
+                                                  <span class="task-runs-timing-copy">
+                                                    {timingCopy()}
+                                                  </span>
+                                                )}
+                                              </Show>
                                               <Show
                                                 when={runItem.targetRepoId?.trim()}
                                               >
