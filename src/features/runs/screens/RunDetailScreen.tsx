@@ -117,6 +117,79 @@ const RunDetailScreen: Component = () => {
                     >
                       {formatRunStatus(runValue().status)}
                     </span>
+                    <div
+                      class="run-detail-header-actions"
+                      role="group"
+                      aria-label="Run actions"
+                    >
+                      <button
+                        type="button"
+                        class="run-detail-icon-button"
+                        aria-label="Pause"
+                        title="Pause"
+                      >
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <rect x="4" y="3" width="3" height="10" rx="1" />
+                          <rect x="9" y="3" width="3" height="10" rx="1" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="run-detail-icon-button run-detail-icon-button--danger"
+                        aria-label="Cancel"
+                        title="Cancel"
+                      >
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <rect x="4" y="4" width="8" height="8" rx="1.5" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="run-detail-icon-button"
+                        aria-label="Retry"
+                        title="Retry"
+                      >
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <path d="M3 8a5 5 0 0 1 8.5-3.5V2h1.5v4H9V4.5h1.8A3.5 3.5 0 1 0 11.5 8H13a5 5 0 0 1-10 0Z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="run-detail-icon-button"
+                        aria-label="Open Diff"
+                        title="Open Diff"
+                      >
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <path d="M5 3h1.5v10H5v-2H3v-2h2V7H3V5h2V3Zm5.5 0H12v2h2v2h-2v2h2v2h-2v2h-1.5V3Z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="run-detail-icon-button"
+                        aria-label="View Logs"
+                        title="View Logs"
+                      >
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <rect
+                            x="3"
+                            y="2.5"
+                            width="10"
+                            height="11"
+                            rx="1.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.3"
+                          />
+                          <path
+                            d="M5.5 6h5M5.5 8.5h5M5.5 11h3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.3"
+                            stroke-linecap="round"
+                          />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 </section>
 
@@ -207,27 +280,6 @@ const RunDetailScreen: Component = () => {
                         <dd>Placeholder</dd>
                       </div>
                     </dl>
-                    <div
-                      class="run-detail-action-row"
-                      role="group"
-                      aria-label="Run actions"
-                    >
-                      <button type="button" class="projects-button-muted">
-                        Pause
-                      </button>
-                      <button type="button" class="projects-button-danger">
-                        Cancel
-                      </button>
-                      <button type="button" class="projects-button-muted">
-                        Retry
-                      </button>
-                      <button type="button" class="projects-button-muted">
-                        Open Diff
-                      </button>
-                      <button type="button" class="projects-button-muted">
-                        View Logs
-                      </button>
-                    </div>
                   </aside>
                 </section>
 

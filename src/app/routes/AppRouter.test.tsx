@@ -1605,6 +1605,11 @@ describe("app routing and shell", () => {
         screen.getByRole("region", { name: "Conversation transcript" }),
       ).toBeTruthy();
       expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Open Diff" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "View Logs" })).toBeTruthy();
       expect(
         screen.getByRole("complementary", { name: "Run operations" }),
       ).toBeTruthy();

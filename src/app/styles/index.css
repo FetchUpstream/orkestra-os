@@ -2119,6 +2119,66 @@ textarea::placeholder {
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+.run-detail-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.run-detail-icon-button {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.05s ease;
+}
+
+.run-detail-icon-button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--text-subtle);
+  color: var(--text);
+}
+
+.run-detail-icon-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.run-detail-icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.run-detail-icon-button svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.run-detail-icon-button--danger {
+  border-color: rgba(255, 107, 107, 0.3);
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.run-detail-icon-button--danger:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.2);
+  border-color: var(--danger);
 }
 
 .run-detail-title {
@@ -2232,17 +2292,6 @@ textarea::placeholder {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-}
-
-.run-detail-action-row {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
-}
-
-.run-detail-action-row .projects-button-muted,
-.run-detail-action-row .projects-button-danger {
-  width: 100%;
 }
 
 .run-detail-bottom-tabs {
@@ -2516,6 +2565,10 @@ textarea::placeholder {
 
   .run-detail-header-row {
     grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .run-detail-header-actions {
     justify-content: flex-start;
   }
 
