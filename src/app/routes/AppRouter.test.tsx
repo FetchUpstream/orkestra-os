@@ -1594,7 +1594,7 @@ describe("app routing and shell", () => {
     ).toBeNull();
   });
 
-  it("renders conversation-first run detail scaffold for run route", async () => {
+  it("renders run detail tabs in operations sidebar with operations selected", async () => {
     renderAt("/runs/run-456");
 
     await waitFor(() => {
@@ -1616,9 +1616,10 @@ describe("app routing and shell", () => {
       expect(
         screen.getByRole("tablist", { name: "Run detail tab list" }),
       ).toBeTruthy();
+      expect(screen.queryByRole("tab", { name: "Conversation" })).toBeNull();
       expect(
         screen
-          .getByRole("tab", { name: "Conversation" })
+          .getByRole("tab", { name: "Operations" })
           .getAttribute("aria-selected"),
       ).toBe("true");
       expect(screen.getByRole("tab", { name: "Logs" })).toBeTruthy();

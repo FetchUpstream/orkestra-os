@@ -6,7 +6,7 @@ import { formatDateTime, formatRunStatus } from "../../tasks/utils/taskDetail";
 
 const RunDetailScreen: Component = () => {
   const model = useRunDetailModel();
-  const [activeTab, setActiveTab] = createSignal("conversation");
+  const [activeTab, setActiveTab] = createSignal("operations");
   const [composerValue, setComposerValue] = createSignal("");
   const transcript = createMemo(() => {
     const runValue = model.run();
@@ -243,121 +243,115 @@ const RunDetailScreen: Component = () => {
                     class="projects-panel run-detail-ops-sidebar"
                     aria-label="Run operations"
                   >
-                    <h2 class="projects-section-title">Operations</h2>
-                    <dl class="task-detail-definition-list run-detail-metadata">
-                      <div>
-                        <dt>Status</dt>
-                        <dd>{formatRunStatus(runValue().status)}</dd>
-                      </div>
-                      <div>
-                        <dt>Duration</dt>
-                        <dd>{model.durationLabel()}</dd>
-                      </div>
-                      <div>
-                        <dt>Worktree</dt>
-                        <dd>
-                          {runValue().worktreeId?.trim() || "Unavailable"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Branch</dt>
-                        <dd>
-                          {runValue().status === "running"
-                            ? "active branch"
-                            : "Unavailable"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Model/agent</dt>
-                        <dd>{runValue().agentId?.trim() || "Unavailable"}</dd>
-                      </div>
-                      <div>
-                        <dt>Files changed</dt>
-                        <dd>Placeholder</dd>
-                      </div>
-                      <div>
-                        <dt>Tests</dt>
-                        <dd>Placeholder</dd>
-                      </div>
-                    </dl>
+                    <div
+                      role="tablist"
+                      aria-label="Run detail tab list"
+                      class="run-detail-tab-list"
+                    >
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab() === "operations"}
+                        class="run-detail-tab"
+                        onClick={() => setActiveTab("operations")}
+                      >
+                        Operations
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab() === "logs"}
+                        class="run-detail-tab"
+                        onClick={() => setActiveTab("logs")}
+                      >
+                        Logs
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab() === "files"}
+                        class="run-detail-tab"
+                        onClick={() => setActiveTab("files")}
+                      >
+                        Files Changed
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab() === "diff"}
+                        class="run-detail-tab"
+                        onClick={() => setActiveTab("diff")}
+                      >
+                        Diff
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab() === "timeline"}
+                        class="run-detail-tab"
+                        onClick={() => setActiveTab("timeline")}
+                      >
+                        Timeline
+                      </button>
+                    </div>
+                    <div
+                      role="tabpanel"
+                      aria-label="Run detail tab panel"
+                      class="run-detail-tab-panel"
+                    >
+                      <Show
+                        when={activeTab() === "operations"}
+                        fallback={
+                          <p class="project-placeholder-text">
+                            {activeTab() === "files"
+                              ? "Files Changed"
+                              : activeTab().charAt(0).toUpperCase() +
+                                activeTab().slice(1)}{" "}
+                            panel placeholder.
+                          </p>
+                        }
+                      >
+                        <dl class="task-detail-definition-list run-detail-metadata">
+                          <div>
+                            <dt>Status</dt>
+                            <dd>{formatRunStatus(runValue().status)}</dd>
+                          </div>
+                          <div>
+                            <dt>Duration</dt>
+                            <dd>{model.durationLabel()}</dd>
+                          </div>
+                          <div>
+                            <dt>Worktree</dt>
+                            <dd>
+                              {runValue().worktreeId?.trim() || "Unavailable"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Branch</dt>
+                            <dd>
+                              {runValue().status === "running"
+                                ? "active branch"
+                                : "Unavailable"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Model/agent</dt>
+                            <dd>
+                              {runValue().agentId?.trim() || "Unavailable"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Files changed</dt>
+                            <dd>Placeholder</dd>
+                          </div>
+                          <div>
+                            <dt>Tests</dt>
+                            <dd>Placeholder</dd>
+                          </div>
+                        </dl>
+                      </Show>
+                    </div>
                   </aside>
-                </section>
-
-                <section
-                  class="projects-panel run-detail-bottom-tabs"
-                  aria-label="Run detail tabs"
-                >
-                  <div
-                    role="tablist"
-                    aria-label="Run detail tab list"
-                    class="run-detail-tab-list"
-                  >
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={activeTab() === "conversation"}
-                      class="run-detail-tab"
-                      onClick={() => setActiveTab("conversation")}
-                    >
-                      Conversation
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={activeTab() === "logs"}
-                      class="run-detail-tab"
-                      onClick={() => setActiveTab("logs")}
-                    >
-                      Logs
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={activeTab() === "files"}
-                      class="run-detail-tab"
-                      onClick={() => setActiveTab("files")}
-                    >
-                      Files Changed
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={activeTab() === "diff"}
-                      class="run-detail-tab"
-                      onClick={() => setActiveTab("diff")}
-                    >
-                      Diff
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={activeTab() === "timeline"}
-                      class="run-detail-tab"
-                      onClick={() => setActiveTab("timeline")}
-                    >
-                      Timeline
-                    </button>
-                  </div>
-                  <div
-                    role="tabpanel"
-                    aria-label="Run detail tab panel"
-                    class="run-detail-tab-panel"
-                  >
-                    <Show
-                      when={activeTab() === "conversation"}
-                      fallback={
-                        <p class="project-placeholder-text">
-                          {activeTab().charAt(0).toUpperCase() +
-                            activeTab().slice(1)}{" "}
-                          panel placeholder.
-                        </p>
-                      }
-                    >
-                      <p class="project-placeholder-text">
-                        Conversation is active in the center workspace.
-                      </p>
-                    </Show>
-                  </div>
                 </section>
               </section>
             )}

@@ -2294,16 +2294,10 @@ textarea::placeholder {
   min-height: 0;
 }
 
-.run-detail-bottom-tabs {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 0;
-}
-
 .run-detail-tab-list {
   display: flex;
-  align-items: center;
+  align-items: stretch;
+  align-content: flex-start;
   gap: 6px;
   flex-wrap: wrap;
 }
