@@ -7,7 +7,11 @@ import { formatDateTime, formatRunStatus } from "../../tasks/utils/taskDetail";
 const RunDetailScreen: Component = () => {
   const model = useRunDetailModel();
   const [activeTab, setActiveTab] = createSignal("operations");
+  const [layoutMode, setLayoutMode] = createSignal<"split" | "info-focus">(
+    "split",
+  );
   const [composerValue, setComposerValue] = createSignal("");
+  const isInfoFocus = createMemo(() => layoutMode() === "info-focus");
   const transcript = createMemo(() => {
     const runValue = model.run();
     const taskValue = model.task();
@@ -125,6 +129,48 @@ const RunDetailScreen: Component = () => {
                       <button
                         type="button"
                         class="run-detail-icon-button"
+                        aria-label={
+                          isInfoFocus()
+                            ? "Return to split mode"
+                            : "Expand info panel"
+                        }
+                        aria-pressed={isInfoFocus() ? "true" : "false"}
+                        title={
+                          isInfoFocus()
+                            ? "Return to split mode"
+                            : "Expand info panel"
+                        }
+                        onClick={() =>
+                          setLayoutMode(isInfoFocus() ? "split" : "info-focus")
+                        }
+                      >
+                        <Show
+                          when={!isInfoFocus()}
+                          fallback={
+                            <svg viewBox="0 0 16 16" aria-hidden="true">
+                              <path
+                                d="M2.5 3.5h11v9h-11v-9Zm5.2 0v9"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.2"
+                              />
+                            </svg>
+                          }
+                        >
+                          <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path
+                              d="M2.5 3.5h11v9h-11v-9Zm5.2 0v9M7.2 8h-3"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.2"
+                              stroke-linecap="round"
+                            />
+                          </svg>
+                        </Show>
+                      </button>
+                      <button
+                        type="button"
+                        class="run-detail-icon-button"
                         aria-label="Pause"
                         title="Pause"
                       >
@@ -193,51 +239,61 @@ const RunDetailScreen: Component = () => {
                   </div>
                 </section>
 
-                <section class="run-detail-main-grid">
-                  <section class="projects-panel run-detail-conversation-column">
-                    <section
-                      class="run-detail-conversation-log"
-                      aria-label="Conversation transcript"
-                    >
-                      <For each={transcript()}>
-                        {(entry) => (
-                          <article
-                            class={`run-detail-message${entry.isEvent ? "run-detail-message--event" : ""}`}
-                          >
-                            <header>
-                              <strong>{entry.actor}</strong>
-                              <span>{formatDateTime(entry.time || null)}</span>
-                            </header>
-                            <p>{entry.text}</p>
-                          </article>
-                        )}
-                      </For>
+                <section
+                  class="run-detail-main-grid"
+                  classList={{
+                    "run-detail-main-grid--info-focus": isInfoFocus(),
+                  }}
+                  data-layout-mode={layoutMode()}
+                >
+                  <Show when={!isInfoFocus()}>
+                    <section class="projects-panel run-detail-conversation-column">
+                      <section
+                        class="run-detail-conversation-log"
+                        aria-label="Conversation transcript"
+                      >
+                        <For each={transcript()}>
+                          {(entry) => (
+                            <article
+                              class={`run-detail-message${entry.isEvent ? "run-detail-message--event" : ""}`}
+                            >
+                              <header>
+                                <strong>{entry.actor}</strong>
+                                <span>
+                                  {formatDateTime(entry.time || null)}
+                                </span>
+                              </header>
+                              <p>{entry.text}</p>
+                            </article>
+                          )}
+                        </For>
+                      </section>
+                      <form
+                        class="run-detail-composer"
+                        aria-label="Message composer"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                        }}
+                      >
+                        <label class="sr-only" for="run-detail-message-input">
+                          Message agent
+                        </label>
+                        <input
+                          id="run-detail-message-input"
+                          type="text"
+                          value={composerValue()}
+                          onInput={(event) =>
+                            setComposerValue(event.currentTarget.value)
+                          }
+                          placeholder="Message agent..."
+                          aria-label="Message agent"
+                        />
+                        <button type="submit" class="projects-button-primary">
+                          Send
+                        </button>
+                      </form>
                     </section>
-                    <form
-                      class="run-detail-composer"
-                      aria-label="Message composer"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                      }}
-                    >
-                      <label class="sr-only" for="run-detail-message-input">
-                        Message agent
-                      </label>
-                      <input
-                        id="run-detail-message-input"
-                        type="text"
-                        value={composerValue()}
-                        onInput={(event) =>
-                          setComposerValue(event.currentTarget.value)
-                        }
-                        placeholder="Message agent..."
-                        aria-label="Message agent"
-                      />
-                      <button type="submit" class="projects-button-primary">
-                        Send
-                      </button>
-                    </form>
-                  </section>
+                  </Show>
 
                   <aside
                     class="projects-panel run-detail-ops-sidebar"

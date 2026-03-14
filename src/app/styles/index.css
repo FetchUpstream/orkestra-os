@@ -298,6 +298,7 @@ textarea::placeholder {
   width: 100%;
   max-width: 100%;
   padding: 24px 28px;
+  min-height: 100%;
 }
 
 .shell-right-panel {
@@ -2083,6 +2084,7 @@ textarea::placeholder {
   gap: 12px;
   margin-top: 12px;
   min-height: 0;
+  height: 100%;
 }
 
 .run-detail-workspace {
@@ -2090,6 +2092,7 @@ textarea::placeholder {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
+  flex: 1;
 }
 
 .run-detail-card {
@@ -2222,6 +2225,15 @@ textarea::placeholder {
   grid-template-columns: minmax(0, 1fr) minmax(250px, 0.35fr);
   gap: 12px;
   min-height: 0;
+  flex: 1;
+}
+
+.run-detail-main-grid > * {
+  min-height: 0;
+}
+
+.run-detail-main-grid--info-focus {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .run-detail-conversation-column {
@@ -2236,8 +2248,8 @@ textarea::placeholder {
   border-radius: var(--radius-md);
   background: var(--bg);
   padding: 12px;
-  min-height: 280px;
-  max-height: 52vh;
+  min-height: 0;
+  flex: 1;
   overflow: auto;
   display: grid;
   gap: 10px;
@@ -2324,6 +2336,8 @@ textarea::placeholder {
   background: var(--bg);
   padding: 10px 12px;
   min-height: 48px;
+  flex: 1;
+  overflow: auto;
 }
 
 .sr-only {
@@ -2571,6 +2585,6 @@ textarea::placeholder {
   }
 
   .run-detail-conversation-log {
-    max-height: 44vh;
+    min-height: 220px;
   }
 }

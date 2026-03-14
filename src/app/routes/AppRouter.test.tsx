@@ -1598,12 +1598,16 @@ describe("app routing and shell", () => {
     renderAt("/runs/run-456");
 
     await waitFor(() => {
+      const toggleButton = screen.getByRole("button", {
+        name: "Expand info panel",
+      });
       expect(screen.getByRole("link", { name: "Back to task" })).toBeTruthy();
       expect(screen.getByRole("heading", { name: "Run #456" })).toBeTruthy();
       expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
       expect(
         screen.getByRole("region", { name: "Conversation transcript" }),
       ).toBeTruthy();
+      expect(toggleButton.getAttribute("aria-pressed")).toBe("false");
       expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
@@ -1627,6 +1631,54 @@ describe("app routing and shell", () => {
       expect(screen.getByRole("tab", { name: "Diff" })).toBeTruthy();
       expect(screen.getByRole("tab", { name: "Timeline" })).toBeTruthy();
       expect(screen.queryByText("run-456")).toBeNull();
+    });
+  });
+
+  it("toggles between split mode and info-focus mode in run detail", async () => {
+    renderAt("/runs/run-456");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("region", { name: "Conversation transcript" }),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "Expand info panel" }),
+      ).toBeTruthy();
+    });
+
+    const expandInfoButton = screen.getByRole("button", {
+      name: "Expand info panel",
+    });
+    await fireEvent.click(expandInfoButton);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("region", { name: "Conversation transcript" }),
+      ).toBeNull();
+      expect(
+        screen.getByRole("complementary", { name: "Run operations" }),
+      ).toBeTruthy();
+      expect(
+        screen
+          .getByRole("tab", { name: "Operations" })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(
+        screen.getByRole("button", { name: "Return to split mode" }),
+      ).toBeTruthy();
+    });
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Return to split mode" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("region", { name: "Conversation transcript" }),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "Expand info panel" }),
+      ).toBeTruthy();
     });
   });
 
