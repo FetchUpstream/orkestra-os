@@ -20,6 +20,72 @@ import {
   repositoryLabel,
 } from "../utils/taskDetail";
 
+const formatRunDuration = (milliseconds: number) => {
+  if (milliseconds <= 0) return "<1s";
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+};
+
+const getRunTimingCopy = (runItem: {
+  createdAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+}) => {
+  const startedAt = runItem.startedAt ? new Date(runItem.startedAt) : null;
+  const finishedAt = runItem.finishedAt ? new Date(runItem.finishedAt) : null;
+  if (
+    startedAt &&
+    finishedAt &&
+    !Number.isNaN(startedAt.getTime()) &&
+    !Number.isNaN(finishedAt.getTime())
+  ) {
+    return `Duration ${formatRunDuration(finishedAt.getTime() - startedAt.getTime())}`;
+  }
+  if (startedAt && !Number.isNaN(startedAt.getTime())) {
+    return `Elapsed ${formatRunDuration(Date.now() - startedAt.getTime())}`;
+  }
+  return `Queued ${formatDateTime(runItem.createdAt)}`;
+};
+
+const getRunSummaryFallback = (status: string) => {
+  if (status === "queued") {
+    return "Waiting for an available runner to start execution.";
+  }
+  if (status === "preparing") {
+    return "Preparing runtime context and workspace before execution.";
+  }
+  if (status === "running") {
+    return "Execution is in progress and actively processing steps.";
+  }
+  if (status === "completed") {
+    return "Execution completed successfully and outputs are ready.";
+  }
+  if (status === "failed") {
+    return "Execution stopped after an error during run stages.";
+  }
+  return "Execution was stopped before completion.";
+};
+
+const getRunPrimaryLabel = (runItem: {
+  runNumber?: number | null;
+  displayKey?: string | null;
+}) => {
+  if (typeof runItem.runNumber === "number") return `Run #${runItem.runNumber}`;
+  const displayKey = runItem.displayKey?.trim();
+  if (displayKey) return displayKey;
+  return "Run";
+};
+
 const EditIcon: Component = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path d="M3 17.25V21h3.75L18.81 8.94l-3.75-3.75L3 17.25zm17.71-10.04a.996.996 0 0 0 0-1.41L18.2 3.29a.996.996 0 1 0-1.41 1.41l2.5 2.5c.39.39 1.03.39 1.42.01z" />
@@ -473,17 +539,53 @@ const TaskDetailScreen: Component = () => {
                                           href={`/runs/${runItem.id}`}
                                           class="task-runs-link task-runs-link--with-action"
                                         >
-                                          <span class="task-runs-link-copy">
-                                            Open run details
-                                          </span>
-                                          <span
-                                            class={`project-task-status project-task-status--${runItem.status}`}
-                                          >
-                                            {formatRunStatus(runItem.status)}
-                                          </span>
-                                          <span class="task-runs-created-at">
-                                            {formatDateTime(runItem.createdAt)}
-                                          </span>
+                                          <div class="task-runs-content">
+                                            <div class="task-runs-primary-row">
+                                              <span class="task-runs-label">
+                                                {getRunPrimaryLabel(runItem)}
+                                              </span>
+                                              <span
+                                                class={`project-task-status project-task-status--${runItem.status}`}
+                                              >
+                                                {formatRunStatus(
+                                                  runItem.status,
+                                                )}
+                                              </span>
+                                            </div>
+                                            <div class="task-runs-secondary-row">
+                                              <span class="task-runs-created-at">
+                                                {formatDateTime(
+                                                  runItem.createdAt,
+                                                )}
+                                              </span>
+                                              <span class="task-runs-timing-copy">
+                                                {getRunTimingCopy(runItem)}
+                                              </span>
+                                              <Show
+                                                when={runItem.targetRepoId?.trim()}
+                                              >
+                                                {(repoId) => (
+                                                  <span class="task-runs-repo-tag">
+                                                    {projectRepositories().find(
+                                                      (repository) =>
+                                                        repository.id ===
+                                                        repoId(),
+                                                    )?.name || "Repo"}
+                                                  </span>
+                                                )}
+                                              </Show>
+                                            </div>
+                                            <p class="task-runs-summary-row">
+                                              {(
+                                                runItem.errorMessage ||
+                                                runItem.summary ||
+                                                ""
+                                              ).trim() ||
+                                                getRunSummaryFallback(
+                                                  runItem.status,
+                                                )}
+                                            </p>
+                                          </div>
                                         </A>
                                       </li>
                                     )}

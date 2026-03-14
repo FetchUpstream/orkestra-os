@@ -1982,18 +1982,22 @@ textarea::placeholder {
 
 .task-runs-delete-button {
   position: absolute;
-  top: 50%;
+  top: 10px;
   right: 10px;
-  transform: translateY(-50%);
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  transform: none;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  opacity: 0.72;
+}
+
+.task-runs-item:hover .task-runs-delete-button,
+.task-runs-item:focus-within .task-runs-delete-button {
+  opacity: 1;
 }
 
 .task-runs-link {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: block;
   padding: 10px 12px;
   text-decoration: none;
   color: inherit;
@@ -2005,7 +2009,7 @@ textarea::placeholder {
 }
 
 .task-runs-link--with-action {
-  padding-right: 50px;
+  padding-right: 44px;
 }
 
 .task-runs-link:hover {
@@ -2013,17 +2017,64 @@ textarea::placeholder {
   box-shadow: 0 0 0 1px var(--accent-subtle);
 }
 
-.task-runs-link-copy {
+.task-runs-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-runs-primary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-runs-label {
   color: var(--text);
-  font-size: 0.84rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.task-runs-secondary-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .task-runs-created-at {
-  margin-left: auto;
   color: var(--text-subtle);
   font-size: 0.75rem;
   font-family:
     ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.task-runs-timing-copy {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.task-runs-repo-tag {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.task-runs-summary-row {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .run-detail-page {

@@ -1877,6 +1877,7 @@ describe("app routing and shell", () => {
             {
               id: "run-old",
               task_id: "task-123",
+              run_number: 12,
               project_id: "p-1",
               status: "completed",
               triggered_by: "user",
@@ -1888,6 +1889,7 @@ describe("app routing and shell", () => {
           {
             id: "run-new",
             task_id: "task-99",
+            run_number: 13,
             project_id: "p-1",
             status: "queued",
             triggered_by: "user",
@@ -1896,6 +1898,7 @@ describe("app routing and shell", () => {
           {
             id: "run-old",
             task_id: "task-123",
+            run_number: 12,
             project_id: "p-1",
             status: "completed",
             triggered_by: "user",
@@ -1907,6 +1910,7 @@ describe("app routing and shell", () => {
         return Promise.resolve({
           id: "run-new",
           task_id: "task-123",
+          run_number: 13,
           project_id: "p-1",
           status: "queued",
           triggered_by: "user",
@@ -1934,7 +1938,13 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Runs" })).toBeTruthy();
+      expect(screen.getByText("Run #12")).toBeTruthy();
       expect(screen.getByText("Completed")).toBeTruthy();
+      expect(
+        screen.getByText(
+          "Execution completed successfully and outputs are ready.",
+        ),
+      ).toBeTruthy();
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "New Run" }));
@@ -1944,12 +1954,14 @@ describe("app routing and shell", () => {
         taskId: "task-123",
       });
       expect(listRunsCallCount).toBe(2);
+      expect(screen.getByText("Run #13")).toBeTruthy();
       expect(screen.getByText("Queued")).toBeTruthy();
+      expect(
+        screen.getByText("Waiting for an available runner to start execution."),
+      ).toBeTruthy();
     });
 
-    await fireEvent.click(
-      screen.getAllByRole("link", { name: /Open run details/i })[0],
-    );
+    await fireEvent.click(screen.getByRole("link", { name: /Run #13/i }));
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/runs/run-new");
@@ -2010,6 +2022,7 @@ describe("app routing and shell", () => {
           {
             id: "run-delete",
             task_id: "task-123",
+            run_number: 5,
             project_id: "p-1",
             status: "queued",
             triggered_by: "user",
@@ -2018,6 +2031,7 @@ describe("app routing and shell", () => {
           {
             id: "run-keep",
             task_id: "task-123",
+            run_number: 4,
             project_id: "p-1",
             status: "completed",
             triggered_by: "user",
@@ -2035,6 +2049,7 @@ describe("app routing and shell", () => {
       expect(
         screen.getAllByRole("button", { name: "Delete run" }),
       ).toHaveLength(2);
+      expect(screen.getByText("Run #5")).toBeTruthy();
       expect(screen.getByText("Queued")).toBeTruthy();
       expect(screen.getByText("Completed")).toBeTruthy();
     });
