@@ -1,6 +1,9 @@
-use crate::app::runs::dto::{RunDiffFileDto, RunDiffFilePayloadDto, RunDto};
+use crate::app::runs::dto::{
+    EnsureRunOpenCodeResponse, RawAgentEvent, RunDiffFileDto, RunDiffFilePayloadDto, RunDto,
+};
 use crate::app::state::AppState;
 use crate::app::{commands::context, commands::error_mapping::map_result};
+use tauri::ipc::Channel;
 use tauri::Manager;
 
 #[tauri::command]
@@ -65,4 +68,38 @@ pub async fn set_run_diff_watch(
             .set_run_diff_watch(&window.app_handle(), &window, &run_id, enabled)
             .await,
     )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn ensure_run_opencode(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<EnsureRunOpenCodeResponse, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(service.ensure_run_opencode(&run_id).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn subscribe_run_opencode_events(
+    window: tauri::Window,
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+    on_output: Channel<RawAgentEvent>,
+) -> Result<(), String> {
+    let service = context::runs_opencode_service(&state);
+    let subscriber_id = format!("{}:{}:{}", window.label(), run_id, uuid::Uuid::new_v4());
+    map_result(
+        service
+            .subscribe_run_opencode_events(&subscriber_id, &run_id, on_output)
+            .await,
+    )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_buffered_run_opencode_events(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<Vec<RawAgentEvent>, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(service.get_buffered_run_opencode_events(&run_id).await)
 }

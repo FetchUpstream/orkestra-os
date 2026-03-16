@@ -43,3 +43,18 @@ pub struct RunDiffFilePayloadDto {
 pub struct RunDiffUpdatedEventDto {
     pub run_id: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RawAgentEvent {
+    pub timestamp: String,
+    pub event_name: String,
+    pub payload: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsureRunOpenCodeResponse {
+    pub state: String,
+    pub reason: Option<String>,
+}

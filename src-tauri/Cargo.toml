@@ -37,3 +37,5 @@ notify = "8.2.0"
 notify-debouncer-full = "0.5.0"
 portable-pty = "0.9.0"
 base64 = "0.22.1"
+opencode = { version = "1.2.20", package = "opencode-client-sdk" }
+tokio-stream = { version = "0.1.17", features = ["sync"] }

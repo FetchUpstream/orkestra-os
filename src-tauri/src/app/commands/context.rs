@@ -1,5 +1,6 @@
 use crate::app::projects::service::ProjectsService;
 use crate::app::runs::diff_service::RunsDiffService;
+use crate::app::runs::opencode_service::RunsOpenCodeService;
 use crate::app::runs::service::RunsService;
 use crate::app::state::AppState;
 use crate::app::tasks::service::TasksService;
@@ -20,6 +21,10 @@ pub fn runs_service(state: &tauri::State<'_, AppState>) -> RunsService {
 
 pub fn runs_diff_service(state: &tauri::State<'_, AppState>) -> RunsDiffService {
     state.runs_diff_service.clone()
+}
+
+pub fn runs_opencode_service(state: &tauri::State<'_, AppState>) -> RunsOpenCodeService {
+    state.runs_opencode_service.clone()
 }
 
 pub fn worktrees_service(state: &tauri::State<'_, AppState>) -> WorktreesService {

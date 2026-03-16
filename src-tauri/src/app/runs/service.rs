@@ -100,6 +100,25 @@ impl RunsService {
         Ok(())
     }
 
+    pub async fn transition_queued_to_running(&self, run_id: &str) -> Result<RunDto, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let started_at = Utc::now().to_rfc3339();
+        let updated = self
+            .repository
+            .update_run_status(run_id, "queued", "running", Some(&started_at))
+            .await?;
+
+        if !updated {
+            return self.get_run(run_id).await;
+        }
+
+        self.get_run(run_id).await
+    }
+
     fn to_dto(run: Run) -> RunDto {
         RunDto {
             id: run.id,
