@@ -11,6 +11,7 @@ pub struct CreateWorktreeRequest {
 pub struct CreateWorktreeResponse {
     pub worktree_id: String,
     pub branch_name: String,
+    pub source_branch: Option<String>,
     pub path: String,
 }
 

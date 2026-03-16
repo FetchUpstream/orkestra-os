@@ -49,6 +49,7 @@ impl RunsService {
                 triggered_by: "user".to_string(),
                 created_at: Utc::now().to_rfc3339(),
                 worktree_id: Some(worktree.worktree_id),
+                source_branch: worktree.source_branch,
             })
             .await?;
 
@@ -114,6 +115,7 @@ impl RunsService {
             error_message: run.error_message,
             worktree_id: run.worktree_id,
             agent_id: run.agent_id,
+            source_branch: run.source_branch,
         }
     }
 }
@@ -273,6 +275,7 @@ mod tests {
         assert_eq!(run.triggered_by, "user");
         assert!(run.worktree_id.is_some());
         assert!(run.worktree_id.unwrap().starts_with("ork/"));
+        assert!(run.source_branch.is_some());
     }
 
     #[tokio::test]

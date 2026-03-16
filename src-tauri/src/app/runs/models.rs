@@ -13,6 +13,7 @@ pub struct Run {
     pub error_message: Option<String>,
     pub worktree_id: Option<String>,
     pub agent_id: Option<String>,
+    pub source_branch: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -25,6 +26,7 @@ pub struct NewRun {
     pub triggered_by: String,
     pub created_at: String,
     pub worktree_id: Option<String>,
+    pub source_branch: Option<String>,
 }
 
 #[derive(Clone, Debug)]

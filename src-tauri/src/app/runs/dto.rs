@@ -15,4 +15,31 @@ pub struct RunDto {
     pub error_message: Option<String>,
     pub worktree_id: Option<String>,
     pub agent_id: Option<String>,
+    pub source_branch: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RunDiffFileDto {
+    pub path: String,
+    pub additions: usize,
+    pub deletions: usize,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RunDiffFilePayloadDto {
+    pub path: String,
+    pub additions: usize,
+    pub deletions: usize,
+    pub original: String,
+    pub modified: String,
+    pub language: String,
+    pub status: String,
+    pub is_binary: bool,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RunDiffUpdatedEventDto {
+    pub run_id: String,
 }

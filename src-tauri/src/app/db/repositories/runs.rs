@@ -36,7 +36,7 @@ impl RunsRepository {
 
     pub async fn create_run(&self, input: NewRun) -> Result<Run, AppError> {
         sqlx::query(
-            "INSERT INTO runs (
+             "INSERT INTO runs (
                 id,
                 task_id,
                 project_id,
@@ -44,8 +44,9 @@ impl RunsRepository {
                 status,
                 triggered_by,
                 created_at,
-                worktree_id
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                worktree_id,
+                source_branch
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&input.id)
         .bind(&input.task_id)
@@ -55,6 +56,7 @@ impl RunsRepository {
         .bind(&input.triggered_by)
         .bind(&input.created_at)
         .bind(&input.worktree_id)
+        .bind(&input.source_branch)
         .execute(&self.pool)
         .await?;
 
@@ -78,7 +80,8 @@ impl RunsRepository {
                 summary,
                 error_message,
                 worktree_id,
-                agent_id
+                agent_id,
+                source_branch
              FROM runs
              WHERE task_id = ?
              ORDER BY created_at DESC",
@@ -105,7 +108,8 @@ impl RunsRepository {
                 summary,
                 error_message,
                 worktree_id,
-                agent_id
+                agent_id,
+                source_branch
              FROM runs
              WHERE id = ?",
         )
@@ -140,6 +144,7 @@ impl RunsRepository {
             error_message: row.get("error_message"),
             worktree_id: row.get("worktree_id"),
             agent_id: row.get("agent_id"),
+            source_branch: row.get("source_branch"),
         }
     }
 }

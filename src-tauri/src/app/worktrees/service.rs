@@ -51,21 +51,24 @@ impl WorktreesService {
             return Err(AppError::validation("repository must not be bare"));
         }
 
+        let head = repo.head().map_err(|err| {
+            AppError::validation(format!("failed to resolve HEAD reference: {err}"))
+        })?;
+        let source_branch = if head.is_branch() {
+            head.shorthand().map(str::to_string)
+        } else {
+            None
+        };
+        let head_commit = head
+            .peel_to_commit()
+            .map_err(|err| AppError::validation(format!("failed to resolve HEAD commit: {err}")))?;
+
         let branch_name = worktree_id.clone();
         let branch = match repo.find_branch(&branch_name, BranchType::Local) {
             Ok(branch) => branch,
-            Err(err) if err.code() == ErrorCode::NotFound => {
-                let head_commit =
-                    repo.head()
-                        .and_then(|head| head.peel_to_commit())
-                        .map_err(|err| {
-                            AppError::validation(format!("failed to resolve HEAD commit: {err}"))
-                        })?;
-                repo.branch(&branch_name, &head_commit, false)
-                    .map_err(|err| {
-                        AppError::validation(format!("failed to create branch: {err}"))
-                    })?
-            }
+            Err(err) if err.code() == ErrorCode::NotFound => repo
+                .branch(&branch_name, &head_commit, false)
+                .map_err(|err| AppError::validation(format!("failed to create branch: {err}")))?,
             Err(err) => {
                 return Err(AppError::validation(format!(
                     "failed to lookup branch: {err}"
@@ -95,6 +98,7 @@ impl WorktreesService {
         Ok(CreateWorktreeResponse {
             worktree_id,
             branch_name,
+            source_branch,
             path: worktree_path.to_string_lossy().to_string(),
         })
     }
