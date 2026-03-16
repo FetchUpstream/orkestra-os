@@ -31,13 +31,7 @@ body {
   background: var(--bg);
   color: var(--text);
   color-scheme: dark;
-  font-family:
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    Roboto,
-    sans-serif;
+  font-family: var(--font-mono);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -66,7 +60,7 @@ a:focus-visible {
 input,
 textarea,
 select {
-  font-family: inherit;
+  font-family: var(--font-mono);
   font-size: 0.9rem;
   line-height: 1.5;
 }
@@ -424,8 +418,7 @@ textarea::placeholder {
   margin: 0;
   color: var(--text-muted);
   font-size: 0.8rem;
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .projects-open-cue {
@@ -901,8 +894,7 @@ textarea::placeholder {
   background: var(--surface-alt);
   border: 1px solid var(--border);
   color: var(--text-muted);
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.8rem;
   font-weight: 600;
   border-radius: var(--radius-sm);
@@ -1078,8 +1070,7 @@ textarea::placeholder {
 .project-task-key {
   margin-right: 8px;
   color: var(--text-muted);
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.8rem;
   letter-spacing: 0.02em;
 }
@@ -1092,8 +1083,7 @@ textarea::placeholder {
   margin: 0;
   color: var(--text-subtle);
   font-size: 0.8rem;
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .project-task-meta {
@@ -1192,8 +1182,7 @@ textarea::placeholder {
 .project-task-updated {
   font-size: 0.75rem;
   color: var(--text-subtle);
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 /* Legacy task styles - hide */
@@ -1399,7 +1388,7 @@ textarea::placeholder {
 }
 
 .task-detail-back-link-icon {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.76rem;
 }
 
@@ -1469,8 +1458,7 @@ textarea::placeholder {
 .task-detail-summary-value {
   font-size: 0.8rem;
   color: var(--text-muted);
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .task-detail-main-card {
@@ -1636,8 +1624,7 @@ textarea::placeholder {
 }
 
 .markdown-content code {
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.85em;
   background: var(--surface-alt);
   border: 1px solid var(--border-subtle);
@@ -1834,8 +1821,7 @@ textarea::placeholder {
   margin: 0;
   color: var(--text-muted);
   font-size: 0.84rem;
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   overflow-wrap: anywhere;
 }
 
@@ -1986,8 +1972,7 @@ textarea::placeholder {
 .task-dependency-scope {
   font-size: 0.75rem;
   color: var(--text-subtle);
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .task-dependency-action {
@@ -2099,8 +2084,7 @@ textarea::placeholder {
 .task-runs-created-at {
   color: var(--text-subtle);
   font-size: 0.75rem;
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .task-runs-timing-copy {
@@ -2271,8 +2255,7 @@ textarea::placeholder {
   margin: 0;
   font-size: 0.78rem;
   color: var(--text-subtle);
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .run-detail-main-grid {
@@ -2413,6 +2396,33 @@ textarea::placeholder {
   min-height: 48px;
   flex: 1;
   overflow: auto;
+}
+
+.run-detail-tab-content--hidden {
+  display: none;
+}
+
+.run-detail-terminal-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  height: 100%;
+}
+
+.run-detail-terminal-root {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  min-height: 280px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.run-detail-terminal-host {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
 }
 
 .run-detail-monaco-panel {

@@ -3,6 +3,7 @@ use crate::app::runs::diff_service::RunsDiffService;
 use crate::app::runs::service::RunsService;
 use crate::app::state::AppState;
 use crate::app::tasks::service::TasksService;
+use crate::app::terminal::service::TerminalService;
 use crate::app::worktrees::service::WorktreesService;
 
 pub fn projects_service(state: &tauri::State<'_, AppState>) -> ProjectsService {
@@ -23,4 +24,8 @@ pub fn runs_diff_service(state: &tauri::State<'_, AppState>) -> RunsDiffService 
 
 pub fn worktrees_service(state: &tauri::State<'_, AppState>) -> WorktreesService {
     state.worktrees_service.clone()
+}
+
+pub fn terminal_service(state: &tauri::State<'_, AppState>) -> TerminalService {
+    state.terminal_service.clone()
 }

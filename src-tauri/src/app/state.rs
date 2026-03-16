@@ -5,6 +5,7 @@ use crate::app::projects::service::ProjectsService;
 use crate::app::runs::diff_service::RunsDiffService;
 use crate::app::runs::service::RunsService;
 use crate::app::tasks::service::TasksService;
+use crate::app::terminal::service::TerminalService;
 use crate::app::worktrees::service::WorktreesService;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
@@ -16,6 +17,7 @@ pub struct AppState {
     pub runs_diff_service: RunsDiffService,
     pub tasks_service: TasksService,
     pub worktrees_service: WorktreesService,
+    pub terminal_service: TerminalService,
 }
 
 impl AppState {
@@ -26,7 +28,8 @@ impl AppState {
         let projects_service = ProjectsService::new(repository);
         let worktrees_service = WorktreesService::new(app_data_dir.clone());
         let runs_service = RunsService::new(runs_repository, worktrees_service.clone());
-        let runs_diff_service = RunsDiffService::new(runs_service.clone(), app_data_dir);
+        let runs_diff_service = RunsDiffService::new(runs_service.clone(), app_data_dir.clone());
+        let terminal_service = TerminalService::new(runs_service.clone(), app_data_dir);
         let tasks_service = TasksService::new(tasks_repository);
         Self {
             projects_service,
@@ -34,6 +37,7 @@ impl AppState {
             runs_diff_service,
             tasks_service,
             worktrees_service,
+            terminal_service,
         }
     }
 }

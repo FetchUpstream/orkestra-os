@@ -11,6 +11,7 @@ import BackIconLink from "../../../components/ui/BackIconLink";
 import MonacoDiffEditor from "../../../components/MonacoDiffEditor";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime, formatRunStatus } from "../../tasks/utils/taskDetail";
+import RunTerminal from "../components/RunTerminal";
 
 const RunDetailScreen: Component = () => {
   const model = useRunDetailModel();
@@ -23,6 +24,7 @@ const RunDetailScreen: Component = () => {
   >({});
   const [composerValue, setComposerValue] = createSignal("");
   const isInfoFocus = createMemo(() => layoutMode() === "info-focus");
+  const isTerminalTabActive = createMemo(() => activeTab() === "terminal");
   const transcript = createMemo(() => {
     const runValue = model.run();
     const taskValue = model.task();
@@ -435,183 +437,208 @@ const RunDetailScreen: Component = () => {
                       aria-label="Run detail tab panel"
                       class="run-detail-tab-panel"
                     >
-                      <Show
-                        when={activeTab() === "operations"}
-                        fallback={
-                          <Show
-                            when={activeTab() === "diff"}
-                            fallback={
-                              <p class="project-placeholder-text">
-                                {activeTab() === "files"
-                                  ? "Files Changed"
-                                  : activeTab().charAt(0).toUpperCase() +
-                                    activeTab().slice(1)}{" "}
-                                panel placeholder.
-                              </p>
-                            }
-                          >
-                            <section aria-label="Run diff files">
-                              <Show when={model.diffFilesError().length > 0}>
-                                <p class="projects-error">
-                                  {model.diffFilesError()}
+                      <div
+                        class="run-detail-tab-content"
+                        classList={{
+                          "run-detail-tab-content--hidden":
+                            !isTerminalTabActive(),
+                        }}
+                      >
+                        <RunTerminal
+                          isVisible={isTerminalTabActive()}
+                          isStarting={model.terminal.isStarting()}
+                          isReady={model.terminal.isReady()}
+                          error={model.terminal.error()}
+                          writeTerminal={model.terminal.writeTerminal}
+                          resizeTerminal={model.terminal.resizeTerminal}
+                          setTerminalFrameHandler={
+                            model.terminal.setTerminalFrameHandler
+                          }
+                        />
+                      </div>
+                      <Show when={!isTerminalTabActive()}>
+                        <Show
+                          when={activeTab() === "operations"}
+                          fallback={
+                            <Show
+                              when={activeTab() === "diff"}
+                              fallback={
+                                <p class="project-placeholder-text">
+                                  {activeTab() === "files"
+                                    ? "Files Changed"
+                                    : activeTab().charAt(0).toUpperCase() +
+                                      activeTab().slice(1)}{" "}
+                                  panel placeholder.
                                 </p>
-                              </Show>
-                              <Show
-                                when={model.diffFiles().length > 0}
-                                fallback={
-                                  <Show when={!model.isDiffFilesLoading()}>
-                                    <p class="project-placeholder-text">
-                                      No changed files.
-                                    </p>
-                                  </Show>
-                                }
-                              >
-                                <div class="run-diff-accordion">
-                                  <For each={model.diffFiles()}>
-                                    {(file) => {
-                                      const expanded = () =>
-                                        expandedDiffPaths()[file.path] === true;
-                                      const payload = () =>
-                                        model.diffFilePayloads()[file.path];
-                                      const isFileLoading = () =>
-                                        model.diffFileLoadingPaths()[
-                                          file.path
-                                        ] === true;
+                              }
+                            >
+                              <section aria-label="Run diff files">
+                                <Show when={model.diffFilesError().length > 0}>
+                                  <p class="projects-error">
+                                    {model.diffFilesError()}
+                                  </p>
+                                </Show>
+                                <Show
+                                  when={model.diffFiles().length > 0}
+                                  fallback={
+                                    <Show when={!model.isDiffFilesLoading()}>
+                                      <p class="project-placeholder-text">
+                                        No changed files.
+                                      </p>
+                                    </Show>
+                                  }
+                                >
+                                  <div class="run-diff-accordion">
+                                    <For each={model.diffFiles()}>
+                                      {(file) => {
+                                        const expanded = () =>
+                                          expandedDiffPaths()[file.path] ===
+                                          true;
+                                        const payload = () =>
+                                          model.diffFilePayloads()[file.path];
+                                        const isFileLoading = () =>
+                                          model.diffFileLoadingPaths()[
+                                            file.path
+                                          ] === true;
 
-                                      return (
-                                        <article class="run-diff-item">
-                                          <button
-                                            type="button"
-                                            class="run-diff-item-header"
-                                            aria-expanded={
-                                              expanded() ? "true" : "false"
-                                            }
-                                            onClick={() => {
-                                              const previousExpanded =
-                                                expandedDiffPaths()[
-                                                  file.path
-                                                ] === true;
-                                              const nextExpanded =
-                                                !previousExpanded;
-                                              setExpandedDiffPaths(
-                                                (current) => ({
-                                                  ...current,
-                                                  [file.path]: nextExpanded,
-                                                }),
-                                              );
-                                            }}
-                                          >
-                                            <span class="run-diff-item-path">
-                                              {file.path}
-                                            </span>
-                                            <span class="run-diff-item-stats">
-                                              <span class="run-diff-item-stat-additions">
-                                                +{file.additions}
+                                        return (
+                                          <article class="run-diff-item">
+                                            <button
+                                              type="button"
+                                              class="run-diff-item-header"
+                                              aria-expanded={
+                                                expanded() ? "true" : "false"
+                                              }
+                                              onClick={() => {
+                                                const previousExpanded =
+                                                  expandedDiffPaths()[
+                                                    file.path
+                                                  ] === true;
+                                                const nextExpanded =
+                                                  !previousExpanded;
+                                                setExpandedDiffPaths(
+                                                  (current) => ({
+                                                    ...current,
+                                                    [file.path]: nextExpanded,
+                                                  }),
+                                                );
+                                              }}
+                                            >
+                                              <span class="run-diff-item-path">
+                                                {file.path}
                                               </span>
-                                              <span class="run-diff-item-stat-deletions">
-                                                -{file.deletions}
+                                              <span class="run-diff-item-stats">
+                                                <span class="run-diff-item-stat-additions">
+                                                  +{file.additions}
+                                                </span>
+                                                <span class="run-diff-item-stat-deletions">
+                                                  -{file.deletions}
+                                                </span>
                                               </span>
-                                            </span>
-                                          </button>
-                                          <Show when={expanded()}>
-                                            <div class="run-diff-item-body">
-                                              <Show
-                                                when={!isFileLoading()}
-                                                fallback={
-                                                  <p class="project-placeholder-text">
-                                                    Loading diff.
-                                                  </p>
-                                                }
-                                              >
+                                            </button>
+                                            <Show when={expanded()}>
+                                              <div class="run-diff-item-body">
                                                 <Show
-                                                  when={payload()}
+                                                  when={!isFileLoading()}
                                                   fallback={
                                                     <p class="project-placeholder-text">
-                                                      Diff unavailable.
+                                                      Loading diff.
                                                     </p>
                                                   }
                                                 >
-                                                  {(filePayload) => (
-                                                    <>
-                                                      <p class="run-diff-item-meta">
-                                                        {filePayload().status},{" "}
-                                                        {filePayload().isBinary
-                                                          ? "binary"
-                                                          : "text"}
-                                                        {filePayload().truncated
-                                                          ? ", truncated"
-                                                          : ""}
+                                                  <Show
+                                                    when={payload()}
+                                                    fallback={
+                                                      <p class="project-placeholder-text">
+                                                        Diff unavailable.
                                                       </p>
-                                                      <div class="run-detail-monaco-panel">
-                                                        <MonacoDiffEditor
-                                                          original={
-                                                            filePayload()
-                                                              .original
-                                                          }
-                                                          modified={
-                                                            filePayload()
-                                                              .modified
-                                                          }
-                                                          language={
-                                                            filePayload()
-                                                              .language
-                                                          }
-                                                        />
-                                                      </div>
-                                                    </>
-                                                  )}
+                                                    }
+                                                  >
+                                                    {(filePayload) => (
+                                                      <>
+                                                        <p class="run-diff-item-meta">
+                                                          {filePayload().status}
+                                                          ,{" "}
+                                                          {filePayload()
+                                                            .isBinary
+                                                            ? "binary"
+                                                            : "text"}
+                                                          {filePayload()
+                                                            .truncated
+                                                            ? ", truncated"
+                                                            : ""}
+                                                        </p>
+                                                        <div class="run-detail-monaco-panel">
+                                                          <MonacoDiffEditor
+                                                            original={
+                                                              filePayload()
+                                                                .original
+                                                            }
+                                                            modified={
+                                                              filePayload()
+                                                                .modified
+                                                            }
+                                                            language={
+                                                              filePayload()
+                                                                .language
+                                                            }
+                                                          />
+                                                        </div>
+                                                      </>
+                                                    )}
+                                                  </Show>
                                                 </Show>
-                                              </Show>
-                                            </div>
-                                          </Show>
-                                        </article>
-                                      );
-                                    }}
-                                  </For>
-                                </div>
-                              </Show>
-                            </section>
-                          </Show>
-                        }
-                      >
-                        <dl class="task-detail-definition-list run-detail-metadata">
-                          <div>
-                            <dt>Status</dt>
-                            <dd>{formatRunStatus(runValue().status)}</dd>
-                          </div>
-                          <div>
-                            <dt>Duration</dt>
-                            <dd>{model.durationLabel()}</dd>
-                          </div>
-                          <div>
-                            <dt>Worktree</dt>
-                            <dd>
-                              {runValue().worktreeId?.trim() || "Unavailable"}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Branch</dt>
-                            <dd>
-                              {runValue().status === "running"
-                                ? "active branch"
-                                : "Unavailable"}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Model/agent</dt>
-                            <dd>
-                              {runValue().agentId?.trim() || "Unavailable"}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Files changed</dt>
-                            <dd>Placeholder</dd>
-                          </div>
-                          <div>
-                            <dt>Tests</dt>
-                            <dd>Placeholder</dd>
-                          </div>
-                        </dl>
+                                              </div>
+                                            </Show>
+                                          </article>
+                                        );
+                                      }}
+                                    </For>
+                                  </div>
+                                </Show>
+                              </section>
+                            </Show>
+                          }
+                        >
+                          <dl class="task-detail-definition-list run-detail-metadata">
+                            <div>
+                              <dt>Status</dt>
+                              <dd>{formatRunStatus(runValue().status)}</dd>
+                            </div>
+                            <div>
+                              <dt>Duration</dt>
+                              <dd>{model.durationLabel()}</dd>
+                            </div>
+                            <div>
+                              <dt>Worktree</dt>
+                              <dd>
+                                {runValue().worktreeId?.trim() || "Unavailable"}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Branch</dt>
+                              <dd>
+                                {runValue().status === "running"
+                                  ? "active branch"
+                                  : "Unavailable"}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Model/agent</dt>
+                              <dd>
+                                {runValue().agentId?.trim() || "Unavailable"}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Files changed</dt>
+                              <dd>Placeholder</dd>
+                            </div>
+                            <div>
+                              <dt>Tests</dt>
+                              <dd>Placeholder</dd>
+                            </div>
+                          </dl>
+                        </Show>
                       </Show>
                     </div>
                   </aside>

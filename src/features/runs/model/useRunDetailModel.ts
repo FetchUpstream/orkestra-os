@@ -4,11 +4,16 @@ import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
   getRun,
   getRunDiffFile,
+  killRunTerminal,
   listRunDiffFiles,
+  openRunTerminal,
+  resizeRunTerminal,
   setRunDiffWatch,
   type Run,
   type RunDiffFile,
   type RunDiffFilePayload,
+  type RunTerminalFrame,
+  writeRunTerminal,
 } from "../../../app/lib/runs";
 import { getTask, type Task } from "../../../app/lib/tasks";
 
@@ -28,9 +33,22 @@ export const useRunDetailModel = () => {
   >({});
   const [isLoading, setIsLoading] = createSignal(true);
   const [error, setError] = createSignal("");
+  const [terminalSessionId, setTerminalSessionId] = createSignal<string | null>(
+    null,
+  );
+  const [terminalGeneration, setTerminalGeneration] = createSignal<
+    number | null
+  >(null);
+  const [isTerminalStarting, setIsTerminalStarting] = createSignal(false);
+  const [isTerminalReady, setIsTerminalReady] = createSignal(false);
+  const [terminalError, setTerminalError] = createSignal("");
   let activeRunRequestVersion = 0;
   let activeDiffRefreshVersion = 0;
   let diffRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let activeTerminalRequestVersion = 0;
+  let terminalRunId: string | null = null;
+  let terminalRouteInstanceId = crypto.randomUUID();
+  let terminalFrameHandler: ((frame: RunTerminalFrame) => void) | null = null;
 
   const areDiffFilesEqual = (
     current: RunDiffFile[],
@@ -246,6 +264,163 @@ export const useRunDetailModel = () => {
     })();
   });
 
+  const setTerminalFrameHandler = (
+    handler: ((frame: RunTerminalFrame) => void) | null,
+  ): void => {
+    terminalFrameHandler = handler;
+  };
+
+  const disposeTerminal = async (): Promise<void> => {
+    const sessionId = terminalSessionId();
+    const generation = terminalGeneration();
+    activeTerminalRequestVersion += 1;
+    setIsTerminalStarting(false);
+    setIsTerminalReady(false);
+    terminalRunId = null;
+    setTerminalSessionId(null);
+    setTerminalGeneration(null);
+
+    if (!sessionId || generation === null) {
+      return;
+    }
+
+    try {
+      await killRunTerminal({
+        sessionId,
+        generation,
+      });
+    } catch {
+      // Ignore disposal failures during route transitions.
+    }
+  };
+
+  const initTerminalForRun = async (runId: string): Promise<void> => {
+    const normalizedRunId = runId.trim();
+    if (!normalizedRunId) {
+      setTerminalError("Missing run ID.");
+      return;
+    }
+
+    if (
+      terminalRunId === normalizedRunId &&
+      (isTerminalStarting() || isTerminalReady())
+    ) {
+      return;
+    }
+
+    if (terminalRunId && terminalRunId !== normalizedRunId) {
+      await disposeTerminal();
+    }
+
+    const requestVersion = ++activeTerminalRequestVersion;
+    terminalRunId = normalizedRunId;
+    terminalRouteInstanceId = crypto.randomUUID();
+    setIsTerminalStarting(true);
+    setIsTerminalReady(false);
+    setTerminalError("");
+    setTerminalSessionId(null);
+    setTerminalGeneration(null);
+
+    try {
+      const session = await openRunTerminal({
+        runId: normalizedRunId,
+        routeInstanceId: terminalRouteInstanceId,
+        cols: 120,
+        rows: 32,
+        onOutput: (frame) => {
+          if (requestVersion !== activeTerminalRequestVersion) {
+            return;
+          }
+
+          if (frame.type === "error") {
+            setTerminalError(frame.message || "Terminal stream error.");
+          }
+
+          if (frame.type === "closed") {
+            setIsTerminalReady(false);
+          }
+
+          terminalFrameHandler?.(frame);
+        },
+      });
+
+      if (requestVersion !== activeTerminalRequestVersion) {
+        return;
+      }
+
+      setTerminalSessionId(session.sessionId);
+      setTerminalGeneration(session.generation);
+      setIsTerminalReady(true);
+    } catch {
+      if (requestVersion !== activeTerminalRequestVersion) {
+        return;
+      }
+
+      setTerminalError("Failed to start terminal.");
+      setTerminalSessionId(null);
+      setTerminalGeneration(null);
+      setIsTerminalReady(false);
+    } finally {
+      if (requestVersion === activeTerminalRequestVersion) {
+        setIsTerminalStarting(false);
+      }
+    }
+  };
+
+  const writeTerminal = async (data: string): Promise<void> => {
+    const sessionId = terminalSessionId();
+    const generation = terminalGeneration();
+    if (!sessionId || generation === null) {
+      return;
+    }
+
+    try {
+      await writeRunTerminal({
+        sessionId,
+        generation,
+        data,
+      });
+    } catch {
+      setTerminalError("Failed to write to terminal.");
+    }
+  };
+
+  const resizeTerminal = async (cols: number, rows: number): Promise<void> => {
+    const sessionId = terminalSessionId();
+    const generation = terminalGeneration();
+    if (!sessionId || generation === null) {
+      return;
+    }
+
+    const normalizedCols = Math.max(1, Math.floor(cols));
+    const normalizedRows = Math.max(1, Math.floor(rows));
+
+    try {
+      await resizeRunTerminal({
+        sessionId,
+        generation,
+        cols: normalizedCols,
+        rows: normalizedRows,
+      });
+    } catch {
+      setTerminalError("Failed to resize terminal.");
+    }
+  };
+
+  createEffect(() => {
+    const runId = params.runId;
+    if (!runId) {
+      void disposeTerminal();
+      return;
+    }
+
+    void initTerminalForRun(runId);
+
+    onCleanup(() => {
+      void disposeTerminal();
+    });
+  });
+
   const refreshDiffFiles = async (): Promise<void> => {
     const runId = params.runId;
     if (!runId || !isDiffTabActive()) return;
@@ -446,5 +621,17 @@ export const useRunDetailModel = () => {
     diffFilePayloads,
     diffFileLoadingPaths,
     loadDiffFile,
+    terminal: {
+      sessionId: terminalSessionId,
+      generation: terminalGeneration,
+      isStarting: isTerminalStarting,
+      isReady: isTerminalReady,
+      error: terminalError,
+      initTerminalForRun,
+      writeTerminal,
+      resizeTerminal,
+      disposeTerminal,
+      setTerminalFrameHandler,
+    },
   };
 };

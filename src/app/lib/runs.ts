@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 export const RUN_STATUSES = [
   "queued",
@@ -49,6 +49,63 @@ export type RunDiffFilePayload = {
   truncated: boolean;
 };
 
+export type RunTerminalDataFrame = {
+  type: "data";
+  chunkBase64: string;
+};
+
+export type RunTerminalExitFrame = {
+  type: "exit";
+  code: number | null;
+  signal: number | string | null;
+};
+
+export type RunTerminalErrorFrame = {
+  type: "error";
+  message: string;
+};
+
+export type RunTerminalClosedFrame = {
+  type: "closed";
+};
+
+export type RunTerminalFrame =
+  | RunTerminalDataFrame
+  | RunTerminalExitFrame
+  | RunTerminalErrorFrame
+  | RunTerminalClosedFrame;
+
+export type OpenRunTerminalParams = {
+  runId: string;
+  routeInstanceId: string;
+  cols: number;
+  rows: number;
+  onOutput: (frame: RunTerminalFrame) => void;
+};
+
+export type OpenRunTerminalResult = {
+  sessionId: string;
+  generation: number;
+};
+
+export type WriteRunTerminalParams = {
+  sessionId: string;
+  generation: number;
+  data: string;
+};
+
+export type ResizeRunTerminalParams = {
+  sessionId: string;
+  generation: number;
+  cols: number;
+  rows: number;
+};
+
+export type KillRunTerminalParams = {
+  sessionId: string;
+  generation: number;
+};
+
 type RunDiffFileResponse = {
   path: string;
   additions: number;
@@ -67,6 +124,22 @@ type RunDiffFilePayloadResponse = {
   is_binary?: boolean;
   isBinary?: boolean;
   truncated: boolean;
+};
+
+type OpenRunTerminalResponse = {
+  session_id?: string;
+  sessionId?: string;
+  generation: number;
+};
+
+type RunTerminalFrameResponse = {
+  type?: string;
+  event?: string;
+  chunk_base64?: string;
+  chunkBase64?: string;
+  code?: number | null;
+  signal?: number | string | null;
+  message?: string;
 };
 
 type RunResponse = {
@@ -151,6 +224,41 @@ const toRunDiffFilePayload = (
   truncated: payload.truncated,
 });
 
+const toRunTerminalFrame = (
+  frame: RunTerminalFrameResponse,
+): RunTerminalFrame | null => {
+  const frameType = frame.event ?? frame.type;
+
+  if (frameType === "data") {
+    const chunkBase64 = pick(frame.chunk_base64, frame.chunkBase64);
+    if (typeof chunkBase64 === "string") {
+      return { type: "data", chunkBase64 };
+    }
+    return null;
+  }
+
+  if (frameType === "exit") {
+    return {
+      type: "exit",
+      code: frame.code ?? null,
+      signal: frame.signal ?? null,
+    };
+  }
+
+  if (frameType === "error") {
+    return {
+      type: "error",
+      message: frame.message ?? "Terminal stream error.",
+    };
+  }
+
+  if (frameType === "closed") {
+    return { type: "closed" };
+  }
+
+  return null;
+};
+
 export const createRun = async (taskId: string): Promise<Run> => {
   const response = await invoke<RunResponse>("create_run", { taskId });
   return toRun(response);
@@ -198,4 +306,73 @@ export const setRunDiffWatch = async (
   enabled: boolean,
 ): Promise<void> => {
   await invoke("set_run_diff_watch", { runId, enabled });
+};
+
+export const openRunTerminal = async ({
+  runId,
+  routeInstanceId,
+  cols,
+  rows,
+  onOutput,
+}: OpenRunTerminalParams): Promise<OpenRunTerminalResult> => {
+  const outputChannel = new Channel<RunTerminalFrameResponse>();
+  outputChannel.onmessage = (frame) => {
+    const parsedFrame = toRunTerminalFrame(frame);
+    if (!parsedFrame) return;
+    onOutput(parsedFrame);
+  };
+
+  const response = await invoke<OpenRunTerminalResponse>("open_run_terminal", {
+    runId,
+    routeInstanceId,
+    cols,
+    rows,
+    onOutput: outputChannel,
+  });
+
+  const sessionId = pick(response.session_id, response.sessionId);
+  if (!sessionId) {
+    throw new Error("Terminal session ID missing from backend response.");
+  }
+
+  return {
+    sessionId,
+    generation: response.generation,
+  };
+};
+
+export const writeRunTerminal = async ({
+  sessionId,
+  generation,
+  data,
+}: WriteRunTerminalParams): Promise<void> => {
+  await invoke("write_run_terminal", {
+    sessionId,
+    generation,
+    data,
+  });
+};
+
+export const resizeRunTerminal = async ({
+  sessionId,
+  generation,
+  cols,
+  rows,
+}: ResizeRunTerminalParams): Promise<void> => {
+  await invoke("resize_run_terminal", {
+    sessionId,
+    generation,
+    cols,
+    rows,
+  });
+};
+
+export const killRunTerminal = async ({
+  sessionId,
+  generation,
+}: KillRunTerminalParams): Promise<void> => {
+  await invoke("kill_run_terminal", {
+    sessionId,
+    generation,
+  });
 };

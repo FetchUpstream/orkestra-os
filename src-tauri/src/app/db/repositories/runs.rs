@@ -129,6 +129,30 @@ impl RunsRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn update_run_status(
+        &self,
+        run_id: &str,
+        from_status: &str,
+        to_status: &str,
+        started_at: Option<&str>,
+    ) -> Result<bool, AppError> {
+        let started_at_value = started_at.map(std::string::ToString::to_string);
+        let result = sqlx::query(
+            "UPDATE runs
+             SET status = ?,
+                 started_at = COALESCE(?, started_at)
+             WHERE id = ? AND status = ?",
+        )
+        .bind(to_status)
+        .bind(started_at_value)
+        .bind(run_id)
+        .bind(from_status)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     fn map_row_to_run(row: sqlx::sqlite::SqliteRow) -> Run {
         Run {
             id: row.get("id"),
