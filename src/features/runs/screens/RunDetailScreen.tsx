@@ -23,6 +23,13 @@ const RunDetailScreen: Component = () => {
     Record<string, boolean>
   >({});
   const [composerValue, setComposerValue] = createSignal("");
+  const isComposerEmpty = createMemo(() => composerValue().trim().length === 0);
+  const isComposerSendDisabled = createMemo(
+    () =>
+      isComposerEmpty() ||
+      model.agent.isSubmittingPrompt() ||
+      model.agent.state() === "unsupported",
+  );
   const isInfoFocus = createMemo(() => layoutMode() === "info-focus");
   const isTerminalTabActive = createMemo(() => activeTab() === "terminal");
   const isAgentTabActive = createMemo(() => activeTab() === "agent");
@@ -411,6 +418,13 @@ const RunDetailScreen: Component = () => {
                         aria-label="Message composer"
                         onSubmit={(event) => {
                           event.preventDefault();
+                          void (async () => {
+                            const success =
+                              await model.agent.submitPrompt(composerValue());
+                            if (success) {
+                              setComposerValue("");
+                            }
+                          })();
                         }}
                       >
                         <label class="sr-only" for="run-detail-message-input">
@@ -426,10 +440,19 @@ const RunDetailScreen: Component = () => {
                           placeholder="Message agent..."
                           aria-label="Message agent"
                         />
-                        <button type="submit" class="projects-button-primary">
+                        <button
+                          type="submit"
+                          class="projects-button-primary"
+                          disabled={isComposerSendDisabled()}
+                        >
                           Send
                         </button>
                       </form>
+                      <Show when={model.agent.submitError().length > 0}>
+                        <p class="projects-error">
+                          {model.agent.submitError()}
+                        </p>
+                      </Show>
                     </section>
                   </Show>
 

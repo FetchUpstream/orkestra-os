@@ -11,6 +11,7 @@ import {
   openRunTerminal,
   resizeRunTerminal,
   setRunDiffWatch,
+  submitRunOpenCodePrompt,
   subscribeRunOpenCodeEvents,
   type EnsureRunOpenCodeResult,
   type Run,
@@ -52,12 +53,15 @@ export const useRunDetailModel = () => {
     createSignal<RunOpenCodeAgentState>("idle");
   const [agentEvents, setAgentEvents] = createSignal<RunOpenCodeEvent[]>([]);
   const [agentError, setAgentError] = createSignal("");
+  const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(false);
+  const [submitError, setSubmitError] = createSignal("");
   let activeRunRequestVersion = 0;
   let activeDiffRefreshVersion = 0;
   let diffRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let activeTerminalRequestVersion = 0;
   let activeAgentRequestVersion = 0;
   let activeAgentSubscriptionVersion = 0;
+  let activePromptSubmitVersion = 0;
   let isAgentUiSubscribed = false;
   let removeAgentEventForwarder: (() => void) | null = null;
   let terminalRunId: string | null = null;
@@ -153,6 +157,27 @@ export const useRunDetailModel = () => {
     }
 
     return false;
+  };
+
+  const getErrorMessage = (value: unknown): string => {
+    if (value instanceof Error) {
+      return value.message.trim();
+    }
+
+    if (typeof value === "string") {
+      return value.trim();
+    }
+
+    if (!value || typeof value !== "object") {
+      return "";
+    }
+
+    const maybeMessage = (value as { message?: unknown }).message;
+    if (typeof maybeMessage === "string") {
+      return maybeMessage.trim();
+    }
+
+    return "";
   };
 
   const normalizeEnsureAgentState = (
@@ -372,7 +397,8 @@ export const useRunDetailModel = () => {
       }
 
       setAgentState("error");
-      setAgentError("Failed to initialize agent stream.");
+      const backendError = getErrorMessage(ensureError);
+      setAgentError(backendError || "Failed to initialize agent stream.");
     }
   };
 
@@ -416,7 +442,7 @@ export const useRunDetailModel = () => {
         return;
       }
       setAgentEvents(bufferedEvents);
-    } catch {
+    } catch (submitError) {
       if (
         requestVersion !== activeAgentRequestVersion ||
         subscriptionVersion !== activeAgentSubscriptionVersion ||
@@ -472,11 +498,78 @@ export const useRunDetailModel = () => {
     }
   };
 
+  const submitPrompt = async (text: string): Promise<boolean> => {
+    const prompt = text.trim();
+    if (!prompt) {
+      return false;
+    }
+
+    const runId = params.runId?.trim() ?? "";
+    if (!runId) {
+      setSubmitError("Missing run.");
+      return false;
+    }
+
+    const requestVersion = activeAgentRequestVersion;
+    const submitVersion = ++activePromptSubmitVersion;
+    setIsSubmittingPrompt(true);
+
+    try {
+      const response = await submitRunOpenCodePrompt({
+        runId,
+        prompt,
+      });
+
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        submitVersion !== activePromptSubmitVersion ||
+        params.runId !== runId
+      ) {
+        return false;
+      }
+
+      if (response.status === "accepted") {
+        setSubmitError("");
+        return true;
+      }
+
+      setSubmitError(
+        response.reason?.trim() ||
+          "Prompt submission is not supported for this run.",
+      );
+      return false;
+    } catch (submitError) {
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        submitVersion !== activePromptSubmitVersion ||
+        params.runId !== runId
+      ) {
+        return false;
+      }
+
+      setSubmitError(
+        getErrorMessage(submitError) || "Failed to submit prompt.",
+      );
+      return false;
+    } finally {
+      if (
+        requestVersion === activeAgentRequestVersion &&
+        submitVersion === activePromptSubmitVersion &&
+        params.runId === runId
+      ) {
+        setIsSubmittingPrompt(false);
+      }
+    }
+  };
+
   createEffect(() => {
     const runId = params.runId;
     const requestVersion = ++activeAgentRequestVersion;
     setAgentEvents([]);
     setAgentError("");
+    activePromptSubmitVersion += 1;
+    setIsSubmittingPrompt(false);
+    setSubmitError("");
     setAgentState("idle");
     isAgentUiSubscribed = true;
 
@@ -878,6 +971,9 @@ export const useRunDetailModel = () => {
       state: agentState,
       events: agentEvents,
       error: agentError,
+      isSubmittingPrompt,
+      submitError,
+      submitPrompt,
       ensureAgentForRun,
       subscribeAgentEvents,
       unsubscribeAgentEvents,

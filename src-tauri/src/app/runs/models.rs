@@ -14,6 +14,7 @@ pub struct Run {
     pub worktree_id: Option<String>,
     pub agent_id: Option<String>,
     pub source_branch: Option<String>,
+    pub opencode_session_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]

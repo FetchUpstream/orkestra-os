@@ -9,6 +9,7 @@ const MIGRATION_0004: &str = include_str!("../../../migrations/0004_add_task_dis
 const MIGRATION_0005: &str = include_str!("../../../migrations/0005_task_dependencies.sql");
 const MIGRATION_0006: &str = include_str!("../../../migrations/0006_init_runs.sql");
 const MIGRATION_0007: &str = include_str!("../../../migrations/0007_add_run_source_branch.sql");
+const MIGRATION_0008: &str = include_str!("../../../migrations/0008_add_runs_opencode_session_id.sql");
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(MIGRATION_0001).execute(pool).await?;
@@ -54,6 +55,16 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
 
     if !has_run_source_branch {
         sqlx::query(MIGRATION_0007).execute(pool).await?;
+    }
+
+    let has_opencode_session_id = sqlx::query("PRAGMA table_info(runs)")
+        .fetch_all(pool)
+        .await?
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "opencode_session_id");
+
+    if !has_opencode_session_id {
+        sqlx::query(MIGRATION_0008).execute(pool).await?;
     }
 
     Ok(())

@@ -1,10 +1,20 @@
 use crate::app::runs::dto::{
     EnsureRunOpenCodeResponse, RawAgentEvent, RunDiffFileDto, RunDiffFilePayloadDto, RunDto,
+    SubmitRunOpenCodePromptResponse,
 };
 use crate::app::state::AppState;
 use crate::app::{commands::context, commands::error_mapping::map_result};
+use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::Manager;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitRunOpenCodePromptRequest {
+    pub run_id: String,
+    pub prompt: String,
+    pub client_request_id: Option<String>,
+}
 
 #[tauri::command]
 pub async fn create_run(
@@ -102,4 +112,17 @@ pub async fn get_buffered_run_opencode_events(
 ) -> Result<Vec<RawAgentEvent>, String> {
     let service = context::runs_opencode_service(&state);
     map_result(service.get_buffered_run_opencode_events(&run_id).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn submit_run_opencode_prompt(
+    state: tauri::State<'_, AppState>,
+    request: SubmitRunOpenCodePromptRequest,
+) -> Result<SubmitRunOpenCodePromptResponse, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(
+        service
+            .submit_run_opencode_prompt(&request.run_id, &request.prompt, request.client_request_id)
+            .await,
+    )
 }

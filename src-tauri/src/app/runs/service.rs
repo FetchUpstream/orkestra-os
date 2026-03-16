@@ -86,6 +86,18 @@ impl RunsService {
         Ok(Self::to_dto(run))
     }
 
+    pub async fn get_run_model(&self, run_id: &str) -> Result<Run, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        self.repository
+            .get_run(run_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("run not found"))
+    }
+
     pub async fn delete_run(&self, run_id: &str) -> Result<(), AppError> {
         let run_id = run_id.trim();
         if run_id.is_empty() {
@@ -117,6 +129,26 @@ impl RunsService {
         }
 
         self.get_run(run_id).await
+    }
+
+    pub async fn update_run_opencode_session_id(
+        &self,
+        run_id: &str,
+        opencode_session_id: &str,
+    ) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let opencode_session_id = opencode_session_id.trim();
+        if opencode_session_id.is_empty() {
+            return Err(AppError::validation("opencode_session_id is required"));
+        }
+
+        self.repository
+            .update_opencode_session_id(run_id, opencode_session_id)
+            .await
     }
 
     fn to_dto(run: Run) -> RunDto {

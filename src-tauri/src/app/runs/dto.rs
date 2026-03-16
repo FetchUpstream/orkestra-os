@@ -58,3 +58,12 @@ pub struct EnsureRunOpenCodeResponse {
     pub state: String,
     pub reason: Option<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitRunOpenCodePromptResponse {
+    pub state: String,
+    pub reason: Option<String>,
+    pub queued_at: String,
+    pub client_request_id: Option<String>,
+}

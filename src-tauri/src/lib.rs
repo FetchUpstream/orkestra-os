@@ -40,6 +40,7 @@ pub fn run() {
             app::commands::runs::get_run_diff_file,
             app::commands::runs::set_run_diff_watch,
             app::commands::runs::ensure_run_opencode,
+            app::commands::runs::submit_run_opencode_prompt,
             app::commands::runs::subscribe_run_opencode_events,
             app::commands::runs::get_buffered_run_opencode_events,
             app::commands::terminal::open_run_terminal,

@@ -101,6 +101,19 @@ export type SubscribeRunOpenCodeEventsParams = {
   onOutputChannel?: (event: RunOpenCodeEvent) => void;
 };
 
+export type SubmitRunOpenCodePromptParams = {
+  runId: string;
+  prompt: string;
+  clientRequestId?: string;
+};
+
+export type SubmitRunOpenCodePromptResult = {
+  status: "accepted" | "unsupported";
+  reason?: string;
+  queuedAt: string;
+  clientRequestId?: string;
+};
+
 export type OpenRunTerminalParams = {
   runId: string;
   routeInstanceId: string;
@@ -177,6 +190,16 @@ type RunOpenCodeEventResponse = {
   event?: string;
   payload?: unknown;
   data?: unknown;
+};
+
+type SubmitRunOpenCodePromptResponse = {
+  state?: string;
+  status?: string;
+  reason?: string | null;
+  queued_at?: string;
+  queuedAt?: string;
+  client_request_id?: string | null;
+  clientRequestId?: string | null;
 };
 
 type RunResponse = {
@@ -464,5 +487,30 @@ export const subscribeRunOpenCodeEvents = async ({
 
   return () => {
     outputChannel.onmessage = () => {};
+  };
+};
+
+export const submitRunOpenCodePrompt = async ({
+  runId,
+  prompt,
+  clientRequestId,
+}: SubmitRunOpenCodePromptParams): Promise<SubmitRunOpenCodePromptResult> => {
+  const response = await invoke<SubmitRunOpenCodePromptResponse>(
+    "submit_run_opencode_prompt",
+    {
+      runId,
+      prompt,
+      clientRequestId,
+    },
+  );
+
+  const submitState = response.state ?? response.status;
+
+  return {
+    status: submitState === "unsupported" ? "unsupported" : "accepted",
+    reason: response.reason ?? undefined,
+    queuedAt: pick(response.queued_at, response.queuedAt) ?? "",
+    clientRequestId:
+      pick(response.client_request_id, response.clientRequestId) ?? undefined,
   };
 };

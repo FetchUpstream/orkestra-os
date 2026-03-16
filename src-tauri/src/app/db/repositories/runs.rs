@@ -81,7 +81,8 @@ impl RunsRepository {
                 error_message,
                 worktree_id,
                 agent_id,
-                source_branch
+                source_branch,
+                opencode_session_id
              FROM runs
              WHERE task_id = ?
              ORDER BY created_at DESC",
@@ -109,7 +110,8 @@ impl RunsRepository {
                 error_message,
                 worktree_id,
                 agent_id,
-                source_branch
+                source_branch,
+                opencode_session_id
              FROM runs
              WHERE id = ?",
         )
@@ -153,6 +155,24 @@ impl RunsRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn update_opencode_session_id(
+        &self,
+        run_id: &str,
+        opencode_session_id: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET opencode_session_id = ?
+             WHERE id = ?",
+        )
+        .bind(opencode_session_id)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     fn map_row_to_run(row: sqlx::sqlite::SqliteRow) -> Run {
         Run {
             id: row.get("id"),
@@ -169,6 +189,7 @@ impl RunsRepository {
             worktree_id: row.get("worktree_id"),
             agent_id: row.get("agent_id"),
             source_branch: row.get("source_branch"),
+            opencode_session_id: row.get("opencode_session_id"),
         }
     }
 }
