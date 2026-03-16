@@ -6,6 +6,7 @@ import {
   type Task,
   type TaskStatus,
 } from "../../../app/lib/tasks";
+import { canTransitionStatus } from "../../tasks/utils/taskDetail";
 import { groupTasksByStatus } from "../utils/board";
 
 export const useBoardModel = () => {
@@ -63,6 +64,15 @@ export const useBoardModel = () => {
   const isTaskStatusUpdating = (taskId: string): boolean =>
     updatingTaskIds().includes(taskId);
 
+  const canTaskTransitionToStatus = (
+    taskId: string,
+    targetStatus: TaskStatus,
+  ): boolean => {
+    const taskToMove = tasks().find((task) => task.id === taskId);
+    if (!taskToMove || taskToMove.status === targetStatus) return false;
+    return canTransitionStatus(taskToMove.status, targetStatus);
+  };
+
   const moveTaskToStatus = async (
     taskId: string,
     targetStatus: TaskStatus,
@@ -72,6 +82,7 @@ export const useBoardModel = () => {
     const currentTasks = tasks();
     const taskToMove = currentTasks.find((task) => task.id === taskId);
     if (!taskToMove || taskToMove.status === targetStatus) return;
+    if (!canTransitionStatus(taskToMove.status, targetStatus)) return;
     const previousStatus = taskToMove.status;
 
     setUpdatingTaskIds((current) => [...current, taskId]);
@@ -135,6 +146,7 @@ export const useBoardModel = () => {
     error,
     onProjectChange,
     isTaskStatusUpdating,
+    canTaskTransitionToStatus,
     moveTaskToStatus,
   };
 };

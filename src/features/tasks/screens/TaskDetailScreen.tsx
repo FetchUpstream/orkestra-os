@@ -571,19 +571,6 @@ const TaskDetailScreen: Component = () => {
                                                   </span>
                                                 )}
                                               </Show>
-                                              <Show
-                                                when={runItem.targetRepoId?.trim()}
-                                              >
-                                                {(repoId) => (
-                                                  <span class="task-runs-repo-tag">
-                                                    {projectRepositories().find(
-                                                      (repository) =>
-                                                        repository.id ===
-                                                        repoId(),
-                                                    )?.name || "Repo"}
-                                                  </span>
-                                                )}
-                                              </Show>
                                             </div>
                                             <p class="task-runs-summary-row">
                                               {(

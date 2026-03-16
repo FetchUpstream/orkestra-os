@@ -6,6 +6,36 @@ import { useBoardModel } from "../model/useBoardModel";
 import { BOARD_COLUMNS } from "../utils/board";
 import type { TaskStatus } from "../../../app/lib/tasks";
 
+const BOARD_TASK_TRANSFER_TYPE = "application/x-orkestra-task";
+
+const isUrlLikePayload = (value: string) => {
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized.startsWith("http://") ||
+    normalized.startsWith("https://") ||
+    normalized.startsWith("/")
+  );
+};
+
+const resolveDroppedTaskId = (
+  event: DragEvent,
+  draggingTaskId: string | null,
+) => {
+  const appPayload = (
+    event.dataTransfer?.getData(BOARD_TASK_TRANSFER_TYPE) ?? ""
+  ).trim();
+  if (appPayload) {
+    return appPayload;
+  }
+
+  const plainPayload = (event.dataTransfer?.getData("text/plain") ?? "").trim();
+  if (plainPayload && !isUrlLikePayload(plainPayload)) {
+    return plainPayload;
+  }
+
+  return draggingTaskId;
+};
+
 const BoardScreen: Component = () => {
   const model = useBoardModel();
   const [draggingTaskId, setDraggingTaskId] = createSignal<string | null>(null);
@@ -17,7 +47,7 @@ const BoardScreen: Component = () => {
     setDraggingTaskId(taskId);
     if (!event.dataTransfer) return;
     event.dataTransfer.setData("text/plain", taskId);
-    event.dataTransfer.setData("application/x-orkestra-task", taskId);
+    event.dataTransfer.setData(BOARD_TASK_TRANSFER_TYPE, taskId);
     event.dataTransfer.effectAllowed = "move";
   };
 
@@ -29,12 +59,15 @@ const BoardScreen: Component = () => {
   const onColumnDrop = (status: TaskStatus, event: DragEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    const droppedTaskId =
-      event.dataTransfer?.getData("application/x-orkestra-task") ||
-      event.dataTransfer?.getData("text/plain") ||
-      draggingTaskId();
+    const droppedTaskId = resolveDroppedTaskId(event, draggingTaskId());
+    if (
+      !droppedTaskId ||
+      !model.canTaskTransitionToStatus(droppedTaskId, status)
+    ) {
+      resetDragState();
+      return;
+    }
     resetDragState();
-    if (!droppedTaskId) return;
     void model.moveTaskToStatus(droppedTaskId, status);
   };
 
@@ -96,17 +129,31 @@ const BoardScreen: Component = () => {
           <For each={BOARD_COLUMNS}>
             {(column) => (
               <section
-                class="projects-panel"
+                class="projects-panel board-column"
+                classList={{
+                  "board-column--drop-active":
+                    activeDropStatus() === column.status,
+                }}
                 aria-labelledby={`board-column-${column.status}`}
                 data-board-status={column.status}
-                style={{
-                  transition: "box-shadow 0.2s ease",
-                  "box-shadow":
-                    activeDropStatus() === column.status
-                      ? "inset 0 0 0 2px var(--accent)"
-                      : "none",
-                }}
                 onDragOver={(event) => {
+                  const droppedTaskId = resolveDroppedTaskId(
+                    event,
+                    draggingTaskId(),
+                  );
+                  const canDrop =
+                    !!droppedTaskId &&
+                    model.canTaskTransitionToStatus(
+                      droppedTaskId,
+                      column.status,
+                    );
+                  if (!canDrop) {
+                    if (activeDropStatus() === column.status) {
+                      setActiveDropStatus(null);
+                    }
+                    return;
+                  }
+
                   event.preventDefault();
                   if (event.dataTransfer) {
                     event.dataTransfer.dropEffect = "move";

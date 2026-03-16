@@ -21,14 +21,6 @@ const BoardTaskCard: Component<Props> = (props) => {
 
   const onDragStart = (event: DragEvent) => {
     setDragJustEnded(false);
-    if (event.dataTransfer) {
-      const dragImage = document.createElement("canvas");
-      dragImage.width = 1;
-      dragImage.height = 1;
-      if (typeof event.dataTransfer.setDragImage === "function") {
-        event.dataTransfer.setDragImage(dragImage, 0, 0);
-      }
-    }
     props.onDragStart?.(props.task.id, event);
   };
 
@@ -40,30 +32,29 @@ const BoardTaskCard: Component<Props> = (props) => {
 
   return (
     <li
-      class="project-task-item"
+      class="project-task-item board-task-card"
+      classList={{
+        "board-task-card--dragging": Boolean(props.isDragging),
+      }}
       draggable={!props.isStatusUpdating}
       style={{
-        opacity: props.isDragging ? "0.5" : "1",
-        transition: "opacity 0.2s ease",
-        cursor: props.isStatusUpdating ? "wait" : "grab",
+        cursor: props.isStatusUpdating
+          ? "wait"
+          : props.isDragging
+            ? "grabbing"
+            : "grab",
       }}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
     >
-      <div
-        aria-hidden="true"
-        style={{
-          "font-size": "0.75rem",
-          opacity: "0.7",
-          "margin-bottom": "4px",
-          "user-select": "none",
-        }}
-      >
-        Drag to move
-      </div>
       <A
         href={`/tasks/${props.task.id}?origin=board`}
         class="project-task-link"
+        draggable={false}
+        onDragStart={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
         onClick={(event) => {
           if (dragJustEnded() || props.isDragging) {
             event.preventDefault();

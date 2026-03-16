@@ -17,12 +17,6 @@ const RunDetailScreen: Component = () => {
     const taskValue = model.task();
     return [
       {
-        actor: "System",
-        text: `Run created ${formatDateTime(runValue?.createdAt)}.`,
-        time: runValue?.createdAt,
-        isEvent: true,
-      },
-      {
         actor: "Planner",
         text: taskValue
           ? `Task context loaded: ${taskValue.title}`
@@ -248,15 +242,18 @@ const RunDetailScreen: Component = () => {
                 >
                   <Show when={!isInfoFocus()}>
                     <section class="projects-panel run-detail-conversation-column">
+                      <header class="run-detail-conversation-card-header">
+                        <h2 class="run-detail-conversation-title">
+                          SESSION TITLE
+                        </h2>
+                      </header>
                       <section
                         class="run-detail-conversation-log"
                         aria-label="Conversation transcript"
                       >
                         <For each={transcript()}>
                           {(entry) => (
-                            <article
-                              class={`run-detail-message${entry.isEvent ? "run-detail-message--event" : ""}`}
-                            >
+                            <article class="run-detail-message">
                               <header>
                                 <strong>{entry.actor}</strong>
                                 <span>
@@ -343,11 +340,20 @@ const RunDetailScreen: Component = () => {
                       <button
                         type="button"
                         role="tab"
-                        aria-selected={activeTab() === "timeline"}
+                        aria-selected={activeTab() === "git"}
                         class="run-detail-tab"
-                        onClick={() => setActiveTab("timeline")}
+                        onClick={() => setActiveTab("git")}
                       >
-                        Timeline
+                        Git
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab() === "terminal"}
+                        class="run-detail-tab"
+                        onClick={() => setActiveTab("terminal")}
+                      >
+                        Terminal
                       </button>
                     </div>
                     <div

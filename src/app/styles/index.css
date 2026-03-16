@@ -294,11 +294,22 @@ textarea::placeholder {
   background: var(--bg);
 }
 
+.main-content--run-detail {
+  overflow: hidden;
+}
+
 .main-content-inner {
   width: 100%;
   max-width: 100%;
   padding: 24px 28px;
   min-height: 100%;
+}
+
+.main-content-inner--run-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
 }
 
 .shell-right-panel {
@@ -2082,9 +2093,11 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 12px;
+  padding-top: 12px;
   min-height: 0;
   height: 100%;
+  flex: 1;
+  overflow: hidden;
 }
 
 .run-detail-workspace {
@@ -2093,6 +2106,7 @@ textarea::placeholder {
   gap: 12px;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .run-detail-card {
@@ -2226,6 +2240,8 @@ textarea::placeholder {
   gap: 12px;
   min-height: 0;
   flex: 1;
+  align-items: stretch;
+  overflow: hidden;
 }
 
 .run-detail-main-grid > * {
@@ -2241,6 +2257,22 @@ textarea::placeholder {
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.run-detail-conversation-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.run-detail-conversation-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .run-detail-conversation-log {
@@ -2304,6 +2336,8 @@ textarea::placeholder {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .run-detail-tab-list {
@@ -2430,6 +2464,15 @@ textarea::placeholder {
 
   .main-content-inner {
     padding: 20px 20px;
+  }
+
+  .main-content--run-detail {
+    overflow: auto;
+  }
+
+  .main-content-inner--run-detail {
+    height: auto;
+    min-height: 100%;
   }
 
   .projects-layout {
@@ -2582,6 +2625,14 @@ textarea::placeholder {
 
   .run-detail-main-grid {
     grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .run-detail-page,
+  .run-detail-workspace,
+  .run-detail-conversation-column,
+  .run-detail-ops-sidebar {
+    overflow: visible;
   }
 
   .run-detail-conversation-log {

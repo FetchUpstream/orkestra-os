@@ -1602,7 +1602,9 @@ describe("app routing and shell", () => {
         name: "Expand info panel",
       });
       expect(screen.getByRole("link", { name: "Back to task" })).toBeTruthy();
-      expect(screen.getByRole("heading", { name: "Run #456" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "SESSION TITLE" }),
+      ).toBeTruthy();
       expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
       expect(
         screen.getByRole("region", { name: "Conversation transcript" }),
@@ -1629,7 +1631,8 @@ describe("app routing and shell", () => {
       expect(screen.getByRole("tab", { name: "Logs" })).toBeTruthy();
       expect(screen.getByRole("tab", { name: "Files Changed" })).toBeTruthy();
       expect(screen.getByRole("tab", { name: "Diff" })).toBeTruthy();
-      expect(screen.getByRole("tab", { name: "Timeline" })).toBeTruthy();
+      expect(screen.getByRole("tab", { name: "Git" })).toBeTruthy();
+      expect(screen.getByRole("tab", { name: "Terminal" })).toBeTruthy();
       expect(screen.queryByText("run-456")).toBeNull();
     });
   });
@@ -1749,10 +1752,12 @@ describe("app routing and shell", () => {
     renderAt("/runs/run-456");
 
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: /Sample task/i })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "SESSION TITLE" }),
+      ).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByRole("link", { name: /Sample task/i }));
+    await fireEvent.click(screen.getByRole("link", { name: /ALP-7/i }));
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/projects/p-1/tasks/task-123");
@@ -1764,7 +1769,9 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/runs/run-456");
-      expect(screen.getByRole("heading", { name: "Run #456" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "SESSION TITLE" }),
+      ).toBeTruthy();
     });
   });
 
@@ -2023,7 +2030,9 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/runs/run-new");
-      expect(screen.getByRole("heading", { name: "Current run" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "SESSION TITLE" }),
+      ).toBeTruthy();
       expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
     });
   });
