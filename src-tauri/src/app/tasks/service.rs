@@ -84,7 +84,11 @@ impl TasksService {
         Ok(Self::to_dto(task))
     }
 
-    pub async fn update_task(&self, id: &str, mut input: UpdateTaskRequest) -> Result<TaskDto, AppError> {
+    pub async fn update_task(
+        &self,
+        id: &str,
+        mut input: UpdateTaskRequest,
+    ) -> Result<TaskDto, AppError> {
         input.title = input.title.trim().to_string();
         input.description = input.description.map(|value| value.trim().to_string());
 
@@ -108,7 +112,11 @@ impl TasksService {
         Ok(Self::to_dto(updated))
     }
 
-    pub async fn set_task_status(&self, id: &str, mut input: SetTaskStatusRequest) -> Result<TaskDto, AppError> {
+    pub async fn set_task_status(
+        &self,
+        id: &str,
+        mut input: SetTaskStatusRequest,
+    ) -> Result<TaskDto, AppError> {
         input.status = input.status.trim().to_string();
         Self::validate_status(&input.status)?;
 
@@ -137,7 +145,11 @@ impl TasksService {
         Ok(Self::to_dto(updated))
     }
 
-    pub async fn move_task(&self, id: &str, mut input: MoveTaskRequest) -> Result<TaskDto, AppError> {
+    pub async fn move_task(
+        &self,
+        id: &str,
+        mut input: MoveTaskRequest,
+    ) -> Result<TaskDto, AppError> {
         input.repository_id = input.repository_id.trim().to_string();
 
         let existing_task = self
@@ -180,11 +192,13 @@ impl TasksService {
         Ok(DeleteTaskResponse { id: id.to_string() })
     }
 
-    pub async fn list_task_dependencies(&self, task_id: &str) -> Result<TaskDependenciesDto, AppError> {
+    pub async fn list_task_dependencies(
+        &self,
+        task_id: &str,
+    ) -> Result<TaskDependenciesDto, AppError> {
         let task_id = task_id.trim().to_string();
 
-        self
-            .repository
+        self.repository
             .get_task(&task_id)
             .await?
             .ok_or_else(|| AppError::not_found("task not found"))?;
@@ -210,7 +224,10 @@ impl TasksService {
         })
     }
 
-    pub async fn add_task_dependency(&self, mut input: AddTaskDependencyRequest) -> Result<TaskDependencyEdgeDto, AppError> {
+    pub async fn add_task_dependency(
+        &self,
+        mut input: AddTaskDependencyRequest,
+    ) -> Result<TaskDependencyEdgeDto, AppError> {
         input.parent_task_id = input.parent_task_id.trim().to_string();
         input.child_task_id = input.child_task_id.trim().to_string();
 

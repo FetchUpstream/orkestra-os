@@ -12,8 +12,16 @@ impl RunsRepository {
         Self { pool }
     }
 
-    pub async fn get_task_run_context(&self, task_id: &str) -> Result<Option<TaskRunContext>, AppError> {
-        let row = sqlx::query("SELECT project_id, repository_id FROM tasks WHERE id = ?")
+    pub async fn get_task_run_context(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<TaskRunContext>, AppError> {
+        let row = sqlx::query(
+            "SELECT t.project_id, t.repository_id, t.title AS branch_title, pr.repo_path AS repository_path
+             FROM tasks t
+             JOIN project_repositories pr ON pr.id = t.repository_id
+             WHERE t.id = ?",
+        )
             .bind(task_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -21,6 +29,8 @@ impl RunsRepository {
         Ok(row.map(|row| TaskRunContext {
             project_id: row.get("project_id"),
             repository_id: row.get("repository_id"),
+            repository_path: row.get("repository_path"),
+            branch_title: row.get("branch_title"),
         }))
     }
 
@@ -33,8 +43,9 @@ impl RunsRepository {
                 target_repo_id,
                 status,
                 triggered_by,
-                created_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                created_at,
+                worktree_id
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&input.id)
         .bind(&input.task_id)
@@ -43,6 +54,7 @@ impl RunsRepository {
         .bind(&input.status)
         .bind(&input.triggered_by)
         .bind(&input.created_at)
+        .bind(&input.worktree_id)
         .execute(&self.pool)
         .await?;
 

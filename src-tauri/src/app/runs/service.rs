@@ -2,16 +2,22 @@ use crate::app::db::repositories::runs::RunsRepository;
 use crate::app::errors::AppError;
 use crate::app::runs::dto::RunDto;
 use crate::app::runs::models::{NewRun, Run};
+use crate::app::worktrees::dto::CreateWorktreeRequest;
+use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
 
 #[derive(Clone, Debug)]
 pub struct RunsService {
     repository: RunsRepository,
+    worktrees_service: WorktreesService,
 }
 
 impl RunsService {
-    pub fn new(repository: RunsRepository) -> Self {
-        Self { repository }
+    pub fn new(repository: RunsRepository, worktrees_service: WorktreesService) -> Self {
+        Self {
+            repository,
+            worktrees_service,
+        }
     }
 
     pub async fn create_run(&self, task_id: &str) -> Result<RunDto, AppError> {
@@ -26,6 +32,12 @@ impl RunsService {
             .await?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
+        let worktree = self.worktrees_service.create(CreateWorktreeRequest {
+            project_id: task_context.project_id.clone(),
+            repo_path: task_context.repository_path,
+            branch_title: task_context.branch_title,
+        })?;
+
         let created = self
             .repository
             .create_run(NewRun {
@@ -36,6 +48,7 @@ impl RunsService {
                 status: "queued".to_string(),
                 triggered_by: "user".to_string(),
                 created_at: Utc::now().to_rfc3339(),
+                worktree_id: Some(worktree.worktree_id),
             })
             .await?;
 
@@ -109,16 +122,27 @@ impl RunsService {
 mod tests {
     use super::*;
     use crate::app::db::migrations::run_migrations;
+    use crate::app::worktrees::service::WorktreesService;
+    use git2::{Repository, Signature};
     use sqlx::SqlitePool;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use uuid::Uuid;
 
-    async fn setup_service() -> (RunsService, SqlitePool) {
+    async fn setup_service() -> (RunsService, SqlitePool, TempDir) {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
         let repository = RunsRepository::new(pool.clone());
-        (RunsService::new(repository), pool)
+        let temp_dir = TempDir::new();
+        let worktrees_service = WorktreesService::new(temp_dir.path().join("app-data"));
+        (
+            RunsService::new(repository, worktrees_service),
+            pool,
+            temp_dir,
+        )
     }
 
-    async fn seed_task(pool: &SqlitePool, task_id: &str) {
+    async fn seed_task(pool: &SqlitePool, task_id: &str, repo_path: &Path) {
         let project_id = "project-1";
         let repository_id = "repo-1";
 
@@ -144,7 +168,7 @@ mod tests {
         .bind(repository_id)
         .bind(project_id)
         .bind("Main")
-        .bind("/repo/main")
+        .bind(repo_path.to_string_lossy().to_string())
         .bind(1)
         .bind("2024-01-01T00:00:00Z")
         .execute(pool)
@@ -169,6 +193,53 @@ mod tests {
         .unwrap();
     }
 
+    fn init_git_repo(path: &Path) {
+        fs::create_dir_all(path).unwrap();
+        let repo = Repository::init(path).unwrap();
+        let readme_path = path.join("README.md");
+        fs::write(&readme_path, "seed\n").unwrap();
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("README.md")).unwrap();
+        index.write().unwrap();
+
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let signature = Signature::now("orkestra", "orkestra@example.com").unwrap();
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "initial commit",
+            &tree,
+            &[],
+        )
+        .unwrap();
+    }
+
+    #[derive(Debug)]
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("orkestra-runs-tests-{}", Uuid::new_v4()));
+            fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
     async fn seed_run(pool: &SqlitePool, run_id: &str, task_id: &str) {
         sqlx::query(
             "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
@@ -188,8 +259,10 @@ mod tests {
 
     #[tokio::test]
     async fn create_run_happy_path_sets_queued_and_task_context() {
-        let (service, pool) = setup_service().await;
-        seed_task(&pool, "task-1").await;
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
 
         let run = service.create_run("task-1").await.unwrap();
 
@@ -198,11 +271,13 @@ mod tests {
         assert_eq!(run.target_repo_id, Some("repo-1".to_string()));
         assert_eq!(run.status, "queued");
         assert_eq!(run.triggered_by, "user");
+        assert!(run.worktree_id.is_some());
+        assert!(run.worktree_id.unwrap().starts_with("ork/"));
     }
 
     #[tokio::test]
     async fn create_run_returns_not_found_for_missing_task() {
-        let (service, _) = setup_service().await;
+        let (service, _, _) = setup_service().await;
 
         let result = service.create_run("missing-task").await;
 
@@ -214,7 +289,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_run_returns_validation_error_for_empty_task_id() {
-        let (service, _) = setup_service().await;
+        let (service, _, _) = setup_service().await;
 
         let result = service.create_run("   ").await;
 
@@ -226,8 +301,10 @@ mod tests {
 
     #[tokio::test]
     async fn list_task_runs_orders_by_created_at_desc() {
-        let (service, pool) = setup_service().await;
-        seed_task(&pool, "task-1").await;
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
 
         sqlx::query(
             "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
@@ -268,7 +345,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_task_runs_returns_not_found_for_missing_task() {
-        let (service, _) = setup_service().await;
+        let (service, _, _) = setup_service().await;
 
         let result = service.list_task_runs("missing-task").await;
 
@@ -280,7 +357,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_task_runs_returns_validation_error_for_empty_task_id() {
-        let (service, _) = setup_service().await;
+        let (service, _, _) = setup_service().await;
 
         let result = service.list_task_runs(" ").await;
 
@@ -292,7 +369,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_run_returns_not_found_for_missing_run() {
-        let (service, _) = setup_service().await;
+        let (service, _, _) = setup_service().await;
 
         let result = service.get_run("missing-run").await;
 
@@ -304,7 +381,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_run_returns_validation_error_for_empty_run_id() {
-        let (service, _) = setup_service().await;
+        let (service, _, _) = setup_service().await;
 
         let result = service.get_run("   ").await;
 
@@ -316,8 +393,10 @@ mod tests {
 
     #[tokio::test]
     async fn delete_run_succeeds_for_existing_run() {
-        let (service, pool) = setup_service().await;
-        seed_task(&pool, "task-1").await;
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
         seed_run(&pool, "run-1", "task-1").await;
 
         let result = service.delete_run("run-1").await;
@@ -329,7 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_run_returns_not_found_for_missing_run() {
-        let (service, _) = setup_service().await;
+        let (service, _, _) = setup_service().await;
 
         let result = service.delete_run("missing-run").await;
 
@@ -341,8 +420,10 @@ mod tests {
 
     #[tokio::test]
     async fn migration_rejects_invalid_run_status() {
-        let (_, pool) = setup_service().await;
-        seed_task(&pool, "task-1").await;
+        let (_, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
 
         let result = sqlx::query(
             "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)

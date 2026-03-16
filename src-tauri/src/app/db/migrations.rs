@@ -35,12 +35,11 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
         sqlx::query(MIGRATION_0005).execute(pool).await?;
     }
 
-    let has_runs = sqlx::query(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs' LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await?
-    .is_some();
+    let has_runs =
+        sqlx::query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs' LIMIT 1")
+            .fetch_optional(pool)
+            .await?
+            .is_some();
 
     if !has_runs {
         sqlx::query(MIGRATION_0006).execute(pool).await?;

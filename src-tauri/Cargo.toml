@@ -32,4 +32,4 @@ uuid = { version = "1.22.0", features = ["v4", "serde"] }
 chrono = { version = "0.4.44", features = ["serde"] }
 tokio = { version = "1.50.0", features = ["full"] }
 sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-rustls", "macros", "chrono", "uuid"] }
-
+git2 = { version = "0.20.4", default-features = false }

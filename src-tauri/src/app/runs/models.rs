@@ -24,10 +24,13 @@ pub struct NewRun {
     pub status: String,
     pub triggered_by: String,
     pub created_at: String,
+    pub worktree_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub struct TaskRunContext {
     pub project_id: String,
     pub repository_id: String,
+    pub repository_path: String,
+    pub branch_title: String,
 }

@@ -5,3 +5,4 @@ pub mod projects;
 pub mod runs;
 pub mod state;
 pub mod tasks;
+pub mod worktrees;
