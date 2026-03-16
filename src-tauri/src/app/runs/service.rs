@@ -151,6 +151,26 @@ impl RunsService {
             .await
     }
 
+    pub async fn set_run_opencode_session_id_if_unset(
+        &self,
+        run_id: &str,
+        opencode_session_id: &str,
+    ) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let opencode_session_id = opencode_session_id.trim();
+        if opencode_session_id.is_empty() {
+            return Err(AppError::validation("opencode_session_id is required"));
+        }
+
+        self.repository
+            .set_opencode_session_id_if_unset(run_id, opencode_session_id)
+            .await
+    }
+
     fn to_dto(run: Run) -> RunDto {
         RunDto {
             id: run.id,

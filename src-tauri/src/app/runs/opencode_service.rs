@@ -9,6 +9,7 @@ use opencode::{
     OpencodeClient, OpencodeClientConfig, OpencodeServer, OpencodeServerOptions, RequestOptions,
     create_opencode_client, create_opencode_server, types::PartInput,
 };
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -51,6 +52,8 @@ pub struct RunsOpenCodeService {
     runs_service: RunsService,
     worktrees_root: PathBuf,
     handles: Arc<RwLock<HashMap<String, Arc<RunOpenCodeHandle>>>>,
+    init_locks: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    handle_generation: Arc<AtomicU64>,
 }
 
 impl std::fmt::Debug for RunsOpenCodeService {
@@ -62,6 +65,7 @@ impl std::fmt::Debug for RunsOpenCodeService {
 }
 
 struct RunOpenCodeHandle {
+    generation: u64,
     _server: Arc<tokio::sync::Mutex<OpencodeServer>>,
     client: OpencodeClient,
     session_id: Arc<Mutex<Option<String>>>,
@@ -76,7 +80,21 @@ impl RunsOpenCodeService {
             runs_service,
             worktrees_root: app_data_dir.join("worktrees"),
             handles: Arc::new(RwLock::new(HashMap::new())),
+            init_locks: Arc::new(RwLock::new(HashMap::new())),
+            handle_generation: Arc::new(AtomicU64::new(1)),
         }
+    }
+
+    async fn get_or_create_init_lock(&self, run_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        if let Some(lock) = self.init_locks.read().await.get(run_id).cloned() {
+            return lock;
+        }
+
+        let mut locks = self.init_locks.write().await;
+        locks
+            .entry(run_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 
     pub async fn ensure_run_opencode(&self, run_id: &str) -> Result<EnsureRunOpenCodeResponse, AppError> {
@@ -94,6 +112,16 @@ impl RunsOpenCodeService {
                 reason: Some(format!("run status '{}' is not supported", run.status)),
             });
         }
+
+        if self.handles.read().await.contains_key(&run.id) {
+            return Ok(EnsureRunOpenCodeResponse {
+                state: "running".to_string(),
+                reason: None,
+            });
+        }
+
+        let init_lock = self.get_or_create_init_lock(&run.id).await;
+        let _guard = init_lock.lock().await;
 
         if self.handles.read().await.contains_key(&run.id) {
             return Ok(EnsureRunOpenCodeResponse {
@@ -141,7 +169,9 @@ impl RunsOpenCodeService {
         let (event_tx, _rx) = tokio::sync::broadcast::channel(64);
         let subscribers = Arc::new(Mutex::new(HashMap::new()));
         let buffered_events = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_BUFFERED_EVENTS)));
+        let generation = self.handle_generation.fetch_add(1, Ordering::Relaxed);
         let handle = Arc::new(RunOpenCodeHandle {
+            generation,
             _server: Arc::new(tokio::sync::Mutex::new(server)),
             client: client.clone(),
             session_id: Arc::new(Mutex::new(None)),
@@ -155,7 +185,7 @@ impl RunsOpenCodeService {
             .await
             .insert(run.id.clone(), handle.clone());
 
-        self.spawn_event_stream(run.id.clone(), client, event_tx, buffered_events);
+        self.spawn_event_stream(run.id.clone(), generation, client, event_tx, buffered_events);
 
         if run.status == "queued" {
             let _ = self.runs_service.transition_queued_to_running(&run.id).await?;
@@ -202,7 +232,7 @@ impl RunsOpenCodeService {
             .ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
 
         let run = self.runs_service.get_run_model(run_id).await?;
-        let persisted_session_id = run.opencode_session_id;
+        let persisted_session_id = run.opencode_session_id.filter(|id| !id.trim().is_empty());
 
         let in_memory_session_id = {
             let session_guard = handle
@@ -230,11 +260,22 @@ impl RunsOpenCodeService {
 
                 let persisted = self
                     .runs_service
-                    .update_run_opencode_session_id(run_id, &id)
+                    .set_run_opencode_session_id_if_unset(run_id, &id)
                     .await?;
-                if !persisted {
-                    return Err(AppError::not_found("run not found"));
-                }
+
+                let canonical_session_id = if persisted {
+                    id.clone()
+                } else {
+                    let canonical_run = self.runs_service.get_run_model(run_id).await?;
+                    canonical_run
+                        .opencode_session_id
+                        .filter(|existing| !existing.trim().is_empty())
+                        .ok_or_else(|| {
+                            AppError::validation(
+                                "OpenCode session id was not persisted and no canonical value exists",
+                            )
+                        })?
+                };
 
                 let mut session_guard = handle
                     .session_id
@@ -243,8 +284,8 @@ impl RunsOpenCodeService {
                 if let Some(existing) = session_guard.as_ref() {
                     existing.clone()
                 } else {
-                    *session_guard = Some(id.clone());
-                    id
+                    *session_guard = Some(canonical_session_id.clone());
+                    canonical_session_id
                 }
             }
         };
@@ -441,6 +482,7 @@ impl RunsOpenCodeService {
     fn spawn_event_stream(
         &self,
         run_id: String,
+        generation: u64,
         client: OpencodeClient,
         event_tx: tokio::sync::broadcast::Sender<RawAgentEvent>,
         buffered_events: Arc<Mutex<VecDeque<RawAgentEvent>>>,
@@ -451,7 +493,13 @@ impl RunsOpenCodeService {
                 Ok(stream) => stream,
                 Err(_) => {
                     let mut handles_guard = handles.write().await;
-                    handles_guard.remove(&run_id);
+                    let should_remove = handles_guard
+                        .get(&run_id)
+                        .map(|current| current.generation == generation)
+                        .unwrap_or(false);
+                    if should_remove {
+                        handles_guard.remove(&run_id);
+                    }
                     return;
                 }
             };
@@ -481,7 +529,13 @@ impl RunsOpenCodeService {
             }
 
             let mut handles_guard = handles.write().await;
-            handles_guard.remove(&run_id);
+            let should_remove = handles_guard
+                .get(&run_id)
+                .map(|current| current.generation == generation)
+                .unwrap_or(false);
+            if should_remove {
+                handles_guard.remove(&run_id);
+            }
         });
     }
 
