@@ -1,6 +1,7 @@
 use crate::app::errors::AppError;
 use crate::app::runs::dto::{
-    EnsureRunOpenCodeResponse, RawAgentEvent, RunDto, SubmitRunOpenCodePromptResponse,
+    EnsureRunOpenCodeResponse, RawAgentEvent, RunDto, RunOpenCodeSessionMessageDto,
+    RunOpenCodeSessionTodoDto, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::service::RunsService;
 use chrono::Utc;
@@ -16,6 +17,32 @@ use tokio::sync::RwLock;
 use tokio::time::{Duration, sleep};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
+
+fn value_array_to_message_wrappers(value: serde_json::Value) -> Vec<RunOpenCodeSessionMessageDto> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .cloned()
+                .map(|payload| RunOpenCodeSessionMessageDto { payload })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn value_array_to_todo_wrappers(value: serde_json::Value) -> Vec<RunOpenCodeSessionTodoDto> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .cloned()
+                .map(|payload| RunOpenCodeSessionTodoDto { payload })
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 const MAX_BUFFERED_EVENTS: usize = 500;
 
@@ -237,8 +264,10 @@ impl RunsOpenCodeService {
             request = request.with_header("x-request-id", request_id.clone());
         }
         request = request.with_body(serde_json::json!({
-            "provider": "kimi-for-coding",
-            "model": "k2p5",
+            "model": {
+                "providerID": "kimi-for-coding",
+                "modelID": "k2p5",
+            },
             "parts": [PartInput::Raw(serde_json::json!({
                 "type": "text",
                 "text": prompt,
@@ -258,6 +287,72 @@ impl RunsOpenCodeService {
             queued_at: Utc::now().to_rfc3339(),
             client_request_id,
         })
+    }
+
+    pub async fn get_run_opencode_session_messages(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<RunOpenCodeSessionMessageDto>, AppError> {
+        let run = self.runs_service.get_run_model(run_id).await?;
+        let Some(session_id) = run.opencode_session_id else {
+            return Ok(vec![]);
+        };
+
+        let ensured = self.ensure_run_opencode(run_id).await?;
+        if ensured.state == "unsupported" {
+            return Ok(vec![]);
+        }
+
+        let handle = self
+            .handles
+            .read()
+            .await
+            .get(run_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+
+        let request = RequestOptions::default().with_path("id", session_id);
+        let response = handle
+            .client
+            .session()
+            .messages(request)
+            .await
+            .map_err(|err| AppError::validation(format!("failed to fetch OpenCode session messages: {err}")))?;
+
+        Ok(value_array_to_message_wrappers(response.data))
+    }
+
+    pub async fn get_run_opencode_session_todos(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<RunOpenCodeSessionTodoDto>, AppError> {
+        let run = self.runs_service.get_run_model(run_id).await?;
+        let Some(session_id) = run.opencode_session_id else {
+            return Ok(vec![]);
+        };
+
+        let ensured = self.ensure_run_opencode(run_id).await?;
+        if ensured.state == "unsupported" {
+            return Ok(vec![]);
+        }
+
+        let handle = self
+            .handles
+            .read()
+            .await
+            .get(run_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+
+        let request = RequestOptions::default().with_path("id", session_id);
+        let response = handle
+            .client
+            .session()
+            .todo(request)
+            .await
+            .map_err(|err| AppError::validation(format!("failed to fetch OpenCode session todos: {err}")))?;
+
+        Ok(value_array_to_todo_wrappers(response.data))
     }
 
     pub async fn subscribe_run_opencode_events(

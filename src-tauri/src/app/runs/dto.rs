@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunDto {
@@ -66,4 +67,16 @@ pub struct SubmitRunOpenCodePromptResponse {
     pub reason: Option<String>,
     pub queued_at: String,
     pub client_request_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunOpenCodeSessionMessageDto {
+    pub payload: Value,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunOpenCodeSessionTodoDto {
+    pub payload: Value,
 }
