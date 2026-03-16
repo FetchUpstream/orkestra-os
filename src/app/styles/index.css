@@ -2333,6 +2333,80 @@ textarea::placeholder {
   font-size: 0.85rem;
 }
 
+.run-detail-message-parts {
+  display: grid;
+  gap: 8px;
+}
+
+.run-detail-part {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: 8px 10px;
+}
+
+.run-detail-part--text,
+.run-detail-part--reasoning p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.run-detail-part--reasoning {
+  background: var(--surface);
+}
+
+.run-detail-part--reasoning summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.run-detail-part--reasoning[open] summary {
+  margin-bottom: 8px;
+}
+
+.run-detail-part--tool {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.run-detail-part-tool-status {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.run-detail-part--fallback {
+  display: grid;
+  gap: 6px;
+}
+
+.run-detail-part-fallback-label {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.run-detail-part--fallback pre {
+  margin: 0;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  background: #0a0c12;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .run-detail-message--event {
   background: var(--accent-subtle);
   border-style: dashed;

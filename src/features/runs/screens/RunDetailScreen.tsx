@@ -12,6 +12,7 @@ import MonacoDiffEditor from "../../../components/MonacoDiffEditor";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime, formatRunStatus } from "../../tasks/utils/taskDetail";
 import RunTerminal from "../components/RunTerminal";
+import type { UiPart } from "../model/agentTypes";
 
 const RunDetailScreen: Component = () => {
   const model = useRunDetailModel();
@@ -33,34 +34,8 @@ const RunDetailScreen: Component = () => {
   const isInfoFocus = createMemo(() => layoutMode() === "info-focus");
   const isTerminalTabActive = createMemo(() => activeTab() === "terminal");
   const isAgentTabActive = createMemo(() => activeTab() === "agent");
-  const transcript = createMemo(() => {
-    const runValue = model.run();
-    const taskValue = model.task();
-    return [
-      {
-        actor: "Planner",
-        text: taskValue
-          ? `Task context loaded: ${taskValue.title}`
-          : "Task context is still resolving.",
-        time: runValue?.startedAt ?? runValue?.createdAt,
-      },
-      {
-        actor: "Builder",
-        text: "Workspace ready. Waiting for next instruction.",
-        time: runValue?.startedAt ?? runValue?.createdAt,
-      },
-      {
-        actor: "Reviewer",
-        text: "No review feedback yet.",
-        time: runValue?.finishedAt ?? runValue?.startedAt,
-      },
-      {
-        actor: "You",
-        text: "Message agent...",
-        time: runValue?.finishedAt ?? runValue?.createdAt,
-      },
-    ];
-  });
+  let transcriptScrollRef: HTMLDivElement | undefined;
+  let transcriptBottomRef: HTMLDivElement | undefined;
   let agentEventLogRef: HTMLDivElement | undefined;
 
   const INTERNAL_ID_PATTERN =
@@ -111,6 +86,95 @@ const RunDetailScreen: Component = () => {
     const formatted = formatDateTime(normalizedValue);
     return formatted === "Unavailable" ? String(value) : formatted;
   };
+
+  const getMessageActorLabel = (role: string): string => {
+    if (role === "assistant") return "Agent";
+    if (role === "user") return "You";
+    if (role === "system") return "System";
+    return "Message";
+  };
+
+  const getPartTypeLabel = (part: UiPart): string => {
+    if (part.kind === "unknown") {
+      return part.rawType || "unknown";
+    }
+    return part.type || part.kind;
+  };
+
+  const formatPartSnippet = (payload: unknown): string => {
+    const serialized = formatAgentPayload(payload);
+    if (serialized.length <= 280) {
+      return serialized;
+    }
+    return `${serialized.slice(0, 280)}...`;
+  };
+
+  const getPartSnippet = (part: UiPart): string => {
+    if (part.kind === "file") {
+      return formatPartSnippet({
+        filename: part.filename,
+        mime: part.mime,
+        url: part.url,
+      });
+    }
+
+    if (part.kind === "patch") {
+      return formatPartSnippet({
+        hash: part.hash,
+        files: Array.isArray(part.files) ? part.files.length : 0,
+      });
+    }
+
+    if (part.kind === "step-start") {
+      return formatPartSnippet({ snapshot: part.snapshot });
+    }
+
+    if (part.kind === "step-finish") {
+      return formatPartSnippet({
+        reason: part.reason,
+        tokens: part.tokens,
+        cost: part.cost,
+      });
+    }
+
+    if (part.kind === "unknown") {
+      return formatPartSnippet(part.raw ?? { type: part.rawType });
+    }
+
+    return formatPartSnippet(part);
+  };
+
+  const transcript = createMemo(() => {
+    const store = model.agent.store();
+    const entries: Array<{
+      actor: string;
+      time: number | null;
+      parts: UiPart[];
+    }> = [];
+
+    for (const messageId of store.messageOrder) {
+      const message = store.messagesById[messageId];
+      if (!message) {
+        continue;
+      }
+
+      const parts: UiPart[] = [];
+      for (const partId of message.partOrder) {
+        const part = message.partsById[partId];
+        if (part) {
+          parts.push(part);
+        }
+      }
+
+      entries.push({
+        actor: getMessageActorLabel(message.role),
+        time: message.updatedAt ?? message.createdAt ?? null,
+        parts,
+      });
+    }
+
+    return entries;
+  });
   createEffect(() => {
     const diffActive = activeTab() === "diff";
     model.setIsDiffTabActive(diffActive);
@@ -172,6 +236,30 @@ const RunDetailScreen: Component = () => {
     for (const path of openPaths) {
       void model.loadDiffFile(path);
     }
+  });
+
+  createEffect(() => {
+    const entries = transcript();
+    if (entries.length === 0) {
+      return;
+    }
+
+    queueMicrotask(() => {
+      requestAnimationFrame(() => {
+        if (transcriptBottomRef) {
+          transcriptBottomRef.scrollIntoView({
+            block: "end",
+            inline: "nearest",
+            behavior: "auto",
+          });
+          return;
+        }
+
+        if (transcriptScrollRef) {
+          transcriptScrollRef.scrollTop = transcriptScrollRef.scrollHeight;
+        }
+      });
+    });
   });
 
   createEffect(() => {
@@ -392,26 +480,115 @@ const RunDetailScreen: Component = () => {
                     <section class="projects-panel run-detail-conversation-column">
                       <header class="run-detail-conversation-card-header">
                         <h2 class="run-detail-conversation-title">
-                          SESSION TITLE
+                          Chat Workspace
                         </h2>
                       </header>
                       <section
                         class="run-detail-conversation-log"
                         aria-label="Conversation transcript"
+                        ref={transcriptScrollRef}
                       >
-                        <For each={transcript()}>
-                          {(entry) => (
-                            <article class="run-detail-message">
-                              <header>
-                                <strong>{entry.actor}</strong>
-                                <span>
-                                  {formatDateTime(entry.time || null)}
-                                </span>
-                              </header>
-                              <p>{entry.text}</p>
-                            </article>
-                          )}
-                        </For>
+                        <Show when={model.agent.error().length > 0}>
+                          <p class="projects-error">{model.agent.error()}</p>
+                        </Show>
+                        <Show when={model.agent.state() === "unsupported"}>
+                          <p class="project-placeholder-text">
+                            Agent stream is not available for this run.
+                          </p>
+                        </Show>
+                        <Show
+                          when={transcript().length > 0}
+                          fallback={
+                            <p class="project-placeholder-text">
+                              {model.agent.state() === "starting"
+                                ? "Starting agent stream."
+                                : "No agent messages yet."}
+                            </p>
+                          }
+                        >
+                          <For each={transcript()}>
+                            {(entry) => (
+                              <article class="run-detail-message">
+                                <header>
+                                  <strong>{entry.actor}</strong>
+                                  <span>
+                                    {formatAgentTimestamp(entry.time)}
+                                  </span>
+                                </header>
+                                <Show
+                                  when={entry.parts.length > 0}
+                                  fallback={
+                                    <p class="project-placeholder-text">
+                                      No message parts yet.
+                                    </p>
+                                  }
+                                >
+                                  <div class="run-detail-message-parts">
+                                    <For each={entry.parts}>
+                                      {(part) => (
+                                        <>
+                                          <Show when={part.kind === "text"}>
+                                            <p class="run-detail-part run-detail-part--text">
+                                              {part.kind === "text"
+                                                ? part.text
+                                                : ""}
+                                            </p>
+                                          </Show>
+
+                                          <Show
+                                            when={part.kind === "reasoning"}
+                                          >
+                                            <details class="run-detail-part run-detail-part--reasoning">
+                                              <summary>Reasoning</summary>
+                                              <p>
+                                                {part.kind === "reasoning"
+                                                  ? part.text
+                                                  : ""}
+                                              </p>
+                                            </details>
+                                          </Show>
+
+                                          <Show when={part.kind === "tool"}>
+                                            <div class="run-detail-part run-detail-part--tool">
+                                              <span>
+                                                {part.kind === "tool"
+                                                  ? part.toolName || "tool"
+                                                  : "tool"}
+                                              </span>
+                                              <span class="run-detail-part-tool-status">
+                                                {part.kind === "tool"
+                                                  ? part.status || "pending"
+                                                  : "pending"}
+                                              </span>
+                                            </div>
+                                          </Show>
+
+                                          <Show
+                                            when={
+                                              part.kind === "file" ||
+                                              part.kind === "patch" ||
+                                              part.kind === "step-start" ||
+                                              part.kind === "step-finish" ||
+                                              part.kind === "unknown"
+                                            }
+                                          >
+                                            <div class="run-detail-part run-detail-part--fallback">
+                                              <p class="run-detail-part-fallback-label">
+                                                {getPartTypeLabel(part)}
+                                              </p>
+                                              <pre>{getPartSnippet(part)}</pre>
+                                            </div>
+                                          </Show>
+                                        </>
+                                      )}
+                                    </For>
+                                  </div>
+                                </Show>
+                              </article>
+                            )}
+                          </For>
+                          <div ref={transcriptBottomRef} aria-hidden="true" />
+                        </Show>
                       </section>
                       <form
                         class="run-detail-composer"
