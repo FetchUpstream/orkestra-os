@@ -25,6 +25,7 @@ const RunDetailScreen: Component = () => {
   const [composerValue, setComposerValue] = createSignal("");
   const isInfoFocus = createMemo(() => layoutMode() === "info-focus");
   const isTerminalTabActive = createMemo(() => activeTab() === "terminal");
+  const isAgentTabActive = createMemo(() => activeTab() === "agent");
   const transcript = createMemo(() => {
     const runValue = model.run();
     const taskValue = model.task();
@@ -53,6 +54,56 @@ const RunDetailScreen: Component = () => {
       },
     ];
   });
+  let agentEventLogRef: HTMLDivElement | undefined;
+
+  const INTERNAL_ID_PATTERN =
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+
+  const formatAgentPayload = (payload: unknown): string => {
+    if (payload === undefined) {
+      return "undefined";
+    }
+
+    try {
+      const serialized = JSON.stringify(
+        payload,
+        (_key, value) =>
+          typeof value === "string"
+            ? value.replace(INTERNAL_ID_PATTERN, "[internal-id]")
+            : value,
+        2,
+      );
+      if (typeof serialized === "string") {
+        return serialized;
+      }
+    } catch {}
+
+    if (typeof payload === "string") {
+      return payload.replace(INTERNAL_ID_PATTERN, "[internal-id]");
+    }
+
+    return String(payload);
+  };
+
+  const formatAgentTimestamp = (value: string | number | null): string => {
+    if (value === null) {
+      return "Unavailable";
+    }
+
+    let normalizedValue: string;
+    if (typeof value === "number") {
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) {
+        return String(value);
+      }
+      normalizedValue = parsed.toISOString();
+    } else {
+      normalizedValue = value;
+    }
+
+    const formatted = formatDateTime(normalizedValue);
+    return formatted === "Unavailable" ? String(value) : formatted;
+  };
   createEffect(() => {
     const diffActive = activeTab() === "diff";
     model.setIsDiffTabActive(diffActive);
@@ -114,6 +165,20 @@ const RunDetailScreen: Component = () => {
     for (const path of openPaths) {
       void model.loadDiffFile(path);
     }
+  });
+
+  createEffect(() => {
+    if (!isAgentTabActive()) {
+      return;
+    }
+
+    model.agent.events();
+    queueMicrotask(() => {
+      if (!agentEventLogRef) {
+        return;
+      }
+      agentEventLogRef.scrollTop = agentEventLogRef.scrollHeight;
+    });
   });
 
   return (
@@ -389,11 +454,11 @@ const RunDetailScreen: Component = () => {
                       <button
                         type="button"
                         role="tab"
-                        aria-selected={activeTab() === "logs"}
+                        aria-selected={activeTab() === "agent"}
                         class="run-detail-tab"
-                        onClick={() => setActiveTab("logs")}
+                        onClick={() => setActiveTab("agent")}
                       >
-                        Logs
+                        Agent
                       </button>
                       <button
                         type="button"
@@ -463,13 +528,72 @@ const RunDetailScreen: Component = () => {
                             <Show
                               when={activeTab() === "diff"}
                               fallback={
-                                <p class="project-placeholder-text">
-                                  {activeTab() === "files"
-                                    ? "Files Changed"
-                                    : activeTab().charAt(0).toUpperCase() +
-                                      activeTab().slice(1)}{" "}
-                                  panel placeholder.
-                                </p>
+                                <Show
+                                  when={isAgentTabActive()}
+                                  fallback={
+                                    <p class="project-placeholder-text">
+                                      {activeTab() === "files"
+                                        ? "Files Changed"
+                                        : activeTab().charAt(0).toUpperCase() +
+                                          activeTab().slice(1)}{" "}
+                                      panel placeholder.
+                                    </p>
+                                  }
+                                >
+                                  <section
+                                    class="run-agent-panel"
+                                    aria-label="Agent stream events"
+                                  >
+                                    <Show when={model.agent.error().length > 0}>
+                                      <p class="projects-error">
+                                        {model.agent.error()}
+                                      </p>
+                                    </Show>
+                                    <Show
+                                      when={
+                                        model.agent.state() === "unsupported"
+                                      }
+                                    >
+                                      <p class="project-placeholder-text">
+                                        Agent stream is not available for this
+                                        run.
+                                      </p>
+                                    </Show>
+                                    <Show
+                                      when={model.agent.events().length > 0}
+                                      fallback={
+                                        <p class="project-placeholder-text">
+                                          {model.agent.state() === "starting"
+                                            ? "Starting agent stream."
+                                            : "No agent events yet."}
+                                        </p>
+                                      }
+                                    >
+                                      <div
+                                        class="run-agent-event-log"
+                                        ref={agentEventLogRef}
+                                      >
+                                        <For each={model.agent.events()}>
+                                          {(item) => (
+                                            <article class="run-agent-event-item">
+                                              <header>
+                                                <time>
+                                                  {formatAgentTimestamp(
+                                                    item.ts,
+                                                  )}
+                                                </time>
+                                                <strong>{item.event}</strong>
+                                              </header>
+                                              <pre>
+                                                {formatAgentPayload(item.data)}
+                                              </pre>
+                                            </article>
+                                          )}
+                                        </For>
+                                      </div>
+                                    </Show>
+                                  </section>
+                                </Show>
                               }
                             >
                               <section aria-label="Run diff files">

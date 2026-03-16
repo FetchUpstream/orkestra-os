@@ -75,6 +75,32 @@ export type RunTerminalFrame =
   | RunTerminalErrorFrame
   | RunTerminalClosedFrame;
 
+export type RunOpenCodeAgentState =
+  | "idle"
+  | "starting"
+  | "running"
+  | "unsupported"
+  | "error";
+
+export type RunOpenCodeEvent = {
+  runId: string;
+  ts: string | number | null;
+  event: string;
+  data: unknown;
+};
+
+export type EnsureRunOpenCodeResult = {
+  state?: RunOpenCodeAgentState;
+  supported?: boolean;
+  error?: string | null;
+};
+
+export type SubscribeRunOpenCodeEventsParams = {
+  runId: string;
+  onOutput?: (event: RunOpenCodeEvent) => void;
+  onOutputChannel?: (event: RunOpenCodeEvent) => void;
+};
+
 export type OpenRunTerminalParams = {
   runId: string;
   routeInstanceId: string;
@@ -140,6 +166,17 @@ type RunTerminalFrameResponse = {
   code?: number | null;
   signal?: number | string | null;
   message?: string;
+};
+
+type RunOpenCodeEventResponse = {
+  run_id?: string;
+  runId?: string;
+  timestamp?: string | number | null;
+  ts?: string | number | null;
+  eventName?: string;
+  event?: string;
+  payload?: unknown;
+  data?: unknown;
 };
 
 type RunResponse = {
@@ -259,6 +296,16 @@ const toRunTerminalFrame = (
   return null;
 };
 
+const toRunOpenCodeEvent = (
+  event: RunOpenCodeEventResponse,
+  fallbackRunId: string,
+): RunOpenCodeEvent => ({
+  runId: pick(event.run_id, event.runId) ?? fallbackRunId,
+  ts: pick(event.timestamp, event.ts) ?? null,
+  event: pick(event.eventName, event.event) ?? "unknown",
+  data: pick(event.payload, event.data) ?? null,
+});
+
 export const createRun = async (taskId: string): Promise<Run> => {
   const response = await invoke<RunResponse>("create_run", { taskId });
   return toRun(response);
@@ -375,4 +422,47 @@ export const killRunTerminal = async ({
     sessionId,
     generation,
   });
+};
+
+export const ensureRunOpenCode = async (
+  runId: string,
+): Promise<EnsureRunOpenCodeResult> => {
+  return invoke<EnsureRunOpenCodeResult>("ensure_run_opencode", {
+    runId,
+  });
+};
+
+export const getBufferedRunOpenCodeEvents = async (
+  runId: string,
+): Promise<RunOpenCodeEvent[]> => {
+  const response = await invoke<RunOpenCodeEventResponse[]>(
+    "get_buffered_run_opencode_events",
+    { runId },
+  );
+  return response.map((event) => toRunOpenCodeEvent(event, runId));
+};
+
+export const subscribeRunOpenCodeEvents = async ({
+  runId,
+  onOutput,
+  onOutputChannel,
+}: SubscribeRunOpenCodeEventsParams): Promise<() => void> => {
+  const handler = onOutput ?? onOutputChannel;
+  if (!handler) {
+    throw new Error("subscribeRunOpenCodeEvents requires an output handler.");
+  }
+
+  const outputChannel = new Channel<RunOpenCodeEventResponse>();
+  outputChannel.onmessage = (event) => {
+    handler(toRunOpenCodeEvent(event, runId));
+  };
+
+  await invoke("subscribe_run_opencode_events", {
+    runId,
+    onOutput: outputChannel,
+  });
+
+  return () => {
+    outputChannel.onmessage = () => {};
+  };
 };

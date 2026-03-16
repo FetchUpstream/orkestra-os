@@ -2,6 +2,8 @@ import { useParams } from "@solidjs/router";
 import { listen } from "@tauri-apps/api/event";
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
+  ensureRunOpenCode,
+  getBufferedRunOpenCodeEvents,
   getRun,
   getRunDiffFile,
   killRunTerminal,
@@ -9,9 +11,13 @@ import {
   openRunTerminal,
   resizeRunTerminal,
   setRunDiffWatch,
+  subscribeRunOpenCodeEvents,
+  type EnsureRunOpenCodeResult,
   type Run,
   type RunDiffFile,
   type RunDiffFilePayload,
+  type RunOpenCodeAgentState,
+  type RunOpenCodeEvent,
   type RunTerminalFrame,
   writeRunTerminal,
 } from "../../../app/lib/runs";
@@ -42,10 +48,18 @@ export const useRunDetailModel = () => {
   const [isTerminalStarting, setIsTerminalStarting] = createSignal(false);
   const [isTerminalReady, setIsTerminalReady] = createSignal(false);
   const [terminalError, setTerminalError] = createSignal("");
+  const [agentState, setAgentState] =
+    createSignal<RunOpenCodeAgentState>("idle");
+  const [agentEvents, setAgentEvents] = createSignal<RunOpenCodeEvent[]>([]);
+  const [agentError, setAgentError] = createSignal("");
   let activeRunRequestVersion = 0;
   let activeDiffRefreshVersion = 0;
   let diffRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let activeTerminalRequestVersion = 0;
+  let activeAgentRequestVersion = 0;
+  let activeAgentSubscriptionVersion = 0;
+  let isAgentUiSubscribed = false;
+  let removeAgentEventForwarder: (() => void) | null = null;
   let terminalRunId: string | null = null;
   let terminalRouteInstanceId = crypto.randomUUID();
   let terminalFrameHandler: ((frame: RunTerminalFrame) => void) | null = null;
@@ -103,6 +117,54 @@ export const useRunDetailModel = () => {
     }
 
     return false;
+  };
+
+  const isAgentUnsupportedError = (value: unknown): boolean => {
+    if (value instanceof Error) {
+      const message = value.message.toLowerCase();
+      return (
+        message.includes("unsupported") ||
+        message.includes("not implemented") ||
+        message.includes("not available")
+      );
+    }
+
+    if (typeof value === "string") {
+      const message = value.toLowerCase();
+      return (
+        message.includes("unsupported") ||
+        message.includes("not implemented") ||
+        message.includes("not available")
+      );
+    }
+
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+
+    const maybeMessage = (value as { message?: unknown }).message;
+    if (typeof maybeMessage === "string") {
+      const message = maybeMessage.toLowerCase();
+      return (
+        message.includes("unsupported") ||
+        message.includes("not implemented") ||
+        message.includes("not available")
+      );
+    }
+
+    return false;
+  };
+
+  const normalizeEnsureAgentState = (
+    result: EnsureRunOpenCodeResult,
+  ): RunOpenCodeAgentState => {
+    if (result.state === "unsupported") return "unsupported";
+    if (result.state === "error") return "error";
+    if (result.state === "running") return "running";
+    if (result.state === "starting") return "starting";
+    if (result.state === "idle") return "idle";
+    if (result.supported === false) return "unsupported";
+    return "running";
   };
 
   const taskHref = createMemo(() => {
@@ -262,6 +324,185 @@ export const useRunDetailModel = () => {
         }
       }
     })();
+  });
+
+  const ensureAgentForRun = async (runId: string): Promise<void> => {
+    const normalizedRunId = runId.trim();
+    if (!normalizedRunId) {
+      setAgentState("error");
+      setAgentError("Missing run.");
+      return;
+    }
+
+    const requestVersion = activeAgentRequestVersion;
+    setAgentState("starting");
+    setAgentError("");
+
+    try {
+      const result = await ensureRunOpenCode(normalizedRunId);
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== normalizedRunId
+      ) {
+        return;
+      }
+
+      const nextState = normalizeEnsureAgentState(result);
+      setAgentState(nextState);
+
+      const backendError = result.error?.trim();
+      if (nextState === "error") {
+        setAgentError(backendError || "Failed to initialize agent stream.");
+        return;
+      }
+
+      setAgentError("");
+    } catch (ensureError) {
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== normalizedRunId
+      ) {
+        return;
+      }
+
+      if (isAgentUnsupportedError(ensureError)) {
+        setAgentState("unsupported");
+        setAgentError("");
+        return;
+      }
+
+      setAgentState("error");
+      setAgentError("Failed to initialize agent stream.");
+    }
+  };
+
+  const unsubscribeAgentEvents = (): void => {
+    isAgentUiSubscribed = false;
+    activeAgentSubscriptionVersion += 1;
+    if (removeAgentEventForwarder) {
+      removeAgentEventForwarder();
+      removeAgentEventForwarder = null;
+    }
+  };
+
+  const subscribeAgentEvents = async (runId: string): Promise<void> => {
+    const normalizedRunId = runId.trim();
+    if (!normalizedRunId) {
+      return;
+    }
+
+    if (agentState() === "unsupported" || agentState() === "error") {
+      return;
+    }
+
+    const requestVersion = activeAgentRequestVersion;
+    const subscriptionVersion = ++activeAgentSubscriptionVersion;
+    if (removeAgentEventForwarder) {
+      removeAgentEventForwarder();
+      removeAgentEventForwarder = null;
+    }
+    setAgentState("running");
+    setAgentError("");
+
+    try {
+      const bufferedEvents =
+        await getBufferedRunOpenCodeEvents(normalizedRunId);
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        subscriptionVersion !== activeAgentSubscriptionVersion ||
+        !isAgentUiSubscribed ||
+        params.runId !== normalizedRunId
+      ) {
+        return;
+      }
+      setAgentEvents(bufferedEvents);
+    } catch {
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        subscriptionVersion !== activeAgentSubscriptionVersion ||
+        params.runId !== normalizedRunId
+      ) {
+        return;
+      }
+      setAgentState("error");
+      setAgentError("Failed to load buffered agent events.");
+      return;
+    }
+
+    try {
+      const removeForwarder = await subscribeRunOpenCodeEvents({
+        runId: normalizedRunId,
+        onOutputChannel: (event) => {
+          if (
+            requestVersion !== activeAgentRequestVersion ||
+            subscriptionVersion !== activeAgentSubscriptionVersion ||
+            !isAgentUiSubscribed ||
+            params.runId !== normalizedRunId
+          ) {
+            return;
+          }
+
+          setAgentEvents((current) => [...current, event]);
+        },
+      });
+
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        subscriptionVersion !== activeAgentSubscriptionVersion ||
+        !isAgentUiSubscribed ||
+        params.runId !== normalizedRunId
+      ) {
+        removeForwarder();
+        return;
+      }
+
+      removeAgentEventForwarder = removeForwarder;
+      setAgentState("running");
+    } catch {
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        subscriptionVersion !== activeAgentSubscriptionVersion ||
+        params.runId !== normalizedRunId
+      ) {
+        return;
+      }
+
+      setAgentState("error");
+      setAgentError("Failed to subscribe to agent events.");
+    }
+  };
+
+  createEffect(() => {
+    const runId = params.runId;
+    const requestVersion = ++activeAgentRequestVersion;
+    setAgentEvents([]);
+    setAgentError("");
+    setAgentState("idle");
+    isAgentUiSubscribed = true;
+
+    if (!runId) {
+      return;
+    }
+
+    void (async () => {
+      await ensureAgentForRun(runId);
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== runId
+      ) {
+        return;
+      }
+
+      if (agentState() === "unsupported" || agentState() === "error") {
+        return;
+      }
+
+      await subscribeAgentEvents(runId);
+    })();
+
+    onCleanup(() => {
+      unsubscribeAgentEvents();
+    });
   });
 
   const setTerminalFrameHandler = (
@@ -632,6 +873,14 @@ export const useRunDetailModel = () => {
       resizeTerminal,
       disposeTerminal,
       setTerminalFrameHandler,
+    },
+    agent: {
+      state: agentState,
+      events: agentEvents,
+      error: agentError,
+      ensureAgentForRun,
+      subscribeAgentEvents,
+      unsubscribeAgentEvents,
     },
   };
 };

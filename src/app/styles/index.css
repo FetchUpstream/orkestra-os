@@ -2402,6 +2402,65 @@ textarea::placeholder {
   display: none;
 }
 
+.run-agent-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  height: 100%;
+}
+
+.run-agent-event-log {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: #090b10;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 220px;
+  max-height: min(58vh, 520px);
+  overflow: auto;
+}
+
+.run-agent-event-item {
+  border: 1px solid #242934;
+  border-radius: var(--radius-sm);
+  background: #10141d;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.run-agent-event-item header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-subtle);
+  font-size: 0.74rem;
+}
+
+.run-agent-event-item header strong {
+  color: var(--accent);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.run-agent-event-item pre {
+  margin: 0;
+  padding: 8px;
+  border-radius: 4px;
+  background: #07090d;
+  color: #c5d1ea;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .run-detail-terminal-shell {
   display: flex;
   flex-direction: column;

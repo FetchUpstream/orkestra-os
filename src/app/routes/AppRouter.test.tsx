@@ -1628,7 +1628,7 @@ describe("app routing and shell", () => {
           .getByRole("tab", { name: "Operations" })
           .getAttribute("aria-selected"),
       ).toBe("true");
-      expect(screen.getByRole("tab", { name: "Logs" })).toBeTruthy();
+      expect(screen.getByRole("tab", { name: "Agent" })).toBeTruthy();
       expect(screen.getByRole("tab", { name: "Files Changed" })).toBeTruthy();
       expect(screen.getByRole("tab", { name: "Diff" })).toBeTruthy();
       expect(screen.getByRole("tab", { name: "Git" })).toBeTruthy();
