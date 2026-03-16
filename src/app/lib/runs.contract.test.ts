@@ -51,6 +51,7 @@ describe("runs contract", () => {
         error_message: null,
         worktree_id: null,
         agent_id: null,
+        source_branch: "main",
       },
       {
         id: "run-camel",
@@ -66,6 +67,7 @@ describe("runs contract", () => {
         errorMessage: null,
         worktreeId: "wt-1",
         agentId: "agent-1",
+        sourceBranch: "develop",
       },
     ]);
 
@@ -89,6 +91,7 @@ describe("runs contract", () => {
         errorMessage: null,
         worktreeId: null,
         agentId: null,
+        sourceBranch: "main",
       },
       {
         id: "run-camel",
@@ -104,6 +107,7 @@ describe("runs contract", () => {
         errorMessage: null,
         worktreeId: "wt-1",
         agentId: "agent-1",
+        sourceBranch: "develop",
       },
     ] satisfies Run[]);
   });

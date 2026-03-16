@@ -1,15 +1,70 @@
 import { useParams } from "@solidjs/router";
-import { createEffect, createMemo, createSignal } from "solid-js";
-import { getRun, type Run } from "../../../app/lib/runs";
+import { listen } from "@tauri-apps/api/event";
+import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import {
+  getRun,
+  getRunDiffFile,
+  listRunDiffFiles,
+  setRunDiffWatch,
+  type Run,
+  type RunDiffFile,
+  type RunDiffFilePayload,
+} from "../../../app/lib/runs";
 import { getTask, type Task } from "../../../app/lib/tasks";
 
 export const useRunDetailModel = () => {
   const params = useParams();
   const [run, setRun] = createSignal<Run | null>(null);
   const [task, setTask] = createSignal<Task | null>(null);
+  const [isDiffTabActive, setIsDiffTabActive] = createSignal(false);
+  const [diffFiles, setDiffFiles] = createSignal<RunDiffFile[]>([]);
+  const [isDiffFilesLoading, setIsDiffFilesLoading] = createSignal(false);
+  const [diffFilesError, setDiffFilesError] = createSignal("");
+  const [diffFilePayloads, setDiffFilePayloads] = createSignal<
+    Record<string, RunDiffFilePayload>
+  >({});
+  const [diffFileLoadingPaths, setDiffFileLoadingPaths] = createSignal<
+    Record<string, boolean>
+  >({});
   const [isLoading, setIsLoading] = createSignal(true);
   const [error, setError] = createSignal("");
   let activeRunRequestVersion = 0;
+  let activeDiffRefreshVersion = 0;
+  let diffRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const areDiffFilesEqual = (
+    current: RunDiffFile[],
+    next: RunDiffFile[],
+  ): boolean => {
+    if (current.length !== next.length) return false;
+
+    for (let index = 0; index < current.length; index += 1) {
+      const currentFile = current[index];
+      const nextFile = next[index];
+      if (
+        currentFile.path !== nextFile.path ||
+        currentFile.additions !== nextFile.additions ||
+        currentFile.deletions !== nextFile.deletions ||
+        currentFile.status !== nextFile.status
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const hasSameDiffFileMetadata = (
+    current: RunDiffFile,
+    next: RunDiffFile,
+  ): boolean => {
+    return (
+      current.path === next.path &&
+      current.additions === next.additions &&
+      current.deletions === next.deletions &&
+      current.status === next.status
+    );
+  };
 
   const isNotFoundError = (value: unknown): boolean => {
     if (value instanceof Error) {
@@ -96,8 +151,7 @@ export const useRunDetailModel = () => {
     const runValue = run();
     const repository =
       taskValue?.targetRepositoryName?.trim() || "Repository unavailable";
-    const branch =
-      runValue?.status === "running" ? "active branch" : "branch unavailable";
+    const branch = runValue?.sourceBranch?.trim() || "branch unavailable";
     const worktree = runValue?.worktreeId?.trim() || "worktree unavailable";
     return `${repository} / ${branch} / ${worktree}`;
   });
@@ -192,6 +246,187 @@ export const useRunDetailModel = () => {
     })();
   });
 
+  const refreshDiffFiles = async (): Promise<void> => {
+    const runId = params.runId;
+    if (!runId || !isDiffTabActive()) return;
+    const requestVersion = ++activeDiffRefreshVersion;
+    setIsDiffFilesLoading(true);
+    setDiffFilesError("");
+    try {
+      const files = await listRunDiffFiles(runId);
+      if (
+        params.runId !== runId ||
+        requestVersion !== activeDiffRefreshVersion
+      ) {
+        return;
+      }
+      const presentPaths = new Set(files.map((file) => file.path));
+      const invalidatedPaths = new Set<string>();
+
+      setDiffFiles((current) => {
+        const currentByPath = new Map(current.map((file) => [file.path, file]));
+        const nextByPath = new Map(files.map((file) => [file.path, file]));
+
+        for (const currentFile of current) {
+          const nextFile = nextByPath.get(currentFile.path);
+          if (!nextFile || !hasSameDiffFileMetadata(currentFile, nextFile)) {
+            invalidatedPaths.add(currentFile.path);
+          }
+        }
+
+        for (const nextFile of files) {
+          if (!currentByPath.has(nextFile.path)) {
+            invalidatedPaths.add(nextFile.path);
+          }
+        }
+
+        const listIsEqual = areDiffFilesEqual(current, files);
+        if (listIsEqual) {
+          return current;
+        }
+
+        const mergedFiles = files.map((file) => {
+          const existing = currentByPath.get(file.path);
+          if (existing && hasSameDiffFileMetadata(existing, file)) {
+            return existing;
+          }
+          return file;
+        });
+
+        return mergedFiles;
+      });
+
+      setDiffFilePayloads((current) => {
+        let didChange = false;
+        const next: Record<string, RunDiffFilePayload> = {};
+        for (const [path, payload] of Object.entries(current)) {
+          if (presentPaths.has(path) && !invalidatedPaths.has(path)) {
+            next[path] = payload;
+          } else {
+            didChange = true;
+          }
+        }
+        return didChange ? next : current;
+      });
+      setDiffFileLoadingPaths((current) => {
+        let didChange = false;
+        const next: Record<string, boolean> = {};
+        for (const [path, isLoading] of Object.entries(current)) {
+          if (presentPaths.has(path) && !invalidatedPaths.has(path)) {
+            next[path] = isLoading;
+          } else {
+            didChange = true;
+          }
+        }
+        return didChange ? next : current;
+      });
+    } catch {
+      if (
+        params.runId !== runId ||
+        requestVersion !== activeDiffRefreshVersion
+      ) {
+        return;
+      }
+      setDiffFilesError("Failed to load changed files.");
+    } finally {
+      if (
+        params.runId === runId &&
+        requestVersion === activeDiffRefreshVersion
+      ) {
+        setIsDiffFilesLoading(false);
+      }
+    }
+  };
+
+  const loadDiffFile = async (path: string): Promise<void> => {
+    const runId = params.runId;
+    if (!runId || !path.trim()) return;
+    const isCached = diffFilePayloads()[path] !== undefined;
+    const isLoading = diffFileLoadingPaths()[path] === true;
+    if (isCached || isLoading) {
+      return;
+    }
+
+    setDiffFileLoadingPaths((current) => ({ ...current, [path]: true }));
+    try {
+      const payload = await getRunDiffFile(runId, path);
+      if (params.runId !== runId) return;
+      setDiffFilePayloads((current) => ({ ...current, [path]: payload }));
+    } catch (loadError) {
+      throw loadError;
+    } finally {
+      if (params.runId === runId) {
+        setDiffFileLoadingPaths((current) => {
+          const next = { ...current };
+          delete next[path];
+          return next;
+        });
+      }
+    }
+  };
+
+  createEffect(() => {
+    const runId = params.runId;
+    if (!runId) {
+      return;
+    }
+    void setRunDiffWatch(runId, true);
+
+    let disposed = false;
+    let unlisten: null | (() => void) = null;
+    void (async () => {
+      const remove = await listen<{ run_id?: string; runId?: string }>(
+        "run-diff-updated",
+        (event) => {
+          const eventRunId = event.payload.run_id ?? event.payload.runId;
+          if (eventRunId !== runId || disposed || params.runId !== runId)
+            return;
+
+          if (!isDiffTabActive()) {
+            return;
+          }
+
+          if (diffRefreshDebounceTimer) {
+            clearTimeout(diffRefreshDebounceTimer);
+          }
+          diffRefreshDebounceTimer = setTimeout(() => {
+            if (disposed || params.runId !== runId) {
+              return;
+            }
+            void refreshDiffFiles();
+          }, 250);
+        },
+      );
+      if (disposed) {
+        remove();
+        return;
+      }
+      unlisten = remove;
+    })();
+
+    onCleanup(() => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+      if (diffRefreshDebounceTimer) {
+        clearTimeout(diffRefreshDebounceTimer);
+        diffRefreshDebounceTimer = null;
+      }
+      void setRunDiffWatch(runId, false);
+    });
+  });
+
+  createEffect(() => {
+    const runId = params.runId;
+    const active = isDiffTabActive();
+    if (!runId || !active) {
+      return;
+    }
+
+    void refreshDiffFiles();
+  });
+
   return {
     run,
     task,
@@ -203,5 +438,13 @@ export const useRunDetailModel = () => {
     runLabel,
     repositorySummary,
     durationLabel,
+    isDiffTabActive,
+    setIsDiffTabActive,
+    diffFiles,
+    isDiffFilesLoading,
+    diffFilesError,
+    diffFilePayloads,
+    diffFileLoadingPaths,
+    loadDiffFile,
   };
 };

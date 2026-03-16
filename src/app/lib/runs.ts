@@ -27,6 +27,46 @@ export type Run = {
   errorMessage?: string | null;
   worktreeId?: string | null;
   agentId?: string | null;
+  sourceBranch?: string | null;
+};
+
+export type RunDiffFile = {
+  path: string;
+  additions: number;
+  deletions: number;
+  status: string;
+};
+
+export type RunDiffFilePayload = {
+  path: string;
+  additions: number;
+  deletions: number;
+  original: string;
+  modified: string;
+  language: string;
+  status: string;
+  isBinary: boolean;
+  truncated: boolean;
+};
+
+type RunDiffFileResponse = {
+  path: string;
+  additions: number;
+  deletions: number;
+  status: string;
+};
+
+type RunDiffFilePayloadResponse = {
+  path: string;
+  additions: number;
+  deletions: number;
+  original: string;
+  modified: string;
+  language: string;
+  status: string;
+  is_binary?: boolean;
+  isBinary?: boolean;
+  truncated: boolean;
 };
 
 type RunResponse = {
@@ -57,6 +97,8 @@ type RunResponse = {
   worktreeId?: string | null;
   agent_id?: string | null;
   agentId?: string | null;
+  source_branch?: string | null;
+  sourceBranch?: string | null;
 };
 
 const runStatusSet = new Set<string>(RUN_STATUSES);
@@ -85,6 +127,28 @@ const toRun = (run: RunResponse): Run => ({
   errorMessage: pick(run.error_message, run.errorMessage),
   worktreeId: pick(run.worktree_id, run.worktreeId),
   agentId: pick(run.agent_id, run.agentId),
+  sourceBranch: pick(run.source_branch, run.sourceBranch),
+});
+
+const toRunDiffFile = (file: RunDiffFileResponse): RunDiffFile => ({
+  path: file.path,
+  additions: file.additions,
+  deletions: file.deletions,
+  status: file.status,
+});
+
+const toRunDiffFilePayload = (
+  payload: RunDiffFilePayloadResponse,
+): RunDiffFilePayload => ({
+  path: payload.path,
+  additions: payload.additions,
+  deletions: payload.deletions,
+  original: payload.original,
+  modified: payload.modified,
+  language: payload.language,
+  status: payload.status,
+  isBinary: pick(payload.is_binary, payload.isBinary) ?? false,
+  truncated: payload.truncated,
 });
 
 export const createRun = async (taskId: string): Promise<Run> => {
@@ -104,4 +168,34 @@ export const getRun = async (runId: string): Promise<Run> => {
 
 export const deleteRun = async (runId: string): Promise<void> => {
   await invoke("delete_run", { runId });
+};
+
+export const listRunDiffFiles = async (
+  runId: string,
+): Promise<RunDiffFile[]> => {
+  const response = await invoke<RunDiffFileResponse[]>("list_run_diff_files", {
+    runId,
+  });
+  return response.map(toRunDiffFile);
+};
+
+export const getRunDiffFile = async (
+  runId: string,
+  path: string,
+): Promise<RunDiffFilePayload> => {
+  const response = await invoke<RunDiffFilePayloadResponse>(
+    "get_run_diff_file",
+    {
+      runId,
+      path,
+    },
+  );
+  return toRunDiffFilePayload(response);
+};
+
+export const setRunDiffWatch = async (
+  runId: string,
+  enabled: boolean,
+): Promise<void> => {
+  await invoke("set_run_diff_watch", { runId, enabled });
 };

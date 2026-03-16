@@ -1,6 +1,14 @@
 import { A } from "@solidjs/router";
-import { For, Show, createMemo, createSignal, type Component } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  type Component,
+} from "solid-js";
 import BackIconLink from "../../../components/ui/BackIconLink";
+import MonacoDiffEditor from "../../../components/MonacoDiffEditor";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime, formatRunStatus } from "../../tasks/utils/taskDetail";
 
@@ -10,6 +18,9 @@ const RunDetailScreen: Component = () => {
   const [layoutMode, setLayoutMode] = createSignal<"split" | "info-focus">(
     "split",
   );
+  const [expandedDiffPaths, setExpandedDiffPaths] = createSignal<
+    Record<string, boolean>
+  >({});
   const [composerValue, setComposerValue] = createSignal("");
   const isInfoFocus = createMemo(() => layoutMode() === "info-focus");
   const transcript = createMemo(() => {
@@ -39,6 +50,68 @@ const RunDetailScreen: Component = () => {
         time: runValue?.finishedAt ?? runValue?.createdAt,
       },
     ];
+  });
+  createEffect(() => {
+    const diffActive = activeTab() === "diff";
+    model.setIsDiffTabActive(diffActive);
+  });
+
+  createEffect(() => {
+    if (activeTab() !== "diff") {
+      return;
+    }
+
+    const files = model.diffFiles();
+    setExpandedDiffPaths((current) => {
+      const next: Record<string, boolean> = {};
+      let didChange = false;
+
+      for (const file of files) {
+        if (Object.prototype.hasOwnProperty.call(current, file.path)) {
+          next[file.path] = current[file.path] === true;
+          continue;
+        }
+
+        next[file.path] = true;
+        didChange = true;
+      }
+
+      if (!didChange) {
+        const currentPaths = Object.keys(current);
+        if (currentPaths.length !== files.length) {
+          didChange = true;
+        } else {
+          for (const path of currentPaths) {
+            if (!Object.prototype.hasOwnProperty.call(next, path)) {
+              didChange = true;
+              break;
+            }
+            if (current[path] !== next[path]) {
+              didChange = true;
+              break;
+            }
+          }
+        }
+      }
+
+      return didChange ? next : current;
+    });
+  });
+
+  createEffect(() => {
+    if (activeTab() !== "diff") {
+      return;
+    }
+
+    const files = model.diffFiles();
+    const expanded = expandedDiffPaths();
+    const openPaths = files
+      .map((file) => file.path)
+      .filter((path) => expanded[path] === true);
+
+    for (const path of openPaths) {
+      void model.loadDiffFile(path);
+    }
   });
 
   return (
@@ -198,6 +271,7 @@ const RunDetailScreen: Component = () => {
                         class="run-detail-icon-button"
                         aria-label="Open Diff"
                         title="Open Diff"
+                        onClick={() => setActiveTab("diff")}
                       >
                         <svg viewBox="0 0 16 16" aria-hidden="true">
                           <path d="M5 3h1.5v10H5v-2H3v-2h2V7H3V5h2V3Zm5.5 0H12v2h2v2h-2v2h2v2h-2v2h-1.5V3Z" />
@@ -364,13 +438,140 @@ const RunDetailScreen: Component = () => {
                       <Show
                         when={activeTab() === "operations"}
                         fallback={
-                          <p class="project-placeholder-text">
-                            {activeTab() === "files"
-                              ? "Files Changed"
-                              : activeTab().charAt(0).toUpperCase() +
-                                activeTab().slice(1)}{" "}
-                            panel placeholder.
-                          </p>
+                          <Show
+                            when={activeTab() === "diff"}
+                            fallback={
+                              <p class="project-placeholder-text">
+                                {activeTab() === "files"
+                                  ? "Files Changed"
+                                  : activeTab().charAt(0).toUpperCase() +
+                                    activeTab().slice(1)}{" "}
+                                panel placeholder.
+                              </p>
+                            }
+                          >
+                            <section aria-label="Run diff files">
+                              <Show when={model.diffFilesError().length > 0}>
+                                <p class="projects-error">
+                                  {model.diffFilesError()}
+                                </p>
+                              </Show>
+                              <Show
+                                when={model.diffFiles().length > 0}
+                                fallback={
+                                  <Show when={!model.isDiffFilesLoading()}>
+                                    <p class="project-placeholder-text">
+                                      No changed files.
+                                    </p>
+                                  </Show>
+                                }
+                              >
+                                <div class="run-diff-accordion">
+                                  <For each={model.diffFiles()}>
+                                    {(file) => {
+                                      const expanded = () =>
+                                        expandedDiffPaths()[file.path] === true;
+                                      const payload = () =>
+                                        model.diffFilePayloads()[file.path];
+                                      const isFileLoading = () =>
+                                        model.diffFileLoadingPaths()[
+                                          file.path
+                                        ] === true;
+
+                                      return (
+                                        <article class="run-diff-item">
+                                          <button
+                                            type="button"
+                                            class="run-diff-item-header"
+                                            aria-expanded={
+                                              expanded() ? "true" : "false"
+                                            }
+                                            onClick={() => {
+                                              const previousExpanded =
+                                                expandedDiffPaths()[
+                                                  file.path
+                                                ] === true;
+                                              const nextExpanded =
+                                                !previousExpanded;
+                                              setExpandedDiffPaths(
+                                                (current) => ({
+                                                  ...current,
+                                                  [file.path]: nextExpanded,
+                                                }),
+                                              );
+                                            }}
+                                          >
+                                            <span class="run-diff-item-path">
+                                              {file.path}
+                                            </span>
+                                            <span class="run-diff-item-stats">
+                                              <span class="run-diff-item-stat-additions">
+                                                +{file.additions}
+                                              </span>
+                                              <span class="run-diff-item-stat-deletions">
+                                                -{file.deletions}
+                                              </span>
+                                            </span>
+                                          </button>
+                                          <Show when={expanded()}>
+                                            <div class="run-diff-item-body">
+                                              <Show
+                                                when={!isFileLoading()}
+                                                fallback={
+                                                  <p class="project-placeholder-text">
+                                                    Loading diff.
+                                                  </p>
+                                                }
+                                              >
+                                                <Show
+                                                  when={payload()}
+                                                  fallback={
+                                                    <p class="project-placeholder-text">
+                                                      Diff unavailable.
+                                                    </p>
+                                                  }
+                                                >
+                                                  {(filePayload) => (
+                                                    <>
+                                                      <p class="run-diff-item-meta">
+                                                        {filePayload().status},{" "}
+                                                        {filePayload().isBinary
+                                                          ? "binary"
+                                                          : "text"}
+                                                        {filePayload().truncated
+                                                          ? ", truncated"
+                                                          : ""}
+                                                      </p>
+                                                      <div class="run-detail-monaco-panel">
+                                                        <MonacoDiffEditor
+                                                          original={
+                                                            filePayload()
+                                                              .original
+                                                          }
+                                                          modified={
+                                                            filePayload()
+                                                              .modified
+                                                          }
+                                                          language={
+                                                            filePayload()
+                                                              .language
+                                                          }
+                                                        />
+                                                      </div>
+                                                    </>
+                                                  )}
+                                                </Show>
+                                              </Show>
+                                            </div>
+                                          </Show>
+                                        </article>
+                                      );
+                                    }}
+                                  </For>
+                                </div>
+                              </Show>
+                            </section>
+                          </Show>
                         }
                       >
                         <dl class="task-detail-definition-list run-detail-metadata">

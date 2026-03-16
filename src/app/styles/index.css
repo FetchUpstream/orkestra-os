@@ -2415,6 +2415,78 @@ textarea::placeholder {
   overflow: auto;
 }
 
+.run-detail-monaco-panel {
+  height: 320px;
+  min-height: 320px;
+}
+
+.run-diff-accordion {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.run-diff-item {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+}
+
+.run-diff-item-header {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.run-diff-item-path {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.run-diff-item-stats {
+  display: inline-flex;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.run-diff-item-stat-additions {
+  color: var(--success);
+}
+
+.run-diff-item-stat-deletions {
+  color: var(--danger);
+}
+
+.run-diff-item-body {
+  border-top: 1px solid var(--border-subtle);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.run-diff-item-meta {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-transform: capitalize;
+}
+
+.monaco-editor-root {
+  width: 100%;
+  height: 100%;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
