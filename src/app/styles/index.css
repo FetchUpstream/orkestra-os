@@ -2333,6 +2333,43 @@ textarea::placeholder {
   font-size: 0.85rem;
 }
 
+.run-detail-step-meta {
+  margin: 0 0 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.run-detail-step-meta div {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg);
+  min-width: 0;
+}
+
+.run-detail-step-meta dt {
+  margin: 0;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-subtle);
+}
+
+.run-detail-step-meta dd {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  max-width: min(38ch, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .run-detail-message-parts {
   display: grid;
   gap: 8px;
@@ -2482,6 +2519,19 @@ textarea::placeholder {
   gap: 10px;
   min-height: 0;
   height: 100%;
+}
+
+.run-agent-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.run-agent-event-count {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 0.74rem;
+  font-family: var(--font-mono);
 }
 
 .run-agent-event-log {

@@ -9,6 +9,7 @@ import {
 } from "solid-js";
 import BackIconLink from "../../../components/ui/BackIconLink";
 import MonacoDiffEditor from "../../../components/MonacoDiffEditor";
+import MarkdownContent from "../../../components/ui/MarkdownContent";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime, formatRunStatus } from "../../tasks/utils/taskDetail";
 import RunTerminal from "../components/RunTerminal";
@@ -34,6 +35,31 @@ const RunDetailScreen: Component = () => {
   const isInfoFocus = createMemo(() => layoutMode() === "info-focus");
   const isTerminalTabActive = createMemo(() => activeTab() === "terminal");
   const isAgentTabActive = createMemo(() => activeTab() === "agent");
+  const agentEvents = createMemo(() => model.agent.events());
+  const agentEventMax = createMemo<number | null>(() => {
+    const candidates = [
+      (model.agent as Record<string, unknown>).maxEvents,
+      (model.agent as Record<string, unknown>).eventBufferLimit,
+      (model.agent as Record<string, unknown>).eventsMax,
+    ];
+
+    for (const candidate of candidates) {
+      if (
+        typeof candidate === "number" &&
+        Number.isFinite(candidate) &&
+        candidate > 0
+      ) {
+        return Math.floor(candidate);
+      }
+    }
+
+    return null;
+  });
+  const agentEventCountLabel = createMemo(() => {
+    const count = agentEvents().length;
+    const max = agentEventMax();
+    return max !== null ? `Events: ${count}/${max}` : `Events: ${count}`;
+  });
   let transcriptScrollRef: HTMLDivElement | undefined;
   let transcriptBottomRef: HTMLDivElement | undefined;
   let agentEventLogRef: HTMLDivElement | undefined;
@@ -109,6 +135,144 @@ const RunDetailScreen: Component = () => {
     return `${serialized.slice(0, 280)}...`;
   };
 
+  const formatStepMetaValue = (value: unknown): string | null => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      const normalized = String(value)
+        .replace(INTERNAL_ID_PATTERN, "[internal-id]")
+        .trim();
+      return normalized.length > 0 ? normalized : null;
+    }
+
+    const formatted = formatPartSnippet(value).trim();
+    return formatted.length > 0 ? formatted : null;
+  };
+
+  const formatStructuredTokenMeta = (value: unknown): string | null => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+
+    const tokenMap = new Map<string, number>();
+
+    const normalizeKey = (key: string): string =>
+      key.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+    const visit = (node: unknown, depth: number): void => {
+      if (
+        !node ||
+        typeof node !== "object" ||
+        Array.isArray(node) ||
+        depth > 3
+      ) {
+        return;
+      }
+
+      for (const [rawKey, rawValue] of Object.entries(
+        node as Record<string, unknown>,
+      )) {
+        if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+          tokenMap.set(normalizeKey(rawKey), rawValue);
+          continue;
+        }
+
+        if (
+          rawValue &&
+          typeof rawValue === "object" &&
+          !Array.isArray(rawValue)
+        ) {
+          visit(rawValue, depth + 1);
+        }
+      }
+    };
+
+    visit(value, 0);
+
+    const pick = (...candidates: string[]): number | null => {
+      for (const key of candidates) {
+        const tokenCount = tokenMap.get(key);
+        if (tokenCount !== undefined) {
+          return tokenCount;
+        }
+      }
+      return null;
+    };
+
+    const parts: string[] = [];
+    const total = pick("total", "totaltokens", "tokens");
+    const input = pick("input", "inputtokens", "prompt", "prompttokens");
+    const output = pick(
+      "output",
+      "outputtokens",
+      "completion",
+      "completiontokens",
+    );
+    const reasoning = pick("reasoning", "reasoningtokens");
+    const cacheRead = pick("cacheread", "cachedinput", "cachedinputtokens");
+    const cacheWrite = pick("cachewrite", "cachedoutput", "cachedoutputtokens");
+
+    if (total !== null) {
+      parts.push(`total: ${total}`);
+    }
+    if (input !== null) {
+      parts.push(`input: ${input}`);
+    }
+    if (output !== null) {
+      parts.push(`output: ${output}`);
+    }
+    if (reasoning !== null) {
+      parts.push(`reasoning: ${reasoning}`);
+    }
+    if (cacheRead !== null) {
+      parts.push(`cache read: ${cacheRead}`);
+    }
+    if (cacheWrite !== null) {
+      parts.push(`cache write: ${cacheWrite}`);
+    }
+
+    return parts.length > 0 ? parts.join(" · ") : null;
+  };
+
+  const formatStepTokenValue = (value: unknown): string | null => {
+    const structured = formatStructuredTokenMeta(value);
+    if (structured) {
+      return structured;
+    }
+    return formatStepMetaValue(value);
+  };
+
+  const extractSnapshotHash = (snapshot: unknown): string | null => {
+    if (typeof snapshot === "string") {
+      return formatStepMetaValue(snapshot);
+    }
+
+    if (snapshot && typeof snapshot === "object") {
+      const record = snapshot as Record<string, unknown>;
+      const directHash = formatStepMetaValue(record.hash);
+      if (directHash) {
+        return directHash;
+      }
+
+      const nestedSnapshot = record.snapshot;
+      if (nestedSnapshot && typeof nestedSnapshot === "object") {
+        const nestedRecord = nestedSnapshot as Record<string, unknown>;
+        const nestedHash = formatStepMetaValue(nestedRecord.hash);
+        if (nestedHash) {
+          return nestedHash;
+        }
+      }
+    }
+
+    return null;
+  };
+
   const getPartSnippet = (part: UiPart): string => {
     if (part.kind === "file") {
       return formatPartSnippet({
@@ -150,6 +314,12 @@ const RunDetailScreen: Component = () => {
       actor: string;
       time: number | null;
       parts: UiPart[];
+      stepMeta: {
+        snapshotHash?: string;
+        reason?: string;
+        tokens?: string;
+        cost?: string;
+      } | null;
     }> = [];
 
     for (const messageId of store.messageOrder) {
@@ -159,17 +329,62 @@ const RunDetailScreen: Component = () => {
       }
 
       const parts: UiPart[] = [];
+      let snapshotHash: string | null = null;
+      let finishReason: string | null = null;
+      let finishTokens: string | null = null;
+      let finishCost: string | null = null;
+
       for (const partId of message.partOrder) {
         const part = message.partsById[partId];
-        if (part) {
-          parts.push(part);
+        if (!part) {
+          continue;
         }
+
+        if (part.kind === "step-start") {
+          if (!snapshotHash) {
+            snapshotHash = extractSnapshotHash(part.snapshot);
+          }
+          continue;
+        }
+
+        if (part.kind === "step-finish") {
+          if (!snapshotHash) {
+            snapshotHash = extractSnapshotHash(part.snapshot);
+          }
+
+          const reason = formatStepMetaValue(part.reason);
+          if (reason) {
+            finishReason = reason;
+          }
+
+          const tokens = formatStepTokenValue(part.tokens);
+          if (tokens) {
+            finishTokens = tokens;
+          }
+
+          const cost = formatStepMetaValue(part.cost);
+          if (cost) {
+            finishCost = cost;
+          }
+          continue;
+        }
+
+        parts.push(part);
       }
 
       entries.push({
         actor: getMessageActorLabel(message.role),
         time: message.updatedAt ?? message.createdAt ?? null,
         parts,
+        stepMeta:
+          snapshotHash || finishReason || finishTokens || finishCost
+            ? {
+                snapshotHash: snapshotHash || undefined,
+                reason: finishReason || undefined,
+                tokens: finishTokens || undefined,
+                cost: finishCost || undefined,
+              }
+            : null,
       });
     }
 
@@ -267,7 +482,7 @@ const RunDetailScreen: Component = () => {
       return;
     }
 
-    model.agent.events();
+    agentEvents();
     queueMicrotask(() => {
       if (!agentEventLogRef) {
         return;
@@ -515,6 +730,36 @@ const RunDetailScreen: Component = () => {
                                     {formatAgentTimestamp(entry.time)}
                                   </span>
                                 </header>
+                                <Show when={entry.stepMeta}>
+                                  {(meta) => (
+                                    <dl class="run-detail-step-meta">
+                                      <Show when={meta().snapshotHash}>
+                                        <div>
+                                          <dt>Snapshot</dt>
+                                          <dd>{meta().snapshotHash}</dd>
+                                        </div>
+                                      </Show>
+                                      <Show when={meta().reason}>
+                                        <div>
+                                          <dt>Reason</dt>
+                                          <dd>{meta().reason}</dd>
+                                        </div>
+                                      </Show>
+                                      <Show when={meta().tokens}>
+                                        <div>
+                                          <dt>Tokens</dt>
+                                          <dd>{meta().tokens}</dd>
+                                        </div>
+                                      </Show>
+                                      <Show when={meta().cost}>
+                                        <div>
+                                          <dt>Cost</dt>
+                                          <dd>{meta().cost}</dd>
+                                        </div>
+                                      </Show>
+                                    </dl>
+                                  )}
+                                </Show>
                                 <Show
                                   when={entry.parts.length > 0}
                                   fallback={
@@ -528,23 +773,31 @@ const RunDetailScreen: Component = () => {
                                       {(part) => (
                                         <>
                                           <Show when={part.kind === "text"}>
-                                            <p class="run-detail-part run-detail-part--text">
-                                              {part.kind === "text"
-                                                ? part.text
-                                                : ""}
-                                            </p>
+                                            <MarkdownContent
+                                              content={
+                                                part.kind === "text"
+                                                  ? part.text
+                                                  : ""
+                                              }
+                                              class="run-detail-part run-detail-part--text"
+                                            />
                                           </Show>
 
                                           <Show
                                             when={part.kind === "reasoning"}
                                           >
-                                            <details class="run-detail-part run-detail-part--reasoning">
+                                            <details
+                                              class="run-detail-part run-detail-part--reasoning"
+                                              open
+                                            >
                                               <summary>Reasoning</summary>
-                                              <p>
-                                                {part.kind === "reasoning"
-                                                  ? part.text
-                                                  : ""}
-                                              </p>
+                                              <MarkdownContent
+                                                content={
+                                                  part.kind === "reasoning"
+                                                    ? part.text
+                                                    : ""
+                                                }
+                                              />
                                             </details>
                                           </Show>
 
@@ -567,8 +820,6 @@ const RunDetailScreen: Component = () => {
                                             when={
                                               part.kind === "file" ||
                                               part.kind === "patch" ||
-                                              part.kind === "step-start" ||
-                                              part.kind === "step-finish" ||
                                               part.kind === "unknown"
                                             }
                                           >
@@ -744,6 +995,11 @@ const RunDetailScreen: Component = () => {
                                     class="run-agent-panel"
                                     aria-label="Agent stream events"
                                   >
+                                    <header class="run-agent-panel-header">
+                                      <p class="run-agent-event-count">
+                                        {agentEventCountLabel()}
+                                      </p>
+                                    </header>
                                     <Show when={model.agent.error().length > 0}>
                                       <p class="projects-error">
                                         {model.agent.error()}
@@ -760,7 +1016,7 @@ const RunDetailScreen: Component = () => {
                                       </p>
                                     </Show>
                                     <Show
-                                      when={model.agent.events().length > 0}
+                                      when={agentEvents().length > 0}
                                       fallback={
                                         <p class="project-placeholder-text">
                                           {model.agent.state() === "starting"
@@ -773,7 +1029,7 @@ const RunDetailScreen: Component = () => {
                                         class="run-agent-event-log"
                                         ref={agentEventLogRef}
                                       >
-                                        <For each={model.agent.events()}>
+                                        <For each={agentEvents()}>
                                           {(item) => (
                                             <article class="run-agent-event-item">
                                               <header>
