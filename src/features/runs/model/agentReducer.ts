@@ -409,31 +409,39 @@ export const upsertPart = (
 
   const existingPart = existingMessage.partsById[partId];
   let nextPart: UiPart = normalizedPart;
+  const hasDelta = typeof delta === "string" && delta.length > 0;
 
-  if (
-    delta &&
-    existingPart &&
-    normalizedPart.kind === "text" &&
-    existingPart.kind === "text"
-  ) {
-    nextPart = {
-      ...normalizedPart,
-      text: `${existingPart.text}${delta}`,
-      streaming: true,
-    };
-  }
+  if (normalizedPart.kind === "text" || normalizedPart.kind === "reasoning") {
+    const existingTextPart =
+      existingPart && existingPart.kind === normalizedPart.kind
+        ? existingPart
+        : undefined;
+    const incomingText = asString(rawPart.text);
 
-  if (
-    delta &&
-    existingPart &&
-    normalizedPart.kind === "reasoning" &&
-    existingPart.kind === "reasoning"
-  ) {
-    nextPart = {
-      ...normalizedPart,
-      text: `${existingPart.text}${delta}`,
-      streaming: true,
-    };
+    if (hasDelta) {
+      nextPart = {
+        ...normalizedPart,
+        text: `${existingTextPart?.text ?? normalizedPart.text}${delta}`,
+        streaming: true,
+      };
+    } else if (incomingText && incomingText.length > 0) {
+      nextPart = {
+        ...normalizedPart,
+        text: incomingText,
+        streaming: false,
+      };
+    } else if (existingTextPart?.text) {
+      nextPart = {
+        ...normalizedPart,
+        text: existingTextPart.text,
+        streaming: existingTextPart.streaming,
+      };
+    } else {
+      nextPart = {
+        ...normalizedPart,
+        streaming: false,
+      };
+    }
   }
 
   const nextMessage: UiMessage = {
@@ -622,6 +630,44 @@ export const reduceOpenCodeEvent = (
       const rawPart = pickRecordValue(properties, "part") ?? properties;
       const delta = asString(pickRecordValue(properties, "delta"));
       return upsertPart(nextState, rawPart, delta);
+    }
+
+    case "message.part.delta": {
+      const sessionId = asString(properties.sessionID ?? properties.sessionId);
+      const messageId = asString(properties.messageID ?? properties.messageId);
+      const partId = asString(properties.partID ?? properties.partId);
+      const field = asString(properties.field);
+      const delta = asString(properties.delta);
+
+      if (!sessionId || !messageId || !partId || !delta || field !== "text") {
+        return nextState;
+      }
+
+      if (nextState.sessionId && nextState.sessionId !== sessionId) {
+        return nextState;
+      }
+
+      const existingMessage = nextState.messagesById[messageId];
+      const existingPart = existingMessage?.partsById[partId];
+      const partType =
+        existingPart?.kind === "reasoning" ? "reasoning" : "text";
+
+      return upsertPart(
+        nextState,
+        {
+          id: partId,
+          partID: partId,
+          messageID: messageId,
+          sessionID: sessionId,
+          type: partType,
+          text:
+            existingPart &&
+            (existingPart.kind === "text" || existingPart.kind === "reasoning")
+              ? existingPart.text
+              : "",
+        },
+        delta,
+      );
     }
 
     case "message.part.removed": {
