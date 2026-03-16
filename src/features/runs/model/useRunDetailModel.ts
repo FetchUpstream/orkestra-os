@@ -4,6 +4,8 @@ import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
   ensureRunOpenCode,
   getBufferedRunOpenCodeEvents,
+  getRunOpenCodeSessionMessages,
+  getRunOpenCodeSessionTodos,
   getRun,
   getRunDiffFile,
   killRunTerminal,
@@ -23,6 +25,12 @@ import {
   writeRunTerminal,
 } from "../../../app/lib/runs";
 import { getTask, type Task } from "../../../app/lib/tasks";
+import {
+  createEmptyAgentStore,
+  hydrateAgentStore,
+  reduceOpenCodeEvent,
+} from "./agentReducer";
+import type { AgentStore, OpenCodeBusEvent } from "./agentTypes";
 
 export const useRunDetailModel = () => {
   const params = useParams();
@@ -52,6 +60,9 @@ export const useRunDetailModel = () => {
   const [agentState, setAgentState] =
     createSignal<RunOpenCodeAgentState>("idle");
   const [agentEvents, setAgentEvents] = createSignal<RunOpenCodeEvent[]>([]);
+  const [agentStore, setAgentStore] = createSignal<AgentStore>(
+    createEmptyAgentStore(null),
+  );
   const [agentError, setAgentError] = createSignal("");
   const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(false);
   const [submitError, setSubmitError] = createSignal("");
@@ -190,6 +201,250 @@ export const useRunDetailModel = () => {
     if (result.state === "idle") return "idle";
     if (result.supported === false) return "unsupported";
     return "running";
+  };
+
+  const isRecord = (value: unknown): value is Record<string, unknown> => {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  };
+
+  const parseMaybeJson = (value: unknown): unknown => {
+    if (typeof value !== "string") {
+      return value;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    let current: unknown = trimmed;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (typeof current !== "string") {
+        return current;
+      }
+
+      const candidate = current.trim();
+      if (!candidate) {
+        return null;
+      }
+
+      try {
+        const parsed = JSON.parse(candidate);
+        current = parsed;
+
+        if (typeof parsed !== "string") {
+          return parsed;
+        }
+
+        const nestedCandidate = parsed.trim();
+        const looksJsonish =
+          nestedCandidate.startsWith("{") ||
+          nestedCandidate.startsWith("[") ||
+          nestedCandidate.startsWith('"');
+        if (!looksJsonish) {
+          return parsed;
+        }
+      } catch {
+        return attempt === 0 ? value : current;
+      }
+    }
+
+    return current;
+  };
+
+  const preserveIdentifierFields = (
+    source: Record<string, unknown>,
+    target: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    const identifierKeys = [
+      "sessionID",
+      "sessionId",
+      "messageID",
+      "messageId",
+      "partID",
+      "partId",
+      "id",
+    ] as const;
+
+    let changed = false;
+    const merged: Record<string, unknown> = { ...target };
+    for (const key of identifierKeys) {
+      if (merged[key] !== undefined || source[key] === undefined) {
+        continue;
+      }
+      merged[key] = source[key];
+      changed = true;
+    }
+
+    return changed ? merged : target;
+  };
+
+  const normalizePayloadRecord = (
+    payload: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    const normalized: Record<string, unknown> = { ...payload };
+
+    const parsedProperties = parseMaybeJson(normalized.properties);
+    if (isRecord(parsedProperties)) {
+      normalized.properties = parsedProperties;
+    }
+
+    const parsedPart = parseMaybeJson(normalized.part);
+    if (isRecord(parsedPart)) {
+      normalized.part = parsedPart;
+    }
+
+    if (isRecord(normalized.properties)) {
+      const properties = { ...normalized.properties };
+      const propertiesPart = parseMaybeJson(properties.part);
+      if (isRecord(propertiesPart)) {
+        properties.part = propertiesPart;
+      }
+      normalized.properties = properties;
+    }
+
+    return normalized;
+  };
+
+  const resolveBusEventPayload = (
+    eventName: string,
+    value: unknown,
+  ): { busType: string; busProperties: unknown } => {
+    const parsed = parseMaybeJson(value);
+    const genericEventName = eventName === "message" || eventName === "unknown";
+
+    if (!isRecord(parsed)) {
+      return {
+        busType: eventName,
+        busProperties: parsed,
+      };
+    }
+
+    const normalized = normalizePayloadRecord(parsed);
+
+    const nested = normalized.properties;
+    const busProperties = isRecord(nested)
+      ? preserveIdentifierFields(normalized, nested)
+      : normalized;
+    const payloadType =
+      typeof normalized.type === "string" ? normalized.type.trim() : "";
+    const busType = genericEventName && payloadType ? payloadType : eventName;
+
+    return {
+      busType,
+      busProperties,
+    };
+  };
+
+  const toOpenCodeBusEvent = (event: RunOpenCodeEvent): OpenCodeBusEvent => {
+    const { busType, busProperties } = resolveBusEventPayload(
+      event.event,
+      event.data,
+    );
+
+    return {
+      type: busType,
+      properties: busProperties,
+      ts: event.ts,
+      raw: event,
+    };
+  };
+
+  const extractSessionIdFromMessages = (messages: unknown[]): string | null => {
+    for (const item of messages) {
+      if (!isRecord(item)) {
+        continue;
+      }
+
+      const info = isRecord(item.info)
+        ? item.info
+        : (item as Record<string, unknown>);
+      const sessionId = info.sessionID ?? info.sessionId;
+      if (typeof sessionId === "string" && sessionId.trim()) {
+        return sessionId.trim();
+      }
+    }
+    return null;
+  };
+
+  const extractSessionIdFromTodos = (todos: unknown[]): string | null => {
+    for (const item of todos) {
+      if (!isRecord(item)) {
+        continue;
+      }
+      const sessionId = item.sessionID ?? item.sessionId;
+      if (typeof sessionId === "string" && sessionId.trim()) {
+        return sessionId.trim();
+      }
+    }
+    return null;
+  };
+
+  const extractSessionIdFromEvents = (
+    events: RunOpenCodeEvent[],
+  ): string | null => {
+    for (const item of events) {
+      const parsed = resolveBusEventPayload(
+        item.event,
+        item.data,
+      ).busProperties;
+      if (!isRecord(parsed)) {
+        continue;
+      }
+
+      const part = isRecord(parsed.part) ? parsed.part : null;
+      const sessionId =
+        (typeof parsed.sessionID === "string" ? parsed.sessionID : null) ||
+        (typeof parsed.sessionId === "string" ? parsed.sessionId : null) ||
+        (part && typeof part.sessionID === "string" ? part.sessionID : null) ||
+        (part && typeof part.sessionId === "string" ? part.sessionId : null);
+
+      if (sessionId && sessionId.trim()) {
+        return sessionId.trim();
+      }
+    }
+    return null;
+  };
+
+  const hydrateAgentSnapshot = async (
+    runId: string,
+    requestVersion: number,
+    baseEvents: RunOpenCodeEvent[] = [],
+  ): Promise<void> => {
+    const [messagesSnapshot, todosSnapshot] = await Promise.all([
+      getRunOpenCodeSessionMessages(runId),
+      getRunOpenCodeSessionTodos(runId),
+    ]);
+
+    if (
+      requestVersion !== activeAgentRequestVersion ||
+      params.runId !== runId
+    ) {
+      return;
+    }
+
+    const sessionId =
+      extractSessionIdFromMessages(messagesSnapshot.messages) ||
+      extractSessionIdFromTodos(todosSnapshot.todos) ||
+      extractSessionIdFromEvents(baseEvents) ||
+      agentStore().sessionId;
+
+    setAgentStore((current) => {
+      const hydrated = hydrateAgentStore({
+        sessionId,
+        messages: messagesSnapshot.messages,
+        todos: todosSnapshot.todos,
+      });
+
+      const replayEvents: OpenCodeBusEvent[] =
+        baseEvents.length > 0
+          ? baseEvents.map(toOpenCodeBusEvent)
+          : current.rawEvents;
+
+      return replayEvents.reduce((nextState, item) => {
+        return reduceOpenCodeEvent(nextState, item);
+      }, hydrated);
+    });
   };
 
   const taskHref = createMemo(() => {
@@ -381,6 +636,14 @@ export const useRunDetailModel = () => {
         return;
       }
 
+      await hydrateAgentSnapshot(normalizedRunId, requestVersion);
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== normalizedRunId
+      ) {
+        return;
+      }
+
       setAgentError("");
     } catch (ensureError) {
       if (
@@ -442,6 +705,11 @@ export const useRunDetailModel = () => {
         return;
       }
       setAgentEvents(bufferedEvents);
+      setAgentStore((current) => {
+        return bufferedEvents.reduce((nextState, event) => {
+          return reduceOpenCodeEvent(nextState, toOpenCodeBusEvent(event));
+        }, current);
+      });
     } catch (submitError) {
       if (
         requestVersion !== activeAgentRequestVersion ||
@@ -469,6 +737,12 @@ export const useRunDetailModel = () => {
           }
 
           setAgentEvents((current) => [...current, event]);
+          const busEvent = toOpenCodeBusEvent(event);
+          setAgentStore((current) => reduceOpenCodeEvent(current, busEvent));
+
+          if (busEvent.type === "server.connected") {
+            void hydrateAgentSnapshot(normalizedRunId, requestVersion);
+          }
         },
       });
 
@@ -566,6 +840,7 @@ export const useRunDetailModel = () => {
     const runId = params.runId;
     const requestVersion = ++activeAgentRequestVersion;
     setAgentEvents([]);
+    setAgentStore(createEmptyAgentStore(null));
     setAgentError("");
     activePromptSubmitVersion += 1;
     setIsSubmittingPrompt(false);
@@ -970,6 +1245,7 @@ export const useRunDetailModel = () => {
     agent: {
       state: agentState,
       events: agentEvents,
+      store: agentStore,
       error: agentError,
       isSubmittingPrompt,
       submitError,

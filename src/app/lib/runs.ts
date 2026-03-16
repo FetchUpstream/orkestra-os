@@ -114,6 +114,16 @@ export type SubmitRunOpenCodePromptResult = {
   clientRequestId?: string;
 };
 
+export type RunOpenCodeSessionMessagesResult = {
+  messages: unknown[];
+  raw: unknown;
+};
+
+export type RunOpenCodeSessionTodosResult = {
+  todos: unknown[];
+  raw: unknown;
+};
+
 export type OpenRunTerminalParams = {
   runId: string;
   routeInstanceId: string;
@@ -200,6 +210,13 @@ type SubmitRunOpenCodePromptResponse = {
   queuedAt?: string;
   client_request_id?: string | null;
   clientRequestId?: string | null;
+};
+
+type RunOpenCodeSnapshotResponse = {
+  messages?: unknown;
+  todos?: unknown;
+  items?: unknown;
+  data?: unknown;
 };
 
 type RunResponse = {
@@ -328,6 +345,36 @@ const toRunOpenCodeEvent = (
   event: pick(event.eventName, event.event) ?? "unknown",
   data: pick(event.payload, event.data) ?? null,
 });
+
+const toUnknownArray = (value: unknown): unknown[] => {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+
+  const record = value as RunOpenCodeSnapshotResponse;
+  if (Array.isArray(record.items)) {
+    return record.items;
+  }
+  if (Array.isArray(record.data)) {
+    return record.data;
+  }
+
+  return [];
+};
+
+const unwrapSnapshotPayload = (item: unknown): unknown => {
+  if (item && typeof item === "object" && "payload" in item) {
+    return (item as { payload: unknown }).payload;
+  }
+  return item;
+};
+
+const unwrapSnapshotItems = (items: unknown[]): unknown[] => {
+  return items.map(unwrapSnapshotPayload);
+};
 
 export const createRun = async (taskId: string): Promise<Run> => {
   const response = await invoke<RunResponse>("create_run", { taskId });
@@ -465,6 +512,70 @@ export const getBufferedRunOpenCodeEvents = async (
   return response.map((event) => toRunOpenCodeEvent(event, runId));
 };
 
+export const getRunOpenCodeSessionMessages = async (
+  runId: string,
+): Promise<RunOpenCodeSessionMessagesResult> => {
+  const response = await invoke<unknown>("get_run_opencode_session_messages", {
+    runId,
+  });
+
+  if (Array.isArray(response)) {
+    return {
+      messages: unwrapSnapshotItems(response),
+      raw: response,
+    };
+  }
+
+  const record =
+    response && typeof response === "object"
+      ? (response as RunOpenCodeSnapshotResponse)
+      : null;
+
+  if (record && Array.isArray(record.messages)) {
+    return {
+      messages: unwrapSnapshotItems(record.messages),
+      raw: response,
+    };
+  }
+
+  return {
+    messages: unwrapSnapshotItems(toUnknownArray(response)),
+    raw: response,
+  };
+};
+
+export const getRunOpenCodeSessionTodos = async (
+  runId: string,
+): Promise<RunOpenCodeSessionTodosResult> => {
+  const response = await invoke<unknown>("get_run_opencode_session_todos", {
+    runId,
+  });
+
+  if (Array.isArray(response)) {
+    return {
+      todos: unwrapSnapshotItems(response),
+      raw: response,
+    };
+  }
+
+  const record =
+    response && typeof response === "object"
+      ? (response as RunOpenCodeSnapshotResponse)
+      : null;
+
+  if (record && Array.isArray(record.todos)) {
+    return {
+      todos: unwrapSnapshotItems(record.todos),
+      raw: response,
+    };
+  }
+
+  return {
+    todos: unwrapSnapshotItems(toUnknownArray(response)),
+    raw: response,
+  };
+};
+
 export const subscribeRunOpenCodeEvents = async ({
   runId,
   onOutput,
@@ -498,9 +609,11 @@ export const submitRunOpenCodePrompt = async ({
   const response = await invoke<SubmitRunOpenCodePromptResponse>(
     "submit_run_opencode_prompt",
     {
-      runId,
-      prompt,
-      clientRequestId,
+      request: {
+        runId,
+        prompt,
+        clientRequestId,
+      },
     },
   );
 
