@@ -196,26 +196,6 @@ impl ProjectsService {
         })
     }
 
-    pub async fn recommend_key(&self, project_name: &str) -> Result<String, AppError> {
-        let letters = Self::key_source_chars(project_name);
-        if letters.len() < 3 {
-            return Err(AppError::validation(
-                "project name must have at least 3 alphanumeric characters to recommend a key",
-            ));
-        }
-
-        for start in 0..=(letters.len() - 3) {
-            let candidate: String = letters[start..start + 3].iter().collect();
-            if !self.repository.key_exists(&candidate).await? {
-                return Ok(candidate);
-            }
-        }
-
-        Err(AppError::validation(
-            "could not recommend a unique 3 character key from project name",
-        ))
-    }
-
     fn validate_key(&self, key: &str) -> Result<(), AppError> {
         if key.is_empty() {
             return Err(AppError::validation("project key is required"));
@@ -259,11 +239,4 @@ impl ProjectsService {
         Ok(())
     }
 
-    fn key_source_chars(project_name: &str) -> Vec<char> {
-        project_name
-            .chars()
-            .filter(|character| character.is_ascii_alphanumeric())
-            .map(|character| character.to_ascii_uppercase())
-            .collect()
-    }
 }

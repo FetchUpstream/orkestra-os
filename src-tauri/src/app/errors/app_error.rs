@@ -5,7 +5,6 @@ use std::fmt::{Display, Formatter};
 pub enum AppError {
     Validation(String),
     NotFound(String),
-    NotImplemented(String),
     Database(sqlx::Error),
 }
 
@@ -16,10 +15,6 @@ impl AppError {
 
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::NotFound(message.into())
-    }
-
-    pub fn not_implemented(area: &str) -> Self {
-        Self::NotImplemented(format!("not implemented: {area}"))
     }
 }
 
@@ -34,7 +29,6 @@ impl Display for AppError {
         match self {
             Self::Validation(message) => write!(f, "{message}"),
             Self::NotFound(message) => write!(f, "{message}"),
-            Self::NotImplemented(message) => write!(f, "{message}"),
             Self::Database(err) => write!(f, "database error: {err}"),
         }
     }

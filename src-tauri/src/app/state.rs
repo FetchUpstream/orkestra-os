@@ -11,7 +11,6 @@ use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub struct AppState {
-    pub db_pool: SqlitePool,
     pub projects_service: ProjectsService,
     pub runs_service: RunsService,
     pub runs_diff_service: RunsDiffService,
@@ -30,7 +29,6 @@ impl AppState {
         let runs_diff_service = RunsDiffService::new(runs_service.clone(), app_data_dir);
         let tasks_service = TasksService::new(tasks_repository);
         Self {
-            db_pool,
             projects_service,
             runs_service,
             runs_diff_service,

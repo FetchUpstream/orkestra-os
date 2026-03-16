@@ -60,7 +60,6 @@ pub struct TaskDependencyTask {
 
 #[derive(Clone, Debug)]
 pub struct TaskDependencies {
-    pub task_id: String,
     pub parents: Vec<TaskDependencyTask>,
     pub children: Vec<TaskDependencyTask>,
 }

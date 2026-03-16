@@ -4,7 +4,6 @@ pub fn map_app_error(error: AppError) -> String {
     match error {
         AppError::Validation(message) => message,
         AppError::NotFound(message) => message,
-        AppError::NotImplemented(_) => "feature not implemented".to_string(),
         AppError::Database(_) => "internal database error".to_string(),
     }
 }
@@ -34,15 +33,6 @@ mod tests {
         let mapped = map_app_error(error);
 
         assert_eq!(mapped, "project not found");
-    }
-
-    #[test]
-    fn maps_not_implemented_to_generic_message() {
-        let error = AppError::NotImplemented("not implemented: exports".to_string());
-
-        let mapped = map_app_error(error);
-
-        assert_eq!(mapped, "feature not implemented");
     }
 
     #[test]

@@ -393,7 +393,6 @@ impl TasksRepository {
             .collect();
 
         Ok(Some(TaskDependencies {
-            task_id: task_id.to_string(),
             parents,
             children,
         }))
