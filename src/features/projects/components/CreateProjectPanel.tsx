@@ -2,6 +2,7 @@ import { Index, Show, type Component, type JSX } from "solid-js";
 import type { RepoInput } from "../utils/projectForm";
 
 type Props = {
+  mode: () => "create" | "edit";
   name: () => string;
   keyValue: () => string;
   description: () => string;
@@ -24,13 +25,14 @@ type Props = {
     field: keyof RepoInput,
     value: string,
   ) => void;
+  resetToCreateMode: () => void;
   onSubmit: JSX.EventHandler<HTMLFormElement, SubmitEvent>;
 };
 
 const CreateProjectPanel: Component<Props> = (props) => (
   <section class="projects-panel" aria-labelledby="create-project-heading">
     <h2 id="create-project-heading" class="projects-section-title">
-      Create Project
+      {props.mode() === "edit" ? "Edit Project" : "Create Project"}
     </h2>
     <form class="projects-form" onSubmit={props.onSubmit}>
       <div class="form-section">
@@ -187,8 +189,24 @@ const CreateProjectPanel: Component<Props> = (props) => (
           class="projects-button-primary"
           disabled={props.isSubmitting()}
         >
-          {props.isSubmitting() ? "Creating project..." : "Create project"}
+          {props.isSubmitting()
+            ? props.mode() === "edit"
+              ? "Saving..."
+              : "Creating project..."
+            : props.mode() === "edit"
+              ? "Save"
+              : "Create project"}
         </button>
+        <Show when={props.mode() === "edit"}>
+          <button
+            type="button"
+            class="projects-button-muted"
+            onClick={props.resetToCreateMode}
+            disabled={props.isSubmitting()}
+          >
+            Cancel
+          </button>
+        </Show>
       </div>
     </form>
   </section>

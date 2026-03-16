@@ -1,9 +1,9 @@
-use crate::app::errors::AppError;
 use crate::app::db::repositories::projects::ProjectsRepository;
+use crate::app::errors::AppError;
 use crate::app::projects::dto::{
-    CreateProjectRequest, ProjectDetailsDto, ProjectDto, ProjectRepositoryDto,
+    CreateProjectRequest, ProjectDetailsDto, ProjectDto, ProjectRepositoryDto, UpdateProjectRequest,
 };
-use crate::app::projects::models::{NewProject, NewProjectRepository};
+use crate::app::projects::models::{NewProject, NewProjectRepository, UpsertProjectRepository};
 use chrono::Utc;
 
 #[derive(Clone, Debug)]
@@ -81,7 +81,9 @@ impl ProjectsService {
             id: uuid::Uuid::new_v4().to_string(),
             name: input.name.trim().to_string(),
             key: input.key,
-            description: input.description.map(|description| description.trim().to_string()),
+            description: input
+                .description
+                .map(|description| description.trim().to_string()),
             default_repo_id: None,
             created_at: now.clone(),
             updated_at: now,
@@ -109,6 +111,77 @@ impl ProjectsService {
                 updated_at: created.project.updated_at,
             },
             repositories: created
+                .repositories
+                .into_iter()
+                .map(|repository| ProjectRepositoryDto {
+                    id: repository.id,
+                    project_id: repository.project_id,
+                    name: repository.name,
+                    repo_path: repository.repo_path,
+                    is_default: repository.is_default,
+                    created_at: repository.created_at,
+                })
+                .collect(),
+        })
+    }
+
+    pub async fn update_project(
+        &self,
+        id: &str,
+        mut input: UpdateProjectRequest,
+    ) -> Result<ProjectDetailsDto, AppError> {
+        input.key = input.key.trim().to_string();
+        self.validate_key(&input.key)?;
+        self.validate_repositories(&input.repositories)?;
+
+        if self
+            .repository
+            .key_exists_for_other_project(&input.key, id)
+            .await?
+        {
+            return Err(AppError::validation("project key already exists"));
+        }
+
+        let now = Utc::now().to_rfc3339();
+        let normalized_description = input
+            .description
+            .map(|description| description.trim().to_string());
+        let normalized_name = input.name.trim().to_string();
+        let normalized_repositories = input
+            .repositories
+            .into_iter()
+            .map(|repository| UpsertProjectRepository {
+                id: repository.id,
+                name: repository.name.trim().to_string(),
+                repo_path: repository.repo_path.trim().to_string(),
+                is_default: repository.is_default,
+            })
+            .collect::<Vec<_>>();
+
+        let updated = self
+            .repository
+            .update_project(
+                id,
+                &normalized_name,
+                &input.key,
+                &normalized_description,
+                &now,
+                &normalized_repositories,
+            )
+            .await?
+            .ok_or_else(|| AppError::not_found("project not found"))?;
+
+        Ok(ProjectDetailsDto {
+            project: ProjectDto {
+                id: updated.project.id,
+                key: updated.project.key,
+                name: updated.project.name,
+                description: updated.project.description,
+                default_repo_id: updated.project.default_repo_id,
+                created_at: updated.project.created_at,
+                updated_at: updated.project.updated_at,
+            },
+            repositories: updated
                 .repositories
                 .into_iter()
                 .map(|repository| ProjectRepositoryDto {
@@ -173,7 +246,10 @@ impl ProjectsService {
             return Err(AppError::validation("at least one repository is required"));
         }
 
-        let default_count = repositories.iter().filter(|repository| repository.is_default).count();
+        let default_count = repositories
+            .iter()
+            .filter(|repository| repository.is_default)
+            .count();
         if default_count != 1 {
             return Err(AppError::validation(
                 "exactly one default repository is required",

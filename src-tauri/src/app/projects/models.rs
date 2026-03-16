@@ -33,6 +33,14 @@ pub struct NewProjectRepository {
 }
 
 #[derive(Clone, Debug)]
+pub struct UpsertProjectRepository {
+    pub id: Option<String>,
+    pub name: String,
+    pub repo_path: String,
+    pub is_default: bool,
+}
+
+#[derive(Clone, Debug)]
 pub struct NewProject {
     pub id: String,
     pub name: String,

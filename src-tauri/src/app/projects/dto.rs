@@ -20,7 +20,16 @@ pub struct CreateProjectRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateProjectRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub key: String,
+    pub repositories: Vec<CreateProjectRepositoryRequest>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateProjectRepositoryRequest {
+    pub id: Option<String>,
     pub name: String,
     pub repo_path: String,
     pub is_default: bool,

@@ -1,6 +1,9 @@
 use crate::app::errors::AppError;
-use crate::app::projects::models::{NewProject, Project, ProjectDetails, ProjectRepository};
+use crate::app::projects::models::{
+    NewProject, Project, ProjectDetails, ProjectRepository, UpsertProjectRepository,
+};
 use sqlx::{Row, SqlitePool};
+use std::collections::HashSet;
 
 #[derive(Clone, Debug)]
 pub struct ProjectsRepository {
@@ -97,6 +100,19 @@ impl ProjectsRepository {
         Ok(row.is_some())
     }
 
+    pub async fn key_exists_for_other_project(
+        &self,
+        key: &str,
+        project_id: &str,
+    ) -> Result<bool, AppError> {
+        let row = sqlx::query("SELECT 1 FROM projects WHERE key = ? AND id != ? LIMIT 1")
+            .bind(key)
+            .bind(project_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.is_some())
+    }
+
     pub async fn create_project(&self, input: NewProject) -> Result<ProjectDetails, AppError> {
         let mut tx = self.pool.begin().await?;
 
@@ -167,5 +183,134 @@ impl ProjectsRepository {
             },
             repositories: saved_repositories,
         })
+    }
+
+    pub async fn update_project(
+        &self,
+        project_id: &str,
+        name: &str,
+        key: &str,
+        description: &Option<String>,
+        updated_at: &str,
+        repositories: &[UpsertProjectRepository],
+    ) -> Result<Option<ProjectDetails>, AppError> {
+        let mut tx = self.pool.begin().await?;
+
+        let project_exists = sqlx::query("SELECT 1 FROM projects WHERE id = ? LIMIT 1")
+            .bind(project_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .is_some();
+
+        if !project_exists {
+            tx.rollback().await?;
+            return Ok(None);
+        }
+
+        sqlx::query(
+            "UPDATE projects SET name = ?, key = ?, description = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(name)
+        .bind(key)
+        .bind(description)
+        .bind(updated_at)
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await?;
+
+        let existing_repository_rows = sqlx::query(
+            "SELECT id, name, repo_path, is_default, created_at
+            FROM project_repositories
+            WHERE project_id = ?",
+        )
+        .bind(project_id)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        let existing_repository_ids: HashSet<String> = existing_repository_rows
+            .iter()
+            .map(|row| row.get::<String, _>("id"))
+            .collect();
+
+        let mut touched_repository_ids = HashSet::new();
+        let mut selected_default_repo_id: Option<String> = None;
+
+        for repository in repositories {
+            let repository_id = match &repository.id {
+                Some(id) if existing_repository_ids.contains(id) => id.clone(),
+                _ => uuid::Uuid::new_v4().to_string(),
+            };
+            let is_existing = existing_repository_ids.contains(&repository_id);
+
+            if is_existing {
+                sqlx::query(
+                    "UPDATE project_repositories
+                    SET name = ?, repo_path = ?, is_default = ?
+                    WHERE id = ? AND project_id = ?",
+                )
+                .bind(&repository.name)
+                .bind(&repository.repo_path)
+                .bind(if repository.is_default { 1_i64 } else { 0_i64 })
+                .bind(&repository_id)
+                .bind(project_id)
+                .execute(&mut *tx)
+                .await?;
+            } else {
+                sqlx::query(
+                    "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&repository_id)
+                .bind(project_id)
+                .bind(&repository.name)
+                .bind(&repository.repo_path)
+                .bind(if repository.is_default { 1_i64 } else { 0_i64 })
+                .bind(updated_at)
+                .execute(&mut *tx)
+                .await?;
+            }
+
+            if repository.is_default {
+                selected_default_repo_id = Some(repository_id.clone());
+            }
+
+            touched_repository_ids.insert(repository_id);
+        }
+
+        for existing_repository_id in existing_repository_ids {
+            if touched_repository_ids.contains(&existing_repository_id) {
+                continue;
+            }
+
+            let used_by_task = sqlx::query("SELECT 1 FROM tasks WHERE repository_id = ? LIMIT 1")
+                .bind(&existing_repository_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .is_some();
+
+            if used_by_task {
+                tx.rollback().await?;
+                return Err(AppError::validation(
+                    "cannot remove repository with existing tasks",
+                ));
+            }
+
+            sqlx::query("DELETE FROM project_repositories WHERE id = ? AND project_id = ?")
+                .bind(&existing_repository_id)
+                .bind(project_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        sqlx::query("UPDATE projects SET default_repo_id = ?, updated_at = ? WHERE id = ?")
+            .bind(&selected_default_repo_id)
+            .bind(updated_at)
+            .bind(project_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+
+        self.get_project(project_id).await
     }
 }

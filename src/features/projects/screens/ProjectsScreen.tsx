@@ -11,8 +11,14 @@ const ProjectsScreen: Component = () => {
     <>
       <PageHeader title="Projects" />
       <div class="projects-layout">
-        <ProjectsListPanel projects={model.projects} />
+        <ProjectsListPanel
+          projects={model.projects}
+          activeEditProjectId={model.editingProjectId}
+          isLoadingProjectForEdit={model.isLoadingProjectForEdit}
+          onEditProject={model.onEditProject}
+        />
         <CreateProjectPanel
+          mode={model.mode}
           name={model.name}
           keyValue={model.key}
           description={model.description}
@@ -29,6 +35,7 @@ const ProjectsScreen: Component = () => {
           addRepository={model.addRepository}
           removeRepository={model.removeRepository}
           updateRepository={model.updateRepository}
+          resetToCreateMode={model.resetForm}
           onSubmit={model.onSubmit}
         />
       </div>

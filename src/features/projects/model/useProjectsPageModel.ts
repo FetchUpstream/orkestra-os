@@ -2,7 +2,9 @@ import { useNavigate } from "@solidjs/router";
 import { createMemo, createSignal, onMount, type JSX } from "solid-js";
 import {
   createProject,
+  getProject,
   listProjects,
+  updateProject,
   type Project,
 } from "../../../app/lib/projects";
 import {
@@ -18,6 +20,10 @@ import {
 
 export const useProjectsPageModel = () => {
   const navigate = useNavigate();
+  const [mode, setMode] = createSignal<"create" | "edit">("create");
+  const [editingProjectId, setEditingProjectId] = createSignal<string | null>(
+    null,
+  );
   const [projects, setProjects] = createSignal<Project[]>([]);
   const [name, setName] = createSignal("");
   const [key, setKey] = createSignal("");
@@ -28,6 +34,8 @@ export const useProjectsPageModel = () => {
   const [defaultRepoIndex, setDefaultRepoIndex] = createSignal(0);
   const [error, setError] = createSignal("");
   const [isSubmitting, setIsSubmitting] = createSignal(false);
+  const [isLoadingProjectForEdit, setIsLoadingProjectForEdit] =
+    createSignal(false);
   const [isKeyEdited, setIsKeyEdited] = createSignal(false);
   const [touched, setTouched] = createSignal<Record<string, boolean>>({});
 
@@ -46,6 +54,8 @@ export const useProjectsPageModel = () => {
   });
 
   const resetForm = () => {
+    setMode("create");
+    setEditingProjectId(null);
     setName("");
     setKey("");
     setDescription("");
@@ -116,6 +126,7 @@ export const useProjectsPageModel = () => {
     }
 
     const normalizedRepositories = repositories().map((repo) => ({
+      id: repo.id,
       path: repo.path.trim(),
       name: repo.name.trim(),
     }));
@@ -132,32 +143,92 @@ export const useProjectsPageModel = () => {
 
     setIsSubmitting(true);
     try {
-      const createdProject = await createProject({
+      const payload = {
         name: name().trim(),
         key: normalizeProjectKey(key()),
         description: description().trim() || undefined,
         repositories: normalizedRepositories.map((repo, index) => ({
+          id: repo.id,
           path: repo.path,
           name: repo.name || undefined,
           is_default: index === defaultRepoIndex(),
         })),
-      });
+      };
+      const activeEditProjectId = editingProjectId();
+
+      if (mode() === "edit" && activeEditProjectId) {
+        await updateProject(activeEditProjectId, payload);
+        await loadProjects();
+        resetForm();
+        return;
+      }
+
+      const createdProject = await createProject(payload);
       await loadProjects();
       resetForm();
       navigate(`/projects/${createdProject.id}`);
-    } catch (createError) {
-      const backendMessage = getCreateProjectErrorMessage(createError);
+    } catch (submitError) {
+      const backendMessage = getCreateProjectErrorMessage(submitError);
+      const prefix =
+        mode() === "edit"
+          ? "Failed to save project."
+          : "Failed to create project.";
       setError(
         backendMessage
-          ? `Failed to create project. ${backendMessage}`
-          : "Failed to create project. Please try again.",
+          ? `${prefix} ${backendMessage}`
+          : `${prefix} Please try again.`,
       );
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const onEditProject = async (projectId: string) => {
+    setError("");
+    setIsLoadingProjectForEdit(true);
+    setEditingProjectId(projectId);
+    try {
+      const projectDetails = await getProject(projectId);
+      const nextRepositories = projectDetails.repositories.map(
+        (repository) => ({
+          id: repository.id,
+          path: repository.path,
+          name: repository.name ?? "",
+        }),
+      );
+
+      setMode("edit");
+      setName(projectDetails.name);
+      setKey(projectDetails.key);
+      setDescription(projectDetails.description ?? "");
+      setRepositories(
+        nextRepositories.length > 0 ? nextRepositories : [emptyRepo()],
+      );
+      const defaultRepositoryIndex = projectDetails.repositories.findIndex(
+        (repository) => repository.is_default,
+      );
+      setDefaultRepoIndex(
+        defaultRepositoryIndex >= 0 ? defaultRepositoryIndex : 0,
+      );
+      setIsKeyEdited(true);
+      setTouched({});
+    } catch (loadError) {
+      const backendMessage = getCreateProjectErrorMessage(loadError);
+      setError(
+        backendMessage
+          ? `Failed to load project for editing. ${backendMessage}`
+          : "Failed to load project for editing. Please try again.",
+      );
+      setMode("create");
+      setEditingProjectId(null);
+    } finally {
+      setIsLoadingProjectForEdit(false);
+    }
+  };
+
   return {
+    mode,
+    editingProjectId,
     projects,
     name,
     key,
@@ -166,6 +237,7 @@ export const useProjectsPageModel = () => {
     defaultRepoIndex,
     error,
     isSubmitting,
+    isLoadingProjectForEdit,
     touched,
     projectKeyError,
     setDescription,
@@ -176,6 +248,8 @@ export const useProjectsPageModel = () => {
     addRepository,
     removeRepository,
     updateRepository,
+    resetForm,
+    onEditProject,
     onSubmit,
   };
 };

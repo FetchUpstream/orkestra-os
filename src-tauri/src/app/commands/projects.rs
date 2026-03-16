@@ -1,4 +1,6 @@
-use crate::app::projects::dto::{CreateProjectRequest, ProjectDetailsDto, ProjectDto};
+use crate::app::projects::dto::{
+    CreateProjectRequest, ProjectDetailsDto, ProjectDto, UpdateProjectRequest,
+};
 use crate::app::state::AppState;
 use crate::app::{commands::context, commands::error_mapping::map_result};
 
@@ -24,4 +26,14 @@ pub async fn create_project(
 ) -> Result<ProjectDetailsDto, String> {
     let service = context::projects_service(&state);
     map_result(service.create_project(input).await)
+}
+
+#[tauri::command]
+pub async fn update_project(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    input: UpdateProjectRequest,
+) -> Result<ProjectDetailsDto, String> {
+    let service = context::projects_service(&state);
+    map_result(service.update_project(&id, input).await)
 }

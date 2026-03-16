@@ -14,7 +14,10 @@ pub fn run() {
             let app_state = tauri::async_runtime::block_on(async {
                 let pool = app::db::connection::connect(&db_path).await?;
                 app::db::migrations::run_migrations(&pool).await?;
-                Ok::<app::state::AppState, app::errors::AppError>(app::state::AppState::new(pool))
+                Ok::<app::state::AppState, app::errors::AppError>(app::state::AppState::new(
+                    pool,
+                    app_data_dir,
+                ))
             })?;
 
             app.manage(app_state);
@@ -27,11 +30,14 @@ pub fn run() {
             app::commands::projects::list_projects,
             app::commands::projects::get_project,
             app::commands::projects::create_project,
+            app::commands::projects::update_project,
             app::commands::tasks::create_task,
             app::commands::runs::create_run,
             app::commands::runs::list_task_runs,
             app::commands::runs::get_run,
             app::commands::runs::delete_run,
+            app::commands::worktrees::create_worktree,
+            app::commands::worktrees::remove_worktree,
             app::commands::tasks::list_project_tasks,
             app::commands::tasks::get_task,
             app::commands::tasks::update_task,

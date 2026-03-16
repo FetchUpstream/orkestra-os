@@ -2,6 +2,7 @@ import { createMemo } from "solid-js";
 import { isValidProjectKey } from "../../../app/lib/projectKey";
 
 export type RepoInput = {
+  id?: string;
   path: string;
   name: string;
 };
