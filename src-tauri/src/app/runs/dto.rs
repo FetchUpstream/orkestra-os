@@ -80,3 +80,16 @@ pub struct RunOpenCodeSessionMessageDto {
 pub struct RunOpenCodeSessionTodoDto {
     pub payload: Value,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootstrapRunOpenCodeResponse {
+    pub state: String,
+    pub reason: Option<String>,
+    pub buffered_events: Vec<RawAgentEvent>,
+    pub messages: Vec<RunOpenCodeSessionMessageDto>,
+    pub todos: Vec<RunOpenCodeSessionTodoDto>,
+    pub session_id: Option<String>,
+    pub stream_connected: bool,
+    pub ready_phase: Option<String>,
+}

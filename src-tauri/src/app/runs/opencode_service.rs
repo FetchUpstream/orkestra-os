@@ -1,6 +1,7 @@
 use crate::app::errors::AppError;
 use crate::app::runs::dto::{
-    EnsureRunOpenCodeResponse, RawAgentEvent, RunDto, RunOpenCodeSessionMessageDto,
+    BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent, RunDto,
+    RunOpenCodeSessionMessageDto,
     RunOpenCodeSessionTodoDto, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::service::RunsService;
@@ -16,10 +17,11 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::async_runtime::JoinHandle;
 use tokio::sync::RwLock;
-use tokio::time::{Duration, sleep};
+use tokio::time::{Duration, Instant, sleep};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
+use tracing::info;
 
 fn value_array_to_message_wrappers(value: serde_json::Value) -> Vec<RunOpenCodeSessionMessageDto> {
     value
@@ -75,6 +77,7 @@ struct RunOpenCodeHandle {
     _server: Arc<tokio::sync::Mutex<OpencodeServer>>,
     client: OpencodeClient,
     session_id: Arc<Mutex<Option<String>>>,
+    session_init_lock: tokio::sync::Mutex<()>,
     subscribers: Arc<Mutex<HashMap<String, Channel<RawAgentEvent>>>>,
     subscriber_tasks: Arc<Mutex<HashMap<String, SubscriberTaskEntry>>>,
     subscriber_generation: AtomicU64,
@@ -89,6 +92,147 @@ struct SubscriberTaskEntry {
 }
 
 impl RunsOpenCodeService {
+    fn unsupported_reason_for_run_status(status: &str) -> Option<String> {
+        if matches!(status, "completed" | "failed" | "cancelled") {
+            return Some(format!("run status '{}' is not supported", status));
+        }
+
+        if !matches!(status, "queued" | "preparing" | "running") {
+            return Some(format!("run status '{}' is not supported", status));
+        }
+
+        None
+    }
+
+    fn compute_stream_connected(buffered_events: &[RawAgentEvent]) -> bool {
+        for event in buffered_events.iter().rev() {
+            match event.event_name.as_str() {
+                "stream.disconnected" | "stream.reconnecting" | "stream.terminated" => return false,
+                "stream.reconnected" => return true,
+                _ => {}
+            }
+        }
+
+        true
+    }
+
+    async fn ensure_run_ready_for_operation(
+        &self,
+        run_id: &str,
+    ) -> Result<(EnsureRunOpenCodeResponse, Option<Arc<RunOpenCodeHandle>>, &'static str), AppError> {
+        if let Some(handle) = self.handles.read().await.get(run_id).cloned() {
+            let run = self.runs_service.get_run(run_id).await?;
+            if let Some(reason) = Self::unsupported_reason_for_run_status(run.status.as_str()) {
+                return Ok((
+                    EnsureRunOpenCodeResponse {
+                        state: "unsupported".to_string(),
+                        reason: Some(reason),
+                    },
+                    None,
+                    "unsupported",
+                ));
+            }
+
+            return Ok((
+                EnsureRunOpenCodeResponse {
+                    state: "running".to_string(),
+                    reason: None,
+                },
+                Some(handle),
+                "warm_handle",
+            ));
+        }
+
+        let ensured = self.ensure_run_opencode(run_id).await?;
+        if ensured.state == "unsupported" {
+            return Ok((ensured, None, "unsupported"));
+        }
+
+        let handle = self.handles.read().await.get(run_id).cloned();
+        Ok((ensured, handle, "cold_ensure"))
+    }
+
+    async fn get_or_create_session_id(
+        &self,
+        run_id: &str,
+        handle: Arc<RunOpenCodeHandle>,
+    ) -> Result<String, AppError> {
+        let _session_guard = handle.session_init_lock.lock().await;
+
+        let run = self.runs_service.get_run_model(run_id).await?;
+        let persisted_session_id = run.opencode_session_id.filter(|id| !id.trim().is_empty());
+
+        let in_memory_session_id = {
+            let session_guard = handle
+                .session_id
+                .lock()
+                .map_err(|_| AppError::validation("failed to lock OpenCode session id"))?;
+            session_guard.clone()
+        };
+
+        if let Some(existing) = persisted_session_id.or(in_memory_session_id) {
+            let mut session_guard = handle
+                .session_id
+                .lock()
+                .map_err(|_| AppError::validation("failed to lock OpenCode session id"))?;
+            if session_guard.is_none() {
+                *session_guard = Some(existing.clone());
+            }
+            return Ok(existing);
+        }
+
+        let create_start = Instant::now();
+        let created = handle
+            .client
+            .session()
+            .create(RequestOptions::default())
+            .await
+            .map_err(|err| AppError::validation(format!("failed to create OpenCode session: {err}")))?;
+        let id = created
+            .data
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .ok_or_else(|| AppError::validation("OpenCode session create response missing id"))?;
+        info!(
+            target: "opencode.runtime",
+            marker = "session_create",
+            run_id = run_id,
+            latency_ms = create_start.elapsed().as_millis() as u64,
+            "OpenCode session created"
+        );
+
+        let persisted = self
+            .runs_service
+            .set_run_opencode_session_id_if_unset(run_id, &id)
+            .await?;
+
+        let canonical_session_id = if persisted {
+            id.clone()
+        } else {
+            let canonical_run = self.runs_service.get_run_model(run_id).await?;
+            canonical_run
+                .opencode_session_id
+                .filter(|existing| !existing.trim().is_empty())
+                .ok_or_else(|| {
+                    AppError::validation(
+                        "OpenCode session id was not persisted and no canonical value exists",
+                    )
+                })?
+        };
+
+        let mut session_guard = handle
+            .session_id
+            .lock()
+            .map_err(|_| AppError::validation("failed to lock OpenCode session id"))?;
+        if let Some(existing) = session_guard.as_ref() {
+            Ok(existing.clone())
+        } else {
+            *session_guard = Some(canonical_session_id.clone());
+            Ok(canonical_session_id)
+        }
+    }
+
     fn push_event(
         event_tx: &tokio::sync::broadcast::Sender<RawAgentEvent>,
         buffered_events: &Arc<Mutex<VecDeque<RawAgentEvent>>>,
@@ -134,36 +278,59 @@ impl RunsOpenCodeService {
     }
 
     pub async fn ensure_run_opencode(&self, run_id: &str) -> Result<EnsureRunOpenCodeResponse, AppError> {
+        let ensure_start = Instant::now();
         let run = self.runs_service.get_run(run_id).await?;
-        if matches!(run.status.as_str(), "completed" | "failed" | "cancelled") {
-            return Ok(EnsureRunOpenCodeResponse {
+        if let Some(reason) = Self::unsupported_reason_for_run_status(run.status.as_str()) {
+            let response = EnsureRunOpenCodeResponse {
                 state: "unsupported".to_string(),
-                reason: Some(format!("run status '{}' is not supported", run.status)),
-            });
-        }
-
-        if !matches!(run.status.as_str(), "queued" | "preparing" | "running") {
-            return Ok(EnsureRunOpenCodeResponse {
-                state: "unsupported".to_string(),
-                reason: Some(format!("run status '{}' is not supported", run.status)),
-            });
+                reason: Some(reason),
+            };
+            info!(
+                target: "opencode.runtime",
+                marker = "ensure",
+                run_id = run.id.as_str(),
+                state = response.state.as_str(),
+                latency_ms = ensure_start.elapsed().as_millis() as u64,
+                "OpenCode ensure finished"
+            );
+            return Ok(response);
         }
 
         if self.handles.read().await.contains_key(&run.id) {
-            return Ok(EnsureRunOpenCodeResponse {
+            let response = EnsureRunOpenCodeResponse {
                 state: "running".to_string(),
                 reason: None,
-            });
+            };
+            info!(
+                target: "opencode.runtime",
+                marker = "ensure",
+                run_id = run.id.as_str(),
+                state = response.state.as_str(),
+                ready_phase = "warm_handle",
+                latency_ms = ensure_start.elapsed().as_millis() as u64,
+                "OpenCode ensure finished"
+            );
+            return Ok(response);
         }
 
         let init_lock = self.get_or_create_init_lock(&run.id).await;
         let _guard = init_lock.lock().await;
 
         if self.handles.read().await.contains_key(&run.id) {
-            return Ok(EnsureRunOpenCodeResponse {
+            let response = EnsureRunOpenCodeResponse {
                 state: "running".to_string(),
                 reason: None,
-            });
+            };
+            info!(
+                target: "opencode.runtime",
+                marker = "ensure",
+                run_id = run.id.as_str(),
+                state = response.state.as_str(),
+                ready_phase = "warm_handle",
+                latency_ms = ensure_start.elapsed().as_millis() as u64,
+                "OpenCode ensure finished"
+            );
+            return Ok(response);
         }
 
         let worktree_path = self.resolve_worktree_path(&run)?;
@@ -186,7 +353,7 @@ impl RunsOpenCodeService {
 
         let max_health_wait = Duration::from_secs(10);
         let health_retry_interval = Duration::from_millis(250);
-        let health_start = tokio::time::Instant::now();
+        let health_start = Instant::now();
 
         loop {
             match client.global().health(RequestOptions::default()).await {
@@ -212,6 +379,7 @@ impl RunsOpenCodeService {
             _server: Arc::new(tokio::sync::Mutex::new(server)),
             client: client.clone(),
             session_id: Arc::new(Mutex::new(None)),
+            session_init_lock: tokio::sync::Mutex::new(()),
             subscribers: subscribers.clone(),
             subscriber_tasks,
             subscriber_generation: AtomicU64::new(1),
@@ -231,10 +399,20 @@ impl RunsOpenCodeService {
             let _ = self.runs_service.transition_queued_to_running(&run.id).await?;
         }
 
-        Ok(EnsureRunOpenCodeResponse {
+        let response = EnsureRunOpenCodeResponse {
             state: "running".to_string(),
             reason: None,
-        })
+        };
+        info!(
+            target: "opencode.runtime",
+            marker = "ensure",
+            run_id = run.id.as_str(),
+            state = response.state.as_str(),
+            ready_phase = "cold_start",
+            latency_ms = ensure_start.elapsed().as_millis() as u64,
+            "OpenCode ensure finished"
+        );
+        Ok(response)
     }
 
     pub async fn submit_run_opencode_prompt(
@@ -243,6 +421,7 @@ impl RunsOpenCodeService {
         prompt: &str,
         client_request_id: Option<String>,
     ) -> Result<SubmitRunOpenCodePromptResponse, AppError> {
+        let submit_start = Instant::now();
         let run_id = run_id.trim();
         if run_id.is_empty() {
             return Err(AppError::validation("run_id is required"));
@@ -253,7 +432,7 @@ impl RunsOpenCodeService {
             return Err(AppError::validation("prompt is required"));
         }
 
-        let ensured = self.ensure_run_opencode(run_id).await?;
+        let (ensured, handle, ready_phase) = self.ensure_run_ready_for_operation(run_id).await?;
         if ensured.state == "unsupported" {
             return Ok(SubmitRunOpenCodePromptResponse {
                 state: "unsupported".to_string(),
@@ -263,82 +442,9 @@ impl RunsOpenCodeService {
             });
         }
 
-        let handle = self
-            .handles
-            .read()
-            .await
-            .get(run_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
 
-        let run = self.runs_service.get_run_model(run_id).await?;
-        let persisted_session_id = run.opencode_session_id.filter(|id| !id.trim().is_empty());
-
-        let in_memory_session_id = {
-            let session_guard = handle
-                .session_id
-                .lock()
-                .map_err(|_| AppError::validation("failed to lock OpenCode session id"))?;
-            session_guard.clone()
-        };
-
-        let session_id = match persisted_session_id.or(in_memory_session_id) {
-            Some(id) => id,
-            None => {
-                let created = handle
-                    .client
-                    .session()
-                    .create(RequestOptions::default())
-                    .await
-                    .map_err(|err| AppError::validation(format!("failed to create OpenCode session: {err}")))?;
-                let id = created
-                    .data
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .map(ToString::to_string)
-                    .ok_or_else(|| AppError::validation("OpenCode session create response missing id"))?;
-
-                let persisted = self
-                    .runs_service
-                    .set_run_opencode_session_id_if_unset(run_id, &id)
-                    .await?;
-
-                let canonical_session_id = if persisted {
-                    id.clone()
-                } else {
-                    let canonical_run = self.runs_service.get_run_model(run_id).await?;
-                    canonical_run
-                        .opencode_session_id
-                        .filter(|existing| !existing.trim().is_empty())
-                        .ok_or_else(|| {
-                            AppError::validation(
-                                "OpenCode session id was not persisted and no canonical value exists",
-                            )
-                        })?
-                };
-
-                let mut session_guard = handle
-                    .session_id
-                    .lock()
-                    .map_err(|_| AppError::validation("failed to lock OpenCode session id"))?;
-                if let Some(existing) = session_guard.as_ref() {
-                    existing.clone()
-                } else {
-                    *session_guard = Some(canonical_session_id.clone());
-                    canonical_session_id
-                }
-            }
-        };
-
-        {
-            let mut session_guard = handle
-                .session_id
-                .lock()
-                .map_err(|_| AppError::validation("failed to lock OpenCode session id"))?;
-            if session_guard.is_none() {
-                *session_guard = Some(session_id.clone());
-            }
-        }
+        let session_id = self.get_or_create_session_id(run_id, handle.clone()).await?;
 
         let mut request = RequestOptions::default().with_path("id", session_id);
         if let Some(request_id) = client_request_id.as_ref() {
@@ -362,6 +468,15 @@ impl RunsOpenCodeService {
             .await
             .map_err(|err| AppError::validation(format!("failed to submit OpenCode prompt: {err}")))?;
 
+        info!(
+            target: "opencode.runtime",
+            marker = "submit",
+            run_id = run_id,
+            ready_phase = ready_phase,
+            latency_ms = submit_start.elapsed().as_millis() as u64,
+            "OpenCode submit finished"
+        );
+
         Ok(SubmitRunOpenCodePromptResponse {
             state: "accepted".to_string(),
             reason: None,
@@ -379,18 +494,12 @@ impl RunsOpenCodeService {
             return Ok(vec![]);
         };
 
-        let ensured = self.ensure_run_opencode(run_id).await?;
+        let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
         if ensured.state == "unsupported" {
             return Ok(vec![]);
         }
 
-        let handle = self
-            .handles
-            .read()
-            .await
-            .get(run_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
 
         let request = RequestOptions::default().with_path("id", session_id);
         let response = handle
@@ -412,18 +521,12 @@ impl RunsOpenCodeService {
             return Ok(vec![]);
         };
 
-        let ensured = self.ensure_run_opencode(run_id).await?;
+        let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
         if ensured.state == "unsupported" {
             return Ok(vec![]);
         }
 
-        let handle = self
-            .handles
-            .read()
-            .await
-            .get(run_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
 
         let request = RequestOptions::default().with_path("id", session_id);
         let response = handle
@@ -447,7 +550,7 @@ impl RunsOpenCodeService {
             return Err(AppError::validation("subscriber_id is required"));
         }
 
-        let ensured = self.ensure_run_opencode(run_id).await?;
+        let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
         if ensured.state == "unsupported" {
             return Err(AppError::validation(
                 ensured
@@ -456,13 +559,7 @@ impl RunsOpenCodeService {
             ));
         }
 
-        let handle = self
-            .handles
-            .read()
-            .await
-            .get(run_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
 
         let _lifecycle_guard = handle.subscriber_lifecycle_lock.lock().await;
 
@@ -597,6 +694,105 @@ impl RunsOpenCodeService {
             .lock()
             .map_err(|_| AppError::validation("failed to lock OpenCode buffered events"))?;
         Ok(buffered.iter().cloned().collect())
+    }
+
+    pub async fn build_run_opencode_bootstrap_payload(
+        &self,
+        run_id: &str,
+    ) -> Result<BootstrapRunOpenCodeResponse, AppError> {
+        let bootstrap_start = Instant::now();
+        let (ensured, handle, ready_phase) = self.ensure_run_ready_for_operation(run_id).await?;
+
+        if ensured.state == "unsupported" {
+            info!(
+                target: "opencode.runtime",
+                marker = "bootstrap_gather",
+                run_id = run_id,
+                ready_phase = ready_phase,
+                stream_connected = false,
+                latency_ms = bootstrap_start.elapsed().as_millis() as u64,
+                "OpenCode bootstrap payload gathered"
+            );
+            return Ok(BootstrapRunOpenCodeResponse {
+                state: ensured.state,
+                reason: ensured.reason,
+                buffered_events: vec![],
+                messages: vec![],
+                todos: vec![],
+                session_id: None,
+                stream_connected: false,
+                ready_phase: Some(ready_phase.to_string()),
+            });
+        }
+
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let buffered_events = {
+            let buffered = handle
+                .buffered_events
+                .lock()
+                .map_err(|_| AppError::validation("failed to lock OpenCode buffered events"))?;
+            buffered.iter().cloned().collect::<Vec<_>>()
+        };
+
+        let run = self.runs_service.get_run_model(run_id).await?;
+        let session_id = run.opencode_session_id.filter(|id| !id.trim().is_empty());
+
+        let (messages, todos) = if let Some(session_id) = session_id.as_ref() {
+            let request = RequestOptions::default().with_path("id", session_id.clone());
+            let messages_response = handle
+                .client
+                .session()
+                .messages(request)
+                .await
+                .map_err(|err| {
+                    AppError::validation(format!("failed to fetch OpenCode session messages: {err}"))
+                })?;
+            let request = RequestOptions::default().with_path("id", session_id.clone());
+            let todos_response = handle
+                .client
+                .session()
+                .todo(request)
+                .await
+                .map_err(|err| {
+                    AppError::validation(format!("failed to fetch OpenCode session todos: {err}"))
+                })?;
+
+            (
+                value_array_to_message_wrappers(messages_response.data),
+                value_array_to_todo_wrappers(todos_response.data),
+            )
+        } else {
+            (vec![], vec![])
+        };
+
+        let stream_connected = Self::compute_stream_connected(&buffered_events);
+        info!(
+            target: "opencode.runtime",
+            marker = "bootstrap_gather",
+            run_id = run_id,
+            ready_phase = ready_phase,
+            stream_connected = stream_connected,
+            latency_ms = bootstrap_start.elapsed().as_millis() as u64,
+            "OpenCode bootstrap payload gathered"
+        );
+
+        Ok(BootstrapRunOpenCodeResponse {
+            state: ensured.state,
+            reason: ensured.reason,
+            buffered_events,
+            messages,
+            todos,
+            session_id,
+            stream_connected,
+            ready_phase: Some(ready_phase.to_string()),
+        })
+    }
+
+    pub async fn bootstrap_run_opencode(
+        &self,
+        run_id: &str,
+    ) -> Result<BootstrapRunOpenCodeResponse, AppError> {
+        self.build_run_opencode_bootstrap_payload(run_id).await
     }
 
     pub async fn unsubscribe_run_opencode_events(
