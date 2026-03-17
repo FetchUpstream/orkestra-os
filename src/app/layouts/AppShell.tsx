@@ -11,16 +11,6 @@ import { listProjects } from "../lib/projects";
 import MainContent from "../../components/layout/MainContent";
 import SidebarNav from "../../components/layout/SidebarNav";
 
-const topbarTitleByPath: Record<string, string> = {
-  "/": "Board",
-  "/board": "Board",
-  "/agents": "Agents",
-  "/projects": "Projects",
-  "/worktrees": "Worktrees",
-  "/reviews": "Reviews",
-  "/settings": "Settings",
-};
-
 type AppShellProps = {
   children?: JSX.Element;
 };
@@ -151,14 +141,6 @@ const AppShell: Component<AppShellProps> = (props) => {
     }
   };
 
-  const title = () => {
-    if (location.pathname.startsWith("/tasks/")) return "Task Detail";
-    if (location.pathname.includes("/tasks/")) return "Task Detail";
-    if (location.pathname.startsWith("/runs/")) return "Run Detail";
-    if (location.pathname.startsWith("/projects/")) return "";
-    return topbarTitleByPath[location.pathname] ?? "OrkestraOS";
-  };
-
   return (
     <div
       class="app-shell"
@@ -190,26 +172,20 @@ const AppShell: Component<AppShellProps> = (props) => {
         />
       )}
       <div class="shell-main">
-        <header class="topbar" role="banner">
-          <div class="topbar-leading">
-            {isMobile() ? (
-              <button
-                ref={mobileMenuButtonRef}
-                type="button"
-                class="sidebar-toggle"
-                aria-label="Open navigation menu"
-                aria-controls="app-sidebar"
-                aria-expanded={isSidebarVisible() ? "true" : "false"}
-                onClick={onMobileOpen}
-              >
-                Menu
-              </button>
-            ) : null}
-            <h1 class="topbar-title">{title()}</h1>
-          </div>
-          <div class="topbar-actions" />
-        </header>
         <div class="shell-content-wrapper">
+          {isMobile() ? (
+            <button
+              ref={mobileMenuButtonRef}
+              type="button"
+              class="sidebar-toggle sidebar-toggle--floating"
+              aria-label="Open navigation menu"
+              aria-controls="app-sidebar"
+              aria-expanded={isSidebarVisible() ? "true" : "false"}
+              onClick={onMobileOpen}
+            >
+              Menu
+            </button>
+          ) : null}
           <div class="shell-body">
             <MainContent>{props.children}</MainContent>
             <aside class="shell-right-panel" aria-hidden="true" />

@@ -286,7 +286,17 @@ const RunConversationMessage: Component<RunConversationMessageProps> = (
 
       <Show
         when={messagePartIds().length > 0}
-        fallback={<p class="project-placeholder-text">No message parts yet.</p>}
+        fallback={
+          <p
+            class="run-inline-loading-row"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <span class="run-inline-spinner" aria-hidden="true" />
+            <span>Waiting for agent output...</span>
+          </p>
+        }
       >
         <div class="run-detail-message-parts">
           <For each={messagePartIds()}>

@@ -5,6 +5,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  onCleanup,
   type Component,
 } from "solid-js";
 import BackIconLink from "../../../components/ui/BackIconLink";
@@ -29,6 +30,8 @@ const RunDetailScreen: Component = () => {
   const [layoutMode, setLayoutMode] = createSignal<"split" | "info-focus">(
     "split",
   );
+  const [isOperationsDrawerOpen, setIsOperationsDrawerOpen] =
+    createSignal(false);
   const [expandedDiffPaths, setExpandedDiffPaths] = createSignal<
     Record<string, boolean>
   >({});
@@ -67,6 +70,15 @@ const RunDetailScreen: Component = () => {
   const isComposerBlockedByReadiness = createMemo(() => {
     const phase = visibleAgentReadinessPhase();
     return (
+      phase === "warming_backend" ||
+      phase === "creating_session" ||
+      phase === "reconnecting"
+    );
+  });
+  const isTranscriptWaitingForAgentOutput = createMemo(() => {
+    const phase = agentReadinessPhase();
+    return (
+      model.agent.state() === "starting" ||
       phase === "warming_backend" ||
       phase === "creating_session" ||
       phase === "reconnecting"
@@ -111,6 +123,8 @@ const RunDetailScreen: Component = () => {
   let transcriptScrollRef: HTMLDivElement | undefined;
   let transcriptBottomRef: HTMLDivElement | undefined;
   let agentEventLogRef: HTMLDivElement | undefined;
+  let operationsDrawerEdgeToggleRef: HTMLButtonElement | undefined;
+  let operationsDrawerCloseButtonRef: HTMLButtonElement | undefined;
   let transcriptScrollRaf: number | null = null;
   let agentEventLogScrollRaf: number | null = null;
   let transcriptProgrammaticScrollResetRaf: number | null = null;
@@ -643,6 +657,41 @@ const RunDetailScreen: Component = () => {
     }
   });
 
+  createEffect((wasOpen: boolean | undefined) => {
+    const isOpen = isOperationsDrawerOpen();
+    if (isOpen && !wasOpen) {
+      queueMicrotask(() => {
+        operationsDrawerCloseButtonRef?.focus();
+      });
+    }
+    if (!isOpen && wasOpen) {
+      queueMicrotask(() => {
+        operationsDrawerEdgeToggleRef?.focus();
+      });
+    }
+    return isOpen;
+  });
+
+  createEffect(() => {
+    if (!isOperationsDrawerOpen()) {
+      return;
+    }
+
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      setIsOperationsDrawerOpen(false);
+      setLayoutMode("split");
+    };
+
+    window.addEventListener("keydown", onWindowKeyDown);
+    onCleanup(() => {
+      window.removeEventListener("keydown", onWindowKeyDown);
+    });
+  });
+
   return (
     <div class="run-detail-page">
       <Show
@@ -674,16 +723,13 @@ const RunDetailScreen: Component = () => {
                 class="run-detail-workspace"
                 aria-label="Run detail workspace"
               >
-                <section
-                  class="projects-panel run-detail-topbar"
-                  aria-label="Run header"
-                >
-                  <BackIconLink
-                    href={model.backHref()}
-                    label={model.backLabel()}
-                    class="project-detail-back-link project-detail-back-link--icon task-detail-back-link"
-                  />
-                  <div class="run-detail-topbar-main">
+                <section class="run-detail-topbar" aria-label="Run header">
+                  <div class="run-detail-topbar-left">
+                    <BackIconLink
+                      href={model.backHref()}
+                      label={model.backLabel()}
+                      class="project-detail-back-link project-detail-back-link--icon task-detail-back-link"
+                    />
                     <p class="run-detail-task-context">
                       <Show
                         when={model.task()}
@@ -700,6 +746,8 @@ const RunDetailScreen: Component = () => {
                         )}
                       </Show>
                     </p>
+                  </div>
+                  <div class="run-detail-topbar-center">
                     <span
                       class="run-detail-title"
                       role="heading"
@@ -711,7 +759,7 @@ const RunDetailScreen: Component = () => {
                       {model.repositorySummary()}
                     </p>
                   </div>
-                  <div class="run-detail-header-row">
+                  <div class="run-detail-topbar-right">
                     <span
                       class={`project-task-status project-task-status--${runValue().status}`}
                     >
@@ -736,9 +784,10 @@ const RunDetailScreen: Component = () => {
                             ? "Return to split mode"
                             : "Expand info panel"
                         }
-                        onClick={() =>
-                          setLayoutMode(isInfoFocus() ? "split" : "info-focus")
-                        }
+                        onClick={() => {
+                          setLayoutMode(isInfoFocus() ? "split" : "info-focus");
+                          setIsOperationsDrawerOpen(true);
+                        }}
                       >
                         <Show
                           when={!isInfoFocus()}
@@ -800,7 +849,10 @@ const RunDetailScreen: Component = () => {
                         class="run-detail-icon-button"
                         aria-label="Open Diff"
                         title="Open Diff"
-                        onClick={() => setActiveTab("diff")}
+                        onClick={() => {
+                          setActiveTab("diff");
+                          setIsOperationsDrawerOpen(true);
+                        }}
                       >
                         <svg viewBox="0 0 16 16" aria-hidden="true">
                           <path d="M5 3h1.5v10H5v-2H3v-2h2V7H3V5h2V3Zm5.5 0H12v2h2v2h-2v2h2v2h-2v2h-1.5V3Z" />
@@ -836,14 +888,11 @@ const RunDetailScreen: Component = () => {
                   </div>
                 </section>
 
-                <section
-                  class="run-detail-main-grid"
-                  classList={{
-                    "run-detail-main-grid--info-focus": isInfoFocus(),
-                  }}
-                  data-layout-mode={layoutMode()}
-                >
-                  <Show when={!isInfoFocus()}>
+                <section class="run-detail-content-region">
+                  <section
+                    class="run-detail-main-grid"
+                    data-layout-mode={layoutMode()}
+                  >
                     <section class="projects-panel run-detail-conversation-column">
                       <header class="run-detail-conversation-card-header">
                         <h2 class="run-detail-conversation-title">
@@ -874,12 +923,28 @@ const RunDetailScreen: Component = () => {
                         <Show
                           when={transcriptMessageOrder().length > 0}
                           fallback={
-                            <p class="project-placeholder-text">
-                              {agentReadinessCopy() ||
-                                (model.agent.state() === "starting"
-                                  ? "Starting agent stream."
-                                  : "No agent messages yet.")}
-                            </p>
+                            <Show
+                              when={isTranscriptWaitingForAgentOutput()}
+                              fallback={
+                                <p class="project-placeholder-text">
+                                  {agentReadinessCopy() ||
+                                    "No agent messages yet."}
+                                </p>
+                              }
+                            >
+                              <p
+                                class="run-inline-loading-row"
+                                role="status"
+                                aria-live="polite"
+                                aria-atomic="true"
+                              >
+                                <span
+                                  class="run-inline-spinner"
+                                  aria-hidden="true"
+                                />
+                                <span>Waiting for agent output...</span>
+                              </p>
+                            </Show>
                           }
                         >
                           <Show when={transcriptHiddenMessageCount() > 0}>
@@ -985,12 +1050,132 @@ const RunDetailScreen: Component = () => {
                         </p>
                       </Show>
                     </section>
-                  </Show>
+                  </section>
+
+                  <div
+                    class="run-detail-ops-backdrop"
+                    classList={{
+                      "run-detail-ops-backdrop--open": isOperationsDrawerOpen(),
+                    }}
+                    aria-hidden={isOperationsDrawerOpen() ? "false" : "true"}
+                    onClick={() => {
+                      setIsOperationsDrawerOpen(false);
+                      setLayoutMode("split");
+                    }}
+                  />
+
+                  <button
+                    ref={operationsDrawerEdgeToggleRef}
+                    type="button"
+                    class="run-detail-ops-drawer-edge-toggle"
+                    classList={{
+                      "run-detail-ops-drawer-edge-toggle--hidden":
+                        isOperationsDrawerOpen(),
+                    }}
+                    aria-label="Open operations panel"
+                    title="Open operations panel"
+                    aria-controls="run-detail-ops-drawer"
+                    aria-expanded={isOperationsDrawerOpen() ? "true" : "false"}
+                    onClick={() => setIsOperationsDrawerOpen(true)}
+                  >
+                    <svg viewBox="0 0 16 16" aria-hidden="true">
+                      <path
+                        d="M6 3.5L10 8l-4 4.5"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.4"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
 
                   <aside
-                    class="projects-panel run-detail-ops-sidebar"
+                    id="run-detail-ops-drawer"
+                    class="projects-panel run-detail-ops-drawer"
+                    classList={{
+                      "run-detail-ops-drawer--open": isOperationsDrawerOpen(),
+                      "run-detail-ops-drawer--closed":
+                        !isOperationsDrawerOpen(),
+                      "run-detail-ops-drawer--expanded": isInfoFocus(),
+                    }}
                     aria-label="Run operations"
+                    aria-hidden={isOperationsDrawerOpen() ? "false" : "true"}
                   >
+                    <header class="run-detail-ops-drawer-header">
+                      <div
+                        class="run-detail-ops-drawer-controls"
+                        role="group"
+                        aria-label="Operations panel controls"
+                      >
+                        <button
+                          type="button"
+                          class="run-detail-icon-button"
+                          aria-label={
+                            isInfoFocus()
+                              ? "Collapse info panel"
+                              : "Expand info panel"
+                          }
+                          aria-pressed={isInfoFocus() ? "true" : "false"}
+                          title={
+                            isInfoFocus()
+                              ? "Collapse info panel"
+                              : "Expand info panel"
+                          }
+                          onClick={() =>
+                            setLayoutMode(
+                              isInfoFocus() ? "split" : "info-focus",
+                            )
+                          }
+                        >
+                          <Show
+                            when={!isInfoFocus()}
+                            fallback={
+                              <svg viewBox="0 0 16 16" aria-hidden="true">
+                                <path
+                                  d="M2.5 3.5h11v9h-11v-9Zm5.2 0v9"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.2"
+                                />
+                              </svg>
+                            }
+                          >
+                            <svg viewBox="0 0 16 16" aria-hidden="true">
+                              <path
+                                d="M2.5 3.5h11v9h-11v-9Zm5.2 0v9M7.2 8h-3"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.2"
+                                stroke-linecap="round"
+                              />
+                            </svg>
+                          </Show>
+                        </button>
+                        <button
+                          ref={operationsDrawerCloseButtonRef}
+                          type="button"
+                          class="run-detail-icon-button"
+                          aria-label="Close operations panel"
+                          title="Close operations panel"
+                          onClick={() => {
+                            setIsOperationsDrawerOpen(false);
+                            setLayoutMode("split");
+                          }}
+                        >
+                          <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path
+                              d="M4 4l8 8M12 4l-8 8"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.3"
+                              stroke-linecap="round"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+                    </header>
+
                     <div
                       role="tablist"
                       aria-label="Run detail tab list"

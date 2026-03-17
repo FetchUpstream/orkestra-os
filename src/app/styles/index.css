@@ -215,6 +215,7 @@ textarea::placeholder {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  position: relative;
 }
 
 .shell-body {
@@ -236,11 +237,21 @@ textarea::placeholder {
   flex-shrink: 0;
 }
 
-.topbar-leading {
+.topbar-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.topbar-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  min-width: 160px;
+  min-height: 32px;
   gap: 12px;
-  min-width: 0;
 }
 
 .sidebar-toggle {
@@ -259,25 +270,15 @@ textarea::placeholder {
   background: var(--surface-hover);
 }
 
+.sidebar-toggle--floating {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  z-index: 15;
+}
+
 .sidebar-backdrop {
   display: none;
-}
-
-.topbar-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: -0.01em;
-}
-
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  min-width: 160px;
-  min-height: 32px;
-  gap: 12px;
 }
 
 .main-content {
@@ -1277,6 +1278,38 @@ textarea::placeholder {
   line-height: 1.4;
 }
 
+.run-inline-loading-row {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.run-inline-spinner {
+  width: 0.8rem;
+  height: 0.8rem;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  flex: 0 0 auto;
+  animation: run-inline-spinner-rotate 0.8s linear infinite;
+}
+
+@keyframes run-inline-spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-inline-spinner {
+    animation-duration: 1.6s;
+  }
+}
+
 .projects-task-item {
   align-items: flex-start;
 }
@@ -2117,8 +2150,8 @@ textarea::placeholder {
 .run-detail-page {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-top: 12px;
+  gap: 8px;
+  padding-top: 4px;
   min-height: 0;
   height: 100%;
   flex: 1;
@@ -2128,7 +2161,14 @@ textarea::placeholder {
 .run-detail-workspace {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.run-detail-content-region {
+  position: relative;
   min-height: 0;
   flex: 1;
   overflow: hidden;
@@ -2144,23 +2184,32 @@ textarea::placeholder {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  padding-top: 14px;
-  padding-bottom: 14px;
+  column-gap: 12px;
+  row-gap: 8px;
+  padding: 4px 0 10px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-.run-detail-topbar-main {
+.run-detail-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.run-detail-topbar-center {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
 }
 
-.run-detail-header-row {
+.run-detail-topbar-right {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+  min-width: 0;
   flex-wrap: wrap;
 }
 
@@ -2235,6 +2284,10 @@ textarea::placeholder {
   margin: 0;
   font-size: 0.82rem;
   color: var(--text-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .run-detail-task-link {
@@ -2260,8 +2313,8 @@ textarea::placeholder {
 
 .run-detail-main-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(250px, 0.35fr);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
   min-height: 0;
   flex: 1;
   align-items: stretch;
@@ -2271,10 +2324,6 @@ textarea::placeholder {
 .run-detail-main-grid > * {
   min-width: 0;
   min-height: 0;
-}
-
-.run-detail-main-grid--info-focus {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .run-detail-conversation-column {
@@ -2613,13 +2662,129 @@ textarea::placeholder {
   min-width: 0;
 }
 
-.run-detail-ops-sidebar {
+.run-detail-ops-drawer {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-  height: 100%;
+  height: auto;
   overflow: hidden;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(440px, calc(100% - 20px));
+  margin: 0;
+  z-index: 4;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(calc(100% + 16px));
+  pointer-events: none;
+  transition:
+    transform 0.22s ease,
+    opacity 0.22s ease,
+    visibility 0.22s step-end;
+}
+
+.run-detail-ops-drawer--open {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+  pointer-events: auto;
+  transition:
+    transform 0.22s ease,
+    opacity 0.22s ease,
+    visibility 0s step-start;
+}
+
+.run-detail-ops-drawer--closed {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(calc(100% + 16px));
+  pointer-events: none;
+}
+
+.run-detail-ops-drawer--expanded {
+  left: 0;
+  width: auto;
+  border-radius: var(--radius-lg);
+}
+
+.run-detail-ops-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: rgba(0, 0, 0, 0.44);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.22s ease,
+    visibility 0.22s step-end;
+}
+
+.run-detail-ops-backdrop--open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity 0.22s ease,
+    visibility 0s step-start;
+}
+
+.run-detail-ops-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.run-detail-ops-drawer-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-detail-ops-drawer-edge-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 72px;
+  border: 1px solid var(--border);
+  border-right: 0;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 5;
+  transition:
+    opacity 0.16s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.run-detail-ops-drawer-edge-toggle--hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.run-detail-ops-drawer-edge-toggle:hover {
+  color: var(--text);
+  background: var(--surface-alt);
+}
+
+.run-detail-ops-drawer-edge-toggle svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
 }
 
 .run-detail-tab-list {
@@ -2905,6 +3070,11 @@ textarea::placeholder {
     min-width: 96px;
   }
 
+  .sidebar-toggle--floating {
+    top: 10px;
+    left: 12px;
+  }
+
   .shell-main {
     height: auto;
     min-height: 0;
@@ -2982,6 +3152,14 @@ textarea::placeholder {
 
   .task-detail-edit-description-flow {
     gap: 8px;
+  }
+
+  .run-detail-ops-drawer {
+    width: min(400px, calc(100% - 16px));
+  }
+
+  .run-detail-ops-drawer--expanded {
+    width: calc(100% - 12px);
   }
 }
 
@@ -3064,10 +3242,18 @@ textarea::placeholder {
   }
 
   .run-detail-topbar {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .run-detail-header-row {
+  .run-detail-topbar-left {
+    grid-column: 1 / -1;
+  }
+
+  .run-detail-topbar-center {
+    grid-column: 1 / 2;
+  }
+
+  .run-detail-topbar-right {
     grid-column: 1 / -1;
     justify-content: flex-start;
   }
@@ -3081,14 +3267,41 @@ textarea::placeholder {
     overflow: visible;
   }
 
+  .run-detail-content-region {
+    overflow: visible;
+  }
+
   .run-detail-page,
   .run-detail-workspace,
-  .run-detail-conversation-column,
-  .run-detail-ops-sidebar {
+  .run-detail-conversation-column {
     overflow: visible;
+  }
+
+  .run-detail-ops-drawer {
+    width: min(100%, 440px);
+    border-radius: var(--radius-lg);
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .run-detail-ops-drawer--expanded {
+    width: 100%;
+    left: 0;
+    border-radius: var(--radius-lg);
   }
 
   .run-detail-conversation-log {
     min-height: 220px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-detail-ops-drawer,
+  .run-detail-ops-drawer--open,
+  .run-detail-ops-drawer--closed,
+  .run-detail-ops-backdrop,
+  .run-detail-ops-backdrop--open,
+  .run-detail-ops-drawer-edge-toggle {
+    transition-duration: 0.01ms;
   }
 }

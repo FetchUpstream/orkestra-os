@@ -217,7 +217,20 @@ export const useRunDetailModel = () => {
     if (phase.includes("create") || phase.includes("session")) {
       return "creating_session";
     }
-    if (phase.includes("warm") || phase.includes("boot")) {
+    if (
+      phase.includes("warm") &&
+      (phase.includes("handle") ||
+        phase.includes("ready") ||
+        phase.includes("running"))
+    ) {
+      return "ready";
+    }
+    if (
+      phase.includes("boot") ||
+      phase.includes("cold") ||
+      phase.includes("start") ||
+      phase.includes("warm")
+    ) {
       return "warming_backend";
     }
     if (phase.includes("ready") || result.streamConnected) return "ready";
