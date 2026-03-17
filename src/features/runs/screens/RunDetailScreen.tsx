@@ -63,6 +63,95 @@ const RunDetailScreen: Component = () => {
   let transcriptScrollRef: HTMLDivElement | undefined;
   let transcriptBottomRef: HTMLDivElement | undefined;
   let agentEventLogRef: HTMLDivElement | undefined;
+  let transcriptScrollRaf: number | null = null;
+  let agentEventLogScrollRaf: number | null = null;
+  let transcriptProgrammaticScrollResetRaf: number | null = null;
+  let agentEventLogProgrammaticScrollResetRaf: number | null = null;
+  let isTranscriptProgrammaticScroll = false;
+  let isAgentEventLogProgrammaticScroll = false;
+  const [isTranscriptAutoFollowEnabled, setIsTranscriptAutoFollowEnabled] =
+    createSignal(true);
+  const [
+    isAgentEventLogAutoFollowEnabled,
+    setIsAgentEventLogAutoFollowEnabled,
+  ] = createSignal(true);
+  const AUTO_SCROLL_NEAR_BOTTOM_PX = 96;
+
+  const isNearBottom = (
+    element: HTMLElement,
+    thresholdPx = AUTO_SCROLL_NEAR_BOTTOM_PX,
+  ): boolean =>
+    element.scrollHeight - element.scrollTop - element.clientHeight <=
+    thresholdPx;
+
+  const markTranscriptProgrammaticScroll = () => {
+    isTranscriptProgrammaticScroll = true;
+    if (transcriptProgrammaticScrollResetRaf !== null) {
+      cancelAnimationFrame(transcriptProgrammaticScrollResetRaf);
+    }
+    transcriptProgrammaticScrollResetRaf = requestAnimationFrame(() => {
+      transcriptProgrammaticScrollResetRaf = null;
+      isTranscriptProgrammaticScroll = false;
+    });
+  };
+
+  const markAgentEventLogProgrammaticScroll = () => {
+    isAgentEventLogProgrammaticScroll = true;
+    if (agentEventLogProgrammaticScrollResetRaf !== null) {
+      cancelAnimationFrame(agentEventLogProgrammaticScrollResetRaf);
+    }
+    agentEventLogProgrammaticScrollResetRaf = requestAnimationFrame(() => {
+      agentEventLogProgrammaticScrollResetRaf = null;
+      isAgentEventLogProgrammaticScroll = false;
+    });
+  };
+
+  const scheduleTranscriptScrollToBottom = () => {
+    if (transcriptScrollRaf !== null) {
+      return;
+    }
+
+    transcriptScrollRaf = requestAnimationFrame(() => {
+      transcriptScrollRaf = null;
+      if (!isTranscriptAutoFollowEnabled()) {
+        return;
+      }
+
+      markTranscriptProgrammaticScroll();
+
+      if (transcriptBottomRef) {
+        transcriptBottomRef.scrollIntoView({
+          block: "end",
+          inline: "nearest",
+          behavior: "auto",
+        });
+        return;
+      }
+
+      if (transcriptScrollRef) {
+        transcriptScrollRef.scrollTop = transcriptScrollRef.scrollHeight;
+      }
+    });
+  };
+
+  const scheduleAgentEventLogScrollToBottom = () => {
+    if (agentEventLogScrollRaf !== null) {
+      return;
+    }
+
+    agentEventLogScrollRaf = requestAnimationFrame(() => {
+      agentEventLogScrollRaf = null;
+      if (!isAgentEventLogAutoFollowEnabled()) {
+        return;
+      }
+
+      markAgentEventLogProgrammaticScroll();
+
+      if (agentEventLogRef) {
+        agentEventLogRef.scrollTop = agentEventLogRef.scrollHeight;
+      }
+    });
+  };
 
   const INTERNAL_ID_PATTERN =
     /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
@@ -845,36 +934,9 @@ const RunDetailScreen: Component = () => {
     return formatPartSnippet(part);
   };
 
-  const toStableAnchorValue = (value: unknown): string => {
-    if (value === null || value === undefined) {
-      return "";
-    }
-
-    if (
-      typeof value === "string" ||
-      typeof value === "number" ||
-      typeof value === "boolean"
-    ) {
-      return String(value);
-    }
-
-    if (Array.isArray(value)) {
-      return `[${value.map((item) => toStableAnchorValue(item)).join(",")}]`;
-    }
-
-    if (typeof value === "object") {
-      const entries = Object.entries(value as Record<string, unknown>)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, nested]) => `${key}:${toStableAnchorValue(nested)}`);
-      return `{${entries.join(",")}}`;
-    }
-
-    return "";
-  };
-
-  const getPartAnchorKey = (part: UiPart): string => {
+  const getPartScrollRevision = (part: UiPart): string => {
     if (part.kind === "text" || part.kind === "reasoning") {
-      return `${part.kind}:${part.text}`;
+      return `${part.kind}:${part.text.length}`;
     }
 
     if (part.kind === "tool") {
@@ -882,74 +944,32 @@ const RunDetailScreen: Component = () => {
         part.kind,
         part.toolName || "",
         part.status || "",
-        toStableAnchorValue(part.title),
-        toStableAnchorValue(part.input),
-        toStableAnchorValue(part.output),
-        toStableAnchorValue(part.error),
+        typeof part.title === "string" ? part.title.length : "",
       ].join("|");
     }
 
     if (part.kind === "file") {
-      return [part.kind, part.filename, part.mime, part.url].join("|");
+      return `${part.kind}:${part.filename}`;
     }
 
     if (part.kind === "patch") {
-      return [
-        part.kind,
-        part.hash,
-        toStableAnchorValue(Array.isArray(part.files) ? part.files : []),
-      ].join("|");
+      return `${part.kind}:${part.hash}`;
     }
 
     if (part.kind === "step-start") {
-      return `${part.kind}:${toStableAnchorValue(part.snapshot)}`;
+      return part.kind;
     }
 
     if (part.kind === "step-finish") {
-      return [
-        part.kind,
-        toStableAnchorValue(part.snapshot),
-        toStableAnchorValue(part.reason),
-        toStableAnchorValue(part.tokens),
-        toStableAnchorValue(part.cost),
-      ].join("|");
+      return `${part.kind}:${formatStepMetaValue(part.reason) || ""}`;
     }
 
     if (part.kind === "unknown") {
-      return [
-        part.kind,
-        part.rawType || "",
-        toStableAnchorValue(part.raw),
-      ].join("|");
+      return `${part.kind}:${part.rawType || ""}`;
     }
 
     return "";
   };
-
-  const messageAnchorKey = createMemo(() => {
-    const store = model.agent.store();
-
-    return store.messageOrder
-      .map((messageId) => {
-        const message = store.messagesById[messageId];
-        if (!message) {
-          return `${messageId}:missing`;
-        }
-
-        const partKey = message.partOrder
-          .map((partId) => {
-            const part = message.partsById[partId];
-            if (!part) {
-              return `${partId}:missing`;
-            }
-            return `${partId}:${getPartAnchorKey(part)}`;
-          })
-          .join("~");
-
-        return [messageId, message.role, partKey].join("#");
-      })
-      .join("||");
-  });
 
   const transcript = createMemo(() => {
     const store = model.agent.store();
@@ -1033,6 +1053,47 @@ const RunDetailScreen: Component = () => {
 
     return entries;
   });
+
+  const transcriptScrollRevision = createMemo(() => {
+    const store = model.agent.store();
+    const messageCount = store.messageOrder.length;
+    if (messageCount === 0) {
+      return "0";
+    }
+
+    const lastMessageId = store.messageOrder[messageCount - 1];
+    const lastMessage = store.messagesById[lastMessageId];
+    if (!lastMessage) {
+      return `${messageCount}:${lastMessageId}:missing`;
+    }
+
+    const lastPartCount = lastMessage.partOrder.length;
+    const lastPartId = lastMessage.partOrder[lastPartCount - 1];
+    const lastPart = lastPartId ? lastMessage.partsById[lastPartId] : undefined;
+    const lastPartRevision = lastPart
+      ? getPartScrollRevision(lastPart)
+      : "no-part";
+
+    return [
+      messageCount,
+      lastMessageId,
+      lastPartCount,
+      lastMessage.updatedAt || lastMessage.createdAt || 0,
+      lastPartId || "",
+      lastPartRevision,
+    ].join(":");
+  });
+
+  const agentEventLogScrollRevision = createMemo(() => {
+    const events = agentEvents();
+    const eventCount = events.length;
+    if (eventCount === 0) {
+      return "0";
+    }
+
+    const lastEvent = events[eventCount - 1];
+    return [eventCount, lastEvent.event, String(lastEvent.ts || "")].join(":");
+  });
   createEffect(() => {
     const diffActive = activeTab() === "diff";
     model.setIsDiffTabActive(diffActive);
@@ -1097,28 +1158,19 @@ const RunDetailScreen: Component = () => {
   });
 
   createEffect(() => {
-    messageAnchorKey();
-    const entries = transcript();
-    if (entries.length === 0) {
+    const revision = transcriptScrollRevision();
+    if (revision === "0") {
       return;
     }
 
-    queueMicrotask(() => {
-      requestAnimationFrame(() => {
-        if (transcriptBottomRef) {
-          transcriptBottomRef.scrollIntoView({
-            block: "end",
-            inline: "nearest",
-            behavior: "auto",
-          });
-          return;
-        }
+    const container = transcriptScrollRef;
+    if (!container) {
+      return;
+    }
 
-        if (transcriptScrollRef) {
-          transcriptScrollRef.scrollTop = transcriptScrollRef.scrollHeight;
-        }
-      });
-    });
+    if (isTranscriptAutoFollowEnabled()) {
+      scheduleTranscriptScrollToBottom();
+    }
   });
 
   createEffect(() => {
@@ -1126,13 +1178,19 @@ const RunDetailScreen: Component = () => {
       return;
     }
 
-    agentEvents();
-    queueMicrotask(() => {
-      if (!agentEventLogRef) {
-        return;
-      }
-      agentEventLogRef.scrollTop = agentEventLogRef.scrollHeight;
-    });
+    const revision = agentEventLogScrollRevision();
+    if (revision === "0") {
+      return;
+    }
+
+    const container = agentEventLogRef;
+    if (!container) {
+      return;
+    }
+
+    if (isAgentEventLogAutoFollowEnabled()) {
+      scheduleAgentEventLogScrollToBottom();
+    }
   });
 
   return (
@@ -1346,6 +1404,14 @@ const RunDetailScreen: Component = () => {
                         class="run-detail-conversation-log"
                         aria-label="Conversation transcript"
                         ref={transcriptScrollRef}
+                        onScroll={(event) => {
+                          if (isTranscriptProgrammaticScroll) {
+                            return;
+                          }
+                          setIsTranscriptAutoFollowEnabled(
+                            isNearBottom(event.currentTarget),
+                          );
+                        }}
                       >
                         <Show when={model.agent.error().length > 0}>
                           <p class="projects-error">{model.agent.error()}</p>
@@ -1844,6 +1910,16 @@ const RunDetailScreen: Component = () => {
                                       <div
                                         class="run-agent-event-log"
                                         ref={agentEventLogRef}
+                                        onScroll={(event) => {
+                                          if (
+                                            isAgentEventLogProgrammaticScroll
+                                          ) {
+                                            return;
+                                          }
+                                          setIsAgentEventLogAutoFollowEnabled(
+                                            isNearBottom(event.currentTarget),
+                                          );
+                                        }}
                                       >
                                         <For each={agentEvents()}>
                                           {(item) => (
