@@ -692,6 +692,17 @@ impl RunsOpenCodeService {
 
                         reconnect_attempt += 1;
                         if reconnect_attempt > STREAM_MAX_RECONNECT_ATTEMPTS {
+                            RunsOpenCodeService::push_event(
+                                &event_tx,
+                                &buffered_events,
+                                "stream.terminated",
+                                serde_json::json!({
+                                    "runId": run_id.as_str(),
+                                    "reason": "reconnect_exhausted",
+                                    "attempts": reconnect_attempt,
+                                })
+                                .to_string(),
+                            );
                             break;
                         }
 

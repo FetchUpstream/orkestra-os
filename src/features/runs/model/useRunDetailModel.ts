@@ -82,6 +82,12 @@ export const useRunDetailModel = () => {
   let pendingAgentEvents: RunOpenCodeEvent[] = [];
   let agentFlushTimer: ReturnType<typeof setTimeout> | null = null;
   let agentFlushFrameId: number | null = null;
+  let isAgentSnapshotHydrating = false;
+  let pendingAgentSnapshotHydrate = false;
+  let pendingAgentSnapshotReplayEvents: RunOpenCodeEvent[] = [];
+  let agentResubscribeTimer: ReturnType<typeof setTimeout> | null = null;
+  let isAgentResubscribeInFlight = false;
+  let pendingAgentResubscribe = false;
   let terminalRunId: string | null = null;
   let terminalRouteInstanceId = crypto.randomUUID();
   let terminalFrameHandler: ((frame: RunTerminalFrame) => void) | null = null;
@@ -457,6 +463,130 @@ export const useRunDetailModel = () => {
     });
   };
 
+  const clearPendingAgentSnapshotHydrate = (): void => {
+    isAgentSnapshotHydrating = false;
+    pendingAgentSnapshotHydrate = false;
+    pendingAgentSnapshotReplayEvents = [];
+  };
+
+  const clearPendingAgentResubscribe = (): void => {
+    pendingAgentResubscribe = false;
+    isAgentResubscribeInFlight = false;
+    if (agentResubscribeTimer) {
+      clearTimeout(agentResubscribeTimer);
+      agentResubscribeTimer = null;
+    }
+  };
+
+  const requestAgentResubscribe = (
+    runId: string,
+    requestVersion: number,
+    subscriptionVersion: number,
+  ): void => {
+    if (
+      requestVersion !== activeAgentRequestVersion ||
+      subscriptionVersion !== activeAgentSubscriptionVersion ||
+      !isAgentUiSubscribed ||
+      params.runId !== runId
+    ) {
+      return;
+    }
+
+    pendingAgentResubscribe = true;
+    if (agentResubscribeTimer) {
+      return;
+    }
+
+    agentResubscribeTimer = setTimeout(() => {
+      agentResubscribeTimer = null;
+
+      if (!pendingAgentResubscribe || isAgentResubscribeInFlight) {
+        return;
+      }
+
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        subscriptionVersion !== activeAgentSubscriptionVersion ||
+        !isAgentUiSubscribed ||
+        params.runId !== runId
+      ) {
+        pendingAgentResubscribe = false;
+        return;
+      }
+
+      pendingAgentResubscribe = false;
+      isAgentResubscribeInFlight = true;
+      void subscribeAgentEvents(runId).finally(() => {
+        isAgentResubscribeInFlight = false;
+
+        if (pendingAgentResubscribe) {
+          requestAgentResubscribe(
+            runId,
+            activeAgentRequestVersion,
+            activeAgentSubscriptionVersion,
+          );
+        }
+      });
+    }, 150);
+  };
+
+  const requestAgentSnapshotHydrate = (
+    runId: string,
+    requestVersion: number,
+    subscriptionVersion: number,
+    baseEvents: RunOpenCodeEvent[] = [],
+  ): void => {
+    if (
+      requestVersion !== activeAgentRequestVersion ||
+      subscriptionVersion !== activeAgentSubscriptionVersion ||
+      !isAgentUiSubscribed ||
+      params.runId !== runId
+    ) {
+      return;
+    }
+
+    if (baseEvents.length > 0) {
+      pendingAgentSnapshotReplayEvents = appendCappedHistory(
+        pendingAgentSnapshotReplayEvents,
+        baseEvents,
+      );
+    }
+
+    if (isAgentSnapshotHydrating) {
+      pendingAgentSnapshotHydrate = true;
+      return;
+    }
+
+    isAgentSnapshotHydrating = true;
+    const replayEvents = pendingAgentSnapshotReplayEvents;
+    pendingAgentSnapshotReplayEvents = [];
+
+    void hydrateAgentSnapshot(
+      runId,
+      requestVersion,
+      subscriptionVersion,
+      replayEvents,
+    ).finally(() => {
+      isAgentSnapshotHydrating = false;
+
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        subscriptionVersion !== activeAgentSubscriptionVersion ||
+        !isAgentUiSubscribed ||
+        params.runId !== runId
+      ) {
+        pendingAgentSnapshotHydrate = false;
+        pendingAgentSnapshotReplayEvents = [];
+        return;
+      }
+
+      if (pendingAgentSnapshotHydrate) {
+        pendingAgentSnapshotHydrate = false;
+        requestAgentSnapshotHydrate(runId, requestVersion, subscriptionVersion);
+      }
+    });
+  };
+
   const taskHref = createMemo(() => {
     const taskValue = task();
     const runId = params.runId;
@@ -719,25 +849,36 @@ export const useRunDetailModel = () => {
     const batch = pendingAgentEvents;
     pendingAgentEvents = [];
     let shouldHydrateSnapshot = false;
+    let shouldResubscribe = false;
 
     setAgentEvents((current) => appendCappedHistory(current, batch));
     setAgentStore((current) => {
       return batch.reduce((nextState, event) => {
         const busEvent = toOpenCodeBusEvent(event);
-        if (busEvent.type === "server.connected") {
+        if (
+          busEvent.type === "server.connected" ||
+          busEvent.type === "stream.resync_needed"
+        ) {
           shouldHydrateSnapshot = true;
+        }
+        if (busEvent.type === "stream.resync_needed") {
+          shouldResubscribe = true;
         }
         return reduceOpenCodeEvent(nextState, busEvent);
       }, current);
     });
 
     if (shouldHydrateSnapshot) {
-      void hydrateAgentSnapshot(
+      requestAgentSnapshotHydrate(
         runId,
         requestVersion,
         subscriptionVersion,
         batch,
       );
+    }
+
+    if (shouldResubscribe) {
+      requestAgentResubscribe(runId, requestVersion, subscriptionVersion);
     }
   };
 
@@ -766,6 +907,8 @@ export const useRunDetailModel = () => {
     isAgentUiSubscribed = false;
     activeAgentSubscriptionVersion += 1;
     clearPendingAgentEventFlush();
+    clearPendingAgentSnapshotHydrate();
+    clearPendingAgentResubscribe();
     if (removeAgentEventForwarder) {
       removeAgentEventForwarder();
       removeAgentEventForwarder = null;
@@ -805,6 +948,8 @@ export const useRunDetailModel = () => {
     const requestVersion = activeAgentRequestVersion;
     const subscriptionVersion = ++activeAgentSubscriptionVersion;
     clearPendingAgentEventFlush();
+    clearPendingAgentSnapshotHydrate();
+    clearPendingAgentResubscribe();
     pendingAgentEvents = [];
     const previousSubscriberId = activeAgentSubscriberId?.trim();
     const previousSubscriberRunId = activeAgentSubscriberRunId?.trim();
@@ -843,7 +988,10 @@ export const useRunDetailModel = () => {
       setAgentStore((current) => {
         return bufferedEvents.reduce((nextState, event) => {
           const busEvent = toOpenCodeBusEvent(event);
-          if (busEvent.type === "server.connected") {
+          if (
+            busEvent.type === "server.connected" ||
+            busEvent.type === "stream.resync_needed"
+          ) {
             shouldHydrateSnapshot = true;
           }
           return reduceOpenCodeEvent(nextState, busEvent);
@@ -851,7 +999,7 @@ export const useRunDetailModel = () => {
       });
 
       if (shouldHydrateSnapshot) {
-        void hydrateAgentSnapshot(
+        requestAgentSnapshotHydrate(
           normalizedRunId,
           requestVersion,
           subscriptionVersion,
@@ -901,6 +1049,7 @@ export const useRunDetailModel = () => {
         params.runId !== normalizedRunId
       ) {
         clearPendingAgentEventFlush();
+        clearPendingAgentSnapshotHydrate();
         removeForwarder();
         void unsubscribeRunOpenCodeEvents(normalizedRunId, subscriberId).catch(
           () => {
@@ -996,6 +1145,7 @@ export const useRunDetailModel = () => {
     const runId = params.runId;
     const requestVersion = ++activeAgentRequestVersion;
     clearPendingAgentEventFlush();
+    clearPendingAgentSnapshotHydrate();
     setAgentEvents([]);
     setAgentStore(createEmptyAgentStore(null));
     setAgentError("");
