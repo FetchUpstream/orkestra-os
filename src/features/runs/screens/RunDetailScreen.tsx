@@ -9,11 +9,11 @@ import {
 } from "solid-js";
 import BackIconLink from "../../../components/ui/BackIconLink";
 import MonacoDiffEditor from "../../../components/MonacoDiffEditor";
-import MarkdownContent from "../../../components/ui/MarkdownContent";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime, formatRunStatus } from "../../tasks/utils/taskDetail";
 import RunTerminal from "../components/RunTerminal";
-import type { UiPart, UiToolPart } from "../model/agentTypes";
+import RunConversationMessage from "../components/RunConversationMessage";
+import type { UiPart } from "../model/agentTypes";
 
 const RunDetailScreen: Component = () => {
   const model = useRunDetailModel();
@@ -69,6 +69,8 @@ const RunDetailScreen: Component = () => {
   let agentEventLogProgrammaticScrollResetRaf: number | null = null;
   let isTranscriptProgrammaticScroll = false;
   let isAgentEventLogProgrammaticScroll = false;
+  const TRANSCRIPT_WINDOW_CHUNK = 60;
+  const AGENT_EVENT_WINDOW_CHUNK = 60;
   const [isTranscriptAutoFollowEnabled, setIsTranscriptAutoFollowEnabled] =
     createSignal(true);
   const [
@@ -76,6 +78,12 @@ const RunDetailScreen: Component = () => {
     setIsAgentEventLogAutoFollowEnabled,
   ] = createSignal(true);
   const AUTO_SCROLL_NEAR_BOTTOM_PX = 96;
+  const [transcriptVisibleCount, setTranscriptVisibleCount] = createSignal(
+    TRANSCRIPT_WINDOW_CHUNK,
+  );
+  const [agentEventVisibleCount, setAgentEventVisibleCount] = createSignal(
+    AGENT_EVENT_WINDOW_CHUNK,
+  );
 
   const isNearBottom = (
     element: HTMLElement,
@@ -202,741 +210,20 @@ const RunDetailScreen: Component = () => {
     return formatted === "Unavailable" ? String(value) : formatted;
   };
 
-  const getMessageActorLabel = (role: string): string => {
-    if (role === "assistant") return "Agent";
-    if (role === "user") return "You";
-    if (role === "system") return "System";
-    return "Message";
-  };
-
-  const getPartTypeLabel = (part: UiPart): string => {
-    if (part.kind === "unknown") {
-      return part.rawType || "unknown";
-    }
-    return part.type || part.kind;
-  };
-
-  const formatPartSnippet = (payload: unknown): string => {
-    const serialized = formatAgentPayload(payload);
-    if (serialized.length <= 280) {
-      return serialized;
-    }
-    return `${serialized.slice(0, 280)}...`;
-  };
-
-  const formatStepMetaValue = (value: unknown): string | null => {
-    if (value === null || value === undefined) {
-      return null;
-    }
-
-    if (
-      typeof value === "string" ||
-      typeof value === "number" ||
-      typeof value === "boolean"
-    ) {
-      const normalized = String(value)
-        .replace(INTERNAL_ID_PATTERN, "[internal-id]")
-        .trim();
-      return normalized.length > 0 ? normalized : null;
-    }
-
-    const formatted = formatPartSnippet(value).trim();
-    return formatted.length > 0 ? formatted : null;
-  };
-
-  const formatStructuredTokenMeta = (value: unknown): string | null => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return null;
-    }
-
-    const tokenMap = new Map<string, number>();
-
-    const normalizeKey = (key: string): string =>
-      key.toLowerCase().replace(/[^a-z0-9]/g, "");
-
-    const visit = (node: unknown, depth: number): void => {
-      if (
-        !node ||
-        typeof node !== "object" ||
-        Array.isArray(node) ||
-        depth > 3
-      ) {
-        return;
-      }
-
-      for (const [rawKey, rawValue] of Object.entries(
-        node as Record<string, unknown>,
-      )) {
-        if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
-          tokenMap.set(normalizeKey(rawKey), rawValue);
-          continue;
-        }
-
-        if (
-          rawValue &&
-          typeof rawValue === "object" &&
-          !Array.isArray(rawValue)
-        ) {
-          visit(rawValue, depth + 1);
-        }
-      }
-    };
-
-    visit(value, 0);
-
-    const pick = (...candidates: string[]): number | null => {
-      for (const key of candidates) {
-        const tokenCount = tokenMap.get(key);
-        if (tokenCount !== undefined) {
-          return tokenCount;
-        }
-      }
-      return null;
-    };
-
-    const parts: string[] = [];
-    const total = pick("total", "totaltokens", "tokens");
-    const input = pick("input", "inputtokens", "prompt", "prompttokens");
-    const output = pick(
-      "output",
-      "outputtokens",
-      "completion",
-      "completiontokens",
-    );
-    const reasoning = pick("reasoning", "reasoningtokens");
-    const cacheRead = pick("cacheread", "cachedinput", "cachedinputtokens");
-    const cacheWrite = pick("cachewrite", "cachedoutput", "cachedoutputtokens");
-
-    if (total !== null) {
-      parts.push(`total: ${total}`);
-    }
-    if (input !== null) {
-      parts.push(`input: ${input}`);
-    }
-    if (output !== null) {
-      parts.push(`output: ${output}`);
-    }
-    if (reasoning !== null) {
-      parts.push(`reasoning: ${reasoning}`);
-    }
-    if (cacheRead !== null) {
-      parts.push(`cache read: ${cacheRead}`);
-    }
-    if (cacheWrite !== null) {
-      parts.push(`cache write: ${cacheWrite}`);
-    }
-
-    return parts.length > 0 ? parts.join(" · ") : null;
-  };
-
-  const formatStepTokenValue = (value: unknown): string | null => {
-    const structured = formatStructuredTokenMeta(value);
-    if (structured) {
-      return structured;
-    }
-    return formatStepMetaValue(value);
-  };
-
-  const sanitizeInlineText = (value: string): string =>
-    value.replace(INTERNAL_ID_PATTERN, "[internal-id]");
-
-  const TOOL_TEXT_KEYS = ["text", "message", "content", "result"] as const;
-
-  const extractPreferredToolText = (
-    value: unknown,
-    depth = 0,
-  ): string | null => {
-    if (value === null || value === undefined || depth > 3) {
-      return null;
-    }
-
-    if (typeof value === "string") {
-      const normalized = sanitizeInlineText(value).trim();
-      return normalized.length > 0 ? normalized : null;
-    }
-
-    if (typeof value === "number" || typeof value === "boolean") {
-      return String(value);
-    }
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const candidate = extractPreferredToolText(item, depth + 1);
-        if (candidate) {
-          return candidate;
-        }
-      }
-      return null;
-    }
-
-    if (typeof value === "object") {
-      const record = value as Record<string, unknown>;
-      for (const key of TOOL_TEXT_KEYS) {
-        if (!Object.prototype.hasOwnProperty.call(record, key)) {
-          continue;
-        }
-        const candidate = extractPreferredToolText(record[key], depth + 1);
-        if (candidate) {
-          return candidate;
-        }
-      }
-    }
-
-    return null;
-  };
-
-  const isRecord = (value: unknown): value is Record<string, unknown> =>
-    Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-  const getNestedToolValueByKeys = (
-    value: unknown,
-    keys: readonly string[],
-    depth = 0,
-  ): unknown => {
-    if (!isRecord(value) || depth > 3) {
-      return undefined;
-    }
-
-    for (const key of keys) {
-      if (Object.prototype.hasOwnProperty.call(value, key)) {
-        return value[key];
-      }
-    }
-
-    for (const nestedValue of Object.values(value)) {
-      const candidate = getNestedToolValueByKeys(nestedValue, keys, depth + 1);
-      if (candidate !== undefined) {
-        return candidate;
-      }
-    }
-
-    return undefined;
-  };
-
-  const toInlineSummaryText = (value: unknown): string | null => {
-    if (value === null || value === undefined) {
-      return null;
-    }
-
-    const text =
-      typeof value === "string"
-        ? sanitizeInlineText(value)
-        : extractPreferredToolText(value) || formatPartSnippet(value);
-    const singleLine = text.replace(/\s+/g, " ").trim();
-    if (singleLine.length === 0) {
-      return null;
-    }
-    if (singleLine.length <= 160) {
-      return singleLine;
-    }
-    return `${singleLine.slice(0, 157)}...`;
-  };
-
-  const BASH_COMMAND_KEYS = [
-    "command",
-    "bash",
-    "cmd",
-    "script",
-    "shellCommand",
-    "commandLine",
-  ] as const;
-
-  const COMMON_SHELL_COMMAND_PATTERN =
-    /^(?:\$\s*)?(?:bun|npm|pnpm|yarn|git|ls|cat|cp|mv|rm|mkdir|touch|echo|pwd|cd|grep|awk|sed|chmod|chown|docker|kubectl|python|node|deno|go|cargo|make|sh|bash|zsh)\b/i;
-
-  const SHELL_OPERATOR_PATTERN = /(?:\|\||&&|[|;`$()><])/;
-
-  const toSingleLineToolText = (value: unknown): string | null => {
-    if (value === null || value === undefined) {
-      return null;
-    }
-
-    const text =
-      typeof value === "string"
-        ? sanitizeInlineText(value)
-        : extractPreferredToolText(value) || formatPartSnippet(value);
-    const normalized = text.replace(/\s+/g, " ").trim();
-    return normalized.length > 0 ? normalized : null;
-  };
-
-  const isShellCommandLike = (value: unknown): boolean => {
-    if (typeof value !== "string") {
-      return false;
-    }
-
-    const normalized = value.trim();
-    if (normalized.length === 0) {
-      return false;
-    }
-
-    if (COMMON_SHELL_COMMAND_PATTERN.test(normalized)) {
-      return true;
-    }
-
-    return SHELL_OPERATOR_PATTERN.test(normalized) && normalized.includes(" ");
-  };
-
-  const getBashSummary = (part: UiToolPart) => {
-    const preferredCommandValue = getNestedToolValueByKeys(part.input, [
-      "command",
-    ]);
-    const fallbackCommandValue =
-      getNestedToolValueByKeys(part.input, BASH_COMMAND_KEYS) ??
-      getNestedToolValueByKeys(part.output, BASH_COMMAND_KEYS);
-    const command =
-      toSingleLineToolText(preferredCommandValue) ||
-      toSingleLineToolText(fallbackCommandValue) ||
-      "command unavailable";
-
-    const description =
-      toSingleLineToolText(
-        getNestedToolValueByKeys(part.input, ["description"]),
-      ) ||
-      toSingleLineToolText(part.title) ||
-      toSingleLineToolText(preferredCommandValue) ||
-      toSingleLineToolText(getNestedToolValueByKeys(part.input, ["bash"])) ||
-      "bash";
-
-    const output =
-      extractPreferredToolText(part.output) ||
-      extractPreferredToolText(part.error) ||
-      "(no output)";
-
-    return {
-      description,
-      command,
-      output,
-    };
-  };
-
-  const getToolNameCandidates = (
-    part: UiToolPart,
-  ): Array<string | undefined> => [
-    part.toolName,
-    isRecord(part.input)
-      ? (part.input.toolName as string | undefined)
-      : undefined,
-    isRecord(part.input) ? (part.input.type as string | undefined) : undefined,
-    isRecord(part.input) ? (part.input.name as string | undefined) : undefined,
-    isRecord(part.output)
-      ? (part.output.toolName as string | undefined)
-      : undefined,
-    isRecord(part.output)
-      ? (part.output.type as string | undefined)
-      : undefined,
-    isRecord(part.output)
-      ? (part.output.name as string | undefined)
-      : undefined,
-  ];
-
-  const getQueryToolLabel = (part: UiToolPart): string => {
-    const directName =
-      typeof part.toolName === "string" ? part.toolName.trim() : "";
-    if (directName.length > 0) {
-      return directName;
-    }
-
-    const nestedCandidates = [
-      getNestedToolValueByKeys(part.input, ["type", "name", "toolName"]),
-      getNestedToolValueByKeys(part.output, ["type", "name", "toolName"]),
-    ];
-
-    for (const candidate of nestedCandidates) {
-      if (typeof candidate !== "string") {
-        continue;
-      }
-      const normalized = candidate.trim();
-      if (normalized.length > 0) {
-        return normalized;
-      }
-    }
-
-    return "tool";
-  };
-
-  const SEARCH_TOOL_NAMES = new Set(["websearch_web_search_exa"]);
-  const QUERY_INPUT_KEYS = [
-    "query",
-    "searchQuery",
-    "searchTerm",
-    "queryString",
-    "q",
-    "keywords",
-  ] as const;
-  const URL_INPUT_KEYS = ["url", "href", "link"] as const;
-
-  const toQueryText = (value: unknown): string | null => {
-    const inline = toInlineSummaryText(value);
-    if (!inline) {
-      return null;
-    }
-    return inline.length <= 180 ? inline : `${inline.slice(0, 177)}...`;
-  };
-
-  const isSearchToolPart = (part: UiToolPart): boolean => {
-    for (const rawName of getToolNameCandidates(part)) {
-      if (typeof rawName !== "string") {
-        continue;
-      }
-      const normalized = rawName.trim().toLowerCase();
-      if (normalized.length === 0) {
-        continue;
-      }
-      if (SEARCH_TOOL_NAMES.has(normalized) || normalized.includes("search")) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  const getInputUrlString = (part: UiToolPart): string | null => {
-    if (!isRecord(part.input)) {
-      return null;
-    }
-
-    const directUrl = toSingleLineToolText(part.input.url);
-    if (directUrl) {
-      return directUrl;
-    }
-
-    const nestedUrl = getNestedToolValueByKeys(part.input, URL_INPUT_KEYS);
-    return toSingleLineToolText(nestedUrl);
-  };
-
-  const hasInputQueryString = (part: UiToolPart): boolean => {
-    if (!isRecord(part.input)) {
-      return false;
-    }
-
-    const directQuery = part.input.query;
-    if (typeof directQuery === "string" && directQuery.trim().length > 0) {
-      return true;
-    }
-
-    const nestedQuery = getNestedToolValueByKeys(part.input, QUERY_INPUT_KEYS);
-    return typeof nestedQuery === "string" && nestedQuery.trim().length > 0;
-  };
-
-  const hasInputUrlString = (part: UiToolPart): boolean =>
-    getInputUrlString(part) !== null;
-
-  const getQueryToolSummary = (part: UiToolPart): string => {
-    const directQuery = isRecord(part.input) ? part.input.query : undefined;
-    const directSummary = toQueryText(directQuery);
-    if (directSummary) {
-      return directSummary;
-    }
-
-    const nestedQuery = getNestedToolValueByKeys(part.input, QUERY_INPUT_KEYS);
-    const nestedSummary = toQueryText(nestedQuery);
-    if (nestedSummary) {
-      return nestedSummary;
-    }
-
-    return toQueryText(part.input) || "unknown";
-  };
-
-  const isQueryToolPart = (part: UiToolPart): boolean =>
-    isSearchToolPart(part) ||
-    hasInputQueryString(part) ||
-    hasInputUrlString(part);
-
-  const TODO_ITEM_TEXT_KEYS = [
-    "content",
-    "text",
-    "title",
-    "task",
-    "label",
-    "name",
-  ] as const;
-
-  const getTodoItemsPayload = (part: UiToolPart): unknown[] => {
-    const inputTodos = getNestedToolValueByKeys(part.input, ["todos"]);
-    if (Array.isArray(inputTodos)) {
-      return inputTodos;
-    }
-
-    if (Array.isArray(part.output)) {
-      return part.output;
-    }
-
-    const outputTodos = getNestedToolValueByKeys(part.output, ["todos"]);
-    if (Array.isArray(outputTodos)) {
-      return outputTodos;
-    }
-
-    return [];
-  };
-
-  const getTodoItemText = (item: unknown): string | null => {
-    if (typeof item === "string") {
-      const normalized = sanitizeInlineText(item).trim();
-      return normalized.length > 0 ? normalized : null;
-    }
-
-    if (typeof item === "number" || typeof item === "boolean") {
-      return String(item);
-    }
-
-    if (!isRecord(item)) {
-      return toSingleLineToolText(item);
-    }
-
-    for (const key of TODO_ITEM_TEXT_KEYS) {
-      if (!Object.prototype.hasOwnProperty.call(item, key)) {
-        continue;
-      }
-      const candidate = toSingleLineToolText(item[key]);
-      if (candidate) {
-        return candidate;
-      }
-    }
-
-    return toSingleLineToolText(item);
-  };
-
-  const isTodoListLike = (value: unknown): value is unknown[] => {
-    if (!Array.isArray(value)) {
-      return false;
-    }
-
-    if (value.length === 0) {
-      return true;
-    }
-
-    return value.every((item) => {
-      if (typeof item === "string") {
-        return true;
-      }
-
-      if (!isRecord(item)) {
-        return false;
-      }
-
-      return (
-        typeof item.status === "string" ||
-        TODO_ITEM_TEXT_KEYS.some((key) =>
-          Object.prototype.hasOwnProperty.call(item, key),
-        )
-      );
-    });
-  };
-
-  const getTodoWriteSummary = (part: UiToolPart): string[] =>
-    getTodoItemsPayload(part)
-      .map((item) => {
-        const text = getTodoItemText(item);
-        if (!text) {
-          return null;
-        }
-
-        const status =
-          isRecord(item) && typeof item.status === "string"
-            ? item.status.trim().toLowerCase()
-            : "";
-        const checkbox = status === "completed" ? "[X]" : "[ ]";
-        return `${checkbox} ${text}`;
-      })
-      .filter((line): line is string => line !== null);
-
-  const getToolType = (
-    part: UiToolPart,
-  ): "bash" | "glob" | "read" | "todowrite" | null => {
-    for (const rawName of getToolNameCandidates(part)) {
-      if (typeof rawName !== "string") {
-        continue;
-      }
-      const normalized = rawName.trim().toLowerCase();
-      if (normalized.length === 0) {
-        continue;
-      }
-      if (normalized === "todowrite" || normalized.endsWith(".todowrite")) {
-        return "todowrite";
-      }
-      if (normalized === "glob" || normalized.endsWith(".glob")) {
-        return "glob";
-      }
-      if (normalized === "read" || normalized.endsWith(".read")) {
-        return "read";
-      }
-      if (normalized === "bash" || normalized.endsWith(".bash")) {
-        return "bash";
-      }
-    }
-
-    if (
-      getNestedToolValueByKeys(part.input, ["pattern", "glob"]) !== undefined ||
-      getNestedToolValueByKeys(part.output, ["pattern", "glob"]) !== undefined
-    ) {
-      return "glob";
-    }
-
-    if (
-      getNestedToolValueByKeys(part.input, [
-        "filePath",
-        "path",
-        "filename",
-        "basename",
-      ]) !== undefined ||
-      getNestedToolValueByKeys(part.output, [
-        "filePath",
-        "path",
-        "filename",
-        "basename",
-      ]) !== undefined
-    ) {
-      return "read";
-    }
-
-    if (isTodoListLike(getNestedToolValueByKeys(part.input, ["todos"]))) {
-      return "todowrite";
-    }
-
-    if (
-      isTodoListLike(part.output) ||
-      isTodoListLike(getNestedToolValueByKeys(part.output, ["todos"]))
-    ) {
-      return "todowrite";
-    }
-
-    const commandLikeInputValue =
-      getNestedToolValueByKeys(part.input, BASH_COMMAND_KEYS) ?? part.input;
-    if (isShellCommandLike(commandLikeInputValue)) {
-      return "bash";
-    }
-
-    return null;
-  };
-
-  const getGlobSummary = (part: UiToolPart): string => {
-    const patternValue =
-      getNestedToolValueByKeys(part.input, ["pattern"]) ??
-      getNestedToolValueByKeys(part.output, ["pattern"]);
-    const pattern =
-      toInlineSummaryText(patternValue) ||
-      toInlineSummaryText(part.input) ||
-      toInlineSummaryText(part.output) ||
-      "unknown";
-    return `glob: ${pattern}`;
-  };
-
-  const getPathTail = (path: string): string => {
-    const normalized = path.trim().replace(/[\\/]+$/, "");
-    if (normalized.length === 0) {
-      return "";
-    }
-    const segments = normalized.split(/[\\/]/).filter(Boolean);
-    return segments[segments.length - 1] || "";
-  };
-
-  const getReadSummary = (
-    part: UiToolPart,
-  ): { title: string; path: string | null } => {
-    const fullPathValue =
-      getNestedToolValueByKeys(part.input, ["filePath", "path", "filename"]) ??
-      getNestedToolValueByKeys(part.output, ["filePath", "path", "filename"]);
-    const fullPath = toInlineSummaryText(fullPathValue);
-
-    const explicitTitle =
-      toInlineSummaryText(part.title) ||
-      toInlineSummaryText(
-        getNestedToolValueByKeys(part.input, ["title", "name"]) ??
-          getNestedToolValueByKeys(part.output, ["title", "name"]),
-      );
-    const basename = toInlineSummaryText(
-      getNestedToolValueByKeys(part.input, ["basename"]) ??
-        getNestedToolValueByKeys(part.output, ["basename"]),
-    );
-    const pathTail = fullPath ? getPathTail(fullPath) : "";
-    const title = explicitTitle || basename || pathTail || "file";
-
-    return { title, path: fullPath || null };
-  };
-
-  const getToolFieldEntries = (
-    part: UiToolPart,
-  ): Array<{ label: string; value: unknown }> => {
-    const fields: Array<{ label: string; value: unknown }> = [];
-
-    if (part.title !== undefined) {
-      fields.push({ label: "Title", value: part.title });
-    }
-    if (part.input !== undefined) {
-      fields.push({ label: "Input", value: part.input });
-    }
-    if (part.output !== undefined) {
-      fields.push({ label: "Output", value: part.output });
-    }
-    if (part.error !== undefined) {
-      fields.push({ label: "Error", value: part.error });
-    }
-
-    return fields;
-  };
-
-  const extractSnapshotHash = (snapshot: unknown): string | null => {
-    if (typeof snapshot === "string") {
-      return formatStepMetaValue(snapshot);
-    }
-
-    if (snapshot && typeof snapshot === "object") {
-      const record = snapshot as Record<string, unknown>;
-      const directHash = formatStepMetaValue(record.hash);
-      if (directHash) {
-        return directHash;
-      }
-
-      const nestedSnapshot = record.snapshot;
-      if (nestedSnapshot && typeof nestedSnapshot === "object") {
-        const nestedRecord = nestedSnapshot as Record<string, unknown>;
-        const nestedHash = formatStepMetaValue(nestedRecord.hash);
-        if (nestedHash) {
-          return nestedHash;
-        }
-      }
-    }
-
-    return null;
-  };
-
-  const getPartSnippet = (part: UiPart): string => {
-    if (part.kind === "file") {
-      return formatPartSnippet({
-        filename: part.filename,
-        mime: part.mime,
-        url: part.url,
-      });
-    }
-
-    if (part.kind === "patch") {
-      return formatPartSnippet({
-        hash: part.hash,
-        files: Array.isArray(part.files) ? part.files.length : 0,
-      });
-    }
-
-    if (part.kind === "step-start") {
-      return formatPartSnippet({ snapshot: part.snapshot });
-    }
-
-    if (part.kind === "step-finish") {
-      return formatPartSnippet({
-        reason: part.reason,
-        tokens: part.tokens,
-        cost: part.cost,
-      });
-    }
-
-    if (part.kind === "unknown") {
-      return formatPartSnippet(part.raw ?? { type: part.rawType });
-    }
-
-    return formatPartSnippet(part);
-  };
-
   const getPartScrollRevision = (part: UiPart): string => {
     if (part.kind === "text" || part.kind === "reasoning") {
-      return `${part.kind}:${part.text.length}`;
+      const streamChunkCount = Array.isArray(part.streamChunks)
+        ? part.streamChunks.length
+        : 0;
+      const streamTextLength =
+        typeof part.streamTextLength === "number"
+          ? part.streamTextLength
+          : typeof part.streamText === "string"
+            ? part.streamText.length
+            : part.text.length;
+      const streamRevision =
+        typeof part.streamRevision === "number" ? part.streamRevision : 0;
+      return `${part.kind}:${part.streaming ? 1 : 0}:${part.text.length}:${streamChunkCount}:${streamTextLength}:${streamRevision}`;
     }
 
     if (part.kind === "tool") {
@@ -961,7 +248,11 @@ const RunDetailScreen: Component = () => {
     }
 
     if (part.kind === "step-finish") {
-      return `${part.kind}:${formatStepMetaValue(part.reason) || ""}`;
+      const reason =
+        part.reason === undefined || part.reason === null
+          ? ""
+          : String(part.reason).replace(INTERNAL_ID_PATTERN, "[internal-id]");
+      return `${part.kind}:${reason}`;
     }
 
     if (part.kind === "unknown") {
@@ -971,87 +262,27 @@ const RunDetailScreen: Component = () => {
     return "";
   };
 
-  const transcript = createMemo(() => {
-    const store = model.agent.store();
-    const entries: Array<{
-      actor: string;
-      time: number | null;
-      parts: UiPart[];
-      stepMeta: {
-        snapshotHash?: string;
-        reason?: string;
-        tokens?: string;
-        cost?: string;
-      } | null;
-    }> = [];
+  const transcriptMessageOrder = createMemo(
+    () => model.agent.store().messageOrder,
+  );
 
-    for (const messageId of store.messageOrder) {
-      const message = store.messagesById[messageId];
-      if (!message) {
-        continue;
-      }
+  const transcriptHiddenMessageCount = createMemo(() => {
+    return Math.max(
+      0,
+      transcriptMessageOrder().length - transcriptVisibleCount(),
+    );
+  });
 
-      const parts: UiPart[] = [];
-      let snapshotHash: string | null = null;
-      let finishReason: string | null = null;
-      let finishTokens: string | null = null;
-      let finishCost: string | null = null;
+  const visibleTranscriptMessageIds = createMemo(() => {
+    const order = transcriptMessageOrder();
+    const startIndex = Math.max(0, order.length - transcriptVisibleCount());
+    return order.slice(startIndex);
+  });
 
-      for (const partId of message.partOrder) {
-        const part = message.partsById[partId];
-        if (!part) {
-          continue;
-        }
-
-        if (part.kind === "step-start") {
-          if (!snapshotHash) {
-            snapshotHash = extractSnapshotHash(part.snapshot);
-          }
-          continue;
-        }
-
-        if (part.kind === "step-finish") {
-          if (!snapshotHash) {
-            snapshotHash = extractSnapshotHash(part.snapshot);
-          }
-
-          const reason = formatStepMetaValue(part.reason);
-          if (reason) {
-            finishReason = reason;
-          }
-
-          const tokens = formatStepTokenValue(part.tokens);
-          if (tokens) {
-            finishTokens = tokens;
-          }
-
-          const cost = formatStepMetaValue(part.cost);
-          if (cost) {
-            finishCost = cost;
-          }
-          continue;
-        }
-
-        parts.push(part);
-      }
-
-      entries.push({
-        actor: getMessageActorLabel(message.role),
-        time: message.updatedAt ?? message.createdAt ?? null,
-        parts,
-        stepMeta:
-          snapshotHash || finishReason || finishTokens || finishCost
-            ? {
-                snapshotHash: snapshotHash || undefined,
-                reason: finishReason || undefined,
-                tokens: finishTokens || undefined,
-                cost: finishCost || undefined,
-              }
-            : null,
-      });
+  createEffect(() => {
+    if (transcriptMessageOrder().length === 0) {
+      setTranscriptVisibleCount(TRANSCRIPT_WINDOW_CHUNK);
     }
-
-    return entries;
   });
 
   const transcriptScrollRevision = createMemo(() => {
@@ -1094,9 +325,168 @@ const RunDetailScreen: Component = () => {
     const lastEvent = events[eventCount - 1];
     return [eventCount, lastEvent.event, String(lastEvent.ts || "")].join(":");
   });
+
+  const agentEventHiddenCount = createMemo(() =>
+    Math.max(0, agentEvents().length - agentEventVisibleCount()),
+  );
+
+  type AgentEventPayloadCacheEntry = {
+    payloadRef: unknown;
+    payloadSignature: string;
+    formatted: string;
+  };
+
+  const agentEventPayloadCache = new Map<string, AgentEventPayloadCacheEntry>();
+  const agentEventCollisionFallbackIds = new WeakMap<object, string>();
+  let nextAgentEventCollisionFallbackId = 0;
+
+  const getPayloadSignature = (payload: unknown): string => {
+    const seenObjects = new WeakMap<object, number>();
+    let nextSeenObjectId = 1;
+
+    const serialize = (value: unknown): string => {
+      if (value === null) {
+        return "null";
+      }
+
+      switch (typeof value) {
+        case "string":
+          return `string:${JSON.stringify(value)}`;
+        case "number":
+          return Number.isFinite(value)
+            ? `number:${String(value)}`
+            : `number:${value.toString()}`;
+        case "boolean":
+        case "bigint":
+        case "undefined":
+          return `${typeof value}:${String(value)}`;
+        case "symbol":
+          return `symbol:${String(value)}`;
+        case "function":
+          return `function:${value.name || "anonymous"}`;
+        case "object": {
+          if (value instanceof Date) {
+            return `date:${value.toISOString()}`;
+          }
+
+          const knownObjectId = seenObjects.get(value);
+          if (knownObjectId !== undefined) {
+            return `circular:${knownObjectId}`;
+          }
+
+          const objectId = nextSeenObjectId;
+          nextSeenObjectId += 1;
+          seenObjects.set(value, objectId);
+
+          if (Array.isArray(value)) {
+            return `array:[${value.map((item) => serialize(item)).join(",")}]`;
+          }
+
+          const record = value as Record<string, unknown>;
+          const keys = Object.keys(record).sort();
+          return `object:{${keys
+            .map((key) => `${JSON.stringify(key)}:${serialize(record[key])}`)
+            .join(",")}}`;
+        }
+        default:
+          return `unknown:${String(value)}`;
+      }
+    };
+
+    return serialize(payload);
+  };
+
+  const getAgentEventCollisionFallback = (event: unknown): string => {
+    if (
+      event !== null &&
+      (typeof event === "object" || typeof event === "function")
+    ) {
+      const entity = event as object;
+      const existing = agentEventCollisionFallbackIds.get(entity);
+      if (existing) {
+        return existing;
+      }
+
+      nextAgentEventCollisionFallbackId += 1;
+      const assigned = `ref-${nextAgentEventCollisionFallbackId}`;
+      agentEventCollisionFallbackIds.set(entity, assigned);
+      return assigned;
+    }
+
+    return "primitive-event";
+  };
+
+  const getAgentEventBaseKey = (event: {
+    event: string;
+    ts?: string | number | null;
+    data?: unknown;
+  }): string => {
+    const timestampPart = String(event.ts ?? "");
+    const eventPart = event.event;
+    const payloadPart = getPayloadSignature(event.data);
+    return `${timestampPart}:${eventPart}:${payloadPart}`;
+  };
+
+  const visibleAgentEvents = createMemo(() => {
+    const events = agentEvents();
+    const startIndex = Math.max(0, events.length - agentEventVisibleCount());
+    const visibleEvents = events.slice(startIndex);
+    const nextPayloadCache = new Map<string, AgentEventPayloadCacheEntry>();
+    const keyCounts = new Map<string, number>();
+
+    const rows = visibleEvents.map((event) => {
+      const baseKey = getAgentEventBaseKey(event);
+      const seenCount = (keyCounts.get(baseKey) ?? 0) + 1;
+      keyCounts.set(baseKey, seenCount);
+      const key =
+        seenCount === 1
+          ? baseKey
+          : `${baseKey}#${getAgentEventCollisionFallback(event)}:${seenCount}`;
+      const payloadSignature = getPayloadSignature(event.data);
+      const cached = agentEventPayloadCache.get(key);
+
+      let formattedPayload: string;
+      if (
+        cached &&
+        cached.payloadRef === event.data &&
+        cached.payloadSignature === payloadSignature
+      ) {
+        formattedPayload = cached.formatted;
+        nextPayloadCache.set(key, cached);
+      } else {
+        formattedPayload = formatAgentPayload(event.data);
+        nextPayloadCache.set(key, {
+          payloadRef: event.data,
+          payloadSignature,
+          formatted: formattedPayload,
+        });
+      }
+
+      return {
+        key,
+        ts: event.ts ?? null,
+        event: event.event,
+        payload: formattedPayload,
+      };
+    });
+
+    agentEventPayloadCache.clear();
+    nextPayloadCache.forEach((value, key) => {
+      agentEventPayloadCache.set(key, value);
+    });
+
+    return rows;
+  });
+
   createEffect(() => {
     const diffActive = activeTab() === "diff";
     model.setIsDiffTabActive(diffActive);
+  });
+
+  createEffect(() => {
+    if (agentEvents().length === 0) {
+      setAgentEventVisibleCount(AGENT_EVENT_WINDOW_CHUNK);
+    }
   });
 
   createEffect(() => {
@@ -1422,7 +812,7 @@ const RunDetailScreen: Component = () => {
                           </p>
                         </Show>
                         <Show
-                          when={transcript().length > 0}
+                          when={transcriptMessageOrder().length > 0}
                           fallback={
                             <p class="project-placeholder-text">
                               {model.agent.state() === "starting"
@@ -1431,294 +821,59 @@ const RunDetailScreen: Component = () => {
                             </p>
                           }
                         >
-                          <For each={transcript()}>
-                            {(entry) => (
-                              <article class="run-detail-message">
-                                <header>
-                                  <strong>{entry.actor}</strong>
-                                  <span>
-                                    {formatAgentTimestamp(entry.time)}
-                                  </span>
-                                </header>
-                                <Show when={entry.stepMeta}>
-                                  {(meta) => (
-                                    <dl class="run-detail-step-meta">
-                                      <Show when={meta().snapshotHash}>
-                                        <div>
-                                          <dt>Snapshot</dt>
-                                          <dd>{meta().snapshotHash}</dd>
-                                        </div>
-                                      </Show>
-                                      <Show when={meta().reason}>
-                                        <div>
-                                          <dt>Reason</dt>
-                                          <dd>{meta().reason}</dd>
-                                        </div>
-                                      </Show>
-                                      <Show when={meta().tokens}>
-                                        <div>
-                                          <dt>Tokens</dt>
-                                          <dd>{meta().tokens}</dd>
-                                        </div>
-                                      </Show>
-                                      <Show when={meta().cost}>
-                                        <div>
-                                          <dt>Cost</dt>
-                                          <dd>{meta().cost}</dd>
-                                        </div>
-                                      </Show>
-                                    </dl>
+                          <Show when={transcriptHiddenMessageCount() > 0}>
+                            <button
+                              type="button"
+                              class="run-detail-load-older-button"
+                              onClick={() => {
+                                const container = transcriptScrollRef;
+                                const previousScrollHeight =
+                                  container?.scrollHeight ?? null;
+                                setTranscriptVisibleCount(
+                                  (current) =>
+                                    current + TRANSCRIPT_WINDOW_CHUNK,
+                                );
+                                if (
+                                  !container ||
+                                  previousScrollHeight === null
+                                ) {
+                                  return;
+                                }
+
+                                requestAnimationFrame(() => {
+                                  const nextScrollHeight =
+                                    container.scrollHeight;
+                                  const offset =
+                                    nextScrollHeight - previousScrollHeight;
+                                  if (offset > 0) {
+                                    markTranscriptProgrammaticScroll();
+                                    container.scrollTop += offset;
+                                  }
+                                });
+                              }}
+                            >
+                              {`Load older (${transcriptHiddenMessageCount()} hidden)`}
+                            </button>
+                          </Show>
+                          <For each={visibleTranscriptMessageIds()}>
+                            {(messageId) => {
+                              const message = createMemo(
+                                () =>
+                                  model.agent.store().messagesById[messageId],
+                              );
+
+                              return (
+                                <Show when={message()}>
+                                  {(messageValue) => (
+                                    <RunConversationMessage
+                                      message={messageValue()}
+                                      formatTimestamp={formatAgentTimestamp}
+                                      formatPayload={formatAgentPayload}
+                                    />
                                   )}
                                 </Show>
-                                <Show
-                                  when={entry.parts.length > 0}
-                                  fallback={
-                                    <p class="project-placeholder-text">
-                                      No message parts yet.
-                                    </p>
-                                  }
-                                >
-                                  <div class="run-detail-message-parts">
-                                    <For each={entry.parts}>
-                                      {(part) => (
-                                        <Show when={part.kind !== "patch"}>
-                                          <>
-                                            <Show when={part.kind === "text"}>
-                                              <MarkdownContent
-                                                content={
-                                                  part.kind === "text"
-                                                    ? part.text
-                                                    : ""
-                                                }
-                                                class="run-detail-part run-detail-part--text"
-                                              />
-                                            </Show>
-
-                                            <Show
-                                              when={part.kind === "reasoning"}
-                                            >
-                                              <details
-                                                class="run-detail-part run-detail-part--reasoning"
-                                                open
-                                              >
-                                                <summary>Reasoning</summary>
-                                                <MarkdownContent
-                                                  content={
-                                                    part.kind === "reasoning"
-                                                      ? part.text
-                                                      : ""
-                                                  }
-                                                />
-                                              </details>
-                                            </Show>
-
-                                            <Show when={part.kind === "tool"}>
-                                              {(() => {
-                                                const toolPart =
-                                                  part as UiToolPart;
-                                                const toolType =
-                                                  getToolType(toolPart);
-
-                                                if (toolType === "glob") {
-                                                  return (
-                                                    <div class="run-detail-part run-detail-part--tool">
-                                                      <p class="run-detail-tool-summary-line">
-                                                        {getGlobSummary(
-                                                          toolPart,
-                                                        )}
-                                                      </p>
-                                                    </div>
-                                                  );
-                                                }
-
-                                                if (toolType === "read") {
-                                                  const readSummary =
-                                                    getReadSummary(toolPart);
-
-                                                  return (
-                                                    <div class="run-detail-part run-detail-part--tool">
-                                                      <p class="run-detail-tool-summary-line">
-                                                        {`read: ${readSummary.title}`}
-                                                      </p>
-                                                      <Show
-                                                        when={readSummary.path}
-                                                      >
-                                                        <p class="run-detail-tool-subtitle">
-                                                          {readSummary.path ||
-                                                            ""}
-                                                        </p>
-                                                      </Show>
-                                                    </div>
-                                                  );
-                                                }
-
-                                                if (toolType === "bash") {
-                                                  const bashSummary =
-                                                    getBashSummary(toolPart);
-
-                                                  return (
-                                                    <div class="run-detail-part run-detail-part--tool run-detail-part--tool-bash">
-                                                      <p class="run-detail-tool-summary-line">
-                                                        {`bash: ${bashSummary.description}`}
-                                                      </p>
-                                                      <p class="run-detail-tool-shell-command">
-                                                        {`$ ${bashSummary.command}`}
-                                                      </p>
-                                                      <pre class="run-detail-tool-shell-output">
-                                                        {bashSummary.output}
-                                                      </pre>
-                                                    </div>
-                                                  );
-                                                }
-
-                                                if (toolType === "todowrite") {
-                                                  const todoLines =
-                                                    getTodoWriteSummary(
-                                                      toolPart,
-                                                    );
-
-                                                  return (
-                                                    <div class="run-detail-part run-detail-part--tool">
-                                                      <p class="run-detail-tool-summary-line">
-                                                        TODO
-                                                      </p>
-                                                      <For each={todoLines}>
-                                                        {(line) => (
-                                                          <p class="run-detail-tool-summary-line run-detail-tool-summary-line--todo-item">
-                                                            {line}
-                                                          </p>
-                                                        )}
-                                                      </For>
-                                                    </div>
-                                                  );
-                                                }
-
-                                                if (isQueryToolPart(toolPart)) {
-                                                  const queryToolLabel =
-                                                    getQueryToolLabel(toolPart);
-                                                  const hasQuery =
-                                                    hasInputQueryString(
-                                                      toolPart,
-                                                    );
-                                                  const urlSummary = hasQuery
-                                                    ? null
-                                                    : getInputUrlString(
-                                                        toolPart,
-                                                      );
-                                                  const querySummary =
-                                                    getQueryToolSummary(
-                                                      toolPart,
-                                                    );
-                                                  const summaryLine = urlSummary
-                                                    ? `${queryToolLabel}: fetching ${urlSummary}`
-                                                    : `${queryToolLabel}: ${querySummary}`;
-
-                                                  return (
-                                                    <div class="run-detail-part run-detail-part--tool">
-                                                      <p class="run-detail-tool-summary-line">
-                                                        {summaryLine}
-                                                      </p>
-                                                    </div>
-                                                  );
-                                                }
-
-                                                const fields =
-                                                  getToolFieldEntries(toolPart);
-
-                                                return (
-                                                  <div class="run-detail-part run-detail-part--tool">
-                                                    <div class="run-detail-part-tool-header">
-                                                      <span>
-                                                        {toolPart.toolName ||
-                                                          "tool"}
-                                                      </span>
-                                                      <span class="run-detail-part-tool-status">
-                                                        {toolPart.status ||
-                                                          "pending"}
-                                                      </span>
-                                                    </div>
-                                                    <Show
-                                                      when={fields.length > 0}
-                                                    >
-                                                      <dl class="run-detail-tool-fields">
-                                                        <For each={fields}>
-                                                          {(field) => {
-                                                            const preferredText =
-                                                              extractPreferredToolText(
-                                                                field.value,
-                                                              );
-                                                            const isMarkdownText =
-                                                              typeof field.value ===
-                                                                "string" ||
-                                                              preferredText !==
-                                                                null;
-
-                                                            return (
-                                                              <div class="run-detail-tool-field">
-                                                                <dt>
-                                                                  {field.label}
-                                                                </dt>
-                                                                <dd>
-                                                                  <Show
-                                                                    when={
-                                                                      isMarkdownText
-                                                                    }
-                                                                    fallback={
-                                                                      <pre class="run-detail-tool-field-json">
-                                                                        {formatAgentPayload(
-                                                                          field.value,
-                                                                        )}
-                                                                      </pre>
-                                                                    }
-                                                                  >
-                                                                    <MarkdownContent
-                                                                      content={
-                                                                        typeof field.value ===
-                                                                        "string"
-                                                                          ? sanitizeInlineText(
-                                                                              field.value,
-                                                                            )
-                                                                          : preferredText ||
-                                                                            ""
-                                                                      }
-                                                                      class="run-detail-tool-field-markdown"
-                                                                    />
-                                                                  </Show>
-                                                                </dd>
-                                                              </div>
-                                                            );
-                                                          }}
-                                                        </For>
-                                                      </dl>
-                                                    </Show>
-                                                  </div>
-                                                );
-                                              })()}
-                                            </Show>
-
-                                            <Show
-                                              when={
-                                                part.kind === "file" ||
-                                                part.kind === "unknown"
-                                              }
-                                            >
-                                              <div class="run-detail-part run-detail-part--fallback">
-                                                <p class="run-detail-part-fallback-label">
-                                                  {getPartTypeLabel(part)}
-                                                </p>
-                                                <pre>
-                                                  {getPartSnippet(part)}
-                                                </pre>
-                                              </div>
-                                            </Show>
-                                          </>
-                                        </Show>
-                                      )}
-                                    </For>
-                                  </div>
-                                </Show>
-                              </article>
-                            )}
+                              );
+                            }}
                           </For>
                           <div ref={transcriptBottomRef} aria-hidden="true" />
                         </Show>
@@ -1907,6 +1062,43 @@ const RunDetailScreen: Component = () => {
                                         </p>
                                       }
                                     >
+                                      <Show when={agentEventHiddenCount() > 0}>
+                                        <button
+                                          type="button"
+                                          class="run-detail-load-older-button"
+                                          onClick={() => {
+                                            const container = agentEventLogRef;
+                                            const previousScrollHeight =
+                                              container?.scrollHeight ?? null;
+                                            setAgentEventVisibleCount(
+                                              (current) =>
+                                                current +
+                                                AGENT_EVENT_WINDOW_CHUNK,
+                                            );
+
+                                            if (
+                                              !container ||
+                                              previousScrollHeight === null
+                                            ) {
+                                              return;
+                                            }
+
+                                            requestAnimationFrame(() => {
+                                              const nextScrollHeight =
+                                                container.scrollHeight;
+                                              const offset =
+                                                nextScrollHeight -
+                                                previousScrollHeight;
+                                              if (offset > 0) {
+                                                markAgentEventLogProgrammaticScroll();
+                                                container.scrollTop += offset;
+                                              }
+                                            });
+                                          }}
+                                        >
+                                          {`Load older (${agentEventHiddenCount()} hidden)`}
+                                        </button>
+                                      </Show>
                                       <div
                                         class="run-agent-event-log"
                                         ref={agentEventLogRef}
@@ -1921,7 +1113,7 @@ const RunDetailScreen: Component = () => {
                                           );
                                         }}
                                       >
-                                        <For each={agentEvents()}>
+                                        <For each={visibleAgentEvents()}>
                                           {(item) => (
                                             <article class="run-agent-event-item">
                                               <header>
@@ -1932,9 +1124,7 @@ const RunDetailScreen: Component = () => {
                                                 </time>
                                                 <strong>{item.event}</strong>
                                               </header>
-                                              <pre>
-                                                {formatAgentPayload(item.data)}
-                                              </pre>
+                                              <pre>{item.payload}</pre>
                                             </article>
                                           )}
                                         </For>
