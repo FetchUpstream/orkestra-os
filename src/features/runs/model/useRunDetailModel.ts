@@ -2,11 +2,8 @@ import { useParams } from "@solidjs/router";
 import { listen } from "@tauri-apps/api/event";
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
-  ensureRunOpenCode,
+  bootstrapRunOpenCode,
   appendCappedHistory,
-  getBufferedRunOpenCodeEvents,
-  getRunOpenCodeSessionMessages,
-  getRunOpenCodeSessionTodos,
   getRun,
   getRunDiffFile,
   killRunTerminal,
@@ -17,7 +14,7 @@ import {
   submitRunOpenCodePrompt,
   subscribeRunOpenCodeEvents,
   unsubscribeRunOpenCodeEvents,
-  type EnsureRunOpenCodeResult,
+  type BootstrapRunOpenCodeResult,
   type Run,
   type RunDiffFile,
   type RunDiffFilePayload,
@@ -66,6 +63,14 @@ export const useRunDetailModel = () => {
     createEmptyAgentStore(null),
   );
   const [agentError, setAgentError] = createSignal("");
+  const [agentReadinessPhase, setAgentReadinessPhase] = createSignal<
+    | "warming_backend"
+    | "creating_session"
+    | "ready"
+    | "reconnecting"
+    | "submit_failed"
+    | null
+  >(null);
   const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(false);
   const [submitError, setSubmitError] = createSignal("");
   let activeRunRequestVersion = 0;
@@ -204,16 +209,21 @@ export const useRunDetailModel = () => {
     return "";
   };
 
-  const normalizeEnsureAgentState = (
-    result: EnsureRunOpenCodeResult,
-  ): RunOpenCodeAgentState => {
-    if (result.state === "unsupported") return "unsupported";
-    if (result.state === "error") return "error";
-    if (result.state === "running") return "running";
-    if (result.state === "starting") return "starting";
-    if (result.state === "idle") return "idle";
-    if (result.supported === false) return "unsupported";
-    return "running";
+  const normalizeReadinessPhase = (
+    result: BootstrapRunOpenCodeResult,
+  ): "warming_backend" | "creating_session" | "ready" | "reconnecting" => {
+    const phase = result.readyPhase?.trim().toLowerCase() ?? "";
+    if (phase.includes("reconnect")) return "reconnecting";
+    if (phase.includes("create") || phase.includes("session")) {
+      return "creating_session";
+    }
+    if (phase.includes("warm") || phase.includes("boot")) {
+      return "warming_backend";
+    }
+    if (phase.includes("ready") || result.streamConnected) return "ready";
+    if (result.state === "starting") return "creating_session";
+    if (result.state === "running") return "ready";
+    return "warming_backend";
   };
 
   const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -425,10 +435,7 @@ export const useRunDetailModel = () => {
     subscriptionVersion: number,
     baseEvents: RunOpenCodeEvent[] = [],
   ): Promise<void> => {
-    const [messagesSnapshot, todosSnapshot] = await Promise.all([
-      getRunOpenCodeSessionMessages(runId),
-      getRunOpenCodeSessionTodos(runId),
-    ]);
+    const bootstrap = await bootstrapRunOpenCode(runId);
 
     if (
       requestVersion !== activeAgentRequestVersion ||
@@ -439,22 +446,46 @@ export const useRunDetailModel = () => {
       return;
     }
 
+    if (bootstrap.state === "unsupported") {
+      setAgentState("unsupported");
+      setAgentError("");
+      return;
+    }
+
+    if (bootstrap.state === "error") {
+      setAgentState("error");
+      setAgentError(
+        bootstrap.reason?.trim() || "Failed to initialize agent stream.",
+      );
+      return;
+    }
+
+    const replaySource = appendCappedHistory(
+      bootstrap.bufferedEvents,
+      baseEvents,
+    );
+    setAgentEvents((current) => appendCappedHistory(current, replaySource));
+    setAgentReadinessPhase(normalizeReadinessPhase(bootstrap));
+    setAgentState(bootstrap.state);
+    setAgentError("");
+
     const sessionId =
-      extractSessionIdFromMessages(messagesSnapshot.messages) ||
-      extractSessionIdFromTodos(todosSnapshot.todos) ||
-      extractSessionIdFromEvents(baseEvents) ||
+      bootstrap.sessionId?.trim() ||
+      extractSessionIdFromMessages(bootstrap.messages) ||
+      extractSessionIdFromTodos(bootstrap.todos) ||
+      extractSessionIdFromEvents(replaySource) ||
       agentStore().sessionId;
 
     setAgentStore((current) => {
       const hydrated = hydrateAgentStore({
         sessionId,
-        messages: messagesSnapshot.messages,
-        todos: todosSnapshot.todos,
+        messages: bootstrap.messages,
+        todos: bootstrap.todos,
       });
 
       const replayEvents: OpenCodeBusEvent[] =
-        baseEvents.length > 0
-          ? baseEvents.map(toOpenCodeBusEvent)
+        replaySource.length > 0
+          ? replaySource.map(toOpenCodeBusEvent)
           : current.rawEvents;
 
       return replayEvents.reduce((nextState, item) => {
@@ -756,10 +787,11 @@ export const useRunDetailModel = () => {
 
     const requestVersion = activeAgentRequestVersion;
     setAgentState("starting");
+    setAgentReadinessPhase("warming_backend");
     setAgentError("");
 
     try {
-      const result = await ensureRunOpenCode(normalizedRunId);
+      const result = await bootstrapRunOpenCode(normalizedRunId);
       if (
         requestVersion !== activeAgentRequestVersion ||
         params.runId !== normalizedRunId
@@ -767,20 +799,49 @@ export const useRunDetailModel = () => {
         return;
       }
 
-      const nextState = normalizeEnsureAgentState(result);
+      const nextState = result.state;
       setAgentState(nextState);
+      setAgentReadinessPhase(normalizeReadinessPhase(result));
 
-      const backendError = result.error?.trim();
       if (nextState === "error") {
-        setAgentError(backendError || "Failed to initialize agent stream.");
+        setAgentError(
+          result.reason?.trim() || "Failed to initialize agent stream.",
+        );
         return;
       }
 
-      await hydrateAgentSnapshot(
-        normalizedRunId,
-        requestVersion,
-        activeAgentSubscriptionVersion,
-      );
+      if (nextState === "unsupported") {
+        setAgentError("");
+        return;
+      }
+
+      const replaySource = result.bufferedEvents;
+      setAgentEvents((current) => appendCappedHistory(current, replaySource));
+
+      const sessionId =
+        result.sessionId?.trim() ||
+        extractSessionIdFromMessages(result.messages) ||
+        extractSessionIdFromTodos(result.todos) ||
+        extractSessionIdFromEvents(replaySource) ||
+        agentStore().sessionId;
+
+      setAgentStore((current) => {
+        const hydrated = hydrateAgentStore({
+          sessionId,
+          messages: result.messages,
+          todos: result.todos,
+        });
+
+        const replayEvents: OpenCodeBusEvent[] =
+          replaySource.length > 0
+            ? replaySource.map(toOpenCodeBusEvent)
+            : current.rawEvents;
+
+        return replayEvents.reduce((nextStateValue, item) => {
+          return reduceOpenCodeEvent(nextStateValue, item);
+        }, hydrated);
+      });
+
       if (
         requestVersion !== activeAgentRequestVersion ||
         params.runId !== normalizedRunId
@@ -799,11 +860,13 @@ export const useRunDetailModel = () => {
 
       if (isAgentUnsupportedError(ensureError)) {
         setAgentState("unsupported");
+        setAgentReadinessPhase(null);
         setAgentError("");
         return;
       }
 
       setAgentState("error");
+      setAgentReadinessPhase("warming_backend");
       const backendError = getErrorMessage(ensureError);
       setAgentError(backendError || "Failed to initialize agent stream.");
     }
@@ -968,56 +1031,10 @@ export const useRunDetailModel = () => {
       }
     }
     setAgentState("running");
+    setAgentReadinessPhase("reconnecting");
     setAgentError("");
 
     const subscriberId = `run-detail:${normalizedRunId}:${crypto.randomUUID()}`;
-
-    try {
-      const bufferedEvents =
-        await getBufferedRunOpenCodeEvents(normalizedRunId);
-      if (
-        requestVersion !== activeAgentRequestVersion ||
-        subscriptionVersion !== activeAgentSubscriptionVersion ||
-        !isAgentUiSubscribed ||
-        params.runId !== normalizedRunId
-      ) {
-        return;
-      }
-      setAgentEvents((current) => appendCappedHistory(current, bufferedEvents));
-      let shouldHydrateSnapshot = false;
-      setAgentStore((current) => {
-        return bufferedEvents.reduce((nextState, event) => {
-          const busEvent = toOpenCodeBusEvent(event);
-          if (
-            busEvent.type === "server.connected" ||
-            busEvent.type === "stream.resync_needed"
-          ) {
-            shouldHydrateSnapshot = true;
-          }
-          return reduceOpenCodeEvent(nextState, busEvent);
-        }, current);
-      });
-
-      if (shouldHydrateSnapshot) {
-        requestAgentSnapshotHydrate(
-          normalizedRunId,
-          requestVersion,
-          subscriptionVersion,
-          bufferedEvents,
-        );
-      }
-    } catch (submitError) {
-      if (
-        requestVersion !== activeAgentRequestVersion ||
-        subscriptionVersion !== activeAgentSubscriptionVersion ||
-        params.runId !== normalizedRunId
-      ) {
-        return;
-      }
-      setAgentState("error");
-      setAgentError("Failed to load buffered agent events.");
-      return;
-    }
 
     try {
       const removeForwarder = await subscribeRunOpenCodeEvents({
@@ -1063,6 +1080,7 @@ export const useRunDetailModel = () => {
       activeAgentSubscriberRunId = normalizedRunId;
       removeAgentEventForwarder = removeForwarder;
       setAgentState("running");
+      setAgentReadinessPhase("ready");
     } catch {
       if (
         requestVersion !== activeAgentRequestVersion ||
@@ -1109,9 +1127,13 @@ export const useRunDetailModel = () => {
 
       if (response.status === "accepted") {
         setSubmitError("");
+        if (agentState() !== "unsupported" && agentState() !== "error") {
+          setAgentReadinessPhase("ready");
+        }
         return true;
       }
 
+      setAgentReadinessPhase("submit_failed");
       setSubmitError(
         response.reason?.trim() ||
           "Prompt submission is not supported for this run.",
@@ -1126,6 +1148,7 @@ export const useRunDetailModel = () => {
         return false;
       }
 
+      setAgentReadinessPhase("submit_failed");
       setSubmitError(
         getErrorMessage(submitError) || "Failed to submit prompt.",
       );
@@ -1149,6 +1172,7 @@ export const useRunDetailModel = () => {
     setAgentEvents([]);
     setAgentStore(createEmptyAgentStore(null));
     setAgentError("");
+    setAgentReadinessPhase(null);
     activePromptSubmitVersion += 1;
     setIsSubmittingPrompt(false);
     setSubmitError("");
@@ -1551,6 +1575,7 @@ export const useRunDetailModel = () => {
     },
     agent: {
       state: agentState,
+      readinessPhase: agentReadinessPhase,
       events: agentEvents,
       store: agentStore,
       error: agentError,
