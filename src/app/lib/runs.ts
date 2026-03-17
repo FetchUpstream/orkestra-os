@@ -97,6 +97,7 @@ export type EnsureRunOpenCodeResult = {
 
 export type SubscribeRunOpenCodeEventsParams = {
   runId: string;
+  subscriberId?: string;
   onOutput?: (event: RunOpenCodeEvent) => void;
   onOutputChannel?: (event: RunOpenCodeEvent) => void;
 };
@@ -122,6 +123,31 @@ export type RunOpenCodeSessionMessagesResult = {
 export type RunOpenCodeSessionTodosResult = {
   todos: unknown[];
   raw: unknown;
+};
+
+export const RUN_OPENCODE_EVENT_HISTORY_LIMIT = 500;
+
+export const appendCappedHistory = <T>(
+  current: T[],
+  items: T | T[],
+  maxSize = RUN_OPENCODE_EVENT_HISTORY_LIMIT,
+): T[] => {
+  const incoming = Array.isArray(items) ? items : [items];
+  if (incoming.length === 0) {
+    return current;
+  }
+
+  const cappedMaxSize = Math.max(1, Math.floor(maxSize));
+  if (incoming.length >= cappedMaxSize) {
+    return incoming.slice(incoming.length - cappedMaxSize);
+  }
+
+  const overflow = current.length + incoming.length - cappedMaxSize;
+  if (overflow <= 0) {
+    return [...current, ...incoming];
+  }
+
+  return [...current.slice(overflow), ...incoming];
 };
 
 export type OpenRunTerminalParams = {
@@ -578,6 +604,7 @@ export const getRunOpenCodeSessionTodos = async (
 
 export const subscribeRunOpenCodeEvents = async ({
   runId,
+  subscriberId,
   onOutput,
   onOutputChannel,
 }: SubscribeRunOpenCodeEventsParams): Promise<() => void> => {
@@ -593,12 +620,27 @@ export const subscribeRunOpenCodeEvents = async ({
 
   await invoke("subscribe_run_opencode_events", {
     runId,
+    subscriberId,
     onOutput: outputChannel,
   });
 
   return () => {
     outputChannel.onmessage = () => {};
   };
+};
+
+export const unsubscribeRunOpenCodeEvents = async (
+  runId: string,
+  subscriberId?: string,
+): Promise<void> => {
+  if (!subscriberId) {
+    return;
+  }
+
+  await invoke("unsubscribe_run_opencode_events", {
+    runId,
+    subscriberId,
+  });
 };
 
 export const submitRunOpenCodePrompt = async ({

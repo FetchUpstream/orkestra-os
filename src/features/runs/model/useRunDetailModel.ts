@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
   ensureRunOpenCode,
+  appendCappedHistory,
   getBufferedRunOpenCodeEvents,
   getRunOpenCodeSessionMessages,
   getRunOpenCodeSessionTodos,
@@ -15,6 +16,7 @@ import {
   setRunDiffWatch,
   submitRunOpenCodePrompt,
   subscribeRunOpenCodeEvents,
+  unsubscribeRunOpenCodeEvents,
   type EnsureRunOpenCodeResult,
   type Run,
   type RunDiffFile,
@@ -74,7 +76,12 @@ export const useRunDetailModel = () => {
   let activeAgentSubscriptionVersion = 0;
   let activePromptSubmitVersion = 0;
   let isAgentUiSubscribed = false;
+  let activeAgentSubscriberId: string | null = null;
+  let activeAgentSubscriberRunId: string | null = null;
   let removeAgentEventForwarder: (() => void) | null = null;
+  let pendingAgentEvents: RunOpenCodeEvent[] = [];
+  let agentFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  let agentFlushFrameId: number | null = null;
   let terminalRunId: string | null = null;
   let terminalRouteInstanceId = crypto.randomUUID();
   let terminalFrameHandler: ((frame: RunTerminalFrame) => void) | null = null;
@@ -409,6 +416,7 @@ export const useRunDetailModel = () => {
   const hydrateAgentSnapshot = async (
     runId: string,
     requestVersion: number,
+    subscriptionVersion: number,
     baseEvents: RunOpenCodeEvent[] = [],
   ): Promise<void> => {
     const [messagesSnapshot, todosSnapshot] = await Promise.all([
@@ -418,6 +426,8 @@ export const useRunDetailModel = () => {
 
     if (
       requestVersion !== activeAgentRequestVersion ||
+      subscriptionVersion !== activeAgentSubscriptionVersion ||
+      !isAgentUiSubscribed ||
       params.runId !== runId
     ) {
       return;
@@ -636,7 +646,11 @@ export const useRunDetailModel = () => {
         return;
       }
 
-      await hydrateAgentSnapshot(normalizedRunId, requestVersion);
+      await hydrateAgentSnapshot(
+        normalizedRunId,
+        requestVersion,
+        activeAgentSubscriptionVersion,
+      );
       if (
         requestVersion !== activeAgentRequestVersion ||
         params.runId !== normalizedRunId
@@ -665,13 +679,117 @@ export const useRunDetailModel = () => {
     }
   };
 
-  const unsubscribeAgentEvents = (): void => {
+  const clearPendingAgentEventFlush = (): void => {
+    pendingAgentEvents = [];
+    if (
+      agentFlushFrameId !== null &&
+      typeof cancelAnimationFrame === "function"
+    ) {
+      cancelAnimationFrame(agentFlushFrameId);
+      agentFlushFrameId = null;
+    }
+    agentFlushFrameId = null;
+    if (agentFlushTimer) {
+      clearTimeout(agentFlushTimer);
+      agentFlushTimer = null;
+    }
+  };
+
+  const flushPendingAgentEvents = (
+    runId: string,
+    requestVersion: number,
+    subscriptionVersion: number,
+  ): void => {
+    agentFlushFrameId = null;
+    agentFlushTimer = null;
+    if (pendingAgentEvents.length === 0) {
+      return;
+    }
+
+    if (
+      requestVersion !== activeAgentRequestVersion ||
+      subscriptionVersion !== activeAgentSubscriptionVersion ||
+      !isAgentUiSubscribed ||
+      params.runId !== runId
+    ) {
+      pendingAgentEvents = [];
+      return;
+    }
+
+    const batch = pendingAgentEvents;
+    pendingAgentEvents = [];
+    let shouldHydrateSnapshot = false;
+
+    setAgentEvents((current) => appendCappedHistory(current, batch));
+    setAgentStore((current) => {
+      return batch.reduce((nextState, event) => {
+        const busEvent = toOpenCodeBusEvent(event);
+        if (busEvent.type === "server.connected") {
+          shouldHydrateSnapshot = true;
+        }
+        return reduceOpenCodeEvent(nextState, busEvent);
+      }, current);
+    });
+
+    if (shouldHydrateSnapshot) {
+      void hydrateAgentSnapshot(
+        runId,
+        requestVersion,
+        subscriptionVersion,
+        batch,
+      );
+    }
+  };
+
+  const schedulePendingAgentEventFlush = (
+    runId: string,
+    requestVersion: number,
+    subscriptionVersion: number,
+  ): void => {
+    if (agentFlushFrameId !== null || agentFlushTimer) {
+      return;
+    }
+
+    if (typeof requestAnimationFrame === "function") {
+      agentFlushFrameId = requestAnimationFrame(() => {
+        flushPendingAgentEvents(runId, requestVersion, subscriptionVersion);
+      });
+      return;
+    }
+
+    agentFlushTimer = setTimeout(() => {
+      flushPendingAgentEvents(runId, requestVersion, subscriptionVersion);
+    }, 16);
+  };
+
+  const unsubscribeAgentEvents = (runId?: string): void => {
     isAgentUiSubscribed = false;
     activeAgentSubscriptionVersion += 1;
+    clearPendingAgentEventFlush();
     if (removeAgentEventForwarder) {
       removeAgentEventForwarder();
       removeAgentEventForwarder = null;
     }
+
+    const normalizedRunId = runId?.trim();
+    const subscriberId = activeAgentSubscriberId?.trim();
+    const subscriberRunId = activeAgentSubscriberRunId?.trim();
+    activeAgentSubscriberId = null;
+    activeAgentSubscriberRunId = null;
+    const unsubscribeRunId = subscriberRunId || normalizedRunId;
+    if (!unsubscribeRunId) {
+      return;
+    }
+
+    if (!subscriberId) {
+      return;
+    }
+
+    void unsubscribeRunOpenCodeEvents(unsubscribeRunId, subscriberId).catch(
+      () => {
+        // Ignore unsubscribe failures to preserve prior cleanup behavior.
+      },
+    );
   };
 
   const subscribeAgentEvents = async (runId: string): Promise<void> => {
@@ -686,12 +804,28 @@ export const useRunDetailModel = () => {
 
     const requestVersion = activeAgentRequestVersion;
     const subscriptionVersion = ++activeAgentSubscriptionVersion;
+    clearPendingAgentEventFlush();
+    pendingAgentEvents = [];
+    const previousSubscriberId = activeAgentSubscriberId?.trim();
+    const previousSubscriberRunId = activeAgentSubscriberRunId?.trim();
+    activeAgentSubscriberId = null;
+    activeAgentSubscriberRunId = null;
     if (removeAgentEventForwarder) {
       removeAgentEventForwarder();
       removeAgentEventForwarder = null;
+      if (previousSubscriberId && previousSubscriberRunId) {
+        void unsubscribeRunOpenCodeEvents(
+          previousSubscriberRunId,
+          previousSubscriberId,
+        ).catch(() => {
+          // Ignore unsubscribe failures during re-subscribe.
+        });
+      }
     }
     setAgentState("running");
     setAgentError("");
+
+    const subscriberId = `run-detail:${normalizedRunId}:${crypto.randomUUID()}`;
 
     try {
       const bufferedEvents =
@@ -704,12 +838,26 @@ export const useRunDetailModel = () => {
       ) {
         return;
       }
-      setAgentEvents(bufferedEvents);
+      setAgentEvents((current) => appendCappedHistory(current, bufferedEvents));
+      let shouldHydrateSnapshot = false;
       setAgentStore((current) => {
         return bufferedEvents.reduce((nextState, event) => {
-          return reduceOpenCodeEvent(nextState, toOpenCodeBusEvent(event));
+          const busEvent = toOpenCodeBusEvent(event);
+          if (busEvent.type === "server.connected") {
+            shouldHydrateSnapshot = true;
+          }
+          return reduceOpenCodeEvent(nextState, busEvent);
         }, current);
       });
+
+      if (shouldHydrateSnapshot) {
+        void hydrateAgentSnapshot(
+          normalizedRunId,
+          requestVersion,
+          subscriptionVersion,
+          bufferedEvents,
+        );
+      }
     } catch (submitError) {
       if (
         requestVersion !== activeAgentRequestVersion ||
@@ -726,6 +874,7 @@ export const useRunDetailModel = () => {
     try {
       const removeForwarder = await subscribeRunOpenCodeEvents({
         runId: normalizedRunId,
+        subscriberId,
         onOutputChannel: (event) => {
           if (
             requestVersion !== activeAgentRequestVersion ||
@@ -736,13 +885,12 @@ export const useRunDetailModel = () => {
             return;
           }
 
-          setAgentEvents((current) => [...current, event]);
-          const busEvent = toOpenCodeBusEvent(event);
-          setAgentStore((current) => reduceOpenCodeEvent(current, busEvent));
-
-          if (busEvent.type === "server.connected") {
-            void hydrateAgentSnapshot(normalizedRunId, requestVersion);
-          }
+          pendingAgentEvents.push(event);
+          schedulePendingAgentEventFlush(
+            normalizedRunId,
+            requestVersion,
+            subscriptionVersion,
+          );
         },
       });
 
@@ -752,10 +900,18 @@ export const useRunDetailModel = () => {
         !isAgentUiSubscribed ||
         params.runId !== normalizedRunId
       ) {
+        clearPendingAgentEventFlush();
         removeForwarder();
+        void unsubscribeRunOpenCodeEvents(normalizedRunId, subscriberId).catch(
+          () => {
+            // Ignore unsubscribe failures for stale subscriptions.
+          },
+        );
         return;
       }
 
+      activeAgentSubscriberId = subscriberId;
+      activeAgentSubscriberRunId = normalizedRunId;
       removeAgentEventForwarder = removeForwarder;
       setAgentState("running");
     } catch {
@@ -839,6 +995,7 @@ export const useRunDetailModel = () => {
   createEffect(() => {
     const runId = params.runId;
     const requestVersion = ++activeAgentRequestVersion;
+    clearPendingAgentEventFlush();
     setAgentEvents([]);
     setAgentStore(createEmptyAgentStore(null));
     setAgentError("");
@@ -869,7 +1026,7 @@ export const useRunDetailModel = () => {
     })();
 
     onCleanup(() => {
-      unsubscribeAgentEvents();
+      unsubscribeAgentEvents(runId);
     });
   });
 

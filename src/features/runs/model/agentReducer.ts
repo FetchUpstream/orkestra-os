@@ -9,6 +9,7 @@ import {
   type UiQuestionRequest,
   type UiTodo,
 } from "./agentTypes";
+import { appendCappedHistory } from "../../../app/lib/runs";
 
 type HydrateInput = {
   sessionId: string | null;
@@ -262,7 +263,7 @@ const appendRawEvent = (
 ): AgentStore => {
   return {
     ...state,
-    rawEvents: [...state.rawEvents, event],
+    rawEvents: appendCappedHistory(state.rawEvents, event),
   };
 };
 
