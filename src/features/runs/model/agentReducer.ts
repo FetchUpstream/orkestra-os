@@ -7,6 +7,7 @@ import {
   type UiPart,
   type UiPermissionRequest,
   type UiQuestionRequest,
+  type UiStreamChunkNode,
   type UiTodo,
 } from "./agentTypes";
 import { appendCappedHistory } from "../../../app/lib/runs";
@@ -101,13 +102,48 @@ const normalizePart = (value: unknown): UiPart | null => {
   }
 
   const type = asString(value.type) ?? "unknown";
+  const explicitStreamingValue = pickRecordValue(
+    value,
+    "streaming",
+    "isStreaming",
+    "is_streaming",
+  );
+  const explicitDoneValue = pickRecordValue(
+    value,
+    "done",
+    "isDone",
+    "completed",
+    "isCompleted",
+    "final",
+    "isFinal",
+  );
+  const statusValue = asString(
+    pickRecordValue(value, "status") ??
+      (isRecord(value.state)
+        ? pickRecordValue(value.state, "status")
+        : undefined),
+  )?.toLowerCase();
+  const explicitStreaming =
+    typeof explicitStreamingValue === "boolean"
+      ? explicitStreamingValue
+      : typeof explicitDoneValue === "boolean"
+        ? !explicitDoneValue
+        : statusValue === "streaming" || statusValue === "in_progress"
+          ? true
+          : statusValue === "complete" ||
+              statusValue === "completed" ||
+              statusValue === "done" ||
+              statusValue === "final"
+            ? false
+            : undefined;
+
   if (type === "text") {
     return {
       kind: "text",
       id,
       type,
       text: asString(value.text) ?? "",
-      streaming: true,
+      streaming: explicitStreaming ?? false,
       metadata: value.metadata,
       raw: value,
     };
@@ -119,7 +155,7 @@ const normalizePart = (value: unknown): UiPart | null => {
       id,
       type,
       text: asString(value.text) ?? "",
-      streaming: true,
+      streaming: explicitStreaming ?? false,
       metadata: value.metadata,
       raw: value,
     };
@@ -196,6 +232,27 @@ const normalizePart = (value: unknown): UiPart | null => {
     rawType: type,
     raw: value,
   };
+};
+
+const materializeStreamText = (
+  baseText: string,
+  tail?: UiStreamChunkNode,
+): string => {
+  if (!tail) {
+    return baseText;
+  }
+  const deltas: string[] = [];
+  let cursor: UiStreamChunkNode | undefined = tail;
+  while (cursor) {
+    deltas.push(cursor.delta);
+    cursor = cursor.prev;
+  }
+  deltas.reverse();
+  return `${baseText}${deltas.join("")}`;
+};
+
+const toStreamRevision = (value: unknown): number => {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 };
 
 const normalizeTodos = (value: unknown): UiTodo[] => {
@@ -349,7 +406,7 @@ export const upsertMessage = (state: AgentStore, info: unknown): AgentStore => {
       ...state.messagesById,
       [messageId]: nextMessage,
     },
-    messageOrder: state.messageOrder.includes(messageId)
+    messageOrder: state.messagesById[messageId]
       ? state.messageOrder
       : [...state.messageOrder, messageId],
   };
@@ -418,29 +475,77 @@ export const upsertPart = (
         ? existingPart
         : undefined;
     const incomingText = asString(rawPart.text);
+    const hasIncomingTextSnapshot =
+      typeof incomingText === "string" && incomingText.length > 0;
+    const existingStreamBaseText =
+      typeof existingTextPart?.streamBaseText === "string"
+        ? existingTextPart.streamBaseText
+        : (existingTextPart?.text ?? normalizedPart.text);
+    const existingStreamTail = existingTextPart?.streamTail;
 
-    if (hasDelta) {
-      nextPart = {
-        ...normalizedPart,
-        text: `${existingTextPart?.text ?? normalizedPart.text}${delta}`,
-        streaming: true,
-      };
-    } else if (incomingText && incomingText.length > 0) {
+    if (hasIncomingTextSnapshot) {
+      const shouldStream = normalizedPart.streaming;
       nextPart = {
         ...normalizedPart,
         text: incomingText,
-        streaming: false,
+        streaming: shouldStream,
+        streamBaseText: shouldStream ? incomingText : undefined,
+        streamTail: shouldStream ? undefined : undefined,
+        streamText: undefined,
+        streamTextLength: shouldStream ? incomingText.length : undefined,
+        streamRevision: shouldStream ? 1 : undefined,
       };
-    } else if (existingTextPart?.text) {
+    } else if (hasDelta) {
+      const nextStreamTextLength =
+        typeof existingTextPart?.streamTextLength === "number"
+          ? existingTextPart.streamTextLength + delta.length
+          : existingStreamBaseText.length + delta.length;
+      const nextStreamRevision =
+        toStreamRevision(existingTextPart?.streamRevision) + 1;
       nextPart = {
         ...normalizedPart,
-        text: existingTextPart.text,
-        streaming: existingTextPart.streaming,
+        text: existingStreamBaseText,
+        streaming: true,
+        streamBaseText: existingStreamBaseText,
+        streamTail: {
+          delta,
+          prev: existingStreamTail,
+        },
+        streamText: undefined,
+        streamTextLength: nextStreamTextLength,
+        streamRevision: nextStreamRevision,
+      };
+    } else if (existingTextPart?.streamTail || existingTextPart?.streaming) {
+      const nextStreaming = normalizedPart.streaming;
+      const finalizedText = materializeStreamText(
+        existingStreamBaseText,
+        existingStreamTail,
+      );
+      nextPart = {
+        ...normalizedPart,
+        text: nextStreaming ? existingStreamBaseText : finalizedText,
+        streaming: nextStreaming,
+        streamBaseText: nextStreaming ? existingStreamBaseText : undefined,
+        streamTail: nextStreaming ? existingStreamTail : undefined,
+        streamText: undefined,
+        streamTextLength: nextStreaming
+          ? typeof existingTextPart?.streamTextLength === "number"
+            ? existingTextPart.streamTextLength
+            : finalizedText.length
+          : undefined,
+        streamRevision: nextStreaming
+          ? toStreamRevision(existingTextPart?.streamRevision)
+          : undefined,
       };
     } else {
       nextPart = {
         ...normalizedPart,
         streaming: false,
+        streamBaseText: undefined,
+        streamTail: undefined,
+        streamText: undefined,
+        streamTextLength: undefined,
+        streamRevision: undefined,
       };
     }
   }
@@ -451,7 +556,7 @@ export const upsertPart = (
       ...existingMessage.partsById,
       [partId]: nextPart,
     },
-    partOrder: existingMessage.partOrder.includes(partId)
+    partOrder: existingMessage.partsById[partId]
       ? existingMessage.partOrder
       : [...existingMessage.partOrder, partId],
   };
@@ -463,7 +568,7 @@ export const upsertPart = (
       ...state.messagesById,
       [messageId]: nextMessage,
     },
-    messageOrder: state.messageOrder.includes(messageId)
+    messageOrder: state.messagesById[messageId]
       ? state.messageOrder
       : [...state.messageOrder, messageId],
   };
@@ -661,11 +766,7 @@ export const reduceOpenCodeEvent = (
           messageID: messageId,
           sessionID: sessionId,
           type: partType,
-          text:
-            existingPart &&
-            (existingPart.kind === "text" || existingPart.kind === "reasoning")
-              ? existingPart.text
-              : "",
+          text: "",
         },
         delta,
       );

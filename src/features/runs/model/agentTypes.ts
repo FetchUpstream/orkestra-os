@@ -8,10 +8,21 @@ export type UiBasePart = {
   raw?: unknown;
 };
 
+export type UiStreamChunkNode = {
+  delta: string;
+  prev?: UiStreamChunkNode;
+};
+
 export type UiTextPart = UiBasePart & {
   kind: "text";
   text: string;
   streaming: boolean;
+  streamChunks?: string[];
+  streamBaseText?: string;
+  streamTail?: UiStreamChunkNode;
+  streamText?: string;
+  streamTextLength?: number;
+  streamRevision?: number;
   metadata?: unknown;
 };
 
@@ -19,6 +30,12 @@ export type UiReasoningPart = UiBasePart & {
   kind: "reasoning";
   text: string;
   streaming: boolean;
+  streamChunks?: string[];
+  streamBaseText?: string;
+  streamTail?: UiStreamChunkNode;
+  streamText?: string;
+  streamTextLength?: number;
+  streamRevision?: number;
   metadata?: unknown;
 };
 
