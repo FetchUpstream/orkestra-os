@@ -1,8 +1,10 @@
-import { For, type Component, type JSX } from "solid-js";
+import { For, createMemo, type Component, type JSX } from "solid-js";
 
 type MarkdownContentProps = {
   content: string;
   class?: string;
+  isStreaming?: boolean;
+  renderMode?: "markdown" | "plain";
 };
 
 type Block =
@@ -26,6 +28,8 @@ const OL_ITEM_RE = /^\d+\.\s+(.*)$/;
 const BLOCKQUOTE_RE = /^>\s?(.*)$/;
 const FENCE_RE = /^```([\w-]*)\s*$/;
 const INLINE_RE = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\(([^\s)]+)\))/g;
+const PARSE_CACHE_LIMIT = 200;
+const parseCache = new Map<string, Block[]>();
 
 const isSafeUrl = (value: string) => {
   const normalized = value.trim().toLowerCase();
@@ -173,6 +177,23 @@ const parseMarkdown = (content: string): Block[] => {
   return blocks;
 };
 
+const getParsedMarkdown = (content: string): Block[] => {
+  const cached = parseCache.get(content);
+  if (cached) return cached;
+
+  const parsed = parseMarkdown(content);
+  parseCache.set(content, parsed);
+
+  if (parseCache.size > PARSE_CACHE_LIMIT) {
+    const oldestKey = parseCache.keys().next().value;
+    if (oldestKey) {
+      parseCache.delete(oldestKey);
+    }
+  }
+
+  return parsed;
+};
+
 const renderInline = (text: string): JSX.Element[] => {
   const nodes = parseInline(text);
   return nodes.map((node) => {
@@ -191,11 +212,19 @@ const renderInline = (text: string): JSX.Element[] => {
 };
 
 const MarkdownContent: Component<MarkdownContentProps> = (props) => {
-  const blocks = () => parseMarkdown(props.content);
+  const usePlainText = createMemo(
+    () =>
+      props.renderMode === "plain" ||
+      (props.isStreaming === true && props.renderMode !== "markdown"),
+  );
+  const blocks = createMemo(() => {
+    if (usePlainText()) return [];
+    return getParsedMarkdown(props.content);
+  });
 
   return (
     <div class={`markdown-content ${props.class ?? ""}`.trim()}>
-      <For each={blocks()}>
+      <For each={usePlainText() ? [] : blocks()}>
         {(block) => {
           if (block.type === "heading") {
             if (block.level === 1) return <h1>{renderInline(block.text)}</h1>;
@@ -248,6 +277,10 @@ const MarkdownContent: Component<MarkdownContentProps> = (props) => {
             </pre>
           );
         }}
+      </For>
+
+      <For each={usePlainText() ? [props.content] : []}>
+        {(content) => <pre>{content}</pre>}
       </For>
     </div>
   );
