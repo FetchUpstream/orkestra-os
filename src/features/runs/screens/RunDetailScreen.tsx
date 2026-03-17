@@ -15,6 +15,14 @@ import RunTerminal from "../components/RunTerminal";
 import RunConversationMessage from "../components/RunConversationMessage";
 import type { UiPart } from "../model/agentTypes";
 
+type AgentReadinessPhase =
+  | "warming_backend"
+  | "creating_session"
+  | "ready"
+  | "reconnecting"
+  | "submit_failed"
+  | null;
+
 const RunDetailScreen: Component = () => {
   const model = useRunDetailModel();
   const [activeTab, setActiveTab] = createSignal("operations");
@@ -25,11 +33,51 @@ const RunDetailScreen: Component = () => {
     Record<string, boolean>
   >({});
   const [composerValue, setComposerValue] = createSignal("");
+  const [hasVisibleSubmitFailed, setHasVisibleSubmitFailed] =
+    createSignal(false);
+  const agentReadinessPhase = createMemo<AgentReadinessPhase>(() =>
+    model.agent.readinessPhase(),
+  );
+  const visibleAgentReadinessPhase = createMemo<AgentReadinessPhase>(() => {
+    if (hasVisibleSubmitFailed()) {
+      const phase = agentReadinessPhase();
+      if (phase !== "ready") {
+        return "submit_failed";
+      }
+    }
+
+    return agentReadinessPhase();
+  });
+  const agentReadinessCopy = createMemo<string | null>(() => {
+    switch (visibleAgentReadinessPhase()) {
+      case "warming_backend":
+        return "Warming backend.";
+      case "creating_session":
+        return "Creating session.";
+      case "ready":
+        return "Ready.";
+      case "reconnecting":
+        return "Reconnecting stream.";
+      case "submit_failed":
+        return "Submit failed.";
+      default:
+        return null;
+    }
+  });
+  const isComposerBlockedByReadiness = createMemo(() => {
+    const phase = visibleAgentReadinessPhase();
+    return (
+      phase === "warming_backend" ||
+      phase === "creating_session" ||
+      phase === "reconnecting"
+    );
+  });
   const isComposerEmpty = createMemo(() => composerValue().trim().length === 0);
   const isComposerSendDisabled = createMemo(
     () =>
       isComposerEmpty() ||
       model.agent.isSubmittingPrompt() ||
+      isComposerBlockedByReadiness() ||
       model.agent.state() === "unsupported",
   );
   const isInfoFocus = createMemo(() => layoutMode() === "info-focus");
@@ -479,6 +527,18 @@ const RunDetailScreen: Component = () => {
   });
 
   createEffect(() => {
+    const phase = agentReadinessPhase();
+    if (phase === "submit_failed") {
+      setHasVisibleSubmitFailed(true);
+      return;
+    }
+
+    if (phase === "ready") {
+      setHasVisibleSubmitFailed(false);
+    }
+  });
+
+  createEffect(() => {
     const diffActive = activeTab() === "diff";
     model.setIsDiffTabActive(diffActive);
   });
@@ -815,9 +875,10 @@ const RunDetailScreen: Component = () => {
                           when={transcriptMessageOrder().length > 0}
                           fallback={
                             <p class="project-placeholder-text">
-                              {model.agent.state() === "starting"
-                                ? "Starting agent stream."
-                                : "No agent messages yet."}
+                              {agentReadinessCopy() ||
+                                (model.agent.state() === "starting"
+                                  ? "Starting agent stream."
+                                  : "No agent messages yet.")}
                             </p>
                           }
                         >
@@ -913,6 +974,11 @@ const RunDetailScreen: Component = () => {
                           Send
                         </button>
                       </form>
+                      <Show when={agentReadinessCopy() !== null}>
+                        <p class="project-placeholder-text" aria-live="polite">
+                          {agentReadinessCopy()}
+                        </p>
+                      </Show>
                       <Show when={model.agent.submitError().length > 0}>
                         <p class="projects-error">
                           {model.agent.submitError()}
@@ -1056,9 +1122,10 @@ const RunDetailScreen: Component = () => {
                                       when={agentEvents().length > 0}
                                       fallback={
                                         <p class="project-placeholder-text">
-                                          {model.agent.state() === "starting"
-                                            ? "Starting agent stream."
-                                            : "No agent events yet."}
+                                          {agentReadinessCopy() ||
+                                            (model.agent.state() === "starting"
+                                              ? "Starting agent stream."
+                                              : "No agent events yet.")}
                                         </p>
                                       }
                                     >
