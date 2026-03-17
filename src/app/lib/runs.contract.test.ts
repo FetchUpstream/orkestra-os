@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  bootstrapRunOpenCode,
   createRun,
   getRun,
   listTaskRuns,
+  type BootstrapRunOpenCodeResult,
   type Run,
   type RunStatus,
 } from "./runs";
@@ -128,5 +130,99 @@ describe("runs contract", () => {
     expect(invokeMock).toHaveBeenCalledWith("get_run", { runId: "run-404" });
     expect(run.status).toBe("queued");
     expect(run.errorMessage).toBe("oops");
+  });
+
+  it("invokes bootstrap_run_opencode with runId argument", async () => {
+    invokeMock.mockResolvedValue({
+      state: "running",
+      bufferedEvents: [],
+      messages: [],
+      todos: [],
+      streamConnected: true,
+    });
+
+    await bootstrapRunOpenCode("run-1");
+
+    expect(invokeMock).toHaveBeenCalledWith("bootstrap_run_opencode", {
+      runId: "run-1",
+    });
+  });
+
+  it("normalizes bootstrap snake_case wrapped payload", async () => {
+    invokeMock.mockResolvedValue({
+      result: {
+        state: "starting",
+        reason: "warming",
+        buffered_events: [
+          {
+            run_id: "run-server",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            event: "stdout",
+            payload: { line: "hello" },
+          },
+        ],
+        messages: { items: [{ payload: { role: "assistant" } }] },
+        todos: { data: [{ payload: { text: "Do thing" } }] },
+        session_id: "session-1",
+        stream_connected: true,
+        ready_phase: "hydrated",
+      },
+    });
+
+    const result = await bootstrapRunOpenCode("run-1");
+
+    expect(result).toEqual({
+      state: "starting",
+      reason: "warming",
+      bufferedEvents: [
+        {
+          runId: "run-server",
+          ts: "2026-01-01T00:00:00.000Z",
+          event: "stdout",
+          data: { line: "hello" },
+        },
+      ],
+      messages: [{ role: "assistant" }],
+      todos: [{ text: "Do thing" }],
+      sessionId: "session-1",
+      streamConnected: true,
+      readyPhase: "hydrated",
+    } satisfies BootstrapRunOpenCodeResult);
+  });
+
+  it("normalizes bootstrap camelCase payload and fallback defaults", async () => {
+    invokeMock.mockResolvedValue({
+      state: "invalid",
+      bufferedEvents: [
+        {
+          ts: 123,
+          eventName: "status",
+          data: { ok: true },
+        },
+      ],
+      messages: [{ payload: { id: "msg-1" } }],
+      todos: [{ payload: { id: "todo-1" } }],
+      streamConnected: false,
+    });
+
+    const result = await bootstrapRunOpenCode("run-fallback");
+
+    expect(result).toEqual({
+      state: "idle",
+      reason: undefined,
+      bufferedEvents: [
+        {
+          runId: "run-fallback",
+          ts: 123,
+          event: "status",
+          data: { ok: true },
+        },
+      ],
+      messages: [{ id: "msg-1" }],
+      todos: [{ id: "todo-1" }],
+      sessionId: undefined,
+      streamConnected: false,
+      readyPhase: undefined,
+    } satisfies BootstrapRunOpenCodeResult);
   });
 });

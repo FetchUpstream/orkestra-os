@@ -125,6 +125,17 @@ export type RunOpenCodeSessionTodosResult = {
   raw: unknown;
 };
 
+export type BootstrapRunOpenCodeResult = {
+  state: RunOpenCodeAgentState;
+  reason?: string;
+  bufferedEvents: RunOpenCodeEvent[];
+  messages: unknown[];
+  todos: unknown[];
+  sessionId?: string;
+  streamConnected: boolean;
+  readyPhase?: string;
+};
+
 export const RUN_OPENCODE_EVENT_HISTORY_LIMIT = 500;
 
 export const appendCappedHistory = <T>(
@@ -243,6 +254,25 @@ type RunOpenCodeSnapshotResponse = {
   todos?: unknown;
   items?: unknown;
   data?: unknown;
+};
+
+type BootstrapRunOpenCodeResponse = {
+  state?: RunOpenCodeAgentState | string;
+  reason?: string | null;
+  buffered_events?: unknown;
+  bufferedEvents?: unknown;
+  messages?: unknown;
+  todos?: unknown;
+  session_id?: string | null;
+  sessionId?: string | null;
+  stream_connected?: boolean;
+  streamConnected?: boolean;
+  ready_phase?: string | null;
+  readyPhase?: string | null;
+  bootstrap?: unknown;
+  result?: unknown;
+  data?: unknown;
+  payload?: unknown;
 };
 
 type RunResponse = {
@@ -402,6 +432,61 @@ const unwrapSnapshotItems = (items: unknown[]): unknown[] => {
   return items.map(unwrapSnapshotPayload);
 };
 
+const toRunOpenCodeAgentState = (state: unknown): RunOpenCodeAgentState => {
+  if (
+    state === "idle" ||
+    state === "starting" ||
+    state === "running" ||
+    state === "unsupported" ||
+    state === "error"
+  ) {
+    return state;
+  }
+  return "idle";
+};
+
+const unwrapBootstrapRunOpenCodePayload = (
+  response: unknown,
+): BootstrapRunOpenCodeResponse => {
+  if (!response || typeof response !== "object") {
+    return {};
+  }
+
+  const record = response as BootstrapRunOpenCodeResponse;
+  const wrapped = pick(
+    record.bootstrap,
+    pick(record.result, pick(record.data, record.payload)),
+  );
+
+  if (wrapped && typeof wrapped === "object") {
+    return wrapped as BootstrapRunOpenCodeResponse;
+  }
+
+  return record;
+};
+
+const toBootstrapRunOpenCodeResult = (
+  runId: string,
+  response: unknown,
+): BootstrapRunOpenCodeResult => {
+  const record = unwrapBootstrapRunOpenCodePayload(response);
+  const rawBufferedEvents = pick(record.buffered_events, record.bufferedEvents);
+
+  return {
+    state: toRunOpenCodeAgentState(record.state),
+    reason: record.reason ?? undefined,
+    bufferedEvents: toUnknownArray(rawBufferedEvents).map((event) =>
+      toRunOpenCodeEvent(event as RunOpenCodeEventResponse, runId),
+    ),
+    messages: unwrapSnapshotItems(toUnknownArray(record.messages)),
+    todos: unwrapSnapshotItems(toUnknownArray(record.todos)),
+    sessionId: pick(record.session_id, record.sessionId) ?? undefined,
+    streamConnected:
+      pick(record.stream_connected, record.streamConnected) ?? false,
+    readyPhase: pick(record.ready_phase, record.readyPhase) ?? undefined,
+  };
+};
+
 export const createRun = async (taskId: string): Promise<Run> => {
   const response = await invoke<RunResponse>("create_run", { taskId });
   return toRun(response);
@@ -526,6 +611,15 @@ export const ensureRunOpenCode = async (
   return invoke<EnsureRunOpenCodeResult>("ensure_run_opencode", {
     runId,
   });
+};
+
+export const bootstrapRunOpenCode = async (
+  runId: string,
+): Promise<BootstrapRunOpenCodeResult> => {
+  const response = await invoke<unknown>("bootstrap_run_opencode", {
+    runId,
+  });
+  return toBootstrapRunOpenCodeResult(runId, response);
 };
 
 export const getBufferedRunOpenCodeEvents = async (
