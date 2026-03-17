@@ -21,7 +21,21 @@ use tokio::time::{Duration, Instant, sleep};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
-use tracing::info;
+use tracing::{error, info};
+
+fn format_error_chain<E>(err: &E) -> Option<String>
+where
+    E: std::error::Error + 'static,
+{
+    let mut chain = vec![err.to_string()];
+    let mut source = err.source();
+    while let Some(cause) = source {
+        chain.push(cause.to_string());
+        source = cause.source();
+    }
+
+    Some(chain.join(": "))
+}
 
 fn value_array_to_message_wrappers(value: serde_json::Value) -> Vec<RunOpenCodeSessionMessageDto> {
     value
@@ -347,6 +361,7 @@ impl RunsOpenCodeService {
         let client = create_opencode_client(Some(OpencodeClientConfig {
             base_url: server.url.clone(),
             directory: Some(worktree_path.to_string_lossy().to_string()),
+            timeout: Duration::from_secs(300),
             ..Default::default()
         }))
         .map_err(|err| AppError::validation(format!("failed to create OpenCode client: {err}")))?;
@@ -850,7 +865,6 @@ impl RunsOpenCodeService {
         let init_locks = self.init_locks.clone();
         tauri::async_runtime::spawn(async move {
             let mut reconnect_attempt: u32 = 0;
-            let mut disconnected_emitted = false;
 
             loop {
                 let mut stream = match client.event().subscribe(RequestOptions::default()).await {
@@ -868,23 +882,30 @@ impl RunsOpenCodeService {
                             );
                         }
                         reconnect_attempt = 0;
-                        disconnected_emitted = false;
                         stream
                     }
                     Err(err) => {
-                        if !disconnected_emitted {
-                            disconnected_emitted = true;
-                            RunsOpenCodeService::push_event(
-                                &event_tx,
-                                &buffered_events,
-                                "stream.disconnected",
-                                serde_json::json!({
-                                    "runId": run_id.as_str(),
-                                    "error": err.to_string(),
-                                })
-                                .to_string(),
-                            );
-                        }
+                        let error_chain = format_error_chain(&err);
+                        error!(
+                            target: "opencode.runtime",
+                            marker = "stream_subscribe_failed",
+                            run_id = run_id.as_str(),
+                            reconnect_attempt = reconnect_attempt,
+                            error_display = %err,
+                            error_debug = ?err,
+                            error_chain = error_chain.as_deref().unwrap_or("unavailable"),
+                            "OpenCode stream subscribe failed"
+                        );
+                        RunsOpenCodeService::push_event(
+                            &event_tx,
+                            &buffered_events,
+                            "stream.disconnected",
+                            serde_json::json!({
+                                "runId": run_id.as_str(),
+                                "error": "stream subscribe failed",
+                            })
+                            .to_string(),
+                        );
 
                         reconnect_attempt += 1;
                         if reconnect_attempt > STREAM_MAX_RECONNECT_ATTEMPTS {
@@ -923,25 +944,21 @@ impl RunsOpenCodeService {
                     }
                 };
 
-                let mut stream_failed = false;
                 while let Some(frame) = stream.next().await {
                     let sse = match frame {
                         Ok(event) => event,
                         Err(err) => {
-                            stream_failed = true;
-                            if !disconnected_emitted {
-                                disconnected_emitted = true;
-                                RunsOpenCodeService::push_event(
-                                    &event_tx,
-                                    &buffered_events,
-                                    "stream.disconnected",
-                                    serde_json::json!({
-                                        "runId": run_id.as_str(),
-                                        "error": err.to_string(),
-                                    })
-                                    .to_string(),
-                                );
-                            }
+                            let error_chain = format_error_chain(&err);
+                            error!(
+                                target: "opencode.runtime",
+                                marker = "stream_frame_decode_failed",
+                                run_id = run_id.as_str(),
+                                reconnect_attempt = reconnect_attempt,
+                                error_display = %err,
+                                error_debug = ?err,
+                                error_chain = error_chain.as_deref().unwrap_or("unavailable"),
+                                "OpenCode stream frame decode failed"
+                            );
                             break;
                         }
                     };
@@ -950,19 +967,16 @@ impl RunsOpenCodeService {
                     RunsOpenCodeService::push_event(&event_tx, &buffered_events, event_name, sse.data);
                 }
 
-                if !stream_failed && !disconnected_emitted {
-                    disconnected_emitted = true;
-                    RunsOpenCodeService::push_event(
-                        &event_tx,
-                        &buffered_events,
-                        "stream.disconnected",
-                        serde_json::json!({
-                            "runId": run_id.as_str(),
-                            "error": "event stream ended",
-                        })
-                        .to_string(),
-                    );
-                }
+                RunsOpenCodeService::push_event(
+                    &event_tx,
+                    &buffered_events,
+                    "stream.disconnected",
+                    serde_json::json!({
+                        "runId": run_id.as_str(),
+                        "error": "event stream ended",
+                    })
+                    .to_string(),
+                );
 
                 reconnect_attempt += 1;
                 if reconnect_attempt > STREAM_MAX_RECONNECT_ATTEMPTS {
