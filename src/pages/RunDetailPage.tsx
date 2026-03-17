@@ -1,8 +1,8 @@
 import type { Component } from "solid-js";
-import RunDetailScreen from "../features/runs/screens/RunDetailScreen";
+import NewRunDetailScreen from "../features/runs/screens/NewRunDetailScreen";
 
 const RunDetailPage: Component = () => {
-  return <RunDetailScreen />;
+  return <NewRunDetailScreen />;
 };
 
 export default RunDetailPage;
