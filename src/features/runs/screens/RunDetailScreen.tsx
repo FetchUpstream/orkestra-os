@@ -7,13 +7,26 @@ import {
   createSignal,
   onCleanup,
   type Component,
+  type JSX,
 } from "solid-js";
 import BackIconLink from "../../../components/ui/BackIconLink";
 import MonacoDiffEditor from "../../../components/MonacoDiffEditor";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime, formatRunStatus } from "../../tasks/utils/taskDetail";
 import RunTerminal from "../components/RunTerminal";
-import RunConversationMessage from "../components/RunConversationMessage";
+import {
+  RunChatAssistantMessage,
+  RunChatComposer,
+  RunChatDetailsDisclosure,
+  RunChatMarkdown,
+  RunChatMessage,
+  RunChatReasoningDisclosure,
+  RunChatSystemMessage,
+  RunChatToolRail,
+  RunChatTranscript,
+  RunChatUserMessage,
+  type RunChatToolRailItem,
+} from "../components/chat";
 import type { UiPart } from "../model/agentTypes";
 
 type AgentReadinessPhase =
@@ -32,6 +45,7 @@ const RunDetailScreen: Component = () => {
   );
   const [isOperationsDrawerOpen, setIsOperationsDrawerOpen] =
     createSignal(false);
+  const isOperationsDrawerEnabled = false;
   const [expandedDiffPaths, setExpandedDiffPaths] = createSignal<
     Record<string, boolean>
   >({});
@@ -84,14 +98,6 @@ const RunDetailScreen: Component = () => {
       phase === "reconnecting"
     );
   });
-  const isComposerEmpty = createMemo(() => composerValue().trim().length === 0);
-  const isComposerSendDisabled = createMemo(
-    () =>
-      isComposerEmpty() ||
-      model.agent.isSubmittingPrompt() ||
-      isComposerBlockedByReadiness() ||
-      model.agent.state() === "unsupported",
-  );
   const isInfoFocus = createMemo(() => layoutMode() === "info-focus");
   const isTerminalTabActive = createMemo(() => activeTab() === "terminal");
   const isAgentTabActive = createMemo(() => activeTab() === "agent");
@@ -122,6 +128,7 @@ const RunDetailScreen: Component = () => {
   });
   let transcriptScrollRef: HTMLDivElement | undefined;
   let transcriptBottomRef: HTMLDivElement | undefined;
+  let runChatComposerRef: HTMLDivElement | undefined;
   let agentEventLogRef: HTMLDivElement | undefined;
   let operationsDrawerEdgeToggleRef: HTMLButtonElement | undefined;
   let operationsDrawerCloseButtonRef: HTMLButtonElement | undefined;
@@ -146,6 +153,8 @@ const RunDetailScreen: Component = () => {
   const [agentEventVisibleCount, setAgentEventVisibleCount] = createSignal(
     AGENT_EVENT_WINDOW_CHUNK,
   );
+  const [runChatComposerOffsetPx, setRunChatComposerOffsetPx] =
+    createSignal("0px");
 
   const isNearBottom = (
     element: HTMLElement,
@@ -339,6 +348,237 @@ const RunDetailScreen: Component = () => {
     const order = transcriptMessageOrder();
     const startIndex = Math.max(0, order.length - transcriptVisibleCount());
     return order.slice(startIndex);
+  });
+
+  const resolvePartText = (part: UiPart): string => {
+    if (part.kind !== "text" && part.kind !== "reasoning") {
+      return "";
+    }
+
+    if (typeof part.streamText === "string") {
+      return part.streamText;
+    }
+
+    const streamTail = part.streamTail;
+    if (!streamTail) {
+      return part.text;
+    }
+
+    const deltas: string[] = [];
+    let cursor: typeof streamTail | undefined = streamTail;
+    while (cursor) {
+      deltas.push(cursor.delta);
+      cursor = cursor.prev;
+    }
+    deltas.reverse();
+
+    const baseText =
+      typeof part.streamBaseText === "string" ? part.streamBaseText : part.text;
+    return `${baseText}${deltas.join("")}`;
+  };
+
+  const getStepDetailsSummary = (part: UiPart): string | null => {
+    if (part.kind === "step-start") {
+      const snapshot = formatAgentPayload(part.snapshot).trim();
+      return snapshot.length > 0 ? `Step started: ${snapshot}` : "Step started";
+    }
+
+    if (part.kind === "step-finish") {
+      const fields = [
+        part.reason !== undefined
+          ? `reason=${formatAgentPayload(part.reason)}`
+          : null,
+        part.tokens !== undefined
+          ? `tokens=${formatAgentPayload(part.tokens)}`
+          : null,
+        part.cost !== undefined
+          ? `cost=${formatAgentPayload(part.cost)}`
+          : null,
+      ].filter((value): value is string => value !== null);
+      return fields.length > 0
+        ? `Step finished: ${fields.join(" | ")}`
+        : "Step finished";
+    }
+
+    return null;
+  };
+
+  const buildChatRows = createMemo(() => {
+    return visibleTranscriptMessageIds().map((messageId) => {
+      const message = model.agent.store().messagesById[messageId];
+      if (!message) {
+        return null;
+      }
+
+      const textParts: string[] = [];
+      const reasoningParts: string[] = [];
+      const toolItems: RunChatToolRailItem[] = [];
+      const detailsItems: string[] = [];
+
+      for (const partId of message.partOrder) {
+        const part = message.partsById[partId];
+        if (!part) {
+          continue;
+        }
+
+        if (part.kind === "text") {
+          const text = resolvePartText(part);
+          if (text.trim().length > 0 || part.streaming) {
+            textParts.push(text);
+          }
+          continue;
+        }
+
+        if (part.kind === "reasoning") {
+          const text = resolvePartText(part);
+          if (text.trim().length > 0 || part.streaming) {
+            reasoningParts.push(text);
+          }
+          continue;
+        }
+
+        if (part.kind === "tool") {
+          toolItems.push({
+            id: part.id,
+            label: part.title?.trim() || part.toolName || "Tool",
+            status: part.status,
+            detail: formatAgentPayload({
+              input: part.input,
+              output: part.output,
+              error: part.error,
+              metadata: part.metadata,
+            }),
+            open: false,
+          });
+          continue;
+        }
+
+        if (part.kind === "patch") {
+          continue;
+        }
+
+        if (part.kind === "file") {
+          detailsItems.push(
+            `File: ${formatAgentPayload({ filename: part.filename, mime: part.mime, url: part.url })}`,
+          );
+          continue;
+        }
+
+        const stepSummary = getStepDetailsSummary(part);
+        if (stepSummary) {
+          detailsItems.push(stepSummary);
+          continue;
+        }
+
+        if (part.kind === "unknown") {
+          detailsItems.push(
+            `Unknown part (${part.rawType || "unknown"}): ${formatAgentPayload(part.raw)}`,
+          );
+        }
+      }
+
+      const content = textParts.join("\n\n").trim();
+      const reasoningContent = reasoningParts.join("\n\n").trim();
+      const timestamp = formatAgentTimestamp(
+        message.updatedAt ?? message.createdAt ?? null,
+      );
+
+      return {
+        key: message.id,
+        role: message.role,
+        content,
+        reasoningContent,
+        toolItems,
+        detailsItems,
+        timestamp,
+        hasRenderableContent:
+          content.length > 0 ||
+          reasoningContent.length > 0 ||
+          toolItems.length > 0 ||
+          detailsItems.length > 0,
+      };
+    });
+  });
+
+  const chatTranscriptItems = createMemo<JSX.Element[]>(() => {
+    const waitingRow = (
+      <p
+        class="run-inline-loading-row"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        <span class="run-inline-spinner" aria-hidden="true" />
+        <span>Waiting for agent output...</span>
+      </p>
+    );
+
+    return buildChatRows()
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .map((row) => {
+        const reasoningNode =
+          row.reasoningContent.length > 0 ? (
+            <RunChatReasoningDisclosure
+              summary="Reasoning"
+              open={false}
+              content={<RunChatMarkdown content={row.reasoningContent} />}
+            />
+          ) : undefined;
+
+        const toolRailNode =
+          row.toolItems.length > 0 ? (
+            <RunChatDetailsDisclosure summary="Tools" open={false}>
+              <RunChatToolRail items={row.toolItems} />
+            </RunChatDetailsDisclosure>
+          ) : undefined;
+
+        const detailsNode =
+          row.detailsItems.length > 0 ? (
+            <RunChatDetailsDisclosure summary="Details" open={false}>
+              <div class="run-chat-message__details-block">
+                <p>{`Timestamp: ${row.timestamp}`}</p>
+                <For each={row.detailsItems}>{(item) => <p>{item}</p>}</For>
+              </div>
+            </RunChatDetailsDisclosure>
+          ) : undefined;
+
+        if (row.role === "assistant") {
+          return (
+            <RunChatMessage role="assistant" class="run-chat-message-item">
+              <RunChatAssistantMessage
+                content={row.content.length > 0 ? row.content : " "}
+                reasoning={reasoningNode}
+                toolRail={toolRailNode}
+                details={detailsNode}
+              />
+              <Show when={!row.hasRenderableContent}>{waitingRow}</Show>
+            </RunChatMessage>
+          );
+        }
+
+        if (row.role === "user") {
+          return (
+            <RunChatMessage role="user" class="run-chat-message-item">
+              <RunChatUserMessage>
+                <RunChatMarkdown
+                  content={row.content.length > 0 ? row.content : "(empty)"}
+                />
+              </RunChatUserMessage>
+            </RunChatMessage>
+          );
+        }
+
+        return (
+          <RunChatMessage role="system" class="run-chat-message-item">
+            <RunChatSystemMessage>
+              <RunChatMarkdown
+                content={row.content.length > 0 ? row.content : row.timestamp}
+              />
+              <Show when={detailsNode}>{detailsNode}</Show>
+            </RunChatSystemMessage>
+          </RunChatMessage>
+        );
+      });
   });
 
   createEffect(() => {
@@ -638,6 +878,32 @@ const RunDetailScreen: Component = () => {
   });
 
   createEffect(() => {
+    const composerElement = runChatComposerRef;
+    if (!composerElement || typeof ResizeObserver === "undefined") {
+      setRunChatComposerOffsetPx("0px");
+      return;
+    }
+
+    const updateOffset = () => {
+      const composerHeight = Math.ceil(
+        composerElement.getBoundingClientRect().height,
+      );
+      setRunChatComposerOffsetPx(`${Math.max(0, composerHeight)}px`);
+      if (isTranscriptAutoFollowEnabled()) {
+        scheduleTranscriptScrollToBottom();
+      }
+    };
+
+    updateOffset();
+    const observer = new ResizeObserver(() => updateOffset());
+    observer.observe(composerElement);
+
+    onCleanup(() => {
+      observer.disconnect();
+    });
+  });
+
+  createEffect(() => {
     if (!isAgentTabActive()) {
       return;
     }
@@ -770,49 +1036,53 @@ const RunDetailScreen: Component = () => {
                       role="group"
                       aria-label="Run actions"
                     >
-                      <button
-                        type="button"
-                        class="run-detail-icon-button"
-                        aria-label={
-                          isInfoFocus()
-                            ? "Return to split mode"
-                            : "Expand info panel"
-                        }
-                        aria-pressed={isInfoFocus() ? "true" : "false"}
-                        title={
-                          isInfoFocus()
-                            ? "Return to split mode"
-                            : "Expand info panel"
-                        }
-                        onClick={() => {
-                          setLayoutMode(isInfoFocus() ? "split" : "info-focus");
-                          setIsOperationsDrawerOpen(true);
-                        }}
-                      >
-                        <Show
-                          when={!isInfoFocus()}
-                          fallback={
+                      <Show when={isOperationsDrawerEnabled}>
+                        <button
+                          type="button"
+                          class="run-detail-icon-button"
+                          aria-label={
+                            isInfoFocus()
+                              ? "Return to split mode"
+                              : "Expand info panel"
+                          }
+                          aria-pressed={isInfoFocus() ? "true" : "false"}
+                          title={
+                            isInfoFocus()
+                              ? "Return to split mode"
+                              : "Expand info panel"
+                          }
+                          onClick={() => {
+                            setLayoutMode(
+                              isInfoFocus() ? "split" : "info-focus",
+                            );
+                            setIsOperationsDrawerOpen(true);
+                          }}
+                        >
+                          <Show
+                            when={!isInfoFocus()}
+                            fallback={
+                              <svg viewBox="0 0 16 16" aria-hidden="true">
+                                <path
+                                  d="M2.5 3.5h11v9h-11v-9Zm5.2 0v9"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.2"
+                                />
+                              </svg>
+                            }
+                          >
                             <svg viewBox="0 0 16 16" aria-hidden="true">
                               <path
-                                d="M2.5 3.5h11v9h-11v-9Zm5.2 0v9"
+                                d="M2.5 3.5h11v9h-11v-9Zm5.2 0v9M7.2 8h-3"
                                 fill="none"
                                 stroke="currentColor"
                                 stroke-width="1.2"
+                                stroke-linecap="round"
                               />
                             </svg>
-                          }
-                        >
-                          <svg viewBox="0 0 16 16" aria-hidden="true">
-                            <path
-                              d="M2.5 3.5h11v9h-11v-9Zm5.2 0v9M7.2 8h-3"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="1.2"
-                              stroke-linecap="round"
-                            />
-                          </svg>
-                        </Show>
-                      </button>
+                          </Show>
+                        </button>
+                      </Show>
                       <button
                         type="button"
                         class="run-detail-icon-button"
@@ -844,20 +1114,22 @@ const RunDetailScreen: Component = () => {
                           <path d="M3 8a5 5 0 0 1 8.5-3.5V2h1.5v4H9V4.5h1.8A3.5 3.5 0 1 0 11.5 8H13a5 5 0 0 1-10 0Z" />
                         </svg>
                       </button>
-                      <button
-                        type="button"
-                        class="run-detail-icon-button"
-                        aria-label="Open Diff"
-                        title="Open Diff"
-                        onClick={() => {
-                          setActiveTab("diff");
-                          setIsOperationsDrawerOpen(true);
-                        }}
-                      >
-                        <svg viewBox="0 0 16 16" aria-hidden="true">
-                          <path d="M5 3h1.5v10H5v-2H3v-2h2V7H3V5h2V3Zm5.5 0H12v2h2v2h-2v2h2v2h-2v2h-1.5V3Z" />
-                        </svg>
-                      </button>
+                      <Show when={isOperationsDrawerEnabled}>
+                        <button
+                          type="button"
+                          class="run-detail-icon-button"
+                          aria-label="Open Diff"
+                          title="Open Diff"
+                          onClick={() => {
+                            setActiveTab("diff");
+                            setIsOperationsDrawerOpen(true);
+                          }}
+                        >
+                          <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M5 3h1.5v10H5v-2H3v-2h2V7H3V5h2V3Zm5.5 0H12v2h2v2h-2v2h2v2h-2v2h-1.5V3Z" />
+                          </svg>
+                        </button>
+                      </Show>
                       <button
                         type="button"
                         class="run-detail-icon-button"
@@ -900,662 +1172,674 @@ const RunDetailScreen: Component = () => {
                         </h2>
                       </header>
                       <section
-                        class="run-detail-conversation-log"
-                        aria-label="Conversation transcript"
-                        ref={transcriptScrollRef}
-                        onScroll={(event) => {
-                          if (isTranscriptProgrammaticScroll) {
-                            return;
-                          }
-                          setIsTranscriptAutoFollowEnabled(
-                            isNearBottom(event.currentTarget),
-                          );
+                        class="run-chat-workspace"
+                        style={{
+                          "--run-chat-composer-offset":
+                            runChatComposerOffsetPx(),
                         }}
                       >
-                        <Show when={model.agent.error().length > 0}>
-                          <p class="projects-error">{model.agent.error()}</p>
-                        </Show>
-                        <Show when={model.agent.state() === "unsupported"}>
-                          <p class="project-placeholder-text">
-                            Agent stream is not available for this run.
-                          </p>
-                        </Show>
-                        <Show
-                          when={transcriptMessageOrder().length > 0}
-                          fallback={
-                            <Show
-                              when={isTranscriptWaitingForAgentOutput()}
-                              fallback={
-                                <p class="project-placeholder-text">
-                                  {agentReadinessCopy() ||
-                                    "No agent messages yet."}
-                                </p>
-                              }
-                            >
-                              <p
-                                class="run-inline-loading-row"
-                                role="status"
-                                aria-live="polite"
-                                aria-atomic="true"
-                              >
-                                <span
-                                  class="run-inline-spinner"
-                                  aria-hidden="true"
-                                />
-                                <span>Waiting for agent output...</span>
-                              </p>
-                            </Show>
-                          }
-                        >
-                          <Show when={transcriptHiddenMessageCount() > 0}>
-                            <button
-                              type="button"
-                              class="run-detail-load-older-button"
-                              onClick={() => {
-                                const container = transcriptScrollRef;
-                                const previousScrollHeight =
-                                  container?.scrollHeight ?? null;
-                                setTranscriptVisibleCount(
-                                  (current) =>
-                                    current + TRANSCRIPT_WINDOW_CHUNK,
-                                );
-                                if (
-                                  !container ||
-                                  previousScrollHeight === null
-                                ) {
-                                  return;
-                                }
-
-                                requestAnimationFrame(() => {
-                                  const nextScrollHeight =
-                                    container.scrollHeight;
-                                  const offset =
-                                    nextScrollHeight - previousScrollHeight;
-                                  if (offset > 0) {
-                                    markTranscriptProgrammaticScroll();
-                                    container.scrollTop += offset;
-                                  }
-                                });
-                              }}
-                            >
-                              {`Load older (${transcriptHiddenMessageCount()} hidden)`}
-                            </button>
-                          </Show>
-                          <For each={visibleTranscriptMessageIds()}>
-                            {(messageId) => {
-                              const message = createMemo(
-                                () =>
-                                  model.agent.store().messagesById[messageId],
-                              );
-
-                              return (
-                                <Show when={message()}>
-                                  {(messageValue) => (
-                                    <RunConversationMessage
-                                      message={messageValue()}
-                                      formatTimestamp={formatAgentTimestamp}
-                                      formatPayload={formatAgentPayload}
-                                    />
-                                  )}
-                                </Show>
-                              );
-                            }}
-                          </For>
-                          <div ref={transcriptBottomRef} aria-hidden="true" />
-                        </Show>
-                      </section>
-                      <form
-                        class="run-detail-composer"
-                        aria-label="Message composer"
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          void (async () => {
-                            const success =
-                              await model.agent.submitPrompt(composerValue());
-                            if (success) {
-                              setComposerValue("");
+                        <section
+                          class="run-chat-transcript-scroll"
+                          aria-label="Conversation transcript"
+                          ref={transcriptScrollRef}
+                          style={{
+                            "padding-bottom": runChatComposerOffsetPx(),
+                          }}
+                          onScroll={(event) => {
+                            if (isTranscriptProgrammaticScroll) {
+                              return;
                             }
-                          })();
-                        }}
-                      >
-                        <label class="sr-only" for="run-detail-message-input">
-                          Message agent
-                        </label>
-                        <input
-                          id="run-detail-message-input"
-                          type="text"
-                          value={composerValue()}
-                          onInput={(event) =>
-                            setComposerValue(event.currentTarget.value)
-                          }
-                          placeholder="Message agent..."
-                          aria-label="Message agent"
-                        />
-                        <button
-                          type="submit"
-                          class="projects-button-primary"
-                          disabled={isComposerSendDisabled()}
+                            setIsTranscriptAutoFollowEnabled(
+                              isNearBottom(event.currentTarget),
+                            );
+                          }}
                         >
-                          Send
-                        </button>
-                      </form>
-                      <Show when={agentReadinessCopy() !== null}>
-                        <p class="project-placeholder-text" aria-live="polite">
-                          {agentReadinessCopy()}
-                        </p>
-                      </Show>
-                      <Show when={model.agent.submitError().length > 0}>
-                        <p class="projects-error">
-                          {model.agent.submitError()}
-                        </p>
-                      </Show>
+                          <Show when={model.agent.error().length > 0}>
+                            <p class="projects-error">{model.agent.error()}</p>
+                          </Show>
+                          <Show when={model.agent.state() === "unsupported"}>
+                            <p class="project-placeholder-text">
+                              Agent stream is not available for this run.
+                            </p>
+                          </Show>
+                          <Show
+                            when={transcriptMessageOrder().length > 0}
+                            fallback={
+                              <Show
+                                when={isTranscriptWaitingForAgentOutput()}
+                                fallback={
+                                  <p class="project-placeholder-text">
+                                    {agentReadinessCopy() ||
+                                      "No agent messages yet."}
+                                  </p>
+                                }
+                              >
+                                <p
+                                  class="run-inline-loading-row"
+                                  role="status"
+                                  aria-live="polite"
+                                  aria-atomic="true"
+                                >
+                                  <span
+                                    class="run-inline-spinner"
+                                    aria-hidden="true"
+                                  />
+                                  <span>Waiting for agent output...</span>
+                                </p>
+                              </Show>
+                            }
+                          >
+                            <RunChatTranscript
+                              class="run-chat-transcript"
+                              items={chatTranscriptItems()}
+                              olderAffordance={
+                                <Show when={transcriptHiddenMessageCount() > 0}>
+                                  <button
+                                    type="button"
+                                    class="run-detail-load-older-button run-chat-load-older"
+                                    onClick={() => {
+                                      const container = transcriptScrollRef;
+                                      const previousScrollHeight =
+                                        container?.scrollHeight ?? null;
+                                      setTranscriptVisibleCount(
+                                        (current) =>
+                                          current + TRANSCRIPT_WINDOW_CHUNK,
+                                      );
+                                      if (
+                                        !container ||
+                                        previousScrollHeight === null
+                                      ) {
+                                        return;
+                                      }
+
+                                      requestAnimationFrame(() => {
+                                        const nextScrollHeight =
+                                          container.scrollHeight;
+                                        const offset =
+                                          nextScrollHeight -
+                                          previousScrollHeight;
+                                        if (offset > 0) {
+                                          markTranscriptProgrammaticScroll();
+                                          container.scrollTop += offset;
+                                        }
+                                      });
+                                    }}
+                                  >
+                                    {`Load older (${transcriptHiddenMessageCount()} hidden)`}
+                                  </button>
+                                </Show>
+                              }
+                            />
+                            <div ref={transcriptBottomRef} aria-hidden="true" />
+                          </Show>
+                        </section>
+                        <div
+                          ref={runChatComposerRef}
+                          class="run-chat-composer-shell run-chat-composer-shell--pinned"
+                        >
+                          <RunChatComposer
+                            class="run-chat-composer"
+                            value={composerValue()}
+                            onInput={setComposerValue}
+                            onSubmit={(value) => {
+                              void (async () => {
+                                const success =
+                                  await model.agent.submitPrompt(value);
+                                if (success) {
+                                  setComposerValue("");
+                                }
+                              })();
+                            }}
+                            disabled={
+                              isComposerBlockedByReadiness() ||
+                              model.agent.state() === "unsupported"
+                            }
+                            submitting={model.agent.isSubmittingPrompt()}
+                            placeholder="Message agent..."
+                            textareaLabel="Message agent"
+                            submitLabel="Send"
+                          />
+                          <Show when={agentReadinessCopy() !== null}>
+                            <p
+                              class="project-placeholder-text"
+                              aria-live="polite"
+                            >
+                              {agentReadinessCopy()}
+                            </p>
+                          </Show>
+                          <Show when={model.agent.submitError().length > 0}>
+                            <p class="projects-error">
+                              {model.agent.submitError()}
+                            </p>
+                          </Show>
+                        </div>
+                      </section>
                     </section>
                   </section>
 
-                  <div
-                    class="run-detail-ops-backdrop"
-                    classList={{
-                      "run-detail-ops-backdrop--open": isOperationsDrawerOpen(),
-                    }}
-                    aria-hidden={isOperationsDrawerOpen() ? "false" : "true"}
-                    onClick={() => {
-                      setIsOperationsDrawerOpen(false);
-                      setLayoutMode("split");
-                    }}
-                  />
+                  <Show when={isOperationsDrawerEnabled}>
+                    <div
+                      class="run-detail-ops-backdrop"
+                      classList={{
+                        "run-detail-ops-backdrop--open":
+                          isOperationsDrawerOpen(),
+                      }}
+                      aria-hidden={isOperationsDrawerOpen() ? "false" : "true"}
+                      onClick={() => {
+                        setIsOperationsDrawerOpen(false);
+                        setLayoutMode("split");
+                      }}
+                    />
 
-                  <button
-                    ref={operationsDrawerEdgeToggleRef}
-                    type="button"
-                    class="run-detail-ops-drawer-edge-toggle"
-                    classList={{
-                      "run-detail-ops-drawer-edge-toggle--hidden":
-                        isOperationsDrawerOpen(),
-                    }}
-                    aria-label="Open operations panel"
-                    title="Open operations panel"
-                    aria-controls="run-detail-ops-drawer"
-                    aria-expanded={isOperationsDrawerOpen() ? "true" : "false"}
-                    onClick={() => setIsOperationsDrawerOpen(true)}
-                  >
-                    <svg viewBox="0 0 16 16" aria-hidden="true">
-                      <path
-                        d="M6 3.5L10 8l-4 4.5"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.4"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      />
-                    </svg>
-                  </button>
+                    <button
+                      ref={operationsDrawerEdgeToggleRef}
+                      type="button"
+                      class="run-detail-ops-drawer-edge-toggle"
+                      classList={{
+                        "run-detail-ops-drawer-edge-toggle--hidden":
+                          isOperationsDrawerOpen(),
+                      }}
+                      aria-label="Open operations panel"
+                      title="Open operations panel"
+                      aria-controls="run-detail-ops-drawer"
+                      aria-expanded={
+                        isOperationsDrawerOpen() ? "true" : "false"
+                      }
+                      onClick={() => setIsOperationsDrawerOpen(true)}
+                    >
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <path
+                          d="M6 3.5L10 8l-4 4.5"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.4"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
 
-                  <aside
-                    id="run-detail-ops-drawer"
-                    class="projects-panel run-detail-ops-drawer"
-                    classList={{
-                      "run-detail-ops-drawer--open": isOperationsDrawerOpen(),
-                      "run-detail-ops-drawer--closed":
-                        !isOperationsDrawerOpen(),
-                      "run-detail-ops-drawer--expanded": isInfoFocus(),
-                    }}
-                    aria-label="Run operations"
-                    aria-hidden={isOperationsDrawerOpen() ? "false" : "true"}
-                  >
-                    <header class="run-detail-ops-drawer-header">
-                      <div
-                        class="run-detail-ops-drawer-controls"
-                        role="group"
-                        aria-label="Operations panel controls"
-                      >
-                        <button
-                          type="button"
-                          class="run-detail-icon-button"
-                          aria-label={
-                            isInfoFocus()
-                              ? "Collapse info panel"
-                              : "Expand info panel"
-                          }
-                          aria-pressed={isInfoFocus() ? "true" : "false"}
-                          title={
-                            isInfoFocus()
-                              ? "Collapse info panel"
-                              : "Expand info panel"
-                          }
-                          onClick={() =>
-                            setLayoutMode(
-                              isInfoFocus() ? "split" : "info-focus",
-                            )
-                          }
+                    <aside
+                      id="run-detail-ops-drawer"
+                      class="projects-panel run-detail-ops-drawer"
+                      classList={{
+                        "run-detail-ops-drawer--open": isOperationsDrawerOpen(),
+                        "run-detail-ops-drawer--closed":
+                          !isOperationsDrawerOpen(),
+                        "run-detail-ops-drawer--expanded": isInfoFocus(),
+                      }}
+                      aria-label="Run operations"
+                      aria-hidden={isOperationsDrawerOpen() ? "false" : "true"}
+                    >
+                      <header class="run-detail-ops-drawer-header">
+                        <div
+                          class="run-detail-ops-drawer-controls"
+                          role="group"
+                          aria-label="Operations panel controls"
                         >
-                          <Show
-                            when={!isInfoFocus()}
-                            fallback={
+                          <button
+                            type="button"
+                            class="run-detail-icon-button"
+                            aria-label={
+                              isInfoFocus()
+                                ? "Collapse info panel"
+                                : "Expand info panel"
+                            }
+                            aria-pressed={isInfoFocus() ? "true" : "false"}
+                            title={
+                              isInfoFocus()
+                                ? "Collapse info panel"
+                                : "Expand info panel"
+                            }
+                            onClick={() =>
+                              setLayoutMode(
+                                isInfoFocus() ? "split" : "info-focus",
+                              )
+                            }
+                          >
+                            <Show
+                              when={!isInfoFocus()}
+                              fallback={
+                                <svg viewBox="0 0 16 16" aria-hidden="true">
+                                  <path
+                                    d="M2.5 3.5h11v9h-11v-9Zm5.2 0v9"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.2"
+                                  />
+                                </svg>
+                              }
+                            >
                               <svg viewBox="0 0 16 16" aria-hidden="true">
                                 <path
-                                  d="M2.5 3.5h11v9h-11v-9Zm5.2 0v9"
+                                  d="M2.5 3.5h11v9h-11v-9Zm5.2 0v9M7.2 8h-3"
                                   fill="none"
                                   stroke="currentColor"
                                   stroke-width="1.2"
+                                  stroke-linecap="round"
                                 />
                               </svg>
-                            }
+                            </Show>
+                          </button>
+                          <button
+                            ref={operationsDrawerCloseButtonRef}
+                            type="button"
+                            class="run-detail-icon-button"
+                            aria-label="Close operations panel"
+                            title="Close operations panel"
+                            onClick={() => {
+                              setIsOperationsDrawerOpen(false);
+                              setLayoutMode("split");
+                            }}
                           >
                             <svg viewBox="0 0 16 16" aria-hidden="true">
                               <path
-                                d="M2.5 3.5h11v9h-11v-9Zm5.2 0v9M7.2 8h-3"
+                                d="M4 4l8 8M12 4l-8 8"
                                 fill="none"
                                 stroke="currentColor"
-                                stroke-width="1.2"
+                                stroke-width="1.3"
                                 stroke-linecap="round"
                               />
                             </svg>
-                          </Show>
+                          </button>
+                        </div>
+                      </header>
+
+                      <div
+                        role="tablist"
+                        aria-label="Run detail tab list"
+                        class="run-detail-tab-list"
+                      >
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={activeTab() === "operations"}
+                          class="run-detail-tab"
+                          onClick={() => setActiveTab("operations")}
+                        >
+                          Operations
                         </button>
                         <button
-                          ref={operationsDrawerCloseButtonRef}
                           type="button"
-                          class="run-detail-icon-button"
-                          aria-label="Close operations panel"
-                          title="Close operations panel"
-                          onClick={() => {
-                            setIsOperationsDrawerOpen(false);
-                            setLayoutMode("split");
-                          }}
+                          role="tab"
+                          aria-selected={activeTab() === "agent"}
+                          class="run-detail-tab"
+                          onClick={() => setActiveTab("agent")}
                         >
-                          <svg viewBox="0 0 16 16" aria-hidden="true">
-                            <path
-                              d="M4 4l8 8M12 4l-8 8"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="1.3"
-                              stroke-linecap="round"
-                            />
-                          </svg>
+                          Agent
+                        </button>
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={activeTab() === "files"}
+                          class="run-detail-tab"
+                          onClick={() => setActiveTab("files")}
+                        >
+                          Files Changed
+                        </button>
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={activeTab() === "diff"}
+                          class="run-detail-tab"
+                          onClick={() => setActiveTab("diff")}
+                        >
+                          Diff
+                        </button>
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={activeTab() === "git"}
+                          class="run-detail-tab"
+                          onClick={() => setActiveTab("git")}
+                        >
+                          Git
+                        </button>
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={activeTab() === "terminal"}
+                          class="run-detail-tab"
+                          onClick={() => setActiveTab("terminal")}
+                        >
+                          Terminal
                         </button>
                       </div>
-                    </header>
-
-                    <div
-                      role="tablist"
-                      aria-label="Run detail tab list"
-                      class="run-detail-tab-list"
-                    >
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab() === "operations"}
-                        class="run-detail-tab"
-                        onClick={() => setActiveTab("operations")}
-                      >
-                        Operations
-                      </button>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab() === "agent"}
-                        class="run-detail-tab"
-                        onClick={() => setActiveTab("agent")}
-                      >
-                        Agent
-                      </button>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab() === "files"}
-                        class="run-detail-tab"
-                        onClick={() => setActiveTab("files")}
-                      >
-                        Files Changed
-                      </button>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab() === "diff"}
-                        class="run-detail-tab"
-                        onClick={() => setActiveTab("diff")}
-                      >
-                        Diff
-                      </button>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab() === "git"}
-                        class="run-detail-tab"
-                        onClick={() => setActiveTab("git")}
-                      >
-                        Git
-                      </button>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab() === "terminal"}
-                        class="run-detail-tab"
-                        onClick={() => setActiveTab("terminal")}
-                      >
-                        Terminal
-                      </button>
-                    </div>
-                    <div
-                      role="tabpanel"
-                      aria-label="Run detail tab panel"
-                      class="run-detail-tab-panel"
-                    >
                       <div
-                        class="run-detail-tab-content"
-                        classList={{
-                          "run-detail-tab-content--hidden":
-                            !isTerminalTabActive(),
-                        }}
+                        role="tabpanel"
+                        aria-label="Run detail tab panel"
+                        class="run-detail-tab-panel"
                       >
-                        <RunTerminal
-                          isVisible={isTerminalTabActive()}
-                          isStarting={model.terminal.isStarting()}
-                          isReady={model.terminal.isReady()}
-                          error={model.terminal.error()}
-                          writeTerminal={model.terminal.writeTerminal}
-                          resizeTerminal={model.terminal.resizeTerminal}
-                          setTerminalFrameHandler={
-                            model.terminal.setTerminalFrameHandler
-                          }
-                        />
-                      </div>
-                      <Show when={!isTerminalTabActive()}>
-                        <Show
-                          when={activeTab() === "operations"}
-                          fallback={
-                            <Show
-                              when={activeTab() === "diff"}
-                              fallback={
-                                <Show
-                                  when={isAgentTabActive()}
-                                  fallback={
-                                    <p class="project-placeholder-text">
-                                      {activeTab() === "files"
-                                        ? "Files Changed"
-                                        : activeTab().charAt(0).toUpperCase() +
-                                          activeTab().slice(1)}{" "}
-                                      panel placeholder.
-                                    </p>
-                                  }
-                                >
-                                  <section
-                                    class="run-agent-panel"
-                                    aria-label="Agent stream events"
-                                  >
-                                    <header class="run-agent-panel-header">
-                                      <p class="run-agent-event-count">
-                                        {agentEventCountLabel()}
-                                      </p>
-                                    </header>
-                                    <Show when={model.agent.error().length > 0}>
-                                      <p class="projects-error">
-                                        {model.agent.error()}
-                                      </p>
-                                    </Show>
-                                    <Show
-                                      when={
-                                        model.agent.state() === "unsupported"
-                                      }
-                                    >
+                        <div
+                          class="run-detail-tab-content"
+                          classList={{
+                            "run-detail-tab-content--hidden":
+                              !isTerminalTabActive(),
+                          }}
+                        >
+                          <RunTerminal
+                            isVisible={isTerminalTabActive()}
+                            isStarting={model.terminal.isStarting()}
+                            isReady={model.terminal.isReady()}
+                            error={model.terminal.error()}
+                            writeTerminal={model.terminal.writeTerminal}
+                            resizeTerminal={model.terminal.resizeTerminal}
+                            setTerminalFrameHandler={
+                              model.terminal.setTerminalFrameHandler
+                            }
+                          />
+                        </div>
+                        <Show when={!isTerminalTabActive()}>
+                          <Show
+                            when={activeTab() === "operations"}
+                            fallback={
+                              <Show
+                                when={activeTab() === "diff"}
+                                fallback={
+                                  <Show
+                                    when={isAgentTabActive()}
+                                    fallback={
                                       <p class="project-placeholder-text">
-                                        Agent stream is not available for this
-                                        run.
+                                        {activeTab() === "files"
+                                          ? "Files Changed"
+                                          : activeTab()
+                                              .charAt(0)
+                                              .toUpperCase() +
+                                            activeTab().slice(1)}{" "}
+                                        panel placeholder.
                                       </p>
-                                    </Show>
-                                    <Show
-                                      when={agentEvents().length > 0}
-                                      fallback={
-                                        <p class="project-placeholder-text">
-                                          {agentReadinessCopy() ||
-                                            (model.agent.state() === "starting"
-                                              ? "Starting agent stream."
-                                              : "No agent events yet.")}
-                                        </p>
-                                      }
+                                    }
+                                  >
+                                    <section
+                                      class="run-agent-panel"
+                                      aria-label="Agent stream events"
                                     >
-                                      <Show when={agentEventHiddenCount() > 0}>
-                                        <button
-                                          type="button"
-                                          class="run-detail-load-older-button"
-                                          onClick={() => {
-                                            const container = agentEventLogRef;
-                                            const previousScrollHeight =
-                                              container?.scrollHeight ?? null;
-                                            setAgentEventVisibleCount(
-                                              (current) =>
-                                                current +
-                                                AGENT_EVENT_WINDOW_CHUNK,
-                                            );
+                                      <header class="run-agent-panel-header">
+                                        <p class="run-agent-event-count">
+                                          {agentEventCountLabel()}
+                                        </p>
+                                      </header>
+                                      <Show
+                                        when={model.agent.error().length > 0}
+                                      >
+                                        <p class="projects-error">
+                                          {model.agent.error()}
+                                        </p>
+                                      </Show>
+                                      <Show
+                                        when={
+                                          model.agent.state() === "unsupported"
+                                        }
+                                      >
+                                        <p class="project-placeholder-text">
+                                          Agent stream is not available for this
+                                          run.
+                                        </p>
+                                      </Show>
+                                      <Show
+                                        when={agentEvents().length > 0}
+                                        fallback={
+                                          <p class="project-placeholder-text">
+                                            {agentReadinessCopy() ||
+                                              (model.agent.state() ===
+                                              "starting"
+                                                ? "Starting agent stream."
+                                                : "No agent events yet.")}
+                                          </p>
+                                        }
+                                      >
+                                        <Show
+                                          when={agentEventHiddenCount() > 0}
+                                        >
+                                          <button
+                                            type="button"
+                                            class="run-detail-load-older-button"
+                                            onClick={() => {
+                                              const container =
+                                                agentEventLogRef;
+                                              const previousScrollHeight =
+                                                container?.scrollHeight ?? null;
+                                              setAgentEventVisibleCount(
+                                                (current) =>
+                                                  current +
+                                                  AGENT_EVENT_WINDOW_CHUNK,
+                                              );
 
+                                              if (
+                                                !container ||
+                                                previousScrollHeight === null
+                                              ) {
+                                                return;
+                                              }
+
+                                              requestAnimationFrame(() => {
+                                                const nextScrollHeight =
+                                                  container.scrollHeight;
+                                                const offset =
+                                                  nextScrollHeight -
+                                                  previousScrollHeight;
+                                                if (offset > 0) {
+                                                  markAgentEventLogProgrammaticScroll();
+                                                  container.scrollTop += offset;
+                                                }
+                                              });
+                                            }}
+                                          >
+                                            {`Load older (${agentEventHiddenCount()} hidden)`}
+                                          </button>
+                                        </Show>
+                                        <div
+                                          class="run-agent-event-log"
+                                          ref={agentEventLogRef}
+                                          onScroll={(event) => {
                                             if (
-                                              !container ||
-                                              previousScrollHeight === null
+                                              isAgentEventLogProgrammaticScroll
                                             ) {
                                               return;
                                             }
-
-                                            requestAnimationFrame(() => {
-                                              const nextScrollHeight =
-                                                container.scrollHeight;
-                                              const offset =
-                                                nextScrollHeight -
-                                                previousScrollHeight;
-                                              if (offset > 0) {
-                                                markAgentEventLogProgrammaticScroll();
-                                                container.scrollTop += offset;
-                                              }
-                                            });
+                                            setIsAgentEventLogAutoFollowEnabled(
+                                              isNearBottom(event.currentTarget),
+                                            );
                                           }}
                                         >
-                                          {`Load older (${agentEventHiddenCount()} hidden)`}
-                                        </button>
+                                          <For each={visibleAgentEvents()}>
+                                            {(item) => (
+                                              <article class="run-agent-event-item">
+                                                <header>
+                                                  <time>
+                                                    {formatAgentTimestamp(
+                                                      item.ts,
+                                                    )}
+                                                  </time>
+                                                  <strong>{item.event}</strong>
+                                                </header>
+                                                <pre>{item.payload}</pre>
+                                              </article>
+                                            )}
+                                          </For>
+                                        </div>
                                       </Show>
-                                      <div
-                                        class="run-agent-event-log"
-                                        ref={agentEventLogRef}
-                                        onScroll={(event) => {
-                                          if (
-                                            isAgentEventLogProgrammaticScroll
-                                          ) {
-                                            return;
-                                          }
-                                          setIsAgentEventLogAutoFollowEnabled(
-                                            isNearBottom(event.currentTarget),
-                                          );
-                                        }}
-                                      >
-                                        <For each={visibleAgentEvents()}>
-                                          {(item) => (
-                                            <article class="run-agent-event-item">
-                                              <header>
-                                                <time>
-                                                  {formatAgentTimestamp(
-                                                    item.ts,
-                                                  )}
-                                                </time>
-                                                <strong>{item.event}</strong>
-                                              </header>
-                                              <pre>{item.payload}</pre>
-                                            </article>
-                                          )}
-                                        </For>
-                                      </div>
-                                    </Show>
-                                  </section>
-                                </Show>
-                              }
-                            >
-                              <section aria-label="Run diff files">
-                                <Show when={model.diffFilesError().length > 0}>
-                                  <p class="projects-error">
-                                    {model.diffFilesError()}
-                                  </p>
-                                </Show>
-                                <Show
-                                  when={model.diffFiles().length > 0}
-                                  fallback={
-                                    <Show when={!model.isDiffFilesLoading()}>
-                                      <p class="project-placeholder-text">
-                                        No changed files.
-                                      </p>
-                                    </Show>
-                                  }
-                                >
-                                  <div class="run-diff-accordion">
-                                    <For each={model.diffFiles()}>
-                                      {(file) => {
-                                        const expanded = () =>
-                                          expandedDiffPaths()[file.path] ===
-                                          true;
-                                        const payload = () =>
-                                          model.diffFilePayloads()[file.path];
-                                        const isFileLoading = () =>
-                                          model.diffFileLoadingPaths()[
-                                            file.path
-                                          ] === true;
+                                    </section>
+                                  </Show>
+                                }
+                              >
+                                <section aria-label="Run diff files">
+                                  <Show
+                                    when={model.diffFilesError().length > 0}
+                                  >
+                                    <p class="projects-error">
+                                      {model.diffFilesError()}
+                                    </p>
+                                  </Show>
+                                  <Show
+                                    when={model.diffFiles().length > 0}
+                                    fallback={
+                                      <Show when={!model.isDiffFilesLoading()}>
+                                        <p class="project-placeholder-text">
+                                          No changed files.
+                                        </p>
+                                      </Show>
+                                    }
+                                  >
+                                    <div class="run-diff-accordion">
+                                      <For each={model.diffFiles()}>
+                                        {(file) => {
+                                          const expanded = () =>
+                                            expandedDiffPaths()[file.path] ===
+                                            true;
+                                          const payload = () =>
+                                            model.diffFilePayloads()[file.path];
+                                          const isFileLoading = () =>
+                                            model.diffFileLoadingPaths()[
+                                              file.path
+                                            ] === true;
 
-                                        return (
-                                          <article class="run-diff-item">
-                                            <button
-                                              type="button"
-                                              class="run-diff-item-header"
-                                              aria-expanded={
-                                                expanded() ? "true" : "false"
-                                              }
-                                              onClick={() => {
-                                                const previousExpanded =
-                                                  expandedDiffPaths()[
-                                                    file.path
-                                                  ] === true;
-                                                const nextExpanded =
-                                                  !previousExpanded;
-                                                setExpandedDiffPaths(
-                                                  (current) => ({
-                                                    ...current,
-                                                    [file.path]: nextExpanded,
-                                                  }),
-                                                );
-                                              }}
-                                            >
-                                              <span class="run-diff-item-path">
-                                                {file.path}
-                                              </span>
-                                              <span class="run-diff-item-stats">
-                                                <span class="run-diff-item-stat-additions">
-                                                  +{file.additions}
+                                          return (
+                                            <article class="run-diff-item">
+                                              <button
+                                                type="button"
+                                                class="run-diff-item-header"
+                                                aria-expanded={
+                                                  expanded() ? "true" : "false"
+                                                }
+                                                onClick={() => {
+                                                  const previousExpanded =
+                                                    expandedDiffPaths()[
+                                                      file.path
+                                                    ] === true;
+                                                  const nextExpanded =
+                                                    !previousExpanded;
+                                                  setExpandedDiffPaths(
+                                                    (current) => ({
+                                                      ...current,
+                                                      [file.path]: nextExpanded,
+                                                    }),
+                                                  );
+                                                }}
+                                              >
+                                                <span class="run-diff-item-path">
+                                                  {file.path}
                                                 </span>
-                                                <span class="run-diff-item-stat-deletions">
-                                                  -{file.deletions}
+                                                <span class="run-diff-item-stats">
+                                                  <span class="run-diff-item-stat-additions">
+                                                    +{file.additions}
+                                                  </span>
+                                                  <span class="run-diff-item-stat-deletions">
+                                                    -{file.deletions}
+                                                  </span>
                                                 </span>
-                                              </span>
-                                            </button>
-                                            <Show when={expanded()}>
-                                              <div class="run-diff-item-body">
-                                                <Show
-                                                  when={!isFileLoading()}
-                                                  fallback={
-                                                    <p class="project-placeholder-text">
-                                                      Loading diff.
-                                                    </p>
-                                                  }
-                                                >
+                                              </button>
+                                              <Show when={expanded()}>
+                                                <div class="run-diff-item-body">
                                                   <Show
-                                                    when={payload()}
+                                                    when={!isFileLoading()}
                                                     fallback={
                                                       <p class="project-placeholder-text">
-                                                        Diff unavailable.
+                                                        Loading diff.
                                                       </p>
                                                     }
                                                   >
-                                                    {(filePayload) => (
-                                                      <>
-                                                        <p class="run-diff-item-meta">
-                                                          {filePayload().status}
-                                                          ,{" "}
-                                                          {filePayload()
-                                                            .isBinary
-                                                            ? "binary"
-                                                            : "text"}
-                                                          {filePayload()
-                                                            .truncated
-                                                            ? ", truncated"
-                                                            : ""}
+                                                    <Show
+                                                      when={payload()}
+                                                      fallback={
+                                                        <p class="project-placeholder-text">
+                                                          Diff unavailable.
                                                         </p>
-                                                        <div class="run-detail-monaco-panel">
-                                                          <MonacoDiffEditor
-                                                            original={
+                                                      }
+                                                    >
+                                                      {(filePayload) => (
+                                                        <>
+                                                          <p class="run-diff-item-meta">
+                                                            {
                                                               filePayload()
-                                                                .original
+                                                                .status
                                                             }
-                                                            modified={
-                                                              filePayload()
-                                                                .modified
-                                                            }
-                                                            language={
-                                                              filePayload()
-                                                                .language
-                                                            }
-                                                          />
-                                                        </div>
-                                                      </>
-                                                    )}
+                                                            ,{" "}
+                                                            {filePayload()
+                                                              .isBinary
+                                                              ? "binary"
+                                                              : "text"}
+                                                            {filePayload()
+                                                              .truncated
+                                                              ? ", truncated"
+                                                              : ""}
+                                                          </p>
+                                                          <div class="run-detail-monaco-panel">
+                                                            <MonacoDiffEditor
+                                                              original={
+                                                                filePayload()
+                                                                  .original
+                                                              }
+                                                              modified={
+                                                                filePayload()
+                                                                  .modified
+                                                              }
+                                                              language={
+                                                                filePayload()
+                                                                  .language
+                                                              }
+                                                            />
+                                                          </div>
+                                                        </>
+                                                      )}
+                                                    </Show>
                                                   </Show>
-                                                </Show>
-                                              </div>
-                                            </Show>
-                                          </article>
-                                        );
-                                      }}
-                                    </For>
-                                  </div>
-                                </Show>
-                              </section>
-                            </Show>
-                          }
-                        >
-                          <dl class="task-detail-definition-list run-detail-metadata">
-                            <div>
-                              <dt>Status</dt>
-                              <dd>{formatRunStatus(runValue().status)}</dd>
-                            </div>
-                            <div>
-                              <dt>Duration</dt>
-                              <dd>{model.durationLabel()}</dd>
-                            </div>
-                            <div>
-                              <dt>Worktree</dt>
-                              <dd>
-                                {runValue().worktreeId?.trim() || "Unavailable"}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Branch</dt>
-                              <dd>
-                                {runValue().status === "running"
-                                  ? "active branch"
-                                  : "Unavailable"}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Model/agent</dt>
-                              <dd>
-                                {runValue().agentId?.trim() || "Unavailable"}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Files changed</dt>
-                              <dd>Placeholder</dd>
-                            </div>
-                            <div>
-                              <dt>Tests</dt>
-                              <dd>Placeholder</dd>
-                            </div>
-                          </dl>
+                                                </div>
+                                              </Show>
+                                            </article>
+                                          );
+                                        }}
+                                      </For>
+                                    </div>
+                                  </Show>
+                                </section>
+                              </Show>
+                            }
+                          >
+                            <dl class="task-detail-definition-list run-detail-metadata">
+                              <div>
+                                <dt>Status</dt>
+                                <dd>{formatRunStatus(runValue().status)}</dd>
+                              </div>
+                              <div>
+                                <dt>Duration</dt>
+                                <dd>{model.durationLabel()}</dd>
+                              </div>
+                              <div>
+                                <dt>Worktree</dt>
+                                <dd>
+                                  {runValue().worktreeId?.trim() ||
+                                    "Unavailable"}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Branch</dt>
+                                <dd>
+                                  {runValue().status === "running"
+                                    ? "active branch"
+                                    : "Unavailable"}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Model/agent</dt>
+                                <dd>
+                                  {runValue().agentId?.trim() || "Unavailable"}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Files changed</dt>
+                                <dd>Placeholder</dd>
+                              </div>
+                              <div>
+                                <dt>Tests</dt>
+                                <dd>Placeholder</dd>
+                              </div>
+                            </dl>
+                          </Show>
                         </Show>
-                      </Show>
-                    </div>
-                  </aside>
+                      </div>
+                    </aside>
+                  </Show>
                 </section>
               </section>
             )}
