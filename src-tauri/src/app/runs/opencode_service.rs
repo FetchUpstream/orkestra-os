@@ -14,9 +14,11 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
+use tauri::async_runtime::JoinHandle;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, sleep};
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 
 fn value_array_to_message_wrappers(value: serde_json::Value) -> Vec<RunOpenCodeSessionMessageDto> {
@@ -46,6 +48,10 @@ fn value_array_to_todo_wrappers(value: serde_json::Value) -> Vec<RunOpenCodeSess
 }
 
 const MAX_BUFFERED_EVENTS: usize = 500;
+const EVENT_BROADCAST_CAPACITY: usize = 512;
+const STREAM_RECONNECT_BASE_DELAY_MS: u64 = 250;
+const STREAM_RECONNECT_MAX_DELAY_MS: u64 = 8_000;
+const STREAM_MAX_RECONNECT_ATTEMPTS: u32 = 8;
 
 #[derive(Clone)]
 pub struct RunsOpenCodeService {
@@ -70,11 +76,41 @@ struct RunOpenCodeHandle {
     client: OpencodeClient,
     session_id: Arc<Mutex<Option<String>>>,
     subscribers: Arc<Mutex<HashMap<String, Channel<RawAgentEvent>>>>,
+    subscriber_tasks: Arc<Mutex<HashMap<String, SubscriberTaskEntry>>>,
+    subscriber_generation: AtomicU64,
+    subscriber_lifecycle_lock: tokio::sync::Mutex<()>,
     event_tx: tokio::sync::broadcast::Sender<RawAgentEvent>,
     buffered_events: Arc<Mutex<VecDeque<RawAgentEvent>>>,
 }
 
+struct SubscriberTaskEntry {
+    generation: u64,
+    handle: JoinHandle<()>,
+}
+
 impl RunsOpenCodeService {
+    fn push_event(
+        event_tx: &tokio::sync::broadcast::Sender<RawAgentEvent>,
+        buffered_events: &Arc<Mutex<VecDeque<RawAgentEvent>>>,
+        event_name: impl Into<String>,
+        payload: impl Into<String>,
+    ) {
+        let agent_event = RawAgentEvent {
+            timestamp: Utc::now().to_rfc3339(),
+            event_name: event_name.into(),
+            payload: payload.into(),
+        };
+
+        if let Ok(mut buffered) = buffered_events.lock() {
+            if buffered.len() >= MAX_BUFFERED_EVENTS {
+                buffered.pop_front();
+            }
+            buffered.push_back(agent_event.clone());
+        }
+
+        let _ = event_tx.send(agent_event);
+    }
+
     pub fn new(runs_service: RunsService, app_data_dir: PathBuf) -> Self {
         Self {
             runs_service,
@@ -166,8 +202,9 @@ impl RunsOpenCodeService {
             }
         }
 
-        let (event_tx, _rx) = tokio::sync::broadcast::channel(64);
+        let (event_tx, _rx) = tokio::sync::broadcast::channel(EVENT_BROADCAST_CAPACITY);
         let subscribers = Arc::new(Mutex::new(HashMap::new()));
+        let subscriber_tasks = Arc::new(Mutex::new(HashMap::new()));
         let buffered_events = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_BUFFERED_EVENTS)));
         let generation = self.handle_generation.fetch_add(1, Ordering::Relaxed);
         let handle = Arc::new(RunOpenCodeHandle {
@@ -176,6 +213,9 @@ impl RunsOpenCodeService {
             client: client.clone(),
             session_id: Arc::new(Mutex::new(None)),
             subscribers: subscribers.clone(),
+            subscriber_tasks,
+            subscriber_generation: AtomicU64::new(1),
+            subscriber_lifecycle_lock: tokio::sync::Mutex::new(()),
             event_tx: event_tx.clone(),
             buffered_events: buffered_events.clone(),
         });
@@ -402,6 +442,11 @@ impl RunsOpenCodeService {
         run_id: &str,
         on_output: Channel<RawAgentEvent>,
     ) -> Result<(), AppError> {
+        let subscriber_id = subscriber_id.trim();
+        if subscriber_id.is_empty() {
+            return Err(AppError::validation("subscriber_id is required"));
+        }
+
         let ensured = self.ensure_run_opencode(run_id).await?;
         if ensured.state == "unsupported" {
             return Err(AppError::validation(
@@ -419,6 +464,8 @@ impl RunsOpenCodeService {
             .cloned()
             .ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
 
+        let _lifecycle_guard = handle.subscriber_lifecycle_lock.lock().await;
+
         {
             let mut subscribers = handle
                 .subscribers
@@ -427,35 +474,108 @@ impl RunsOpenCodeService {
             subscribers.insert(subscriber_id.to_string(), on_output);
         }
 
+        let previous_task = {
+            let mut subscriber_tasks = handle
+                .subscriber_tasks
+                .lock()
+                .map_err(|_| AppError::validation("failed to lock OpenCode subscriber tasks"))?;
+            subscriber_tasks.remove(subscriber_id)
+        };
+        if let Some(previous_task) = previous_task {
+            previous_task.handle.abort();
+        }
+
         let subscriber_id_owned = subscriber_id.to_string();
         let subscribers = handle.subscribers.clone();
+        let subscriber_tasks = handle.subscriber_tasks.clone();
+        let subscriber_generation = handle.subscriber_generation.fetch_add(1, Ordering::Relaxed);
         let mut stream = BroadcastStream::new(handle.event_tx.subscribe());
-        tauri::async_runtime::spawn(async move {
+        let run_id_owned = run_id.to_string();
+        let forwarder_task = tauri::async_runtime::spawn(async move {
             while let Some(frame) = stream.next().await {
-                let Ok(event) = frame else {
-                    continue;
+                let event = match frame {
+                    Ok(event) => event,
+                    Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                        let synthetic = RawAgentEvent {
+                            timestamp: Utc::now().to_rfc3339(),
+                            event_name: "stream.resync_needed".to_string(),
+                            payload: serde_json::json!({
+                                "runId": run_id_owned,
+                                "subscriberId": subscriber_id_owned,
+                                "reason": "subscriber_lagged",
+                                "skipped": skipped,
+                            })
+                            .to_string(),
+                        };
+
+                        let channel = {
+                            let subscribers_guard = subscribers.lock();
+                            if let Ok(subscribers_guard) = subscribers_guard {
+                                subscribers_guard.get(&subscriber_id_owned).cloned()
+                            } else {
+                                None
+                            }
+                        };
+
+                        if let Some(channel) = channel {
+                            let _ = channel.send(synthetic);
+                        }
+
+                        if let Ok(mut subscribers_guard) = subscribers.lock() {
+                            subscribers_guard.remove(&subscriber_id_owned);
+                        }
+                        break;
+                    }
                 };
 
-                let send_result = {
+                let channel = {
                     let subscribers_guard = subscribers.lock();
                     if let Ok(subscribers_guard) = subscribers_guard {
-                        subscribers_guard
-                            .get(&subscriber_id_owned)
-                            .cloned()
-                            .map(|channel| channel.send(event.clone()))
+                        subscribers_guard.get(&subscriber_id_owned).cloned()
                     } else {
                         None
                     }
                 };
 
-                if matches!(send_result, Some(Err(_))) {
+                if let Some(channel) = channel {
+                    if channel.send(event).is_err() {
+                        if let Ok(mut subscribers_guard) = subscribers.lock() {
+                            subscribers_guard.remove(&subscriber_id_owned);
+                        }
+                        break;
+                    }
+                } else {
                     if let Ok(mut subscribers_guard) = subscribers.lock() {
                         subscribers_guard.remove(&subscriber_id_owned);
                     }
                     break;
                 }
             }
+
+            if let Ok(mut subscriber_tasks_guard) = subscriber_tasks.lock() {
+                let should_remove = subscriber_tasks_guard
+                    .get(&subscriber_id_owned)
+                    .map(|entry| entry.generation == subscriber_generation)
+                    .unwrap_or(false);
+                if should_remove {
+                    subscriber_tasks_guard.remove(&subscriber_id_owned);
+                }
+            }
         });
+
+        {
+            let mut subscriber_tasks = handle
+                .subscriber_tasks
+                .lock()
+                .map_err(|_| AppError::validation("failed to lock OpenCode subscriber tasks"))?;
+            subscriber_tasks.insert(
+                subscriber_id.to_string(),
+                SubscriberTaskEntry {
+                    generation: subscriber_generation,
+                    handle: forwarder_task,
+                },
+            );
+        }
 
         Ok(())
     }
@@ -479,6 +599,49 @@ impl RunsOpenCodeService {
         Ok(buffered.iter().cloned().collect())
     }
 
+    pub async fn unsubscribe_run_opencode_events(
+        &self,
+        subscriber_id: &str,
+        run_id: &str,
+    ) -> Result<(), AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let subscriber_id = subscriber_id.trim();
+        if subscriber_id.is_empty() {
+            return Err(AppError::validation("subscriber_id is required"));
+        }
+
+        let handle = self.handles.read().await.get(run_id).cloned();
+        if let Some(handle) = handle {
+            let _lifecycle_guard = handle.subscriber_lifecycle_lock.lock().await;
+
+            {
+                let mut subscribers = handle
+                    .subscribers
+                    .lock()
+                    .map_err(|_| AppError::validation("failed to lock OpenCode subscribers"))?;
+                subscribers.remove(subscriber_id);
+            }
+
+            let subscriber_task = {
+                let mut subscriber_tasks = handle
+                    .subscriber_tasks
+                    .lock()
+                    .map_err(|_| AppError::validation("failed to lock OpenCode subscriber tasks"))?;
+                subscriber_tasks.remove(subscriber_id)
+            };
+
+            if let Some(subscriber_task) = subscriber_task {
+                subscriber_task.handle.abort();
+            }
+        }
+
+        Ok(())
+    }
+
     fn spawn_event_stream(
         &self,
         run_id: String,
@@ -488,44 +651,145 @@ impl RunsOpenCodeService {
         buffered_events: Arc<Mutex<VecDeque<RawAgentEvent>>>,
     ) {
         let handles = self.handles.clone();
+        let init_locks = self.init_locks.clone();
         tauri::async_runtime::spawn(async move {
-            let mut stream = match client.event().subscribe(RequestOptions::default()).await {
-                Ok(stream) => stream,
-                Err(_) => {
-                    let mut handles_guard = handles.write().await;
-                    let should_remove = handles_guard
-                        .get(&run_id)
-                        .map(|current| current.generation == generation)
-                        .unwrap_or(false);
-                    if should_remove {
-                        handles_guard.remove(&run_id);
-                    }
-                    return;
-                }
-            };
+            let mut reconnect_attempt: u32 = 0;
+            let mut disconnected_emitted = false;
 
-            while let Some(frame) = stream.next().await {
-                let sse = match frame {
-                    Ok(event) => event,
-                    Err(_) => break,
+            loop {
+                let mut stream = match client.event().subscribe(RequestOptions::default()).await {
+                    Ok(stream) => {
+                        if reconnect_attempt > 0 {
+                            RunsOpenCodeService::push_event(
+                                &event_tx,
+                                &buffered_events,
+                                "stream.reconnected",
+                                serde_json::json!({
+                                    "runId": run_id.as_str(),
+                                    "attempt": reconnect_attempt,
+                                })
+                                .to_string(),
+                            );
+                        }
+                        reconnect_attempt = 0;
+                        disconnected_emitted = false;
+                        stream
+                    }
+                    Err(err) => {
+                        if !disconnected_emitted {
+                            disconnected_emitted = true;
+                            RunsOpenCodeService::push_event(
+                                &event_tx,
+                                &buffered_events,
+                                "stream.disconnected",
+                                serde_json::json!({
+                                    "runId": run_id.as_str(),
+                                    "error": err.to_string(),
+                                })
+                                .to_string(),
+                            );
+                        }
+
+                        reconnect_attempt += 1;
+                        if reconnect_attempt > STREAM_MAX_RECONNECT_ATTEMPTS {
+                            break;
+                        }
+
+                        let backoff_ms = (STREAM_RECONNECT_BASE_DELAY_MS
+                            .saturating_mul(1_u64 << (reconnect_attempt - 1)))
+                        .min(STREAM_RECONNECT_MAX_DELAY_MS);
+
+                        RunsOpenCodeService::push_event(
+                            &event_tx,
+                            &buffered_events,
+                            "stream.reconnecting",
+                            serde_json::json!({
+                                "runId": run_id.as_str(),
+                                "attempt": reconnect_attempt,
+                                "backoffMs": backoff_ms,
+                            })
+                            .to_string(),
+                        );
+
+                        sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
                 };
 
-                let event_name = sse.event.unwrap_or_else(|| "message".to_string());
-                let payload = sse.data;
-                let agent_event = RawAgentEvent {
-                    timestamp: Utc::now().to_rfc3339(),
-                    event_name,
-                    payload,
-                };
+                let mut stream_failed = false;
+                while let Some(frame) = stream.next().await {
+                    let sse = match frame {
+                        Ok(event) => event,
+                        Err(err) => {
+                            stream_failed = true;
+                            if !disconnected_emitted {
+                                disconnected_emitted = true;
+                                RunsOpenCodeService::push_event(
+                                    &event_tx,
+                                    &buffered_events,
+                                    "stream.disconnected",
+                                    serde_json::json!({
+                                        "runId": run_id.as_str(),
+                                        "error": err.to_string(),
+                                    })
+                                    .to_string(),
+                                );
+                            }
+                            break;
+                        }
+                    };
 
-                if let Ok(mut buffered) = buffered_events.lock() {
-                    if buffered.len() >= MAX_BUFFERED_EVENTS {
-                        buffered.pop_front();
-                    }
-                    buffered.push_back(agent_event.clone());
+                    let event_name = sse.event.unwrap_or_else(|| "message".to_string());
+                    RunsOpenCodeService::push_event(&event_tx, &buffered_events, event_name, sse.data);
                 }
 
-                let _ = event_tx.send(agent_event);
+                if !stream_failed && !disconnected_emitted {
+                    disconnected_emitted = true;
+                    RunsOpenCodeService::push_event(
+                        &event_tx,
+                        &buffered_events,
+                        "stream.disconnected",
+                        serde_json::json!({
+                            "runId": run_id.as_str(),
+                            "error": "event stream ended",
+                        })
+                        .to_string(),
+                    );
+                }
+
+                reconnect_attempt += 1;
+                if reconnect_attempt > STREAM_MAX_RECONNECT_ATTEMPTS {
+                    RunsOpenCodeService::push_event(
+                        &event_tx,
+                        &buffered_events,
+                        "stream.terminated",
+                        serde_json::json!({
+                            "runId": run_id.as_str(),
+                            "reason": "reconnect_exhausted",
+                            "attempts": reconnect_attempt,
+                        })
+                        .to_string(),
+                    );
+                    break;
+                }
+
+                let backoff_ms = (STREAM_RECONNECT_BASE_DELAY_MS
+                    .saturating_mul(1_u64 << (reconnect_attempt - 1)))
+                .min(STREAM_RECONNECT_MAX_DELAY_MS);
+
+                RunsOpenCodeService::push_event(
+                    &event_tx,
+                    &buffered_events,
+                    "stream.reconnecting",
+                    serde_json::json!({
+                        "runId": run_id.as_str(),
+                        "attempt": reconnect_attempt,
+                        "backoffMs": backoff_ms,
+                    })
+                    .to_string(),
+                );
+
+                sleep(Duration::from_millis(backoff_ms)).await;
             }
 
             let mut handles_guard = handles.write().await;
@@ -535,6 +799,7 @@ impl RunsOpenCodeService {
                 .unwrap_or(false);
             if should_remove {
                 handles_guard.remove(&run_id);
+                init_locks.write().await.remove(&run_id);
             }
         });
     }

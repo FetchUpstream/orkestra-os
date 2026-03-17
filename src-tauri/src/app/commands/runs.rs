@@ -91,16 +91,29 @@ pub async fn ensure_run_opencode(
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn subscribe_run_opencode_events(
-    window: tauri::Window,
     state: tauri::State<'_, AppState>,
     run_id: String,
+    subscriber_id: String,
     on_output: Channel<RawAgentEvent>,
 ) -> Result<(), String> {
     let service = context::runs_opencode_service(&state);
-    let subscriber_id = format!("{}:{}:{}", window.label(), run_id, uuid::Uuid::new_v4());
     map_result(
         service
             .subscribe_run_opencode_events(&subscriber_id, &run_id, on_output)
+            .await,
+    )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn unsubscribe_run_opencode_events(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+    subscriber_id: String,
+) -> Result<(), String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(
+        service
+            .unsubscribe_run_opencode_events(&subscriber_id, &run_id)
             .await,
     )
 }
