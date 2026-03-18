@@ -1,4 +1,5 @@
 import { Show, type Component } from "solid-js";
+import BackIconLink from "../../../components/ui/BackIconLink";
 import NewRunChatWorkspace from "../components/NewRunChatWorkspace";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 
@@ -31,7 +32,16 @@ const NewRunDetailScreen: Component = () => {
               </section>
             }
           >
-            <NewRunChatWorkspace model={model} />
+            <>
+              <section class="run-chat-back-nav" aria-label="Run navigation">
+                <BackIconLink
+                  href={model.backHref()}
+                  label={model.backLabel()}
+                  class="project-detail-back-link project-detail-back-link--icon task-detail-back-link"
+                />
+              </section>
+              <NewRunChatWorkspace model={model} />
+            </>
           </Show>
         </Show>
       </Show>

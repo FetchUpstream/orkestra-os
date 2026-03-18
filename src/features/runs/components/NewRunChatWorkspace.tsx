@@ -1,5 +1,4 @@
 import {
-  For,
   Show,
   createEffect,
   createMemo,
@@ -11,10 +10,8 @@ import {
 import {
   RunChatAssistantMessage,
   RunChatComposer,
-  RunChatDetailsDisclosure,
   RunChatMarkdown,
   RunChatMessage,
-  RunChatReasoningDisclosure,
   RunChatSystemMessage,
   RunChatToolRail,
   RunChatTranscript,
@@ -41,6 +38,189 @@ const TRANSCRIPT_WINDOW_CHUNK = 60;
 const AUTO_SCROLL_NEAR_BOTTOM_PX = 96;
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const toSingleLine = (value: unknown, maxLength = 140): string | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const asText =
+    typeof value === "string"
+      ? value
+      : typeof value === "number" || typeof value === "boolean"
+        ? String(value)
+        : null;
+
+  if (asText === null) {
+    return null;
+  }
+
+  const normalized = asText
+    .replace(INTERNAL_ID_PATTERN, "[internal-id]")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  return normalized.length <= maxLength
+    ? normalized
+    : `${normalized.slice(0, maxLength - 3)}...`;
+};
+
+const getNestedValueByKeys = (
+  value: unknown,
+  keys: readonly string[],
+  depth = 0,
+): unknown => {
+  if (!isRecord(value) || depth > 3) {
+    return undefined;
+  }
+
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      return value[key];
+    }
+  }
+
+  for (const nestedValue of Object.values(value)) {
+    const candidate = getNestedValueByKeys(nestedValue, keys, depth + 1);
+    if (candidate !== undefined) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+};
+
+const toToolLabel = (toolName: string | null | undefined): string => {
+  const raw = toolName?.trim();
+  if (!raw) {
+    return "Tool";
+  }
+
+  const leaf = raw.includes(".")
+    ? (() => {
+        const segments = raw.split(".");
+        return segments[segments.length - 1] || raw;
+      })()
+    : raw;
+  const normalized = leaf.replace(/[-_]+/g, " ").trim();
+  if (normalized.length === 0) {
+    return "Tool";
+  }
+
+  return normalized
+    .split(/\s+/)
+    .map(
+      (segment: string) => segment.charAt(0).toUpperCase() + segment.slice(1),
+    )
+    .join(" ");
+};
+
+const buildToolSummary = (part: UiPart): string => {
+  if (part.kind !== "tool") {
+    return "";
+  }
+
+  const toolName = toToolLabel(part.toolName);
+  const normalizedToolName = (part.toolName || "").trim().toLowerCase();
+  const input = part.input;
+  const include = toSingleLine(getNestedValueByKeys(input, ["include"]), 60);
+
+  const asPath = toSingleLine(
+    getNestedValueByKeys(input, ["filePath", "path", "filename"]),
+  );
+  const asCommand = toSingleLine(
+    getNestedValueByKeys(input, ["command", "bash", "script", "cmd"]),
+  );
+  const asUrl = toSingleLine(getNestedValueByKeys(input, ["url", "href"]));
+  const asQuery = toSingleLine(
+    getNestedValueByKeys(input, ["query", "searchQuery", "q", "keywords"]),
+  );
+  const asPattern = toSingleLine(
+    getNestedValueByKeys(input, ["pattern", "glob"]),
+  );
+  const asHeader = toSingleLine(getNestedValueByKeys(input, ["header"]));
+
+  let focused =
+    toSingleLine(part.title) ||
+    asCommand ||
+    asUrl ||
+    asPath ||
+    asQuery ||
+    asPattern ||
+    asHeader;
+
+  if (normalizedToolName.includes("read") && asPath) {
+    focused = asPath;
+  } else if (normalizedToolName.includes("bash") && asCommand) {
+    focused = asCommand;
+  } else if (normalizedToolName.includes("webfetch") && asUrl) {
+    focused = asUrl;
+  } else if (normalizedToolName.includes("websearch") && asQuery) {
+    focused = asQuery;
+  } else if (normalizedToolName.includes("glob") && asPattern) {
+    focused = asPattern;
+  } else if (normalizedToolName.includes("grep")) {
+    const grepPattern = asPattern;
+    if (grepPattern && include) {
+      focused = `${grepPattern} in ${include}`;
+    } else if (grepPattern) {
+      focused = grepPattern;
+    }
+  } else if (normalizedToolName.includes("question") && asHeader) {
+    focused = asHeader;
+  } else if (normalizedToolName.includes("todowrite")) {
+    const todos = getNestedValueByKeys(input, ["todos"]);
+    if (Array.isArray(todos)) {
+      const firstTodo = todos[0];
+      const firstText = toSingleLine(
+        isRecord(firstTodo)
+          ? firstTodo.content || firstTodo.text || firstTodo.title
+          : firstTodo,
+      );
+      focused =
+        firstText || `${todos.length} todo${todos.length === 1 ? "" : "s"}`;
+    }
+  } else if (normalizedToolName.includes("apply_patch")) {
+    const patchText = toSingleLine(
+      getNestedValueByKeys(input, ["patchText"]),
+      4000,
+    );
+    if (patchText) {
+      const matches = patchText.match(/\*\*\*\s(?:Add|Update|Delete)\sFile:/g);
+      focused =
+        matches && matches.length > 0
+          ? `${matches.length} file${matches.length === 1 ? "" : "s"}`
+          : "patch";
+    }
+  } else if (normalizedToolName.includes("background_task")) {
+    focused =
+      toSingleLine(getNestedValueByKeys(input, ["description", "task"])) ||
+      focused;
+  } else if (normalizedToolName.includes("background_output")) {
+    focused =
+      toSingleLine(getNestedValueByKeys(input, ["task_id", "taskId"])) ||
+      focused;
+  } else if (normalizedToolName.includes("background_cancel")) {
+    focused =
+      toSingleLine(getNestedValueByKeys(input, ["task_id", "target"])) ||
+      (getNestedValueByKeys(input, ["all"]) === true ? "all tasks" : focused);
+  } else if (normalizedToolName.includes("lsp_")) {
+    focused =
+      toSingleLine(
+        getNestedValueByKeys(input, ["filePath", "newName", "line"]),
+      ) || focused;
+  } else if (normalizedToolName.includes("ast_grep_")) {
+    focused = toSingleLine(getNestedValueByKeys(input, ["pattern"])) || focused;
+  }
+
+  return `-> ${toolName}${focused ? ` ${focused}` : ""}`;
+};
 
 const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const [composerValue, setComposerValue] = createSignal("");
@@ -332,7 +512,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       const textParts: string[] = [];
       const reasoningParts: string[] = [];
       const toolItems: RunChatToolRailItem[] = [];
-      const detailsItems: string[] = [];
 
       for (const partId of message.partOrder) {
         const part = message.partsById[partId];
@@ -357,17 +536,12 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         }
 
         if (part.kind === "tool") {
+          const summary = buildToolSummary(part);
           toolItems.push({
             id: part.id,
             label: part.title?.trim() || part.toolName || "Tool",
+            summary,
             status: part.status,
-            detail: formatAgentPayload({
-              input: part.input,
-              output: part.output,
-              error: part.error,
-              metadata: part.metadata,
-            }),
-            open: false,
           });
           continue;
         }
@@ -377,22 +551,16 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         }
 
         if (part.kind === "file") {
-          detailsItems.push(
-            `File: ${formatAgentPayload({ filename: part.filename, mime: part.mime, url: part.url })}`,
-          );
           continue;
         }
 
         const stepSummary = getStepDetailsSummary(part);
         if (stepSummary) {
-          detailsItems.push(stepSummary);
           continue;
         }
 
         if (part.kind === "unknown") {
-          detailsItems.push(
-            `Unknown part (${part.rawType || "unknown"}): ${formatAgentPayload(part.raw)}`,
-          );
+          continue;
         }
       }
 
@@ -408,13 +576,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         content,
         reasoningContent,
         toolItems,
-        detailsItems,
         timestamp,
         hasRenderableContent:
           content.length > 0 ||
           reasoningContent.length > 0 ||
-          toolItems.length > 0 ||
-          detailsItems.length > 0,
+          toolItems.length > 0,
       };
     });
   });
@@ -437,28 +603,16 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       .map((row) => {
         const reasoningNode =
           row.reasoningContent.length > 0 ? (
-            <RunChatReasoningDisclosure
-              summary="Reasoning"
-              open={false}
-              content={<RunChatMarkdown content={row.reasoningContent} />}
-            />
+            <div class="run-chat-assistant-message__reasoning-inline">
+              <RunChatMarkdown
+                content={`*Thinking:* ${row.reasoningContent}`}
+              />
+            </div>
           ) : undefined;
 
         const toolRailNode =
           row.toolItems.length > 0 ? (
-            <RunChatDetailsDisclosure summary="Tools" open={false}>
-              <RunChatToolRail items={row.toolItems} />
-            </RunChatDetailsDisclosure>
-          ) : undefined;
-
-        const detailsNode =
-          row.detailsItems.length > 0 ? (
-            <RunChatDetailsDisclosure summary="Details" open={false}>
-              <div class="run-chat-message__details-block">
-                <p>{`Timestamp: ${row.timestamp}`}</p>
-                <For each={row.detailsItems}>{(item) => <p>{item}</p>}</For>
-              </div>
-            </RunChatDetailsDisclosure>
+            <RunChatToolRail items={row.toolItems} />
           ) : undefined;
 
         if (row.role === "assistant") {
@@ -468,7 +622,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 content={row.content.length > 0 ? row.content : " "}
                 reasoning={reasoningNode}
                 toolRail={toolRailNode}
-                details={detailsNode}
               />
               <Show when={!row.hasRenderableContent}>{waitingRow}</Show>
             </RunChatMessage>
@@ -493,7 +646,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               <RunChatMarkdown
                 content={row.content.length > 0 ? row.content : row.timestamp}
               />
-              <Show when={detailsNode}>{detailsNode}</Show>
             </RunChatSystemMessage>
           </RunChatMessage>
         );
@@ -693,6 +845,56 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           </Show>
         </section>
         <div
+          class="run-chat-floating-toolbar"
+          role="toolbar"
+          aria-label="Run chat tools"
+        >
+          <button
+            type="button"
+            class="run-chat-floating-toolbar__button"
+            disabled
+            aria-label="Files (coming soon)"
+            title="Files (coming soon)"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2.75 2A1.75 1.75 0 0 0 1 3.75v8.5C1 13.216 1.784 14 2.75 14h10.5A1.75 1.75 0 0 0 15 12.25v-6.5A1.75 1.75 0 0 0 13.25 4H8.91a1.5 1.5 0 0 1-1.06-.44l-.41-.41A2.5 2.5 0 0 0 5.67 2H2.75Zm0 1.5h2.92c.265 0 .52.105.707.293l.41.41A3 3 0 0 0 8.91 5.5h4.34a.25.25 0 0 1 .25.25v6.5a.25.25 0 0 1-.25.25H2.75a.25.25 0 0 1-.25-.25v-8.5a.25.25 0 0 1 .25-.25Z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="run-chat-floating-toolbar__button"
+            disabled
+            aria-label="Terminal (coming soon)"
+            title="Terminal (coming soon)"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2.75 2A1.75 1.75 0 0 0 1 3.75v8.5C1 13.216 1.784 14 2.75 14h10.5A1.75 1.75 0 0 0 15 12.25v-8.5A1.75 1.75 0 0 0 13.25 2H2.75Zm0 1.5h10.5a.25.25 0 0 1 .25.25v8.5a.25.25 0 0 1-.25.25H2.75a.25.25 0 0 1-.25-.25v-8.5a.25.25 0 0 1 .25-.25Zm1.24 2.09a.75.75 0 0 0-.98 1.14l1.75 1.5a.25.25 0 0 1 0 .38l-1.75 1.5a.75.75 0 1 0 .98 1.14l1.75-1.5a1.75 1.75 0 0 0 0-2.66l-1.75-1.5Zm4.26 4.66a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="run-chat-floating-toolbar__button"
+            disabled
+            aria-label="Diff viewer (coming soon)"
+            title="Diff viewer (coming soon)"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M5.75 2a.75.75 0 0 1 .75.75V5h2.5V2.75a.75.75 0 0 1 1.5 0V5h.75a1.75 1.75 0 0 1 1.75 1.75v6.5A1.75 1.75 0 0 1 11.75 15h-7A1.75 1.75 0 0 1 3 13.25v-6.5A1.75 1.75 0 0 1 4.75 5h.75V2.75A.75.75 0 0 1 5.75 2Zm0 4.5h-1a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h7a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25h-1v1.75a.75.75 0 0 1-1.5 0V6.5H6.5v1.75a.75.75 0 0 1-1.5 0V6.5Z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="run-chat-floating-toolbar__button"
+            disabled
+            aria-label="Git (coming soon)"
+            title="Git (coming soon)"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 1.5a2.5 2.5 0 0 0-1.25 4.665v3.17A2.5 2.5 0 1 0 8.5 11.7v-1.35h2.17a2.5 2.5 0 1 0 0-1.5H8.5v-2.68A2.5 2.5 0 1 0 8 1.5Zm0 1.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM5 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm7-3a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z" />
+            </svg>
+          </button>
+        </div>
+        <div
           ref={runChatComposerRef}
           class="run-chat-composer-shell run-chat-composer-shell--pinned"
         >
@@ -713,7 +915,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               props.model.agent.state() === "unsupported"
             }
             submitting={props.model.agent.isSubmittingPrompt()}
-            placeholder="Message agent..."
+            placeholder="What do you want to do?"
             textareaLabel="Message agent"
             submitLabel="Send"
           />

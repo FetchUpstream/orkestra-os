@@ -14,15 +14,15 @@ const RunChatAssistantMessage: Component<RunChatAssistantMessageProps> = (
 ) => {
   return (
     <div class={`run-chat-assistant-message ${props.class ?? ""}`.trim()}>
-      <RunChatMarkdown
-        content={props.content}
-        class="run-chat-assistant-message__content"
-      />
       <Show when={props.reasoning}>
         <div class="run-chat-assistant-message__reasoning">
           {props.reasoning}
         </div>
       </Show>
+      <RunChatMarkdown
+        content={props.content}
+        class="run-chat-assistant-message__content"
+      />
       <Show when={props.toolRail}>
         <div class="run-chat-assistant-message__tools">{props.toolRail}</div>
       </Show>

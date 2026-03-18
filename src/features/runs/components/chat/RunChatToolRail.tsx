@@ -3,6 +3,7 @@ import { For, Show, type Component } from "solid-js";
 export type RunChatToolRailItem = {
   id: string;
   label: string;
+  summary?: string;
   status?: string;
   detail?: string;
   open?: boolean;
@@ -65,28 +66,20 @@ const RunChatToolRail: Component<RunChatToolRailProps> = (props) => {
           <For each={props.items}>
             {(item) => {
               const statusModifier = normalizeStatus(item.status);
+              const rowSummary = item.summary ?? item.label;
 
               return (
                 <li
                   class={`run-chat-tool-rail__item${statusModifier ? ` run-chat-tool-rail__item--${statusModifier}` : ""}`}
                 >
-                  <div class="run-chat-tool-rail__summary">
-                    <span class="run-chat-tool-rail__label">{item.label}</span>
+                  <div class="run-chat-tool-rail__row">
+                    <span class="run-chat-tool-rail__line">{rowSummary}</span>
                     <Show when={item.status}>
                       <span class="run-chat-tool-rail__status">
                         {item.status}
                       </span>
                     </Show>
                   </div>
-                  <Show when={item.detail}>
-                    <details
-                      class="run-chat-tool-rail__details"
-                      open={item.open ?? false}
-                    >
-                      <summary>Details</summary>
-                      <pre>{item.detail}</pre>
-                    </details>
-                  </Show>
                 </li>
               );
             }}
