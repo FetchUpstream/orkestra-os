@@ -133,6 +133,7 @@ const TaskDetailScreen: Component = () => {
     isEditing,
     editTitle,
     editDescription,
+    editImplementationGuide,
     isSavingEdit,
     isChangingStatus,
     moveRepositoryId,
@@ -143,6 +144,7 @@ const TaskDetailScreen: Component = () => {
     createDependencyDirection,
     createDependencyTitle,
     createDependencyDescription,
+    createDependencyImplementationGuide,
     createDependencyStatus,
     isCreatingDependency,
     backHref,
@@ -158,11 +160,13 @@ const TaskDetailScreen: Component = () => {
     setIsEditing,
     setEditTitle,
     setEditDescription,
+    setEditImplementationGuide,
     setMoveRepositoryId,
     setSelectedParentTaskId,
     setSelectedChildTaskId,
     setCreateDependencyTitle,
     setCreateDependencyDescription,
+    setCreateDependencyImplementationGuide,
     setCreateDependencyStatus,
     onOpenCreateDependencyModal,
     onCancelCreateDependency,
@@ -284,7 +288,7 @@ const TaskDetailScreen: Component = () => {
                                 when={taskValue().description?.trim()}
                                 fallback={
                                   <p class="project-placeholder-text task-detail-description-text">
-                                    No description yet
+                                    No description yet.
                                   </p>
                                 }
                               >
@@ -301,6 +305,38 @@ const TaskDetailScreen: Component = () => {
                               value={editDescription()}
                               onChange={setEditDescription}
                               ariaLabel="Task description"
+                              disabled={isSavingEdit()}
+                            />
+                          </Show>
+                        </div>
+                        <div class="task-detail-description-block">
+                          <h2 class="project-section-title task-detail-description-title">
+                            Implementation guide
+                          </h2>
+                          <Show
+                            when={isEditing()}
+                            fallback={
+                              <Show
+                                when={taskValue().implementationGuide?.trim()}
+                                fallback={
+                                  <p class="project-placeholder-text task-detail-description-text">
+                                    No implementation guide yet.
+                                  </p>
+                                }
+                              >
+                                {(implementationGuide) => (
+                                  <MarkdownContent
+                                    content={implementationGuide()}
+                                    class="task-detail-description-text"
+                                  />
+                                )}
+                              </Show>
+                            }
+                          >
+                            <TaskMarkdownEditor
+                              value={editImplementationGuide()}
+                              onChange={setEditImplementationGuide}
+                              ariaLabel="Task implementation guide"
                               disabled={isSavingEdit()}
                             />
                           </Show>
@@ -1064,6 +1100,22 @@ const TaskDetailScreen: Component = () => {
                   setCreateDependencyDescription(event.currentTarget.value)
                 }
                 aria-label="Dependency task description"
+              />
+            </label>
+            <label class="projects-field">
+              <span class="field-label">
+                <span class="field-label-text">Implementation guide</span>
+                <span class="field-optional">Optional</span>
+              </span>
+              <textarea
+                rows={3}
+                value={createDependencyImplementationGuide()}
+                onInput={(event) =>
+                  setCreateDependencyImplementationGuide(
+                    event.currentTarget.value,
+                  )
+                }
+                aria-label="Dependency task implementation guide"
               />
             </label>
             <label class="projects-field">

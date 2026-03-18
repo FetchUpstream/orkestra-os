@@ -8,6 +8,7 @@ type Props = {
   project: () => Project | null;
   taskTitle: () => string;
   taskDescription: () => string;
+  taskImplementationGuide: () => string;
   taskStatus: () => TaskStatus;
   targetRepositoryId: () => string;
   taskFormError: () => string;
@@ -15,6 +16,7 @@ type Props = {
   setIsModalOpen: (open: boolean) => void;
   setTaskTitle: (value: string) => void;
   setTaskDescription: (value: string) => void;
+  setTaskImplementationGuide: (value: string) => void;
   setTaskStatus: (value: TaskStatus) => void;
   setTargetRepositoryId: (value: string) => void;
   onCreateTask: (event: Event) => Promise<void>;
@@ -59,6 +61,19 @@ const CreateTaskModal: Component<Props> = (props) => (
               onInput={(event) =>
                 props.setTaskDescription(event.currentTarget.value)
               }
+            />
+          </div>
+          <div class="projects-field">
+            <label for="task-implementation-guide" class="field-label">
+              Implementation guide <span class="field-optional">optional</span>
+            </label>
+            <textarea
+              id="task-implementation-guide"
+              value={props.taskImplementationGuide()}
+              onInput={(event) =>
+                props.setTaskImplementationGuide(event.currentTarget.value)
+              }
+              aria-label="Task implementation guide"
             />
           </div>
           <div class="projects-field">

@@ -6,6 +6,11 @@ Object.defineProperty(window, "scrollTo", {
   writable: true,
 });
 
+Object.defineProperty(document, "queryCommandSupported", {
+  value: () => false,
+  writable: true,
+});
+
 afterEach(() => {
   cleanup();
 });

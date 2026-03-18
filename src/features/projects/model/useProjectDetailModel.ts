@@ -22,6 +22,8 @@ export const useProjectDetailModel = () => {
   const [taskFormError, setTaskFormError] = createSignal("");
   const [taskTitle, setTaskTitle] = createSignal("");
   const [taskDescription, setTaskDescription] = createSignal("");
+  const [taskImplementationGuide, setTaskImplementationGuide] =
+    createSignal("");
   const [taskStatus, setTaskStatus] = createSignal<TaskStatus>("todo");
   const [targetRepositoryId, setTargetRepositoryId] = createSignal("");
 
@@ -40,6 +42,7 @@ export const useProjectDetailModel = () => {
   const resetTaskForm = () => {
     setTaskTitle("");
     setTaskDescription("");
+    setTaskImplementationGuide("");
     setTaskStatus("todo");
     setTaskFormError("");
     const selectedProject = project();
@@ -91,6 +94,7 @@ export const useProjectDetailModel = () => {
         projectId,
         title: taskTitle().trim(),
         description: taskDescription().trim() || undefined,
+        implementationGuide: taskImplementationGuide().trim() || undefined,
         status: taskStatus(),
         targetRepositoryId: targetRepositoryId() || undefined,
       });
@@ -123,11 +127,13 @@ export const useProjectDetailModel = () => {
     taskFormError,
     taskTitle,
     taskDescription,
+    taskImplementationGuide,
     taskStatus,
     targetRepositoryId,
     setIsModalOpen,
     setTaskTitle,
     setTaskDescription,
+    setTaskImplementationGuide,
     setTaskStatus,
     setTargetRepositoryId,
     resetTaskForm,

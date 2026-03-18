@@ -243,6 +243,7 @@ const ProjectDetailScreen: Component = () => {
                   project={model.project}
                   taskTitle={model.taskTitle}
                   taskDescription={model.taskDescription}
+                  taskImplementationGuide={model.taskImplementationGuide}
                   taskStatus={model.taskStatus}
                   targetRepositoryId={model.targetRepositoryId}
                   taskFormError={model.taskFormError}
@@ -250,6 +251,7 @@ const ProjectDetailScreen: Component = () => {
                   setIsModalOpen={model.setIsModalOpen}
                   setTaskTitle={model.setTaskTitle}
                   setTaskDescription={model.setTaskDescription}
+                  setTaskImplementationGuide={model.setTaskImplementationGuide}
                   setTaskStatus={model.setTaskStatus}
                   setTargetRepositoryId={model.setTargetRepositoryId}
                   onCreateTask={model.onCreateTask}

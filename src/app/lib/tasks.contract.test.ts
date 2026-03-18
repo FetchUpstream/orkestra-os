@@ -4,6 +4,7 @@ import {
   listTaskDependencies,
   listProjectTasks,
   setTaskStatus,
+  updateTask,
   type CreateTaskInput,
   type Task,
   type TaskStatus,
@@ -27,6 +28,7 @@ describe("tasks contract", () => {
       status: "todo" satisfies TaskStatus,
       project_id: "project-1",
       repository_id: "repo-1",
+      implementation_guide: "Follow checklist",
     });
 
     const input: CreateTaskInput = {
@@ -34,6 +36,7 @@ describe("tasks contract", () => {
       title: "New task",
       status: "todo",
       targetRepositoryId: "repo-1",
+      implementationGuide: "Follow checklist",
     };
 
     await createTask(input);
@@ -43,6 +46,7 @@ describe("tasks contract", () => {
         project_id: "project-1",
         title: "New task",
         description: undefined,
+        implementation_guide: "Follow checklist",
         status: "todo",
         repository_id: "repo-1",
       },
@@ -54,6 +58,8 @@ describe("tasks contract", () => {
       {
         id: "task-snake",
         title: "Snake",
+        description: "Snake description",
+        implementation_guide: "Use migrations first",
         status: "doing" satisfies TaskStatus,
         blocked_by_count: 2,
         is_blocked: true,
@@ -68,6 +74,8 @@ describe("tasks contract", () => {
       {
         id: "task-camel",
         title: "Camel",
+        description: "Camel description",
+        implementationGuide: "Keep API stable",
         status: "review" satisfies TaskStatus,
         blockedByCount: 1,
         isBlocked: false,
@@ -90,6 +98,8 @@ describe("tasks contract", () => {
       {
         id: "task-snake",
         title: "Snake",
+        description: "Snake description",
+        implementationGuide: "Use migrations first",
         status: "doing",
         blockedByCount: 2,
         isBlocked: true,
@@ -104,6 +114,8 @@ describe("tasks contract", () => {
       {
         id: "task-camel",
         title: "Camel",
+        description: "Camel description",
+        implementationGuide: "Keep API stable",
         status: "review",
         blockedByCount: 1,
         isBlocked: false,
@@ -207,6 +219,31 @@ describe("tasks contract", () => {
     expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
       id: "task-123",
       input: { status: "doing" },
+    });
+  });
+
+  it("sends implementation guide in update_task payload", async () => {
+    invokeMock.mockResolvedValue({
+      id: "task-123",
+      title: "Task",
+      description: "Task description",
+      implementation_guide: "Follow the rollout checklist",
+      status: "todo" satisfies TaskStatus,
+    });
+
+    await updateTask("task-123", {
+      title: "Task",
+      description: "Task description",
+      implementationGuide: "Follow the rollout checklist",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("update_task", {
+      id: "task-123",
+      input: {
+        title: "Task",
+        description: "Task description",
+        implementation_guide: "Follow the rollout checklist",
+      },
     });
   });
 });

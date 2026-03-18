@@ -56,6 +56,8 @@ export const useTaskDetailModel = () => {
   const [isEditing, setIsEditing] = createSignal(false);
   const [editTitle, setEditTitle] = createSignal("");
   const [editDescription, setEditDescription] = createSignal("");
+  const [editImplementationGuide, setEditImplementationGuide] =
+    createSignal("");
   const [isSavingEdit, setIsSavingEdit] = createSignal(false);
   const [isChangingStatus, setIsChangingStatus] = createSignal(false);
   const [moveRepositoryId, setMoveRepositoryId] = createSignal("");
@@ -69,6 +71,10 @@ export const useTaskDetailModel = () => {
   const [createDependencyTitle, setCreateDependencyTitle] = createSignal("");
   const [createDependencyDescription, setCreateDependencyDescription] =
     createSignal("");
+  const [
+    createDependencyImplementationGuide,
+    setCreateDependencyImplementationGuide,
+  ] = createSignal("");
   const [createDependencyStatus, setCreateDependencyStatus] =
     createSignal<TaskStatus>("todo");
   const [isCreatingDependency, setIsCreatingDependency] = createSignal(false);
@@ -249,6 +255,7 @@ export const useTaskDetailModel = () => {
     setCreateDependencyDirection(direction);
     setCreateDependencyTitle("");
     setCreateDependencyDescription("");
+    setCreateDependencyImplementationGuide("");
     setCreateDependencyStatus("todo");
     setIsCreateDependencyModalOpen(true);
   };
@@ -282,6 +289,8 @@ export const useTaskDetailModel = () => {
         projectId: resolvedProjectId,
         title,
         description: createDependencyDescription().trim() || undefined,
+        implementationGuide:
+          createDependencyImplementationGuide().trim() || undefined,
         status: createDependencyStatus(),
         targetRepositoryId,
       });
@@ -323,6 +332,7 @@ export const useTaskDetailModel = () => {
         setTask(detail);
         setEditTitle(detail.title);
         setEditDescription(detail.description || "");
+        setEditImplementationGuide(detail.implementationGuide || "");
         const resolvedProjectId = detail.projectId || params.projectId || null;
         await Promise.all([
           loadProjectContext(resolvedProjectId),
@@ -352,10 +362,12 @@ export const useTaskDetailModel = () => {
       const updated = await updateTask(taskValue.id, {
         title,
         description: editDescription().trim() || undefined,
+        implementationGuide: editImplementationGuide().trim() || undefined,
       });
       setTask(updated);
       setEditTitle(updated.title);
       setEditDescription(updated.description || "");
+      setEditImplementationGuide(updated.implementationGuide || "");
       setIsEditing(false);
     } catch (mutationError) {
       setActionError(
@@ -371,6 +383,7 @@ export const useTaskDetailModel = () => {
     if (!taskValue) return;
     setEditTitle(taskValue.title);
     setEditDescription(taskValue.description || "");
+    setEditImplementationGuide(taskValue.implementationGuide || "");
     setActionError("");
     setIsEditing(false);
   };
@@ -555,6 +568,7 @@ export const useTaskDetailModel = () => {
     isEditing,
     editTitle,
     editDescription,
+    editImplementationGuide,
     isSavingEdit,
     isChangingStatus,
     moveRepositoryId,
@@ -565,6 +579,7 @@ export const useTaskDetailModel = () => {
     createDependencyDirection,
     createDependencyTitle,
     createDependencyDescription,
+    createDependencyImplementationGuide,
     createDependencyStatus,
     isCreatingDependency,
     backHref,
@@ -580,11 +595,13 @@ export const useTaskDetailModel = () => {
     setIsEditing,
     setEditTitle,
     setEditDescription,
+    setEditImplementationGuide,
     setMoveRepositoryId,
     setSelectedParentTaskId,
     setSelectedChildTaskId,
     setCreateDependencyTitle,
     setCreateDependencyDescription,
+    setCreateDependencyImplementationGuide,
     setCreateDependencyStatus,
     onOpenCreateDependencyModal,
     onCancelCreateDependency,

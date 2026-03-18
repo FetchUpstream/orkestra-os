@@ -6,6 +6,7 @@ export type Task = {
   id: string;
   title: string;
   description?: string | null;
+  implementationGuide?: string | null;
   status: TaskStatus;
   blockedByCount?: number | null;
   isBlocked?: boolean | null;
@@ -38,6 +39,7 @@ export type CreateTaskInput = {
   projectId: string;
   title: string;
   description?: string;
+  implementationGuide?: string;
   status: TaskStatus;
   targetRepositoryId?: string;
 };
@@ -45,6 +47,7 @@ export type CreateTaskInput = {
 export type UpdateTaskInput = {
   title: string;
   description?: string;
+  implementationGuide?: string;
 };
 
 export type SetTaskStatusInput = {
@@ -59,6 +62,8 @@ type TaskResponse = {
   id: string;
   title: string;
   description?: string | null;
+  implementation_guide?: string | null;
+  implementationGuide?: string | null;
   status: TaskStatus;
   blocked_by_count?: number | null;
   blockedByCount?: number | null;
@@ -107,6 +112,7 @@ const toTask = (task: TaskResponse): Task => ({
   id: task.id,
   title: task.title,
   description: task.description,
+  implementationGuide: task.implementation_guide ?? task.implementationGuide,
   status: task.status,
   blockedByCount: task.blocked_by_count ?? task.blockedByCount,
   isBlocked: task.is_blocked ?? task.isBlocked,
@@ -151,6 +157,7 @@ export const createTask = async (input: CreateTaskInput): Promise<Task> => {
       project_id: input.projectId,
       title: input.title,
       description: input.description,
+      implementation_guide: input.implementationGuide,
       status: input.status,
       repository_id: input.targetRepositoryId,
     },
@@ -179,6 +186,7 @@ export const updateTask = async (
     input: {
       title: input.title,
       description: input.description,
+      implementation_guide: input.implementationGuide,
     },
   });
   return toTask(response);

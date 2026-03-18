@@ -37,6 +37,30 @@ vi.mock("../../components/ui/TaskMarkdownEditor", () => ({
   ),
 }));
 
+vi.mock("../../components/MonacoDiffEditor", () => ({
+  default: () => <div data-testid="monaco-diff-editor" />,
+}));
+
+vi.mock("monaco-editor/esm/vs/editor/editor.worker?worker", () => ({
+  default: class MockEditorWorker {},
+}));
+
+vi.mock("monaco-editor/esm/vs/language/css/css.worker?worker", () => ({
+  default: class MockCssWorker {},
+}));
+
+vi.mock("monaco-editor/esm/vs/language/html/html.worker?worker", () => ({
+  default: class MockHtmlWorker {},
+}));
+
+vi.mock("monaco-editor/esm/vs/language/json/json.worker?worker", () => ({
+  default: class MockJsonWorker {},
+}));
+
+vi.mock("monaco-editor/esm/vs/language/typescript/ts.worker?worker", () => ({
+  default: class MockTsWorker {},
+}));
+
 const renderAt = (path: string) => {
   window.history.pushState({}, "", path);
   return render(() => <AppRouter />);
@@ -1355,6 +1379,7 @@ describe("app routing and shell", () => {
           title: "Updated task",
           description:
             "### Updated checklist\n- **Ship** update\n- [Docs](https://example.com)",
+          implementation_guide: undefined,
         },
       });
       expect(
@@ -2424,6 +2449,12 @@ describe("app routing and shell", () => {
     await fireEvent.input(screen.getByLabelText("Dependency task title"), {
       target: { value: "Parent via plus" },
     });
+    await fireEvent.input(
+      screen.getByLabelText("Dependency task implementation guide"),
+      {
+        target: { value: "  Parent implementation steps  " },
+      },
+    );
     await fireEvent.click(
       screen.getByRole("button", { name: "Create and link" }),
     );
@@ -2434,6 +2465,7 @@ describe("app routing and shell", () => {
           project_id: "p-1",
           title: "Parent via plus",
           description: undefined,
+          implementation_guide: "Parent implementation steps",
           status: "todo",
           repository_id: "r-1",
         },
@@ -2480,6 +2512,12 @@ describe("app routing and shell", () => {
     await fireEvent.input(screen.getByLabelText("Dependency task title"), {
       target: { value: "Child via plus" },
     });
+    await fireEvent.input(
+      screen.getByLabelText("Dependency task implementation guide"),
+      {
+        target: { value: "Child implementation steps" },
+      },
+    );
     await fireEvent.click(
       screen.getByRole("button", { name: "Create and link" }),
     );
@@ -2490,6 +2528,7 @@ describe("app routing and shell", () => {
           project_id: "p-1",
           title: "Child via plus",
           description: undefined,
+          implementation_guide: "Child implementation steps",
           status: "todo",
           repository_id: "r-1",
         },
@@ -3011,6 +3050,7 @@ describe("app routing and shell", () => {
         project_id: "p-1",
         title: "Created task",
         description: undefined,
+        implementation_guide: undefined,
         status: "todo",
         repository_id: "r-1",
       },
