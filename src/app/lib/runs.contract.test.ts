@@ -3,9 +3,13 @@ import {
   bootstrapRunOpenCode,
   createRun,
   getRun,
+  getRunGitMergeStatus,
   listTaskRuns,
+  mergeRunWorktreeIntoSource,
+  rebaseRunWorktreeOntoSource,
   type BootstrapRunOpenCodeResult,
   type Run,
+  type RunGitMergeStatus,
   type RunStatus,
 } from "./runs";
 
@@ -224,5 +228,221 @@ describe("runs contract", () => {
       streamConnected: false,
       readyPhase: undefined,
     } satisfies BootstrapRunOpenCodeResult);
+  });
+
+  it("invokes get_run_git_merge_status with runId argument", async () => {
+    invokeMock.mockResolvedValue({
+      state: "ready",
+      sourceBranch: "main",
+      worktreeBranch: "feature/run-1",
+      sourceAhead: 0,
+      sourceBehind: 1,
+      worktreeAhead: 2,
+      worktreeBehind: 0,
+      canRebase: true,
+      canMerge: false,
+      requiresRebase: true,
+      mergeDisabledReason: "Rebase required",
+    });
+
+    const status = await getRunGitMergeStatus("run-1");
+
+    expect(invokeMock).toHaveBeenCalledWith("get_run_git_merge_status", {
+      runId: "run-1",
+    });
+    expect(status).toEqual({
+      state: "ready",
+      sourceBranch: {
+        name: "main",
+        ahead: 0,
+        behind: 1,
+      },
+      worktreeBranch: {
+        name: "feature/run-1",
+        ahead: 2,
+        behind: 0,
+      },
+      isRebaseAllowed: true,
+      isMergeAllowed: false,
+      requiresRebase: true,
+      rebaseDisabledReason: undefined,
+      mergeDisabledReason: "Rebase required",
+      conflictSummary: undefined,
+      conflictFingerprint: undefined,
+    } satisfies RunGitMergeStatus);
+  });
+
+  it("normalizes snake_case branch payload for git merge status", async () => {
+    invokeMock.mockResolvedValue({
+      status: {
+        state: "merge_conflict",
+        branches: {
+          source: { branch: "main", ahead: 1, behind: 0 },
+          worktree: { name: "feature/abc", ahead: 3, behind: 2 },
+        },
+        can_rebase: false,
+        can_merge: false,
+        requires_rebase: false,
+        rebase_disabled_reason: "Already rebased",
+        merge_disabled_reason: "Resolve conflicts",
+        conflict_summary: "Conflicts detected",
+        conflict_fingerprint: "fp-1",
+      },
+    });
+
+    const status = await getRunGitMergeStatus("run-1");
+
+    expect(status).toEqual({
+      state: "merge_conflict",
+      sourceBranch: {
+        name: "main",
+        ahead: 1,
+        behind: 0,
+      },
+      worktreeBranch: {
+        name: "feature/abc",
+        ahead: 3,
+        behind: 2,
+      },
+      isRebaseAllowed: false,
+      isMergeAllowed: false,
+      requiresRebase: false,
+      rebaseDisabledReason: "Already rebased",
+      mergeDisabledReason: "Resolve conflicts",
+      conflictSummary: "Conflicts detected",
+      conflictFingerprint: "fp-1",
+    } satisfies RunGitMergeStatus);
+  });
+
+  it("fails closed for mergeability booleans from malformed payload", async () => {
+    invokeMock.mockResolvedValue({
+      status: {
+        state: "ready",
+        source_branch: "main",
+        worktree_branch: "feature/abc",
+        can_rebase: "true",
+        can_merge: 1,
+        requires_rebase: { value: true },
+        rebase_disabled_reason: { reason: "bad" },
+        merge_disabled_reason: 42,
+      },
+    });
+
+    const status = await getRunGitMergeStatus("run-1");
+
+    expect(status.isRebaseAllowed).toBe(false);
+    expect(status.isMergeAllowed).toBe(false);
+    expect(status.requiresRebase).toBe(false);
+    expect(status.rebaseDisabledReason).toBeUndefined();
+    expect(status.mergeDisabledReason).toBeUndefined();
+  });
+
+  it("keeps actions disabled when allowed flags are false even if reasons are malformed", async () => {
+    invokeMock.mockResolvedValue({
+      status: {
+        state: "ready",
+        source_branch: "main",
+        worktree_branch: "feature/abc",
+        can_rebase: false,
+        can_merge: false,
+        requires_rebase: false,
+        rebase_disabled_reason: { text: "not a string" },
+        merge_disabled_reason: ["not", "a", "string"],
+      },
+    });
+
+    const status = await getRunGitMergeStatus("run-1");
+
+    expect(status.isRebaseAllowed).toBe(false);
+    expect(status.isMergeAllowed).toBe(false);
+    expect(status.rebaseDisabledReason).toBeUndefined();
+    expect(status.mergeDisabledReason).toBeUndefined();
+  });
+
+  it("does not throw on malformed branch-name payload fields", async () => {
+    invokeMock.mockResolvedValue({
+      status: {
+        state: "ready",
+        source_branch: 123,
+        worktree_branch: { invalid: true },
+        source: { name: ["bad"], ahead: 1, behind: 0 },
+        worktree: { branch: false, ahead: 0, behind: 2 },
+      },
+    });
+
+    await expect(getRunGitMergeStatus("run-1")).resolves.toEqual(
+      expect.objectContaining({
+        sourceBranch: {
+          name: "unknown",
+          ahead: 1,
+          behind: 0,
+        },
+        worktreeBranch: {
+          name: "unknown",
+          ahead: 0,
+          behind: 2,
+        },
+      }),
+    );
+  });
+
+  it("normalizes malformed action status/state/message fields safely", async () => {
+    invokeMock.mockResolvedValueOnce({
+      status: { state: "accepted" },
+      message: 42,
+      conflict_summary: ["nope"],
+      conflict_fingerprint: { id: "fp" },
+    });
+    invokeMock.mockResolvedValueOnce({
+      state: null,
+      reason: { text: "bad" },
+      conflictSummary: 123,
+      conflictFingerprint: false,
+    });
+
+    const rebase = await rebaseRunWorktreeOntoSource("run-1");
+    const merge = await mergeRunWorktreeIntoSource("run-1");
+
+    expect(rebase).toEqual({
+      status: "failed",
+      message: undefined,
+      conflictSummary: undefined,
+      conflictFingerprint: undefined,
+    });
+    expect(merge).toEqual({
+      status: "failed",
+      message: undefined,
+      conflictSummary: undefined,
+      conflictFingerprint: undefined,
+    });
+  });
+
+  it("invokes explicit rebase and merge git commands", async () => {
+    invokeMock.mockResolvedValueOnce({
+      status: "conflict",
+      conflict_summary: "x",
+    });
+    invokeMock.mockResolvedValueOnce({ status: "merged" });
+
+    const rebase = await rebaseRunWorktreeOntoSource("run-1");
+    const merge = await mergeRunWorktreeIntoSource("run-1");
+
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      1,
+      "rebase_run_worktree_onto_source",
+      {
+        runId: "run-1",
+      },
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      2,
+      "merge_run_worktree_into_source",
+      {
+        runId: "run-1",
+      },
+    );
+    expect(rebase.status).toBe("conflict");
+    expect(rebase.conflictSummary).toBe("x");
+    expect(merge.status).toBe("merged");
   });
 });

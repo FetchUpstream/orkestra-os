@@ -60,7 +60,7 @@ impl RunsRepository {
 
     pub async fn create_run(&self, input: NewRun) -> Result<Run, AppError> {
         sqlx::query(
-             "INSERT INTO runs (
+            "INSERT INTO runs (
                 id,
                 task_id,
                 project_id,
@@ -306,6 +306,26 @@ impl RunsRepository {
         )
         .bind(run_id)
         .bind(claim_request_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn mark_run_completed(
+        &self,
+        run_id: &str,
+        finished_at: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET status = 'completed',
+                 finished_at = COALESCE(finished_at, ?)
+             WHERE id = ?
+               AND status != 'completed'",
+        )
+        .bind(finished_at)
+        .bind(run_id)
         .execute(&self.pool)
         .await?;
 

@@ -95,6 +95,42 @@ pub struct RunOpenCodeSessionTodoDto {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RunMergeStatusDto {
+    pub run_id: String,
+    pub source_branch: String,
+    pub worktree_branch: String,
+    pub ahead_count: usize,
+    pub behind_count: usize,
+    pub state: String,
+    pub can_rebase: bool,
+    pub can_merge: bool,
+    pub disable_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunMergeConflictDto {
+    pub files: Vec<String>,
+    pub chat_prompt: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunRebaseResponseDto {
+    pub state: String,
+    pub status: RunMergeStatusDto,
+    pub conflict: Option<RunMergeConflictDto>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunMergeResponseDto {
+    pub state: String,
+    pub status: RunMergeStatusDto,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BootstrapRunOpenCodeResponse {
     pub state: String,
     pub reason: Option<String>,

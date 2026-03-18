@@ -37,9 +37,16 @@ pub struct OpenRunTerminalResponse {
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "event")]
 pub enum TerminalFrame {
-    Data { chunk_base64: String },
-    Exit { code: Option<i32>, signal: Option<i32> },
-    Error { message: String },
+    Data {
+        chunk_base64: String,
+    },
+    Exit {
+        code: Option<i32>,
+        signal: Option<i32>,
+    },
+    Error {
+        message: String,
+    },
     Closed,
 }
 
@@ -91,20 +98,17 @@ impl TerminalService {
         let mut cmd = CommandBuilder::new(shell);
         cmd.cwd(cwd);
 
-        let child = pair
-            .slave
-            .spawn_command(cmd)
-            .map_err(|err| AppError::validation(format!("failed to spawn terminal process: {err}")))?;
+        let child = pair.slave.spawn_command(cmd).map_err(|err| {
+            AppError::validation(format!("failed to spawn terminal process: {err}"))
+        })?;
         drop(pair.slave);
 
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|err| AppError::validation(format!("failed to create terminal reader: {err}")))?;
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|err| AppError::validation(format!("failed to create terminal writer: {err}")))?;
+        let reader = pair.master.try_clone_reader().map_err(|err| {
+            AppError::validation(format!("failed to create terminal reader: {err}"))
+        })?;
+        let writer = pair.master.take_writer().map_err(|err| {
+            AppError::validation(format!("failed to create terminal writer: {err}"))
+        })?;
 
         let session_id = uuid::Uuid::new_v4().to_string();
         let generation = 1_u64;
@@ -314,8 +318,12 @@ impl TerminalService {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let chunk_base64 = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
-                        if on_output.send(TerminalFrame::Data { chunk_base64 }).is_err() {
+                        let chunk_base64 =
+                            base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
+                        if on_output
+                            .send(TerminalFrame::Data { chunk_base64 })
+                            .is_err()
+                        {
                             break;
                         }
                     }

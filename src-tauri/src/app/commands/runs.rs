@@ -1,6 +1,7 @@
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent, RunDiffFileDto,
-    RunDiffFilePayloadDto, RunDto, RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto,
+    RunDiffFilePayloadDto, RunDto, RunMergeResponseDto, RunMergeStatusDto,
+    RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, RunRebaseResponseDto,
     StartRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::state::AppState;
@@ -65,6 +66,33 @@ pub async fn get_run_diff_file(
 ) -> Result<RunDiffFilePayloadDto, String> {
     let service = context::runs_diff_service(&state);
     map_result(service.get_run_diff_file(&run_id, &path).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_run_merge_status(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<RunMergeStatusDto, String> {
+    let service = context::runs_merge_service(&state);
+    map_result(service.get_merge_status(&run_id).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn rebase_run_worktree_branch(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<RunRebaseResponseDto, String> {
+    let service = context::runs_merge_service(&state);
+    map_result(service.rebase_worktree_branch(&run_id).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn merge_run_into_source_branch(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<RunMergeResponseDto, String> {
+    let service = context::runs_merge_service(&state);
+    map_result(service.merge_into_source_branch(&run_id).await)
 }
 
 #[tauri::command]

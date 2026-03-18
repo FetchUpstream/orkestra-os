@@ -9,10 +9,14 @@ const MIGRATION_0004: &str = include_str!("../../../migrations/0004_add_task_dis
 const MIGRATION_0005: &str = include_str!("../../../migrations/0005_task_dependencies.sql");
 const MIGRATION_0006: &str = include_str!("../../../migrations/0006_init_runs.sql");
 const MIGRATION_0007: &str = include_str!("../../../migrations/0007_add_run_source_branch.sql");
-const MIGRATION_0008: &str = include_str!("../../../migrations/0008_add_runs_opencode_session_id.sql");
-const MIGRATION_0009: &str = include_str!("../../../migrations/0009_add_tasks_implementation_guide.sql");
-const MIGRATION_0010: &str = include_str!("../../../migrations/0010_add_runs_initial_prompt_tracking.sql");
-const MIGRATION_0011: &str = include_str!("../../../migrations/0011_add_runs_initial_prompt_claim_tracking.sql");
+const MIGRATION_0008: &str =
+    include_str!("../../../migrations/0008_add_runs_opencode_session_id.sql");
+const MIGRATION_0009: &str =
+    include_str!("../../../migrations/0009_add_tasks_implementation_guide.sql");
+const MIGRATION_0010: &str =
+    include_str!("../../../migrations/0010_add_runs_initial_prompt_tracking.sql");
+const MIGRATION_0011: &str =
+    include_str!("../../../migrations/0011_add_runs_initial_prompt_claim_tracking.sql");
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(MIGRATION_0001).execute(pool).await?;
@@ -80,7 +84,9 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
         sqlx::query(MIGRATION_0009).execute(pool).await?;
     }
 
-    let run_columns = sqlx::query("PRAGMA table_info(runs)").fetch_all(pool).await?;
+    let run_columns = sqlx::query("PRAGMA table_info(runs)")
+        .fetch_all(pool)
+        .await?;
     let has_initial_prompt_sent_at = run_columns
         .iter()
         .any(|row| row.get::<String, _>("name") == "initial_prompt_sent_at");
@@ -158,9 +164,9 @@ mod tests {
                 initial_prompt_sent_at TEXT
             )",
         )
-            .execute(&pool)
-            .await
-            .unwrap();
+        .execute(&pool)
+        .await
+        .unwrap();
 
         run_migrations(&pool).await.unwrap();
 

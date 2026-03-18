@@ -148,6 +148,56 @@ export type BootstrapRunOpenCodeResult = {
   readyPhase?: string;
 };
 
+export type RunGitBranchSync = {
+  name: string;
+  ahead: number;
+  behind: number;
+};
+
+export type RunGitMergeState =
+  | "ready"
+  | "rebase_required"
+  | "rebasing"
+  | "rebase_conflict"
+  | "rebase_failed"
+  | "rebase_succeeded"
+  | "merge_ready"
+  | "merging"
+  | "merge_conflict"
+  | "merge_failed"
+  | "merged"
+  | "completing"
+  | "completed"
+  | "unsupported"
+  | "unknown";
+
+export type RunGitMergeStatus = {
+  state: RunGitMergeState;
+  sourceBranch: RunGitBranchSync;
+  worktreeBranch: RunGitBranchSync;
+  isRebaseAllowed: boolean;
+  isMergeAllowed: boolean;
+  requiresRebase: boolean;
+  rebaseDisabledReason?: string;
+  mergeDisabledReason?: string;
+  conflictSummary?: string;
+  conflictFingerprint?: string;
+};
+
+export type RunGitRebaseResult = {
+  status: "accepted" | "conflict" | "failed";
+  message?: string;
+  conflictSummary?: string;
+  conflictFingerprint?: string;
+};
+
+export type RunGitMergeResult = {
+  status: "accepted" | "conflict" | "failed" | "merged" | "completing";
+  message?: string;
+  conflictSummary?: string;
+  conflictFingerprint?: string;
+};
+
 export const RUN_OPENCODE_EVENT_HISTORY_LIMIT = 500;
 
 export const appendCappedHistory = <T>(
@@ -334,6 +384,64 @@ type RunResponse = {
   initialPromptClientRequestId?: string | null;
 };
 
+type RunGitBranchSyncResponse = {
+  name?: string;
+  branch?: string;
+  ahead?: number;
+  behind?: number;
+};
+
+type RunGitMergeStatusResponse = {
+  state?: string;
+  source_branch?: unknown;
+  sourceBranch?: unknown;
+  worktree_branch?: unknown;
+  worktreeBranch?: unknown;
+  source_ahead?: number;
+  sourceAhead?: number;
+  source_behind?: number;
+  sourceBehind?: number;
+  worktree_ahead?: number;
+  worktreeAhead?: number;
+  worktree_behind?: number;
+  worktreeBehind?: number;
+  source?: RunGitBranchSyncResponse;
+  worktree?: RunGitBranchSyncResponse;
+  branches?: {
+    source?: RunGitBranchSyncResponse;
+    worktree?: RunGitBranchSyncResponse;
+  };
+  can_rebase?: boolean;
+  canRebase?: boolean;
+  can_merge?: boolean;
+  canMerge?: boolean;
+  requires_rebase?: boolean;
+  requiresRebase?: boolean;
+  rebase_disabled_reason?: string | null;
+  rebaseDisabledReason?: string | null;
+  merge_disabled_reason?: string | null;
+  mergeDisabledReason?: string | null;
+  conflict_summary?: string | null;
+  conflictSummary?: string | null;
+  conflict_fingerprint?: string | null;
+  conflictFingerprint?: string | null;
+  status?: unknown;
+  data?: unknown;
+  payload?: unknown;
+  result?: unknown;
+};
+
+type RunGitActionResponse = {
+  status?: string;
+  state?: string;
+  message?: string | null;
+  reason?: string | null;
+  conflict_summary?: string | null;
+  conflictSummary?: string | null;
+  conflict_fingerprint?: string | null;
+  conflictFingerprint?: string | null;
+};
+
 const runStatusSet = new Set<string>(RUN_STATUSES);
 
 const toRunStatus = (status: string): RunStatus => {
@@ -499,6 +607,158 @@ const unwrapBootstrapRunOpenCodePayload = (
   }
 
   return record;
+};
+
+const toSafeCount = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.floor(value));
+  }
+  return 0;
+};
+
+const toOptionalTrimmedString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized ? normalized : undefined;
+};
+
+const toRunGitMergeState = (state: unknown): RunGitMergeState => {
+  const normalizedState = toOptionalTrimmedString(state)?.toLowerCase();
+  if (!normalizedState) {
+    return "unknown";
+  }
+
+  switch (normalizedState) {
+    case "ready":
+    case "rebase_required":
+    case "rebasing":
+    case "rebase_conflict":
+    case "rebase_failed":
+    case "rebase_succeeded":
+    case "merge_ready":
+    case "merging":
+    case "merge_conflict":
+    case "merge_failed":
+    case "merged":
+    case "completing":
+    case "completed":
+    case "unsupported":
+      return normalizedState as RunGitMergeState;
+    default:
+      return "unknown";
+  }
+};
+
+const toRunGitBranchSync = (
+  fallbackName: unknown,
+  branch: RunGitBranchSyncResponse | undefined,
+  fallbackAhead: unknown,
+  fallbackBehind: unknown,
+): RunGitBranchSync => {
+  const name =
+    toOptionalTrimmedString(branch?.name) ||
+    toOptionalTrimmedString(branch?.branch) ||
+    toOptionalTrimmedString(fallbackName) ||
+    "unknown";
+
+  return {
+    name,
+    ahead: toSafeCount(branch?.ahead ?? fallbackAhead),
+    behind: toSafeCount(branch?.behind ?? fallbackBehind),
+  };
+};
+
+const unwrapRunGitMergeStatusPayload = (
+  response: unknown,
+): RunGitMergeStatusResponse => {
+  if (!response || typeof response !== "object") {
+    return {};
+  }
+
+  const record = response as RunGitMergeStatusResponse;
+  const wrapped = pick(
+    record.status,
+    pick(record.data, pick(record.payload, record.result)),
+  );
+
+  if (wrapped && typeof wrapped === "object") {
+    return wrapped as RunGitMergeStatusResponse;
+  }
+
+  return record;
+};
+
+const toRunGitMergeStatus = (response: unknown): RunGitMergeStatus => {
+  const payload = unwrapRunGitMergeStatusPayload(response);
+  const source = pick(payload.source, payload.branches?.source);
+  const worktree = pick(payload.worktree, payload.branches?.worktree);
+
+  const sourceBranch = toRunGitBranchSync(
+    pick(payload.source_branch, payload.sourceBranch) ?? "source",
+    source,
+    pick(payload.source_ahead, payload.sourceAhead),
+    pick(payload.source_behind, payload.sourceBehind),
+  );
+
+  const worktreeBranch = toRunGitBranchSync(
+    pick(payload.worktree_branch, payload.worktreeBranch) ?? "worktree",
+    worktree,
+    pick(payload.worktree_ahead, payload.worktreeAhead),
+    pick(payload.worktree_behind, payload.worktreeBehind),
+  );
+
+  return {
+    state: toRunGitMergeState(payload.state),
+    sourceBranch,
+    worktreeBranch,
+    isRebaseAllowed: pick(payload.can_rebase, payload.canRebase) === true,
+    isMergeAllowed: pick(payload.can_merge, payload.canMerge) === true,
+    requiresRebase:
+      pick(payload.requires_rebase, payload.requiresRebase) === true,
+    rebaseDisabledReason: toOptionalTrimmedString(
+      pick(payload.rebase_disabled_reason, payload.rebaseDisabledReason),
+    ),
+    mergeDisabledReason: toOptionalTrimmedString(
+      pick(payload.merge_disabled_reason, payload.mergeDisabledReason),
+    ),
+    conflictSummary: toOptionalTrimmedString(
+      pick(payload.conflict_summary, payload.conflictSummary),
+    ),
+    conflictFingerprint: toOptionalTrimmedString(
+      pick(payload.conflict_fingerprint, payload.conflictFingerprint),
+    ),
+  };
+};
+
+const toRunGitActionResult = (
+  response: unknown,
+): {
+  status: string;
+  message?: string;
+  conflictSummary?: string;
+  conflictFingerprint?: string;
+} => {
+  if (!response || typeof response !== "object") {
+    return { status: "failed", message: "Unexpected empty backend response." };
+  }
+
+  const payload = response as RunGitActionResponse;
+  const normalizedStatus = toOptionalTrimmedString(
+    payload.status ?? payload.state,
+  );
+  return {
+    status: normalizedStatus?.toLowerCase() ?? "failed",
+    message: toOptionalTrimmedString(payload.message ?? payload.reason),
+    conflictSummary: toOptionalTrimmedString(
+      pick(payload.conflict_summary, payload.conflictSummary),
+    ),
+    conflictFingerprint: toOptionalTrimmedString(
+      pick(payload.conflict_fingerprint, payload.conflictFingerprint),
+    ),
+  };
 };
 
 const toBootstrapRunOpenCodeResult = (
@@ -819,5 +1079,94 @@ export const startRunOpenCode = async (
     clientRequestId:
       pick(response.client_request_id, response.clientRequestId) ?? "",
     readyPhase: pick(response.ready_phase, response.readyPhase) ?? undefined,
+  };
+};
+
+export const getRunGitMergeStatus = async (
+  runId: string,
+): Promise<RunGitMergeStatus> => {
+  const response = await invoke<unknown>("get_run_git_merge_status", {
+    runId,
+  });
+  return toRunGitMergeStatus(response);
+};
+
+export const rebaseRunWorktreeOntoSource = async (
+  runId: string,
+): Promise<RunGitRebaseResult> => {
+  const response = await invoke<unknown>("rebase_run_worktree_onto_source", {
+    runId,
+  });
+  const result = toRunGitActionResult(response);
+
+  if (result.status === "accepted" || result.status === "ok") {
+    return {
+      status: "accepted",
+      message: result.message,
+      conflictSummary: result.conflictSummary,
+      conflictFingerprint: result.conflictFingerprint,
+    };
+  }
+  if (result.status === "conflict") {
+    return {
+      status: "conflict",
+      message: result.message,
+      conflictSummary: result.conflictSummary,
+      conflictFingerprint: result.conflictFingerprint,
+    };
+  }
+  return {
+    status: "failed",
+    message: result.message,
+    conflictSummary: result.conflictSummary,
+    conflictFingerprint: result.conflictFingerprint,
+  };
+};
+
+export const mergeRunWorktreeIntoSource = async (
+  runId: string,
+): Promise<RunGitMergeResult> => {
+  const response = await invoke<unknown>("merge_run_worktree_into_source", {
+    runId,
+  });
+  const result = toRunGitActionResult(response);
+
+  if (result.status === "merged") {
+    return {
+      status: "merged",
+      message: result.message,
+      conflictSummary: result.conflictSummary,
+      conflictFingerprint: result.conflictFingerprint,
+    };
+  }
+  if (result.status === "completing") {
+    return {
+      status: "completing",
+      message: result.message,
+      conflictSummary: result.conflictSummary,
+      conflictFingerprint: result.conflictFingerprint,
+    };
+  }
+  if (result.status === "accepted" || result.status === "ok") {
+    return {
+      status: "accepted",
+      message: result.message,
+      conflictSummary: result.conflictSummary,
+      conflictFingerprint: result.conflictFingerprint,
+    };
+  }
+  if (result.status === "conflict") {
+    return {
+      status: "conflict",
+      message: result.message,
+      conflictSummary: result.conflictSummary,
+      conflictFingerprint: result.conflictFingerprint,
+    };
+  }
+  return {
+    status: "failed",
+    message: result.message,
+    conflictSummary: result.conflictSummary,
+    conflictFingerprint: result.conflictFingerprint,
   };
 };

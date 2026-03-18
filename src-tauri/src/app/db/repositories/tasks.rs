@@ -404,10 +404,7 @@ impl TasksRepository {
             })
             .collect();
 
-        Ok(Some(TaskDependencies {
-            parents,
-            children,
-        }))
+        Ok(Some(TaskDependencies { parents, children }))
     }
 
     pub async fn add_task_dependency(

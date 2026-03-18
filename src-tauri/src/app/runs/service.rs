@@ -264,6 +264,18 @@ impl RunsService {
             .await
     }
 
+    pub async fn mark_run_completed(&self, run_id: &str) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let finished_at = Utc::now().to_rfc3339();
+        self.repository
+            .mark_run_completed(run_id, &finished_at)
+            .await
+    }
+
     fn to_dto(run: Run) -> RunDto {
         RunDto {
             id: run.id,
@@ -446,11 +458,9 @@ mod tests {
         let branch_segment = segments.next().unwrap_or_default();
         assert_eq!(project_segment, "ALP");
         assert!(!branch_segment.is_empty());
-        assert!(
-            branch_segment
-                .chars()
-                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
-        );
+        assert!(branch_segment
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-'));
         assert!(segments.next().is_none());
         assert!(run.source_branch.is_some());
     }
@@ -631,17 +641,11 @@ mod tests {
         seed_run(&pool, "run-1", "task-1").await;
 
         let first = service
-            .mark_initial_prompt_sent_if_unset(
-                "run-1",
-                Some("initial-run-message:run-1"),
-            )
+            .mark_initial_prompt_sent_if_unset("run-1", Some("initial-run-message:run-1"))
             .await
             .unwrap();
         let second = service
-            .mark_initial_prompt_sent_if_unset(
-                "run-1",
-                Some("initial-run-message:run-1"),
-            )
+            .mark_initial_prompt_sent_if_unset("run-1", Some("initial-run-message:run-1"))
             .await
             .unwrap();
 

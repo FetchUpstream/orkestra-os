@@ -163,10 +163,10 @@ impl RunsDiffService {
             Duration::from_millis(300),
             None,
             move |result: DebounceEventResult| {
-            if result.is_ok() {
-                let _ = app_handle.emit(RUN_DIFF_EVENT, payload.clone());
-            }
-        },
+                if result.is_ok() {
+                    let _ = app_handle.emit(RUN_DIFF_EVENT, payload.clone());
+                }
+            },
         )
         .map_err(|err| AppError::validation(format!("failed to create watcher: {err}")))?;
 
@@ -182,7 +182,10 @@ impl RunsDiffService {
         Ok(())
     }
 
-    fn resolve_worktree_path(&self, run: &crate::app::runs::dto::RunDto) -> Result<PathBuf, AppError> {
+    fn resolve_worktree_path(
+        &self,
+        run: &crate::app::runs::dto::RunDto,
+    ) -> Result<PathBuf, AppError> {
         let worktree_id = run
             .worktree_id
             .as_deref()
@@ -192,11 +195,15 @@ impl RunsDiffService {
     }
 
     fn open_repository(&self, worktree_path: &Path) -> Result<Repository, AppError> {
-        Repository::open(worktree_path)
-            .map_err(|err| AppError::validation(format!("failed to open worktree repository: {err}")))
+        Repository::open(worktree_path).map_err(|err| {
+            AppError::validation(format!("failed to open worktree repository: {err}"))
+        })
     }
 
-    fn build_workdir_diff<'repo>(repo: &'repo Repository, baseline_tree: &Tree<'repo>) -> Result<Diff<'repo>, AppError> {
+    fn build_workdir_diff<'repo>(
+        repo: &'repo Repository,
+        baseline_tree: &Tree<'repo>,
+    ) -> Result<Diff<'repo>, AppError> {
         let mut options = DiffOptions::new();
         options
             .include_untracked(true)
@@ -251,7 +258,10 @@ impl RunsDiffService {
             }
         };
 
-        if let Some(source_branch) = source_branch.map(str::trim).filter(|branch| !branch.is_empty()) {
+        if let Some(source_branch) = source_branch
+            .map(str::trim)
+            .filter(|branch| !branch.is_empty())
+        {
             if let Some(source_commit) = Self::resolve_source_commit(repo, source_branch) {
                 if let Some(tree) = resolve_merge_base_tree(source_commit) {
                     return Ok(tree);
@@ -278,7 +288,10 @@ impl RunsDiffService {
             .map_err(|err| AppError::validation(format!("failed to resolve HEAD commit: {err}")))
     }
 
-    fn resolve_source_commit<'repo>(repo: &'repo Repository, source_branch: &str) -> Option<Commit<'repo>> {
+    fn resolve_source_commit<'repo>(
+        repo: &'repo Repository,
+        source_branch: &str,
+    ) -> Option<Commit<'repo>> {
         let candidates = [
             source_branch.to_string(),
             format!("refs/heads/{source_branch}"),
@@ -370,7 +383,11 @@ impl RunsDiffService {
             .map(|path| path.to_string_lossy().to_string())
     }
 
-    fn read_tree_blob_text(repo: &Repository, tree: &Tree<'_>, path: Option<&Path>) -> Result<String, AppError> {
+    fn read_tree_blob_text(
+        repo: &Repository,
+        tree: &Tree<'_>,
+        path: Option<&Path>,
+    ) -> Result<String, AppError> {
         let Some(path) = path else {
             return Ok(String::new());
         };

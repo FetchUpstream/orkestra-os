@@ -5,10 +5,13 @@ import {
   bootstrapRunOpenCode,
   appendCappedHistory,
   getRun,
+  getRunGitMergeStatus,
   getRunDiffFile,
   killRunTerminal,
   listRunDiffFiles,
+  mergeRunWorktreeIntoSource,
   openRunTerminal,
+  rebaseRunWorktreeOntoSource,
   resizeRunTerminal,
   setRunDiffWatch,
   submitRunOpenCodePrompt,
@@ -18,6 +21,7 @@ import {
   type Run,
   type RunDiffFile,
   type RunDiffFilePayload,
+  type RunGitMergeStatus,
   type RunOpenCodeAgentState,
   type RunOpenCodeEvent,
   type RunTerminalFrame,
@@ -73,6 +77,15 @@ export const useRunDetailModel = () => {
   >(null);
   const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(false);
   const [submitError, setSubmitError] = createSignal("");
+  const [gitStatus, setGitStatus] = createSignal<RunGitMergeStatus | null>(
+    null,
+  );
+  const [isGitStatusLoading, setIsGitStatusLoading] = createSignal(false);
+  const [gitStatusError, setGitStatusError] = createSignal("");
+  const [isGitRebasePending, setIsGitRebasePending] = createSignal(false);
+  const [isGitMergePending, setIsGitMergePending] = createSignal(false);
+  const [gitActionError, setGitActionError] = createSignal("");
+  const [gitLastActionMessage, setGitLastActionMessage] = createSignal("");
   let activeRunRequestVersion = 0;
   let activeDiffRefreshVersion = 0;
   let diffRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -96,6 +109,7 @@ export const useRunDetailModel = () => {
   let terminalRunId: string | null = null;
   let terminalRouteInstanceId = crypto.randomUUID();
   let terminalFrameHandler: ((frame: RunTerminalFrame) => void) | null = null;
+  const sentGitConflictFingerprints = new Set<string>();
 
   const areDiffFilesEqual = (
     current: RunDiffFile[],
@@ -725,6 +739,162 @@ export const useRunDetailModel = () => {
     return `${minutes}m ${seconds}s`;
   });
 
+  const refreshRunDetails = async (runId: string): Promise<void> => {
+    const loadedRun = await getRun(runId);
+    if (params.runId !== runId) {
+      return;
+    }
+    setRun(loadedRun);
+    try {
+      const loadedTask = await getTask(loadedRun.taskId);
+      if (params.runId !== runId) {
+        return;
+      }
+      setTask(loadedTask);
+    } catch {
+      if (params.runId !== runId) {
+        return;
+      }
+      setTask(null);
+    }
+  };
+
+  const refreshGitMergeStatus = async (): Promise<void> => {
+    const runId = params.runId?.trim() ?? "";
+    if (!runId) {
+      setGitStatus(null);
+      setGitStatusError("Missing run ID.");
+      return;
+    }
+
+    setIsGitStatusLoading(true);
+    setGitStatusError("");
+    try {
+      const status = await getRunGitMergeStatus(runId);
+      if (params.runId !== runId) {
+        return;
+      }
+      setGitStatus(status);
+    } catch {
+      if (params.runId !== runId) {
+        return;
+      }
+      setGitStatus(null);
+      setGitStatusError("Failed to load git merge status.");
+    } finally {
+      if (params.runId === runId) {
+        setIsGitStatusLoading(false);
+      }
+    }
+  };
+
+  const sendGitConflictToChatOnce = async (
+    summary: unknown,
+    fingerprint: unknown,
+  ): Promise<void> => {
+    const normalizedSummary = typeof summary === "string" ? summary.trim() : "";
+    const normalizedFingerprint =
+      typeof fingerprint === "string" ? fingerprint.trim() : "";
+    if (!normalizedSummary) {
+      return;
+    }
+
+    const dedupeKey = normalizedFingerprint || normalizedSummary;
+    if (!dedupeKey || sentGitConflictFingerprints.has(dedupeKey)) {
+      return;
+    }
+
+    sentGitConflictFingerprints.add(dedupeKey);
+    const accepted = await submitPrompt(normalizedSummary);
+    if (!accepted) {
+      sentGitConflictFingerprints.delete(dedupeKey);
+    }
+  };
+
+  const rebaseWorktreeOntoSource = async (): Promise<void> => {
+    const runId = params.runId?.trim() ?? "";
+    if (!runId || isGitRebasePending()) {
+      return;
+    }
+
+    setIsGitRebasePending(true);
+    setGitActionError("");
+    setGitLastActionMessage("");
+    try {
+      const result = await rebaseRunWorktreeOntoSource(runId);
+      if (params.runId !== runId) {
+        return;
+      }
+
+      if (result.message?.trim()) {
+        setGitLastActionMessage(result.message.trim());
+      }
+      if (result.status === "failed") {
+        setGitActionError(result.message?.trim() || "Rebase failed.");
+      }
+      if (result.status === "conflict") {
+        setGitActionError(result.message?.trim() || "Rebase has conflicts.");
+        await sendGitConflictToChatOnce(
+          result.conflictSummary,
+          result.conflictFingerprint,
+        );
+      }
+      await refreshGitMergeStatus();
+    } catch {
+      if (params.runId === runId) {
+        setGitActionError("Failed to rebase worktree branch.");
+      }
+    } finally {
+      if (params.runId === runId) {
+        setIsGitRebasePending(false);
+      }
+    }
+  };
+
+  const mergeWorktreeIntoSource = async (): Promise<void> => {
+    const runId = params.runId?.trim() ?? "";
+    if (!runId || isGitMergePending()) {
+      return;
+    }
+
+    setIsGitMergePending(true);
+    setGitActionError("");
+    setGitLastActionMessage("");
+    try {
+      const result = await mergeRunWorktreeIntoSource(runId);
+      if (params.runId !== runId) {
+        return;
+      }
+
+      if (result.message?.trim()) {
+        setGitLastActionMessage(result.message.trim());
+      }
+      if (result.status === "failed") {
+        setGitActionError(result.message?.trim() || "Merge failed.");
+      }
+      if (result.status === "conflict") {
+        setGitActionError(result.message?.trim() || "Merge has conflicts.");
+        await sendGitConflictToChatOnce(
+          result.conflictSummary,
+          result.conflictFingerprint,
+        );
+      }
+
+      await refreshGitMergeStatus();
+      if (result.status === "merged" || result.status === "completing") {
+        await refreshRunDetails(runId);
+      }
+    } catch {
+      if (params.runId === runId) {
+        setGitActionError("Failed to merge worktree branch.");
+      }
+    } finally {
+      if (params.runId === runId) {
+        setIsGitMergePending(false);
+      }
+    }
+  };
+
   createEffect(() => {
     const runId = params.runId;
     const requestVersion = ++activeRunRequestVersion;
@@ -742,31 +912,12 @@ export const useRunDetailModel = () => {
       setRun(null);
       setTask(null);
       try {
-        const loadedRun = await getRun(runId);
+        await refreshRunDetails(runId);
         if (
           requestVersion !== activeRunRequestVersion ||
           params.runId !== runId
         ) {
           return;
-        }
-        setRun(loadedRun);
-        try {
-          const loadedTask = await getTask(loadedRun.taskId);
-          if (
-            requestVersion !== activeRunRequestVersion ||
-            params.runId !== runId
-          ) {
-            return;
-          }
-          setTask(loadedTask);
-        } catch {
-          if (
-            requestVersion !== activeRunRequestVersion ||
-            params.runId !== runId
-          ) {
-            return;
-          }
-          setTask(null);
         }
       } catch (loadError) {
         if (
@@ -788,6 +939,23 @@ export const useRunDetailModel = () => {
         }
       }
     })();
+  });
+
+  createEffect(() => {
+    const runId = params.runId;
+    sentGitConflictFingerprints.clear();
+    setGitStatus(null);
+    setGitStatusError("");
+    setGitActionError("");
+    setGitLastActionMessage("");
+    setIsGitRebasePending(false);
+    setIsGitMergePending(false);
+
+    if (!runId) {
+      return;
+    }
+
+    void refreshGitMergeStatus();
   });
 
   const ensureAgentForRun = async (runId: string): Promise<void> => {
@@ -1578,6 +1746,18 @@ export const useRunDetailModel = () => {
     diffFilePayloads,
     diffFileLoadingPaths,
     loadDiffFile,
+    git: {
+      status: gitStatus,
+      isLoading: isGitStatusLoading,
+      statusError: gitStatusError,
+      actionError: gitActionError,
+      lastActionMessage: gitLastActionMessage,
+      isRebasePending: isGitRebasePending,
+      isMergePending: isGitMergePending,
+      refreshStatus: refreshGitMergeStatus,
+      rebaseWorktreeOntoSource,
+      mergeWorktreeIntoSource,
+    },
     terminal: {
       sessionId: terminalSessionId,
       generation: terminalGeneration,

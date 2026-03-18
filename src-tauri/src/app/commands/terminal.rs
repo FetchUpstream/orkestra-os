@@ -50,13 +50,7 @@ pub fn resize_run_terminal(
     rows: u16,
 ) -> Result<(), String> {
     let service = context::terminal_service(&state);
-    map_result(service.resize_run_terminal(
-        window.label(),
-        &session_id,
-        generation,
-        cols,
-        rows,
-    ))
+    map_result(service.resize_run_terminal(window.label(), &session_id, generation, cols, rows))
 }
 
 #[tauri::command(rename_all = "camelCase")]

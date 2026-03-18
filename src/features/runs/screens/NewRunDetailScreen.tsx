@@ -87,6 +87,45 @@ const formatLogTimestamp = (ts: string | number | null): string => {
   return ts;
 };
 
+const formatBranchDirection = (ahead: number, behind: number): string => {
+  return `ahead ${ahead} / behind ${behind}`;
+};
+
+const formatGitStateLabel = (state: string): string => {
+  switch (state) {
+    case "ready":
+      return "Ready";
+    case "rebase_required":
+      return "Rebase required";
+    case "rebasing":
+      return "Rebasing";
+    case "rebase_conflict":
+      return "Rebase conflict";
+    case "rebase_failed":
+      return "Rebase failed";
+    case "rebase_succeeded":
+      return "Rebase succeeded";
+    case "merge_ready":
+      return "Merge ready";
+    case "merging":
+      return "Merging";
+    case "merge_conflict":
+      return "Merge conflict";
+    case "merge_failed":
+      return "Merge failed";
+    case "merged":
+      return "Merged";
+    case "completing":
+      return "Completing run";
+    case "completed":
+      return "Completed";
+    case "unsupported":
+      return "Unsupported";
+    default:
+      return "Unknown";
+  }
+};
+
 const NewRunDetailScreen: Component = () => {
   const model = useRunDetailModel();
   const [overlayState, setOverlayState] = createSignal<OverlayState>("none");
@@ -110,6 +149,58 @@ const NewRunDetailScreen: Component = () => {
   const overlaySizeLabel = createMemo(() =>
     overlaySize() === "maximized" ? "Restore panel" : "Maximize panel",
   );
+  const gitStatus = createMemo(() => model.git.status());
+  const mergeRequiresRebase = createMemo(() => {
+    const status = gitStatus();
+    return status?.requiresRebase === true;
+  });
+  const isRebaseDisabled = createMemo(() => {
+    const status = gitStatus();
+    if (!status) {
+      return true;
+    }
+    return model.git.isRebasePending() || !status.isRebaseAllowed;
+  });
+  const isMergeDisabled = createMemo(() => {
+    const status = gitStatus();
+    if (!status) {
+      return true;
+    }
+    return (
+      model.git.isMergePending() ||
+      status.requiresRebase ||
+      !status.isMergeAllowed
+    );
+  });
+  const rebaseDisabledReason = createMemo(() => {
+    const status = gitStatus();
+    if (!status) {
+      return "Git status unavailable.";
+    }
+    if (model.git.isRebasePending()) {
+      return "Rebase already running.";
+    }
+    if (status.isRebaseAllowed) {
+      return "";
+    }
+    return status.rebaseDisabledReason || "Rebase is currently unavailable.";
+  });
+  const mergeDisabledReason = createMemo(() => {
+    const status = gitStatus();
+    if (!status) {
+      return "Git status unavailable.";
+    }
+    if (model.git.isMergePending()) {
+      return "Merge already running.";
+    }
+    if (mergeRequiresRebase()) {
+      return "Rebase worktree onto source before merge.";
+    }
+    if (status.isMergeAllowed) {
+      return "";
+    }
+    return status.mergeDisabledReason || "Merge is currently unavailable.";
+  });
 
   const logsLines = createMemo(() => {
     if (model.agent.error().trim().length > 0) {
@@ -443,6 +534,8 @@ const NewRunDetailScreen: Component = () => {
                         overlayState() === "drawer-logs",
                       "run-chat-overlay-panel__body--diff":
                         overlayState() === "drawer-diff",
+                      "run-chat-overlay-panel__body--git":
+                        overlayState() === "drawer-git",
                     }}
                   >
                     <Show when={overlayState() === "drawer-logs"}>
@@ -463,9 +556,103 @@ const NewRunDetailScreen: Component = () => {
                       />
                     </Show>
                     <Show when={overlayState() === "drawer-git"}>
-                      <p class="project-placeholder-text">
-                        Git view coming soon.
-                      </p>
+                      <section
+                        class="run-chat-git-drawer"
+                        aria-label="Git merge workflow"
+                      >
+                        <Show when={model.git.isLoading()}>
+                          <p class="project-placeholder-text">
+                            Loading git status.
+                          </p>
+                        </Show>
+                        <Show when={model.git.statusError().length > 0}>
+                          <p class="projects-error">
+                            {model.git.statusError()}
+                          </p>
+                        </Show>
+                        <Show when={gitStatus()}>
+                          {(status) => (
+                            <>
+                              <div class="run-chat-git-drawer__branches">
+                                <article class="run-chat-git-drawer__branch-card">
+                                  <h3>
+                                    Source branch to{" "}
+                                    {status().sourceBranch.name}
+                                  </h3>
+                                  <p>
+                                    {formatBranchDirection(
+                                      status().sourceBranch.ahead,
+                                      status().sourceBranch.behind,
+                                    )}
+                                  </p>
+                                </article>
+                                <article class="run-chat-git-drawer__branch-card">
+                                  <h3>
+                                    Worktree branch to{" "}
+                                    {status().worktreeBranch.name}
+                                  </h3>
+                                  <p>
+                                    {formatBranchDirection(
+                                      status().worktreeBranch.ahead,
+                                      status().worktreeBranch.behind,
+                                    )}
+                                  </p>
+                                </article>
+                              </div>
+                              <p class="run-chat-git-drawer__state">
+                                Backend state:{" "}
+                                {formatGitStateLabel(status().state)}
+                              </p>
+                              <Show
+                                when={model.git.lastActionMessage().length > 0}
+                              >
+                                <p class="project-placeholder-text">
+                                  {model.git.lastActionMessage()}
+                                </p>
+                              </Show>
+                              <Show when={model.git.actionError().length > 0}>
+                                <p class="projects-error">
+                                  {model.git.actionError()}
+                                </p>
+                              </Show>
+                              <div class="run-chat-git-drawer__actions">
+                                <button
+                                  type="button"
+                                  class="run-chat-git-drawer__button"
+                                  disabled={isRebaseDisabled()}
+                                  title={rebaseDisabledReason() || undefined}
+                                  onClick={() => {
+                                    void model.git.rebaseWorktreeOntoSource();
+                                  }}
+                                >
+                                  Rebase Worktree onto Source
+                                </button>
+                                <Show when={rebaseDisabledReason().length > 0}>
+                                  <p class="project-placeholder-text">
+                                    {rebaseDisabledReason()}
+                                  </p>
+                                </Show>
+                                <button
+                                  type="button"
+                                  class="run-chat-git-drawer__button"
+                                  disabled={isMergeDisabled()}
+                                  title={mergeDisabledReason() || undefined}
+                                  onClick={() => {
+                                    void model.git.mergeWorktreeIntoSource();
+                                  }}
+                                >
+                                  Merge Worktree into Source
+                                </button>
+                                <Show when={mergeDisabledReason().length > 0}>
+                                  <p class="project-placeholder-text">
+                                    {mergeDisabledReason()}
+                                  </p>
+                                </Show>
+                              </div>
+                            </>
+                          )}
+                        </Show>
+                      </section>
                     </Show>
                   </div>
                 </section>
