@@ -1619,94 +1619,52 @@ describe("app routing and shell", () => {
     ).toBeNull();
   });
 
-  it("renders run detail tabs in operations sidebar with operations selected", async () => {
+  it("renders run detail with chat workspace and floating tools", async () => {
     renderAt("/runs/run-456");
 
     await waitFor(() => {
-      const toggleButton = screen.getByRole("button", {
-        name: "Expand info panel",
-      });
       expect(screen.getByRole("link", { name: "Back to task" })).toBeTruthy();
-      expect(
-        screen.getByRole("heading", { name: "SESSION TITLE" }),
-      ).toBeTruthy();
-      expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
       expect(
         screen.getByRole("region", { name: "Conversation transcript" }),
       ).toBeTruthy();
-      expect(toggleButton.getAttribute("aria-pressed")).toBe("false");
+      expect(
+        screen.getByRole("toolbar", { name: "Run chat tools" }),
+      ).toBeTruthy();
       expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Open Diff" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "View Logs" })).toBeTruthy();
-      expect(
-        screen.getByRole("complementary", { name: "Run operations" }),
-      ).toBeTruthy();
-      expect(
-        screen.getByRole("tablist", { name: "Run detail tab list" }),
-      ).toBeTruthy();
-      expect(screen.queryByRole("tab", { name: "Conversation" })).toBeNull();
-      expect(
-        screen
-          .getByRole("tab", { name: "Operations" })
-          .getAttribute("aria-selected"),
-      ).toBe("true");
-      expect(screen.getByRole("tab", { name: "Agent" })).toBeTruthy();
-      expect(screen.getByRole("tab", { name: "Files Changed" })).toBeTruthy();
-      expect(screen.getByRole("tab", { name: "Diff" })).toBeTruthy();
-      expect(screen.getByRole("tab", { name: "Git" })).toBeTruthy();
-      expect(screen.getByRole("tab", { name: "Terminal" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Logs" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Terminal" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Review" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Git" })).toBeTruthy();
       expect(screen.queryByText("run-456")).toBeNull();
     });
   });
 
-  it("toggles between split mode and info-focus mode in run detail", async () => {
+  it("opens and closes review overlay in run detail", async () => {
     renderAt("/runs/run-456");
 
     await waitFor(() => {
       expect(
         screen.getByRole("region", { name: "Conversation transcript" }),
       ).toBeTruthy();
-      expect(
-        screen.getByRole("button", { name: "Expand info panel" }),
-      ).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Review" })).toBeTruthy();
     });
 
-    const expandInfoButton = screen.getByRole("button", {
-      name: "Expand info panel",
-    });
-    await fireEvent.click(expandInfoButton);
+    await fireEvent.click(screen.getByRole("button", { name: "Review" }));
 
     await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Review" })).toBeTruthy();
       expect(
-        screen.queryByRole("region", { name: "Conversation transcript" }),
-      ).toBeNull();
-      expect(
-        screen.getByRole("complementary", { name: "Run operations" }),
-      ).toBeTruthy();
-      expect(
-        screen
-          .getByRole("tab", { name: "Operations" })
-          .getAttribute("aria-selected"),
-      ).toBe("true");
-      expect(
-        screen.getByRole("button", { name: "Return to split mode" }),
+        screen.getByRole("button", { name: "Close Review panel" }),
       ).toBeTruthy();
     });
 
     await fireEvent.click(
-      screen.getByRole("button", { name: "Return to split mode" }),
+      screen.getByRole("button", { name: "Close Review panel" }),
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("region", { name: "Conversation transcript" }),
-      ).toBeTruthy();
-      expect(
-        screen.getByRole("button", { name: "Expand info panel" }),
-      ).toBeTruthy();
+      expect(screen.queryByRole("dialog", { name: "Review" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Review" })).toBeTruthy();
     });
   });
 
