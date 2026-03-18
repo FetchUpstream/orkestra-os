@@ -26,6 +26,9 @@ impl TasksService {
         input.title = input.title.trim().to_string();
         input.status = input.status.trim().to_string();
         input.description = input.description.map(|value| value.trim().to_string());
+        input.implementation_guide = input
+            .implementation_guide
+            .map(|value| value.trim().to_string());
 
         if input.title.is_empty() {
             return Err(AppError::validation("task title is required"));
@@ -56,6 +59,7 @@ impl TasksService {
                 repository_id: input.repository_id,
                 title: input.title,
                 description: input.description,
+                implementation_guide: input.implementation_guide,
                 status: input.status,
                 created_at: now.clone(),
                 updated_at: now,
@@ -91,6 +95,9 @@ impl TasksService {
     ) -> Result<TaskDto, AppError> {
         input.title = input.title.trim().to_string();
         input.description = input.description.map(|value| value.trim().to_string());
+        input.implementation_guide = input
+            .implementation_guide
+            .map(|value| value.trim().to_string());
 
         if input.title.is_empty() {
             return Err(AppError::validation("task title is required"));
@@ -103,6 +110,7 @@ impl TasksService {
                 UpdateTaskDetails {
                     title: input.title,
                     description: input.description,
+                    implementation_guide: input.implementation_guide,
                     updated_at: Utc::now().to_rfc3339(),
                 },
             )
@@ -335,6 +343,7 @@ impl TasksService {
             display_key: task.display_key,
             title: task.title,
             description: task.description,
+            implementation_guide: task.implementation_guide,
             status: task.status,
             blocked_by_count: task.blocked_by_count,
             is_blocked: task.is_blocked,

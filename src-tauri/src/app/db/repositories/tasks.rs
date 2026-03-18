@@ -47,6 +47,7 @@ impl TasksRepository {
                 task_number,
                 title,
                 description,
+                implementation_guide,
                 status,
                 created_at,
                 updated_at
@@ -60,6 +61,7 @@ impl TasksRepository {
                 ?,
                 ?,
                 ?,
+                ?,
                 ?
             )",
         )
@@ -69,6 +71,7 @@ impl TasksRepository {
         .bind(&input.project_id)
         .bind(&input.title)
         .bind(&input.description)
+        .bind(&input.implementation_guide)
         .bind(&input.status)
         .bind(&input.created_at)
         .bind(&input.updated_at)
@@ -90,6 +93,7 @@ impl TasksRepository {
                 p.key AS project_key,
                 t.title,
                 t.description,
+                t.implementation_guide,
                 t.status,
                 (SELECT COUNT(*) FROM task_dependencies td WHERE td.child_task_id = t.id) AS blocked_by_count,
                 r.name AS target_repository_name,
@@ -120,6 +124,7 @@ impl TasksRepository {
                     display_key: format!("{}-{}", project_key, task_number),
                     title: row.get("title"),
                     description: row.get("description"),
+                    implementation_guide: row.get("implementation_guide"),
                     status: row.get("status"),
                     blocked_by_count,
                     is_blocked: blocked_by_count > 0,
@@ -142,6 +147,7 @@ impl TasksRepository {
                 p.key AS project_key,
                 t.title,
                 t.description,
+                t.implementation_guide,
                 t.status,
                 (SELECT COUNT(*) FROM task_dependencies td WHERE td.child_task_id = t.id) AS blocked_by_count,
                 r.name AS target_repository_name,
@@ -169,6 +175,7 @@ impl TasksRepository {
                 display_key: format!("{}-{}", project_key, task_number),
                 title: row.get("title"),
                 description: row.get("description"),
+                implementation_guide: row.get("implementation_guide"),
                 status: row.get("status"),
                 blocked_by_count,
                 is_blocked: blocked_by_count > 0,
@@ -187,11 +194,12 @@ impl TasksRepository {
     ) -> Result<Option<Task>, AppError> {
         sqlx::query(
             "UPDATE tasks
-             SET title = ?, description = ?, updated_at = ?
+             SET title = ?, description = ?, implementation_guide = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&input.title)
         .bind(&input.description)
+        .bind(&input.implementation_guide)
         .bind(&input.updated_at)
         .bind(id)
         .execute(&self.pool)
