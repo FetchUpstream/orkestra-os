@@ -95,9 +95,11 @@ impl TasksService {
     ) -> Result<TaskDto, AppError> {
         input.title = input.title.trim().to_string();
         input.description = input.description.map(|value| value.trim().to_string());
-        input.implementation_guide = input
-            .implementation_guide
-            .map(|value| value.trim().to_string());
+        input.implementation_guide = input.implementation_guide.map(|value| {
+            value
+                .map(|guide| guide.trim().to_string())
+                .and_then(|guide| if guide.is_empty() { None } else { Some(guide) })
+        });
 
         if input.title.is_empty() {
             return Err(AppError::validation("task title is required"));
@@ -410,7 +412,7 @@ mod tests {
         (TasksService::new(repository), pool)
     }
 
-    async fn seed_task(pool: &SqlitePool, task_status: &str) {
+    async fn seed_project_and_repository(pool: &SqlitePool) {
         let project_id = "project-1";
         let repository_id = "repo-1";
 
@@ -442,6 +444,13 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    async fn seed_task(pool: &SqlitePool, task_status: &str) {
+        let project_id = "project-1";
+        let repository_id = "repo-1";
+
+        seed_project_and_repository(pool).await;
 
         sqlx::query(
             "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
@@ -459,6 +468,151 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn create_task_keeps_implementation_guide_optional_when_omitted() {
+        let (service, pool) = setup_service().await;
+        seed_project_and_repository(&pool).await;
+
+        let created = service
+            .create_task(CreateTaskRequest {
+                project_id: "project-1".to_string(),
+                repository_id: "repo-1".to_string(),
+                title: "Task".to_string(),
+                description: Some("  desc  ".to_string()),
+                implementation_guide: None,
+                status: "todo".to_string(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(created.description, Some("desc".to_string()));
+        assert_eq!(created.implementation_guide, None);
+    }
+
+    #[tokio::test]
+    async fn create_and_update_task_trim_implementation_guide_when_present() {
+        let (service, pool) = setup_service().await;
+        seed_project_and_repository(&pool).await;
+
+        let created = service
+            .create_task(CreateTaskRequest {
+                project_id: " project-1 ".to_string(),
+                repository_id: " repo-1 ".to_string(),
+                title: " Task ".to_string(),
+                description: Some(" desc ".to_string()),
+                implementation_guide: Some("  step 1  ".to_string()),
+                status: " todo ".to_string(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(created.implementation_guide, Some("step 1".to_string()));
+
+        let updated = service
+            .update_task(
+                &created.id,
+                UpdateTaskRequest {
+                    title: " Updated task ".to_string(),
+                    description: Some(" updated desc ".to_string()),
+                    implementation_guide: Some(Some("  step 2  ".to_string())),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.description, Some("updated desc".to_string()));
+        assert_eq!(updated.implementation_guide, Some("step 2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn update_task_keeps_implementation_guide_when_omitted() {
+        let (service, pool) = setup_service().await;
+        seed_project_and_repository(&pool).await;
+
+        let created = service
+            .create_task(CreateTaskRequest {
+                project_id: "project-1".to_string(),
+                repository_id: "repo-1".to_string(),
+                title: "Task".to_string(),
+                description: Some("desc".to_string()),
+                implementation_guide: Some("step 1".to_string()),
+                status: "todo".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let updated = service
+            .update_task(
+                &created.id,
+                UpdateTaskRequest {
+                    title: "Task updated".to_string(),
+                    description: Some("desc updated".to_string()),
+                    implementation_guide: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.implementation_guide, Some("step 1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn update_task_clears_implementation_guide_when_null_or_empty() {
+        let (service, pool) = setup_service().await;
+        seed_project_and_repository(&pool).await;
+
+        let created = service
+            .create_task(CreateTaskRequest {
+                project_id: "project-1".to_string(),
+                repository_id: "repo-1".to_string(),
+                title: "Task".to_string(),
+                description: Some("desc".to_string()),
+                implementation_guide: Some("step 1".to_string()),
+                status: "todo".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let cleared_with_null = service
+            .update_task(
+                &created.id,
+                UpdateTaskRequest {
+                    title: "Task updated".to_string(),
+                    description: Some("desc updated".to_string()),
+                    implementation_guide: Some(None),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(cleared_with_null.implementation_guide, None);
+
+        let restored = service
+            .update_task(
+                &created.id,
+                UpdateTaskRequest {
+                    title: "Task updated again".to_string(),
+                    description: Some("desc updated again".to_string()),
+                    implementation_guide: Some(Some("step 2".to_string())),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(restored.implementation_guide, Some("step 2".to_string()));
+
+        let cleared_with_empty = service
+            .update_task(
+                &created.id,
+                UpdateTaskRequest {
+                    title: "Task updated final".to_string(),
+                    description: Some("desc updated final".to_string()),
+                    implementation_guide: Some(Some("   ".to_string())),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(cleared_with_empty.implementation_guide, None);
     }
 
     #[test]

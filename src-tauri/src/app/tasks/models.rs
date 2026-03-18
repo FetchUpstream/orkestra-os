@@ -34,7 +34,7 @@ pub struct NewTask {
 pub struct UpdateTaskDetails {
     pub title: String,
     pub description: Option<String>,
-    pub implementation_guide: Option<String>,
+    pub implementation_guide: Option<Option<String>>,
     pub updated_at: String,
 }
 

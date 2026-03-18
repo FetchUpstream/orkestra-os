@@ -14,7 +14,8 @@ pub struct CreateTaskRequest {
 pub struct UpdateTaskRequest {
     pub title: String,
     pub description: Option<String>,
-    pub implementation_guide: Option<String>,
+    #[serde(default)]
+    pub implementation_guide: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

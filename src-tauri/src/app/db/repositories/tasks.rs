@@ -194,12 +194,16 @@ impl TasksRepository {
     ) -> Result<Option<Task>, AppError> {
         sqlx::query(
             "UPDATE tasks
-             SET title = ?, description = ?, implementation_guide = ?, updated_at = ?
+             SET title = ?,
+                 description = ?,
+                 implementation_guide = CASE WHEN ? THEN ? ELSE implementation_guide END,
+                 updated_at = ?
              WHERE id = ?",
         )
         .bind(&input.title)
         .bind(&input.description)
-        .bind(&input.implementation_guide)
+        .bind(input.implementation_guide.is_some())
+        .bind(input.implementation_guide.flatten())
         .bind(&input.updated_at)
         .bind(id)
         .execute(&self.pool)
