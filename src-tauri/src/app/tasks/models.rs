@@ -7,6 +7,7 @@ pub struct Task {
     pub display_key: String,
     pub title: String,
     pub description: Option<String>,
+    pub implementation_guide: Option<String>,
     pub status: String,
     pub blocked_by_count: i64,
     pub is_blocked: bool,
@@ -23,6 +24,7 @@ pub struct NewTask {
     pub repository_id: String,
     pub title: String,
     pub description: Option<String>,
+    pub implementation_guide: Option<String>,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -32,6 +34,7 @@ pub struct NewTask {
 pub struct UpdateTaskDetails {
     pub title: String,
     pub description: Option<String>,
+    pub implementation_guide: Option<String>,
     pub updated_at: String,
 }
 

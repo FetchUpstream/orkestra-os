@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   repository_id TEXT NOT NULL,
   title TEXT NOT NULL,
   description TEXT NULL,
+  implementation_guide TEXT NULL,
   status TEXT NOT NULL CHECK (status IN ('todo', 'doing', 'review', 'done')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,

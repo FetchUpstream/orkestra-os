@@ -6,6 +6,7 @@ pub struct CreateTaskRequest {
     pub repository_id: String,
     pub title: String,
     pub description: Option<String>,
+    pub implementation_guide: Option<String>,
     pub status: String,
 }
 
@@ -13,6 +14,7 @@ pub struct CreateTaskRequest {
 pub struct UpdateTaskRequest {
     pub title: String,
     pub description: Option<String>,
+    pub implementation_guide: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -39,6 +41,7 @@ pub struct TaskDto {
     pub display_key: String,
     pub title: String,
     pub description: Option<String>,
+    pub implementation_guide: Option<String>,
     pub status: String,
     pub blocked_by_count: i64,
     pub is_blocked: bool,
