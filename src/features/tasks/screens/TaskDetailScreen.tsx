@@ -1091,7 +1091,7 @@ const TaskDetailScreen: Component = () => {
             <label class="projects-field">
               <span class="field-label">
                 <span class="field-label-text">Description</span>
-                <span class="field-optional">Optional</span>
+                <span class="field-optional">optional</span>
               </span>
               <textarea
                 rows={3}
@@ -1105,7 +1105,7 @@ const TaskDetailScreen: Component = () => {
             <label class="projects-field">
               <span class="field-label">
                 <span class="field-label-text">Implementation guide</span>
-                <span class="field-optional">Optional</span>
+                <span class="field-optional">optional</span>
               </span>
               <textarea
                 rows={3}
@@ -1121,7 +1121,7 @@ const TaskDetailScreen: Component = () => {
             <label class="projects-field">
               <span class="field-label">
                 <span class="field-label-text">Status</span>
-                <span class="field-optional">Optional</span>
+                <span class="field-optional">optional</span>
               </span>
               <select
                 value={createDependencyStatus()}

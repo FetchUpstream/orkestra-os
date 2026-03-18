@@ -6,10 +6,13 @@ Object.defineProperty(window, "scrollTo", {
   writable: true,
 });
 
-Object.defineProperty(document, "queryCommandSupported", {
-  value: () => false,
-  writable: true,
-});
+if (!("queryCommandSupported" in document)) {
+  Object.defineProperty(document, "queryCommandSupported", {
+    value: () => false,
+    writable: true,
+    configurable: true,
+  });
+}
 
 afterEach(() => {
   cleanup();
