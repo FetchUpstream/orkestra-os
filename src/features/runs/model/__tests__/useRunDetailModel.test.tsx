@@ -93,6 +93,8 @@ describe("useRunDetailModel auto initial prompt", () => {
       worktreeId: "wt-1",
       targetRepoId: "repo-1",
       displayKey: "RUN-1",
+      initialPromptSentAt: null,
+      initialPromptClientRequestId: null,
     });
     getTaskMock.mockResolvedValue({
       id: "task-1",
@@ -118,6 +120,7 @@ describe("useRunDetailModel auto initial prompt", () => {
       runId: "run-1",
       prompt:
         "Ship release notes\n\nDraft changelog and verify links.\n\nImplementation guide:\nUse the release template.",
+      clientRequestId: "initial-run-message:run-1",
     });
   });
 
@@ -173,6 +176,8 @@ describe("useRunDetailModel auto initial prompt", () => {
       worktreeId: "wt-2",
       targetRepoId: "repo-1",
       displayKey: "RUN-2",
+      initialPromptSentAt: null,
+      initialPromptClientRequestId: null,
     });
     getTaskMock.mockResolvedValueOnce({
       id: "task-2",
@@ -194,6 +199,7 @@ describe("useRunDetailModel auto initial prompt", () => {
     expect(submitRunOpenCodePromptMock).toHaveBeenLastCalledWith({
       runId: "run-2",
       prompt: "Implement queue drain",
+      clientRequestId: "initial-run-message:run-2",
     });
   });
 
@@ -218,6 +224,7 @@ describe("useRunDetailModel auto initial prompt", () => {
     expect(submitRunOpenCodePromptMock).toHaveBeenLastCalledWith({
       runId: "run-1",
       prompt: "Line one\n\nLine two\n\nImplementation guide:\nStep A\n\nStep B",
+      clientRequestId: "initial-run-message:run-1",
     });
 
     first.unmount();
@@ -237,6 +244,8 @@ describe("useRunDetailModel auto initial prompt", () => {
       worktreeId: "wt-2",
       targetRepoId: "repo-1",
       displayKey: "RUN-2",
+      initialPromptSentAt: null,
+      initialPromptClientRequestId: null,
     });
     getTaskMock.mockResolvedValueOnce({
       id: "task-2",
@@ -258,6 +267,7 @@ describe("useRunDetailModel auto initial prompt", () => {
     expect(submitRunOpenCodePromptMock).toHaveBeenLastCalledWith({
       runId: "run-2",
       prompt: "Please continue with the current task.",
+      clientRequestId: "initial-run-message:run-2",
     });
   });
 
@@ -302,6 +312,8 @@ describe("useRunDetailModel auto initial prompt", () => {
       worktreeId: "wt-1",
       targetRepoId: "repo-1",
       displayKey: "RUN-1",
+      initialPromptSentAt: null,
+      initialPromptClientRequestId: null,
     });
 
     render(() => {
@@ -347,5 +359,47 @@ describe("useRunDetailModel auto initial prompt", () => {
     await waitFor(() => {
       expect(submitRunOpenCodePromptMock).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it("does not auto-send on remount when run already has persisted sent flag", async () => {
+    const first = render(() => {
+      useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(submitRunOpenCodePromptMock).toHaveBeenCalledTimes(1);
+    });
+
+    first.unmount();
+    getRunMock.mockResolvedValueOnce({
+      id: "run-1",
+      taskId: "task-1",
+      projectId: "project-1",
+      status: "running",
+      triggeredBy: "user",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      startedAt: "2026-01-01T00:00:01.000Z",
+      finishedAt: null,
+      summary: null,
+      errorMessage: null,
+      sourceBranch: "main",
+      worktreeId: "wt-1",
+      targetRepoId: "repo-1",
+      displayKey: "RUN-1",
+      initialPromptSentAt: "2026-01-01T00:00:10.000Z",
+      initialPromptClientRequestId: "initial-run-message:run-1",
+    });
+
+    render(() => {
+      useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(getRunMock).toHaveBeenCalledTimes(2);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(submitRunOpenCodePromptMock).toHaveBeenCalledTimes(1);
   });
 });

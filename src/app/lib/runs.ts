@@ -28,6 +28,8 @@ export type Run = {
   worktreeId?: string | null;
   agentId?: string | null;
   sourceBranch?: string | null;
+  initialPromptSentAt?: string | null;
+  initialPromptClientRequestId?: string | null;
 };
 
 export type RunDiffFile = {
@@ -305,6 +307,10 @@ type RunResponse = {
   agentId?: string | null;
   source_branch?: string | null;
   sourceBranch?: string | null;
+  initial_prompt_sent_at?: string | null;
+  initialPromptSentAt?: string | null;
+  initial_prompt_client_request_id?: string | null;
+  initialPromptClientRequestId?: string | null;
 };
 
 const runStatusSet = new Set<string>(RUN_STATUSES);
@@ -334,6 +340,14 @@ const toRun = (run: RunResponse): Run => ({
   worktreeId: pick(run.worktree_id, run.worktreeId),
   agentId: pick(run.agent_id, run.agentId),
   sourceBranch: pick(run.source_branch, run.sourceBranch),
+  initialPromptSentAt: pick(
+    run.initial_prompt_sent_at,
+    run.initialPromptSentAt,
+  ),
+  initialPromptClientRequestId: pick(
+    run.initial_prompt_client_request_id,
+    run.initialPromptClientRequestId,
+  ),
 });
 
 const toRunDiffFile = (file: RunDiffFileResponse): RunDiffFile => ({

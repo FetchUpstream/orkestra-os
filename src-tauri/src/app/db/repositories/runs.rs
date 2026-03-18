@@ -84,7 +84,9 @@ impl RunsRepository {
                 worktree_id,
                 agent_id,
                 source_branch,
-                opencode_session_id
+                opencode_session_id,
+                initial_prompt_sent_at,
+                initial_prompt_client_request_id
              FROM runs
              WHERE task_id = ?
              ORDER BY created_at DESC",
@@ -113,7 +115,9 @@ impl RunsRepository {
                 worktree_id,
                 agent_id,
                 source_branch,
-                opencode_session_id
+                opencode_session_id,
+                initial_prompt_sent_at,
+                initial_prompt_client_request_id
              FROM runs
              WHERE id = ?",
         )
@@ -194,6 +198,98 @@ impl RunsRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn mark_initial_prompt_sent_if_unset(
+        &self,
+        run_id: &str,
+        sent_at: &str,
+        client_request_id: Option<&str>,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET initial_prompt_sent_at = ?,
+                 initial_prompt_client_request_id = COALESCE(?, initial_prompt_client_request_id)
+             WHERE id = ?
+               AND initial_prompt_sent_at IS NULL",
+        )
+        .bind(sent_at)
+        .bind(client_request_id)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn claim_initial_prompt_send_if_unset(
+        &self,
+        run_id: &str,
+        claimed_at: &str,
+        claim_request_id: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET initial_prompt_claimed_at = ?,
+                 initial_prompt_claim_request_id = ?
+             WHERE id = ?
+               AND initial_prompt_sent_at IS NULL
+               AND initial_prompt_claim_request_id IS NULL",
+        )
+        .bind(claimed_at)
+        .bind(claim_request_id)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn finalize_initial_prompt_send_for_claimant(
+        &self,
+        run_id: &str,
+        sent_at: &str,
+        claim_request_id: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET initial_prompt_sent_at = ?,
+                 initial_prompt_client_request_id = COALESCE(initial_prompt_client_request_id, ?),
+                 initial_prompt_claimed_at = NULL,
+                 initial_prompt_claim_request_id = NULL
+             WHERE id = ?
+               AND initial_prompt_sent_at IS NULL
+               AND initial_prompt_claim_request_id = ?",
+        )
+        .bind(sent_at)
+        .bind(claim_request_id)
+        .bind(run_id)
+        .bind(claim_request_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn release_initial_prompt_claim_for_claimant(
+        &self,
+        run_id: &str,
+        claim_request_id: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET initial_prompt_claimed_at = NULL,
+                 initial_prompt_claim_request_id = NULL
+             WHERE id = ?
+               AND initial_prompt_sent_at IS NULL
+               AND initial_prompt_claim_request_id = ?",
+        )
+        .bind(run_id)
+        .bind(claim_request_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     fn map_row_to_run(row: sqlx::sqlite::SqliteRow) -> Run {
         Run {
             id: row.get("id"),
@@ -211,6 +307,8 @@ impl RunsRepository {
             agent_id: row.get("agent_id"),
             source_branch: row.get("source_branch"),
             opencode_session_id: row.get("opencode_session_id"),
+            initial_prompt_sent_at: row.get("initial_prompt_sent_at"),
+            initial_prompt_client_request_id: row.get("initial_prompt_client_request_id"),
         }
     }
 }

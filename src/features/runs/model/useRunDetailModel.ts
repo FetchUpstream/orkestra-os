@@ -96,7 +96,6 @@ export const useRunDetailModel = () => {
   let terminalRunId: string | null = null;
   let terminalRouteInstanceId = crypto.randomUUID();
   let terminalFrameHandler: ((frame: RunTerminalFrame) => void) | null = null;
-  let autoSubmittedInitialPromptRunId: string | null = null;
   let autoSubmittingInitialPromptRunId: string | null = null;
 
   const normalizeInitialPromptField = (
@@ -1150,7 +1149,10 @@ export const useRunDetailModel = () => {
     }
   };
 
-  const submitPrompt = async (text: string): Promise<boolean> => {
+  const submitPrompt = async (
+    text: string,
+    options?: { clientRequestId?: string },
+  ): Promise<boolean> => {
     const prompt = text.trim();
     if (!prompt) {
       return false;
@@ -1170,6 +1172,7 @@ export const useRunDetailModel = () => {
       const response = await submitRunOpenCodePrompt({
         runId,
         prompt,
+        clientRequestId: options?.clientRequestId,
       });
 
       if (
@@ -1429,20 +1432,34 @@ export const useRunDetailModel = () => {
       return;
     }
 
-    if (
-      autoSubmittedInitialPromptRunId === runId ||
-      autoSubmittingInitialPromptRunId === runId
-    ) {
+    if (autoSubmittingInitialPromptRunId === runId) {
+      return;
+    }
+
+    if (run()?.initialPromptSentAt) {
       return;
     }
 
     const prompt = composeInitialPrompt(task());
+    const clientRequestId = `initial-run-message:${runId}`;
     autoSubmittingInitialPromptRunId = runId;
-    void submitPrompt(prompt)
+    void submitPrompt(prompt, { clientRequestId })
       .then((wasSubmitted) => {
-        if (wasSubmitted) {
-          autoSubmittedInitialPromptRunId = runId;
+        if (!wasSubmitted) {
+          return;
         }
+
+        setRun((current) => {
+          if (!current || current.id !== runId || current.initialPromptSentAt) {
+            return current;
+          }
+
+          return {
+            ...current,
+            initialPromptSentAt: new Date().toISOString(),
+            initialPromptClientRequestId: clientRequestId,
+          };
+        });
       })
       .finally(() => {
         if (autoSubmittingInitialPromptRunId === runId) {

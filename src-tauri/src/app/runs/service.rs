@@ -171,6 +171,84 @@ impl RunsService {
             .await
     }
 
+    pub async fn mark_initial_prompt_sent_if_unset(
+        &self,
+        run_id: &str,
+        client_request_id: Option<&str>,
+    ) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let sent_at = Utc::now().to_rfc3339();
+        self.repository
+            .mark_initial_prompt_sent_if_unset(run_id, &sent_at, client_request_id)
+            .await
+    }
+
+    pub async fn claim_initial_prompt_send_if_unset(
+        &self,
+        run_id: &str,
+        claim_request_id: &str,
+    ) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let claim_request_id = claim_request_id.trim();
+        if claim_request_id.is_empty() {
+            return Err(AppError::validation("claim_request_id is required"));
+        }
+
+        let claimed_at = Utc::now().to_rfc3339();
+        self.repository
+            .claim_initial_prompt_send_if_unset(run_id, &claimed_at, claim_request_id)
+            .await
+    }
+
+    pub async fn finalize_initial_prompt_send_for_claimant(
+        &self,
+        run_id: &str,
+        claim_request_id: &str,
+    ) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let claim_request_id = claim_request_id.trim();
+        if claim_request_id.is_empty() {
+            return Err(AppError::validation("claim_request_id is required"));
+        }
+
+        let sent_at = Utc::now().to_rfc3339();
+        self.repository
+            .finalize_initial_prompt_send_for_claimant(run_id, &sent_at, claim_request_id)
+            .await
+    }
+
+    pub async fn release_initial_prompt_claim_for_claimant(
+        &self,
+        run_id: &str,
+        claim_request_id: &str,
+    ) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let claim_request_id = claim_request_id.trim();
+        if claim_request_id.is_empty() {
+            return Err(AppError::validation("claim_request_id is required"));
+        }
+
+        self.repository
+            .release_initial_prompt_claim_for_claimant(run_id, claim_request_id)
+            .await
+    }
+
     fn to_dto(run: Run) -> RunDto {
         RunDto {
             id: run.id,
@@ -187,6 +265,8 @@ impl RunsService {
             worktree_id: run.worktree_id,
             agent_id: run.agent_id,
             source_branch: run.source_branch,
+            initial_prompt_sent_at: run.initial_prompt_sent_at,
+            initial_prompt_client_request_id: run.initial_prompt_client_request_id,
         }
     }
 }
@@ -525,5 +605,109 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn mark_initial_prompt_sent_is_idempotent() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1").await;
+
+        let first = service
+            .mark_initial_prompt_sent_if_unset(
+                "run-1",
+                Some("initial-run-message:run-1"),
+            )
+            .await
+            .unwrap();
+        let second = service
+            .mark_initial_prompt_sent_if_unset(
+                "run-1",
+                Some("initial-run-message:run-1"),
+            )
+            .await
+            .unwrap();
+
+        assert!(first);
+        assert!(!second);
+
+        let run = service.get_run_model("run-1").await.unwrap();
+        assert!(run.initial_prompt_sent_at.is_some());
+        assert_eq!(
+            run.initial_prompt_client_request_id.as_deref(),
+            Some("initial-run-message:run-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn claim_initial_prompt_send_is_concurrency_safe_and_single_winner() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1").await;
+
+        let mut tasks = Vec::new();
+        for idx in 0..8 {
+            let service_clone = service.clone();
+            tasks.push(tokio::spawn(async move {
+                let claim_id = format!("claim-{idx}");
+                service_clone
+                    .claim_initial_prompt_send_if_unset("run-1", &claim_id)
+                    .await
+                    .unwrap()
+            }));
+        }
+
+        let mut successful_claims = 0;
+        for task in tasks {
+            if task.await.unwrap() {
+                successful_claims += 1;
+            }
+        }
+
+        assert_eq!(successful_claims, 1);
+    }
+
+    #[tokio::test]
+    async fn releasing_claim_allows_new_claimant_and_finalize_marks_sent() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1").await;
+
+        let first_claim = service
+            .claim_initial_prompt_send_if_unset("run-1", "claim-a")
+            .await
+            .unwrap();
+        assert!(first_claim);
+
+        let released = service
+            .release_initial_prompt_claim_for_claimant("run-1", "claim-a")
+            .await
+            .unwrap();
+        assert!(released);
+
+        let second_claim = service
+            .claim_initial_prompt_send_if_unset("run-1", "claim-b")
+            .await
+            .unwrap();
+        assert!(second_claim);
+
+        let finalized = service
+            .finalize_initial_prompt_send_for_claimant("run-1", "claim-b")
+            .await
+            .unwrap();
+        assert!(finalized);
+
+        let run = service.get_run_model("run-1").await.unwrap();
+        assert!(run.initial_prompt_sent_at.is_some());
+        assert_eq!(
+            run.initial_prompt_client_request_id.as_deref(),
+            Some("claim-b")
+        );
     }
 }

@@ -107,6 +107,18 @@ struct SubscriberTaskEntry {
 }
 
 impl RunsOpenCodeService {
+    fn initial_seed_request_id_for_run(run_id: &str) -> String {
+        format!("initial-run-message:{run_id}")
+    }
+
+    fn is_initial_seed_request(run_id: &str, client_request_id: Option<&str>) -> bool {
+        let Some(request_id) = client_request_id else {
+            return false;
+        };
+
+        request_id.trim() == Self::initial_seed_request_id_for_run(run_id)
+    }
+
     fn unsupported_reason_for_run_status(status: &str) -> Option<String> {
         if matches!(status, "completed" | "failed" | "cancelled") {
             return Some(format!("run status '{}' is not supported", status));
@@ -246,6 +258,22 @@ impl RunsOpenCodeService {
             *session_guard = Some(canonical_session_id.clone());
             Ok(canonical_session_id)
         }
+    }
+
+    async fn release_initial_seed_claim_if_claimant(
+        &self,
+        run_id: &str,
+        claim_request_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        let Some(claim_request_id) = claim_request_id else {
+            return Ok(());
+        };
+
+        let _ = self
+            .runs_service
+            .release_initial_prompt_claim_for_claimant(run_id, claim_request_id)
+            .await?;
+        Ok(())
     }
 
     fn push_event(
@@ -448,8 +476,39 @@ impl RunsOpenCodeService {
             return Err(AppError::validation("prompt is required"));
         }
 
-        let (ensured, handle, ready_phase) = self.ensure_run_ready_for_operation(run_id).await?;
+        let is_initial_seed_request = Self::is_initial_seed_request(run_id, client_request_id.as_deref());
+        let mut claimed_initial_seed_request_id: Option<&str> = None;
+        if is_initial_seed_request {
+            let claim_request_id = client_request_id
+                .as_deref()
+                .ok_or_else(|| AppError::validation("client_request_id is required"))?;
+            let claimed = self
+                .runs_service
+                .claim_initial_prompt_send_if_unset(run_id, claim_request_id)
+                .await?;
+            if !claimed {
+                return Ok(SubmitRunOpenCodePromptResponse {
+                    state: "accepted".to_string(),
+                    reason: None,
+                    queued_at: Utc::now().to_rfc3339(),
+                    client_request_id,
+                });
+            }
+
+            claimed_initial_seed_request_id = Some(claim_request_id);
+        }
+
+        let (ensured, handle, ready_phase) = match self.ensure_run_ready_for_operation(run_id).await {
+            Ok(result) => result,
+            Err(err) => {
+                self.release_initial_seed_claim_if_claimant(run_id, claimed_initial_seed_request_id)
+                    .await?;
+                return Err(err);
+            }
+        };
         if ensured.state == "unsupported" {
+            self.release_initial_seed_claim_if_claimant(run_id, claimed_initial_seed_request_id)
+                .await?;
             return Ok(SubmitRunOpenCodePromptResponse {
                 state: "unsupported".to_string(),
                 reason: ensured.reason,
@@ -458,9 +517,23 @@ impl RunsOpenCodeService {
             });
         }
 
-        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let handle = match handle {
+            Some(handle) => handle,
+            None => {
+                self.release_initial_seed_claim_if_claimant(run_id, claimed_initial_seed_request_id)
+                    .await?;
+                return Err(AppError::not_found("OpenCode run handle not found"));
+            }
+        };
 
-        let session_id = self.get_or_create_session_id(run_id, handle.clone()).await?;
+        let session_id = match self.get_or_create_session_id(run_id, handle.clone()).await {
+            Ok(session_id) => session_id,
+            Err(err) => {
+                self.release_initial_seed_claim_if_claimant(run_id, claimed_initial_seed_request_id)
+                    .await?;
+                return Err(err);
+            }
+        };
 
         let mut request = RequestOptions::default().with_path("id", session_id);
         if let Some(request_id) = client_request_id.as_ref() {
@@ -477,12 +550,29 @@ impl RunsOpenCodeService {
             }))],
         }));
 
-        handle
+        let send_result = handle
             .client
             .session()
             .prompt_async(request)
-            .await
-            .map_err(|err| AppError::validation(format!("failed to submit OpenCode prompt: {err}")))?;
+            .await;
+
+        if let Err(err) = send_result {
+            self.release_initial_seed_claim_if_claimant(run_id, claimed_initial_seed_request_id)
+                .await?;
+            return Err(AppError::validation(format!("failed to submit OpenCode prompt: {err}")));
+        }
+
+        if let Some(claim_request_id) = claimed_initial_seed_request_id {
+            let finalized = self
+                .runs_service
+                .finalize_initial_prompt_send_for_claimant(run_id, claim_request_id)
+                .await?;
+            if !finalized {
+                return Err(AppError::validation(
+                    "initial prompt claimant failed to finalize sent state",
+                ));
+            }
+        }
 
         info!(
             target: "opencode.runtime",
@@ -1033,5 +1123,303 @@ impl RunsOpenCodeService {
             .ok_or_else(|| AppError::not_found("run worktree not found"))?
             .trim();
         resolve_worktree_path(&self.worktrees_root, worktree_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RunsOpenCodeService;
+    use crate::app::db::migrations::run_migrations;
+    use crate::app::db::repositories::runs::RunsRepository;
+    use crate::app::runs::service::RunsService;
+    use crate::app::worktrees::service::WorktreesService;
+    use opencode::{OpencodeClientConfig, OpencodeServerOptions, create_opencode_client, create_opencode_server};
+    use std::collections::{HashMap, VecDeque};
+    use sqlx::SqlitePool;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::AtomicU64;
+    use std::sync::{Arc, Mutex};
+    use uuid::Uuid;
+
+    async fn setup_services() -> (RunsService, RunsOpenCodeService, SqlitePool, TempDir) {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+
+        let repository = RunsRepository::new(pool.clone());
+        let temp_dir = TempDir::new();
+        let app_data_dir = temp_dir.path().join("app-data");
+        let worktrees_service = WorktreesService::new(app_data_dir.clone());
+        let runs_service = RunsService::new(repository, worktrees_service);
+        let opencode_service = RunsOpenCodeService::new(runs_service.clone(), app_data_dir);
+
+        (runs_service, opencode_service, pool, temp_dir)
+    }
+
+    async fn seed_task(pool: &SqlitePool, task_id: &str, repo_path: &Path) {
+        let project_id = "project-1";
+        let repository_id = "repo-1";
+
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(project_id)
+        .bind("Alpha")
+        .bind("ALP")
+        .bind(Option::<String>::None)
+        .bind(repository_id)
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(repository_id)
+        .bind(project_id)
+        .bind("Main")
+        .bind(repo_path.to_string_lossy().to_string())
+        .bind(1)
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(task_id)
+        .bind(project_id)
+        .bind(repository_id)
+        .bind(1)
+        .bind("Task")
+        .bind(Option::<String>::None)
+        .bind("todo")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_run(pool: &SqlitePool, run_id: &str, task_id: &str, status: &str) {
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(run_id)
+        .bind(task_id)
+        .bind("project-1")
+        .bind("repo-1")
+        .bind(status)
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[derive(Debug)]
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("orkestra-opencode-tests-{}", Uuid::new_v4()));
+            fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn initial_seed_request_detection_is_exact_and_run_scoped() {
+        assert!(RunsOpenCodeService::is_initial_seed_request(
+            "run-1",
+            Some("initial-run-message:run-1")
+        ));
+        assert!(!RunsOpenCodeService::is_initial_seed_request(
+            "run-1",
+            Some("initial-run-message:run-2")
+        ));
+        assert!(!RunsOpenCodeService::is_initial_seed_request("run-1", None));
+    }
+
+    #[tokio::test]
+    async fn submit_initial_seed_releases_claim_when_run_is_unsupported() {
+        let (runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "completed").await;
+
+        let response = opencode_service
+            .submit_run_opencode_prompt(
+                "run-1",
+                "seed prompt",
+                Some("initial-run-message:run-1".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.state, "unsupported");
+
+        let reclaimed = runs_service
+            .claim_initial_prompt_send_if_unset("run-1", "initial-run-message:run-1-retry")
+            .await
+            .unwrap();
+        assert!(reclaimed);
+    }
+
+    #[tokio::test]
+    async fn submit_initial_seed_releases_claim_when_ensure_ready_fails() {
+        let (runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "queued").await;
+
+        let result = opencode_service
+            .submit_run_opencode_prompt(
+                "run-1",
+                "seed prompt",
+                Some("initial-run-message:run-1".to_string()),
+            )
+            .await;
+
+        assert!(result.is_err());
+
+        let reclaimed = runs_service
+            .claim_initial_prompt_send_if_unset("run-1", "initial-run-message:run-1-retry")
+            .await
+            .unwrap();
+        assert!(reclaimed);
+    }
+
+    #[tokio::test]
+    async fn duplicate_initial_seed_non_claimant_is_accepted_no_op() {
+        let (runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "queued").await;
+
+        let claimed = runs_service
+            .claim_initial_prompt_send_if_unset("run-1", "initial-run-message:run-1")
+            .await
+            .unwrap();
+        assert!(claimed);
+
+        let response = opencode_service
+            .submit_run_opencode_prompt(
+                "run-1",
+                "seed prompt",
+                Some("initial-run-message:run-1".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.state, "accepted");
+
+        let finalizing_duplicate = runs_service
+            .finalize_initial_prompt_send_for_claimant("run-1", "initial-run-message:run-1-duplicate")
+            .await
+            .unwrap();
+        assert!(!finalizing_duplicate);
+    }
+
+    #[tokio::test]
+    async fn manual_client_request_path_remains_unaffected() {
+        let (runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "queued").await;
+
+        let result = opencode_service
+            .submit_run_opencode_prompt("run-1", "manual prompt", Some("manual-123".to_string()))
+            .await;
+
+        assert!(result.is_err());
+
+        let initial_seed_claim_available = runs_service
+            .claim_initial_prompt_send_if_unset("run-1", "initial-run-message:run-1")
+            .await
+            .unwrap();
+        assert!(initial_seed_claim_available);
+    }
+
+    #[tokio::test]
+    async fn submit_initial_seed_releases_claim_when_session_creation_fails() {
+        let (runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+
+        let server = create_opencode_server(Some(OpencodeServerOptions {
+            cwd: Some(repo_path.clone()),
+            port: 0,
+            config: Some(serde_json::json!({})),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+
+        let invalid_client = create_opencode_client(Some(OpencodeClientConfig {
+            base_url: "http://127.0.0.1:1".to_string(),
+            directory: Some(repo_path.to_string_lossy().to_string()),
+            ..Default::default()
+        }))
+        .unwrap();
+
+        let (event_tx, _rx) = tokio::sync::broadcast::channel(8);
+        let handle = Arc::new(super::RunOpenCodeHandle {
+            generation: 1,
+            _server: Arc::new(tokio::sync::Mutex::new(server)),
+            client: invalid_client,
+            session_id: Arc::new(Mutex::new(None)),
+            session_init_lock: tokio::sync::Mutex::new(()),
+            subscribers: Arc::new(Mutex::new(HashMap::new())),
+            subscriber_tasks: Arc::new(Mutex::new(HashMap::new())),
+            subscriber_generation: AtomicU64::new(1),
+            subscriber_lifecycle_lock: tokio::sync::Mutex::new(()),
+            event_tx,
+            buffered_events: Arc::new(Mutex::new(VecDeque::new())),
+        });
+
+        let mut handles = opencode_service.handles.write().await;
+        handles.insert("run-1".to_string(), handle);
+        drop(handles);
+
+        let result = opencode_service
+            .submit_run_opencode_prompt(
+                "run-1",
+                "seed prompt",
+                Some("initial-run-message:run-1".to_string()),
+            )
+            .await;
+        assert!(result.is_err());
+
+        let reclaimed = runs_service
+            .claim_initial_prompt_send_if_unset("run-1", "initial-run-message:run-1-retry")
+            .await
+            .unwrap();
+        assert!(reclaimed);
     }
 }

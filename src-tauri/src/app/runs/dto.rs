@@ -17,6 +17,8 @@ pub struct RunDto {
     pub worktree_id: Option<String>,
     pub agent_id: Option<String>,
     pub source_branch: Option<String>,
+    pub initial_prompt_sent_at: Option<String>,
+    pub initial_prompt_client_request_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
