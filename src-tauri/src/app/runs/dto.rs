@@ -73,6 +73,16 @@ pub struct SubmitRunOpenCodePromptResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StartRunOpenCodeResponse {
+    pub state: String,
+    pub reason: Option<String>,
+    pub queued_at: String,
+    pub client_request_id: String,
+    pub ready_phase: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunOpenCodeSessionMessageDto {
     pub payload: Value,
 }

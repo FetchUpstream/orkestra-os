@@ -40,3 +40,11 @@ pub struct TaskRunContext {
     pub repository_path: String,
     pub branch_title: String,
 }
+
+#[derive(Clone, Debug)]
+pub struct RunInitialPromptContext {
+    pub run_id: String,
+    pub task_title: String,
+    pub task_description: Option<String>,
+    pub task_implementation_guide: Option<String>,
+}

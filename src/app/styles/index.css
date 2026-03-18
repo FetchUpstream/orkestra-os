@@ -2062,6 +2062,17 @@ textarea::placeholder {
   opacity: 0.72;
 }
 
+.task-runs-start-button {
+  position: absolute;
+  top: 10px;
+  right: 44px;
+  z-index: 1;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 0.72rem;
+}
+
 .task-runs-item:hover .task-runs-delete-button,
 .task-runs-item:focus-within .task-runs-delete-button {
   opacity: 1;
@@ -2080,7 +2091,7 @@ textarea::placeholder {
 }
 
 .task-runs-link--with-action {
-  padding-right: 44px;
+  padding-right: 118px;
 }
 
 .task-runs-link:hover {
@@ -2145,6 +2156,13 @@ textarea::placeholder {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.task-runs-start-error {
+  margin: 0;
+  padding: 0 12px 10px;
+  color: var(--danger);
+  font-size: 0.74rem;
 }
 
 .run-detail-page {
@@ -4120,7 +4138,12 @@ textarea::placeholder {
   }
 
   .task-runs-link--with-action {
-    padding-right: 44px;
+    padding-right: 110px;
+  }
+
+  .task-runs-start-button {
+    right: 40px;
+    padding: 0 6px;
   }
 
   .task-runs-delete-button {

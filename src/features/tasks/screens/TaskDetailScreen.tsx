@@ -125,6 +125,10 @@ const TaskDetailScreen: Component = () => {
     isLoadingRuns,
     isCreatingRun,
     deletingRunId,
+    startingRunId,
+    isAnyRunStarting,
+    warmingRunIds,
+    runStartErrors,
     selectedParentTaskId,
     selectedChildTaskId,
     isAddingParent,
@@ -182,6 +186,7 @@ const TaskDetailScreen: Component = () => {
     onAddChildDependency,
     onRemoveDependency,
     onCreateRun,
+    onStartRun,
     onDeleteRun,
   } = useTaskDetailModel();
   const [isTransitionMenuOpen, setIsTransitionMenuOpen] = createSignal(false);
@@ -553,6 +558,33 @@ const TaskDetailScreen: Component = () => {
                                       <li class="task-runs-item">
                                         <button
                                           type="button"
+                                          class="projects-button-muted task-runs-start-button"
+                                          onClick={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            void onStartRun(runItem.id);
+                                          }}
+                                          disabled={
+                                            isAnyRunStarting() ||
+                                            deletingRunId() === runItem.id ||
+                                            warmingRunIds()[runItem.id] ||
+                                            runItem.status === "running" ||
+                                            runItem.status === "preparing"
+                                          }
+                                        >
+                                          {startingRunId() === runItem.id
+                                            ? "Starting..."
+                                            : isAnyRunStarting()
+                                              ? "Start locked"
+                                              : warmingRunIds()[runItem.id] ||
+                                                  runItem.status === "preparing"
+                                                ? "Warming..."
+                                                : runItem.status === "running"
+                                                  ? "Running"
+                                                  : "Start"}
+                                        </button>
+                                        <button
+                                          type="button"
                                           class="task-control-icon-button task-control-icon-button-danger task-runs-delete-button"
                                           onClick={(event) => {
                                             event.preventDefault();
@@ -620,6 +652,18 @@ const TaskDetailScreen: Component = () => {
                                             </p>
                                           </div>
                                         </A>
+                                        <Show
+                                          when={runStartErrors()[runItem.id]}
+                                        >
+                                          {(runStartError) => (
+                                            <p
+                                              class="task-runs-start-error"
+                                              role="alert"
+                                            >
+                                              {runStartError()}
+                                            </p>
+                                          )}
+                                        </Show>
                                       </li>
                                     )}
                                   </For>

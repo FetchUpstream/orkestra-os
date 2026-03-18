@@ -79,6 +79,7 @@ export type RunTerminalFrame =
 
 export type RunOpenCodeAgentState =
   | "idle"
+  | "accepted"
   | "starting"
   | "running"
   | "unsupported"
@@ -116,6 +117,14 @@ export type SubmitRunOpenCodePromptResult = {
   reason?: string;
   queuedAt: string;
   clientRequestId?: string;
+};
+
+export type StartRunOpenCodeResult = {
+  state: RunOpenCodeAgentState;
+  reason?: string;
+  queuedAt: string;
+  clientRequestId: string;
+  readyPhase?: string;
 };
 
 export type RunOpenCodeSessionMessagesResult = {
@@ -276,6 +285,17 @@ type BootstrapRunOpenCodeResponse = {
   result?: unknown;
   data?: unknown;
   payload?: unknown;
+};
+
+type StartRunOpenCodeResponse = {
+  state?: RunOpenCodeAgentState | string;
+  reason?: string | null;
+  queued_at?: string;
+  queuedAt?: string;
+  client_request_id?: string;
+  clientRequestId?: string;
+  ready_phase?: string | null;
+  readyPhase?: string | null;
 };
 
 type RunResponse = {
@@ -450,6 +470,7 @@ const unwrapSnapshotItems = (items: unknown[]): unknown[] => {
 const toRunOpenCodeAgentState = (state: unknown): RunOpenCodeAgentState => {
   if (
     state === "idle" ||
+    state === "accepted" ||
     state === "starting" ||
     state === "running" ||
     state === "unsupported" ||
@@ -778,5 +799,25 @@ export const submitRunOpenCodePrompt = async ({
     queuedAt: pick(response.queued_at, response.queuedAt) ?? "",
     clientRequestId:
       pick(response.client_request_id, response.clientRequestId) ?? undefined,
+  };
+};
+
+export const startRunOpenCode = async (
+  runId: string,
+): Promise<StartRunOpenCodeResult> => {
+  const response = await invoke<StartRunOpenCodeResponse>(
+    "start_run_opencode",
+    {
+      runId,
+    },
+  );
+
+  return {
+    state: toRunOpenCodeAgentState(response.state),
+    reason: response.reason ?? undefined,
+    queuedAt: pick(response.queued_at, response.queuedAt) ?? "",
+    clientRequestId:
+      pick(response.client_request_id, response.clientRequestId) ?? "",
+    readyPhase: pick(response.ready_phase, response.readyPhase) ?? undefined,
   };
 };

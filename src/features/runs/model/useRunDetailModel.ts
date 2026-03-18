@@ -96,47 +96,6 @@ export const useRunDetailModel = () => {
   let terminalRunId: string | null = null;
   let terminalRouteInstanceId = crypto.randomUUID();
   let terminalFrameHandler: ((frame: RunTerminalFrame) => void) | null = null;
-  let autoSubmittingInitialPromptRunId: string | null = null;
-
-  const normalizeInitialPromptField = (
-    value: string | null | undefined,
-  ): string => {
-    if (typeof value !== "string") {
-      return "";
-    }
-
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return "";
-    }
-
-    return trimmed.replace(/(?:\r?\n\s*){3,}/g, "\n\n");
-  };
-
-  const composeInitialPrompt = (taskValue: Task | null): string => {
-    const title = normalizeInitialPromptField(taskValue?.title);
-    const description = normalizeInitialPromptField(taskValue?.description);
-    const implementationGuide = normalizeInitialPromptField(
-      taskValue?.implementationGuide,
-    );
-
-    const sections: string[] = [];
-    if (title) {
-      sections.push(title);
-    }
-    if (description) {
-      sections.push(description);
-    }
-    if (implementationGuide) {
-      sections.push(`Implementation guide:\n${implementationGuide}`);
-    }
-
-    if (sections.length === 0) {
-      return "Please continue with the current task.";
-    }
-
-    return sections.join("\n\n");
-  };
 
   const areDiffFilesEqual = (
     current: RunDiffFile[],
@@ -1225,7 +1184,6 @@ export const useRunDetailModel = () => {
   createEffect(() => {
     const runId = params.runId;
     const requestVersion = ++activeAgentRequestVersion;
-    autoSubmittingInitialPromptRunId = null;
     clearPendingAgentEventFlush();
     clearPendingAgentSnapshotHydrate();
     setAgentEvents([]);
@@ -1405,68 +1363,6 @@ export const useRunDetailModel = () => {
       setTerminalError("Failed to resize terminal.");
     }
   };
-
-  createEffect(() => {
-    const runId = params.runId?.trim() ?? "";
-    if (!runId) {
-      autoSubmittingInitialPromptRunId = null;
-      return;
-    }
-
-    if (isLoading()) {
-      return;
-    }
-
-    const readinessPhase = agentReadinessPhase();
-    const agentStatus = agentState();
-    const runStatus = run()?.status;
-    if (
-      readinessPhase !== "ready" ||
-      agentStatus !== "running" ||
-      runStatus !== "running"
-    ) {
-      return;
-    }
-
-    if (isSubmittingPrompt()) {
-      return;
-    }
-
-    if (autoSubmittingInitialPromptRunId === runId) {
-      return;
-    }
-
-    if (run()?.initialPromptSentAt) {
-      return;
-    }
-
-    const prompt = composeInitialPrompt(task());
-    const clientRequestId = `initial-run-message:${runId}`;
-    autoSubmittingInitialPromptRunId = runId;
-    void submitPrompt(prompt, { clientRequestId })
-      .then((wasSubmitted) => {
-        if (!wasSubmitted) {
-          return;
-        }
-
-        setRun((current) => {
-          if (!current || current.id !== runId || current.initialPromptSentAt) {
-            return current;
-          }
-
-          return {
-            ...current,
-            initialPromptSentAt: new Date().toISOString(),
-            initialPromptClientRequestId: clientRequestId,
-          };
-        });
-      })
-      .finally(() => {
-        if (autoSubmittingInitialPromptRunId === runId) {
-          autoSubmittingInitialPromptRunId = null;
-        }
-      });
-  });
 
   createEffect(() => {
     const runId = params.runId;

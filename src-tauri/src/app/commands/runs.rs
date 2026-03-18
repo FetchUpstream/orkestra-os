@@ -1,7 +1,7 @@
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent, RunDiffFileDto,
     RunDiffFilePayloadDto, RunDto, RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto,
-    SubmitRunOpenCodePromptResponse,
+    StartRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::state::AppState;
 use crate::app::{commands::context, commands::error_mapping::map_result};
@@ -154,6 +154,15 @@ pub async fn submit_run_opencode_prompt(
             )
             .await,
     )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn start_run_opencode(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<StartRunOpenCodeResponse, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(service.start_run_opencode(&run_id).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]

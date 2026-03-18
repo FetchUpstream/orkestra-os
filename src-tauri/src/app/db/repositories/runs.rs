@@ -1,5 +1,5 @@
 use crate::app::errors::AppError;
-use crate::app::runs::models::{NewRun, Run, TaskRunContext};
+use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext, TaskRunContext};
 use sqlx::{Row, SqlitePool};
 
 #[derive(Clone, Debug)]
@@ -33,6 +33,28 @@ impl RunsRepository {
             repository_id: row.get("repository_id"),
             repository_path: row.get("repository_path"),
             branch_title: row.get("branch_title"),
+        }))
+    }
+
+    pub async fn get_run_initial_prompt_context(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<RunInitialPromptContext>, AppError> {
+        let row = sqlx::query(
+            "SELECT r.id AS run_id, t.title AS task_title, t.description AS task_description, t.implementation_guide AS task_implementation_guide
+             FROM runs r
+             JOIN tasks t ON t.id = r.task_id
+             WHERE r.id = ?",
+        )
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|row| RunInitialPromptContext {
+            run_id: row.get("run_id"),
+            task_title: row.get("task_title"),
+            task_description: row.get("task_description"),
+            task_implementation_guide: row.get("task_implementation_guide"),
         }))
     }
 

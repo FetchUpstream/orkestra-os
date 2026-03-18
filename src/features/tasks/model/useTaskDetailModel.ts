@@ -20,6 +20,7 @@ import {
   createRun,
   deleteRun,
   listTaskRuns,
+  startRunOpenCode,
   type Run,
 } from "../../../app/lib/runs";
 import {
@@ -85,6 +86,13 @@ export const useTaskDetailModel = () => {
   const [isLoadingRuns, setIsLoadingRuns] = createSignal(false);
   const [isCreatingRun, setIsCreatingRun] = createSignal(false);
   const [deletingRunId, setDeletingRunId] = createSignal("");
+  const [startingRunId, setStartingRunId] = createSignal("");
+  const [warmingRunIds, setWarmingRunIds] = createSignal<
+    Record<string, boolean>
+  >({});
+  const [runStartErrors, setRunStartErrors] = createSignal<
+    Record<string, string>
+  >({});
 
   const taskDetailOrigin = createMemo(() => {
     const searchParams = new URLSearchParams(location.search);
@@ -107,6 +115,7 @@ export const useTaskDetailModel = () => {
     return projectId() ? "project" : "projects";
   });
   const canMoveTask = createMemo(() => projectRepositories().length > 1);
+  const isAnyRunStarting = createMemo(() => Boolean(startingRunId()));
   const validTransitionOptions = createMemo(() => {
     const taskValue = task();
     if (!taskValue) return [];
@@ -543,6 +552,63 @@ export const useTaskDetailModel = () => {
     }
   };
 
+  const clearRunStartError = (runId: string) => {
+    setRunStartErrors((current) => {
+      if (!current[runId]) return current;
+      const next = { ...current };
+      delete next[runId];
+      return next;
+    });
+  };
+
+  const onStartRun = async (runId: string) => {
+    const taskValue = task();
+    if (
+      !taskValue ||
+      !runId ||
+      isAnyRunStarting() ||
+      deletingRunId() === runId
+    ) {
+      return;
+    }
+
+    setActionError("");
+    clearRunStartError(runId);
+    setStartingRunId(runId);
+    setWarmingRunIds((current) => ({ ...current, [runId]: false }));
+
+    try {
+      const startResult = await startRunOpenCode(runId);
+      if (
+        startResult.state === "unsupported" ||
+        startResult.state === "error"
+      ) {
+        setRunStartErrors((current) => ({
+          ...current,
+          [runId]: "Failed to start. Try again.",
+        }));
+        return;
+      }
+
+      const phase = startResult.readyPhase?.toLowerCase() ?? "";
+      const isWarmingPhase =
+        phase.includes("cold") ||
+        phase.includes("boot") ||
+        phase.includes("warm") ||
+        phase.includes("start");
+      setWarmingRunIds((current) => ({ ...current, [runId]: isWarmingPhase }));
+      await refreshRuns(taskValue.id);
+      setWarmingRunIds((current) => ({ ...current, [runId]: false }));
+    } catch {
+      setRunStartErrors((current) => ({
+        ...current,
+        [runId]: "Failed to start. Try again.",
+      }));
+    } finally {
+      setStartingRunId("");
+    }
+  };
+
   return {
     params,
     task,
@@ -560,6 +626,10 @@ export const useTaskDetailModel = () => {
     isLoadingRuns,
     isCreatingRun,
     deletingRunId,
+    startingRunId,
+    isAnyRunStarting,
+    warmingRunIds,
+    runStartErrors,
     selectedParentTaskId,
     selectedChildTaskId,
     isAddingParent,
@@ -617,6 +687,7 @@ export const useTaskDetailModel = () => {
     onAddChildDependency,
     onRemoveDependency,
     onCreateRun,
+    onStartRun,
     onDeleteRun,
   };
 };

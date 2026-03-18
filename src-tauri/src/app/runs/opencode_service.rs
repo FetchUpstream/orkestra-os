@@ -1,7 +1,7 @@
 use crate::app::errors::AppError;
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent, RunDto,
-    RunOpenCodeSessionMessageDto,
+    RunOpenCodeSessionMessageDto, StartRunOpenCodeResponse,
     RunOpenCodeSessionTodoDto, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::service::RunsService;
@@ -141,6 +141,59 @@ impl RunsOpenCodeService {
         }
 
         true
+    }
+
+    fn normalize_initial_prompt_field(value: Option<&str>) -> String {
+        let Some(value) = value else {
+            return String::new();
+        };
+
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return String::new();
+        }
+
+        let mut normalized = String::with_capacity(trimmed.len());
+        let mut newline_count = 0u8;
+        for ch in trimmed.chars() {
+            if ch == '\r' {
+                continue;
+            }
+            if ch == '\n' {
+                newline_count = newline_count.saturating_add(1);
+                if newline_count <= 2 {
+                    normalized.push('\n');
+                }
+                continue;
+            }
+            newline_count = 0;
+            normalized.push(ch);
+        }
+
+        normalized.trim().to_string()
+    }
+
+    fn compose_initial_prompt(task_title: &str, description: Option<&str>, implementation_guide: Option<&str>) -> String {
+        let title = Self::normalize_initial_prompt_field(Some(task_title));
+        let description = Self::normalize_initial_prompt_field(description);
+        let implementation_guide = Self::normalize_initial_prompt_field(implementation_guide);
+
+        let mut sections: Vec<String> = Vec::new();
+        if !title.is_empty() {
+            sections.push(title);
+        }
+        if !description.is_empty() {
+            sections.push(description);
+        }
+        if !implementation_guide.is_empty() {
+            sections.push(format!("Implementation guide:\n{}", implementation_guide));
+        }
+
+        if sections.is_empty() {
+            return "Please continue with the current task.".to_string();
+        }
+
+        sections.join("\n\n")
     }
 
     async fn ensure_run_ready_for_operation(
@@ -596,6 +649,49 @@ impl RunsOpenCodeService {
             reason: None,
             queued_at: Utc::now().to_rfc3339(),
             client_request_id,
+        })
+    }
+
+    pub async fn start_run_opencode(&self, run_id: &str) -> Result<StartRunOpenCodeResponse, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let context = self.runs_service.get_run_initial_prompt_context(run_id).await?;
+        let prompt = Self::compose_initial_prompt(
+            &context.task_title,
+            context.task_description.as_deref(),
+            context.task_implementation_guide.as_deref(),
+        );
+        let client_request_id = Self::initial_seed_request_id_for_run(&context.run_id);
+
+        let (ensured, _, ready_phase) = self.ensure_run_ready_for_operation(&context.run_id).await?;
+        if ensured.state == "unsupported" {
+            return Ok(StartRunOpenCodeResponse {
+                state: "unsupported".to_string(),
+                reason: ensured.reason,
+                queued_at: Utc::now().to_rfc3339(),
+                client_request_id,
+                ready_phase: Some(ready_phase.to_string()),
+            });
+        }
+
+        let submitted = self
+            .submit_run_opencode_prompt(
+                &context.run_id,
+                &prompt,
+                Some(client_request_id.clone()),
+                None,
+            )
+            .await?;
+
+        Ok(StartRunOpenCodeResponse {
+            state: submitted.state,
+            reason: submitted.reason,
+            queued_at: submitted.queued_at,
+            client_request_id,
+            ready_phase: Some(ready_phase.to_string()),
         })
     }
 
@@ -1266,6 +1362,39 @@ mod tests {
             Some("initial-run-message:run-2")
         ));
         assert!(!RunsOpenCodeService::is_initial_seed_request("run-1", None));
+    }
+
+    #[test]
+    fn compose_initial_prompt_combines_task_context() {
+        let prompt = RunsOpenCodeService::compose_initial_prompt(
+            "Ship release notes",
+            Some("\n\nDraft changelog\n\n\n\nVerify links\n"),
+            Some("\n\nUse release template\n"),
+        );
+
+        assert_eq!(
+            prompt,
+            "Ship release notes\n\nDraft changelog\n\nVerify links\n\nImplementation guide:\nUse release template"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_run_opencode_respects_unsupported_and_preserves_idempotency_key() {
+        let (runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "completed").await;
+
+        let response = opencode_service.start_run_opencode("run-1").await.unwrap();
+        assert_eq!(response.state, "unsupported");
+        assert_eq!(response.client_request_id, "initial-run-message:run-1");
+
+        let reclaimed = runs_service
+            .claim_initial_prompt_send_if_unset("run-1", "initial-run-message:run-1-retry")
+            .await
+            .unwrap();
+        assert!(reclaimed);
     }
 
     #[tokio::test]

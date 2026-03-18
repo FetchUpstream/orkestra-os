@@ -1,7 +1,7 @@
 use crate::app::db::repositories::runs::RunsRepository;
 use crate::app::errors::AppError;
 use crate::app::runs::dto::RunDto;
-use crate::app::runs::models::{NewRun, Run};
+use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext};
 use crate::app::worktrees::dto::CreateWorktreeRequest;
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
@@ -94,6 +94,21 @@ impl RunsService {
 
         self.repository
             .get_run(run_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("run not found"))
+    }
+
+    pub async fn get_run_initial_prompt_context(
+        &self,
+        run_id: &str,
+    ) -> Result<RunInitialPromptContext, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        self.repository
+            .get_run_initial_prompt_context(run_id)
             .await?
             .ok_or_else(|| AppError::not_found("run not found"))
     }
