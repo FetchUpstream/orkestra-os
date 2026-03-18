@@ -845,56 +845,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           </Show>
         </section>
         <div
-          class="run-chat-floating-toolbar"
-          role="toolbar"
-          aria-label="Run chat tools"
-        >
-          <button
-            type="button"
-            class="run-chat-floating-toolbar__button"
-            disabled
-            aria-label="Files (coming soon)"
-            title="Files (coming soon)"
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M2.75 2A1.75 1.75 0 0 0 1 3.75v8.5C1 13.216 1.784 14 2.75 14h10.5A1.75 1.75 0 0 0 15 12.25v-6.5A1.75 1.75 0 0 0 13.25 4H8.91a1.5 1.5 0 0 1-1.06-.44l-.41-.41A2.5 2.5 0 0 0 5.67 2H2.75Zm0 1.5h2.92c.265 0 .52.105.707.293l.41.41A3 3 0 0 0 8.91 5.5h4.34a.25.25 0 0 1 .25.25v6.5a.25.25 0 0 1-.25.25H2.75a.25.25 0 0 1-.25-.25v-8.5a.25.25 0 0 1 .25-.25Z" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            class="run-chat-floating-toolbar__button"
-            disabled
-            aria-label="Terminal (coming soon)"
-            title="Terminal (coming soon)"
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M2.75 2A1.75 1.75 0 0 0 1 3.75v8.5C1 13.216 1.784 14 2.75 14h10.5A1.75 1.75 0 0 0 15 12.25v-8.5A1.75 1.75 0 0 0 13.25 2H2.75Zm0 1.5h10.5a.25.25 0 0 1 .25.25v8.5a.25.25 0 0 1-.25.25H2.75a.25.25 0 0 1-.25-.25v-8.5a.25.25 0 0 1 .25-.25Zm1.24 2.09a.75.75 0 0 0-.98 1.14l1.75 1.5a.25.25 0 0 1 0 .38l-1.75 1.5a.75.75 0 1 0 .98 1.14l1.75-1.5a1.75 1.75 0 0 0 0-2.66l-1.75-1.5Zm4.26 4.66a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            class="run-chat-floating-toolbar__button"
-            disabled
-            aria-label="Diff viewer (coming soon)"
-            title="Diff viewer (coming soon)"
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M5.75 2a.75.75 0 0 1 .75.75V5h2.5V2.75a.75.75 0 0 1 1.5 0V5h.75a1.75 1.75 0 0 1 1.75 1.75v6.5A1.75 1.75 0 0 1 11.75 15h-7A1.75 1.75 0 0 1 3 13.25v-6.5A1.75 1.75 0 0 1 4.75 5h.75V2.75A.75.75 0 0 1 5.75 2Zm0 4.5h-1a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h7a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25h-1v1.75a.75.75 0 0 1-1.5 0V6.5H6.5v1.75a.75.75 0 0 1-1.5 0V6.5Z" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            class="run-chat-floating-toolbar__button"
-            disabled
-            aria-label="Git (coming soon)"
-            title="Git (coming soon)"
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M8 1.5a2.5 2.5 0 0 0-1.25 4.665v3.17A2.5 2.5 0 1 0 8.5 11.7v-1.35h2.17a2.5 2.5 0 1 0 0-1.5H8.5v-2.68A2.5 2.5 0 1 0 8 1.5Zm0 1.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM5 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm7-3a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z" />
-            </svg>
-          </button>
-        </div>
-        <div
           ref={runChatComposerRef}
           class="run-chat-composer-shell run-chat-composer-shell--pinned"
         >

@@ -2995,7 +2995,6 @@ textarea::placeholder {
   --run-chat-prose-max: 72ch;
   --run-chat-composer-gap: 148px;
   --run-chat-composer-offset: var(--run-chat-composer-gap, 148px);
-  --run-chat-float-margin: clamp(14px, 2.6vw, 28px);
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
@@ -3005,19 +3004,20 @@ textarea::placeholder {
 }
 
 .run-chat-floating-toolbar {
-  position: absolute;
+  position: fixed;
   top: 50%;
-  right: max(10px, calc((100% - var(--run-chat-rail-max, 820px)) / 2 - 52px));
+  right: 0;
   transform: translateY(-50%);
   display: inline-flex;
   flex-direction: column;
   gap: 8px;
   padding: 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
+  border: 1px solid var(--border);
+  border-right: 0;
+  border-radius: 12px 0 0 12px;
   background: rgba(20, 22, 27, 0.84);
   backdrop-filter: blur(4px);
-  z-index: 5;
+  z-index: 40;
 }
 
 .run-chat-floating-toolbar__button {
@@ -3031,6 +3031,11 @@ textarea::placeholder {
   background: rgba(255, 255, 255, 0.02);
   color: var(--text-subtle);
   padding: 0;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .run-chat-floating-toolbar__button svg {
@@ -3039,9 +3044,96 @@ textarea::placeholder {
   fill: currentColor;
 }
 
-.run-chat-floating-toolbar__button:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
+.run-chat-floating-toolbar__button:hover,
+.run-chat-floating-toolbar__button[aria-pressed="true"] {
+  border-color: rgba(91, 138, 255, 0.35);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.run-chat-overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 50;
+}
+
+.run-chat-overlay-panel {
+  position: fixed;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.run-chat-overlay-panel--drawer {
+  top: 0;
+  right: 0;
+  width: min(420px, 100vw);
+  height: 100vh;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+.run-chat-overlay-panel--sheet {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 44vh;
+  min-height: 320px;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+.run-chat-overlay-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.run-chat-overlay-panel__title {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.run-chat-overlay-panel__close {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  color: var(--text);
+  padding: 0;
+  cursor: pointer;
+}
+
+.run-chat-overlay-panel__close:hover {
+  background: var(--surface-hover);
+}
+
+.run-chat-overlay-panel__close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.run-chat-overlay-panel__body {
+  flex: 1;
+  min-height: 0;
+}
+
+.run-chat-overlay-panel__body--terminal {
+  min-height: 240px;
 }
 
 .run-chat-back-nav {
@@ -3805,18 +3897,21 @@ textarea::placeholder {
 
   .run-chat-workspace {
     --run-chat-composer-gap: 140px;
-    --run-chat-float-margin: 16px;
   }
 
   .run-chat-floating-toolbar {
     top: auto;
-    right: var(--run-chat-float-margin, 16px);
-    bottom: calc(
-      var(--run-chat-composer-offset, var(--run-chat-composer-gap, 148px)) +
-        14px
-    );
+    right: 0;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 94px);
     transform: none;
-    flex-direction: row;
+  }
+
+  .run-chat-overlay-panel--drawer {
+    width: min(420px, 100vw);
+  }
+
+  .run-chat-overlay-panel--sheet {
+    height: 44vh;
   }
 
   .run-chat-transcript {
@@ -3972,11 +4067,11 @@ textarea::placeholder {
 
   .run-chat-workspace {
     --run-chat-composer-gap: 164px;
-    --run-chat-float-margin: 12px;
   }
 
   .run-chat-floating-toolbar {
-    right: 8px;
+    right: 0;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
     gap: 6px;
     padding: 6px;
   }
