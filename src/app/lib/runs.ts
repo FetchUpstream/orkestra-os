@@ -108,6 +108,7 @@ export type SubmitRunOpenCodePromptParams = {
   runId: string;
   prompt: string;
   clientRequestId?: string;
+  agent?: string;
 };
 
 export type SubmitRunOpenCodePromptResult = {
@@ -755,6 +756,7 @@ export const submitRunOpenCodePrompt = async ({
   runId,
   prompt,
   clientRequestId,
+  agent = "build",
 }: SubmitRunOpenCodePromptParams): Promise<SubmitRunOpenCodePromptResult> => {
   const response = await invoke<SubmitRunOpenCodePromptResponse>(
     "submit_run_opencode_prompt",
@@ -763,6 +765,7 @@ export const submitRunOpenCodePrompt = async ({
         runId,
         prompt,
         clientRequestId,
+        agent,
       },
     },
   );

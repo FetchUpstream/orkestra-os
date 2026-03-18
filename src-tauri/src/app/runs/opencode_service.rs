@@ -464,6 +464,7 @@ impl RunsOpenCodeService {
         run_id: &str,
         prompt: &str,
         client_request_id: Option<String>,
+        agent: Option<String>,
     ) -> Result<SubmitRunOpenCodePromptResponse, AppError> {
         let submit_start = Instant::now();
         let run_id = run_id.trim();
@@ -535,11 +536,18 @@ impl RunsOpenCodeService {
             }
         };
 
+        let selected_agent = agent
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("build");
+
         let mut request = RequestOptions::default().with_path("id", session_id);
         if let Some(request_id) = client_request_id.as_ref() {
             request = request.with_header("x-request-id", request_id.clone());
         }
         request = request.with_body(serde_json::json!({
+            "agent": selected_agent,
             "model": {
                 "providerID": "kimi-for-coding",
                 "modelID": "k2p5",
@@ -1273,6 +1281,7 @@ mod tests {
                 "run-1",
                 "seed prompt",
                 Some("initial-run-message:run-1".to_string()),
+                None,
             )
             .await
             .unwrap();
@@ -1299,6 +1308,7 @@ mod tests {
                 "run-1",
                 "seed prompt",
                 Some("initial-run-message:run-1".to_string()),
+                None,
             )
             .await;
 
@@ -1330,6 +1340,7 @@ mod tests {
                 "run-1",
                 "seed prompt",
                 Some("initial-run-message:run-1".to_string()),
+                None,
             )
             .await
             .unwrap();
@@ -1352,7 +1363,12 @@ mod tests {
         seed_run(&pool, "run-1", "task-1", "queued").await;
 
         let result = opencode_service
-            .submit_run_opencode_prompt("run-1", "manual prompt", Some("manual-123".to_string()))
+            .submit_run_opencode_prompt(
+                "run-1",
+                "manual prompt",
+                Some("manual-123".to_string()),
+                None,
+            )
             .await;
 
         assert!(result.is_err());
@@ -1412,6 +1428,7 @@ mod tests {
                 "run-1",
                 "seed prompt",
                 Some("initial-run-message:run-1".to_string()),
+                None,
             )
             .await;
         assert!(result.is_err());

@@ -15,6 +15,7 @@ pub struct SubmitRunOpenCodePromptRequest {
     pub run_id: String,
     pub prompt: String,
     pub client_request_id: Option<String>,
+    pub agent: Option<String>,
 }
 
 #[tauri::command]
@@ -145,7 +146,12 @@ pub async fn submit_run_opencode_prompt(
     let service = context::runs_opencode_service(&state);
     map_result(
         service
-            .submit_run_opencode_prompt(&request.run_id, &request.prompt, request.client_request_id)
+            .submit_run_opencode_prompt(
+                &request.run_id,
+                &request.prompt,
+                request.client_request_id,
+                request.agent,
+            )
             .await,
     )
 }
