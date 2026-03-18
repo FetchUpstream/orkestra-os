@@ -32,6 +32,7 @@ type AgentReadinessPhase =
 
 type NewRunChatWorkspaceProps = {
   model: ReturnType<typeof useRunDetailModel>;
+  hideTranscriptScrollbar?: boolean;
 };
 
 const TRANSCRIPT_WINDOW_CHUNK = 60;
@@ -763,7 +764,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         }}
       >
         <section
-          class="run-chat-transcript-scroll"
+          classList={{
+            "run-chat-transcript-scroll": true,
+            "run-chat-transcript-scroll--scrollbar-hidden":
+              props.hideTranscriptScrollbar === true,
+          }}
           aria-label="Conversation transcript"
           ref={transcriptScrollRef}
           style={{

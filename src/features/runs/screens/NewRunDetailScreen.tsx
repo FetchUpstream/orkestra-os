@@ -1,4 +1,5 @@
 import {
+  For,
   Show,
   createEffect,
   createMemo,
@@ -8,36 +9,141 @@ import {
 } from "solid-js";
 import BackIconLink from "../../../components/ui/BackIconLink";
 import NewRunChatWorkspace from "../components/NewRunChatWorkspace";
+import RunDiffDrawerPanel from "../components/RunDiffDrawerPanel";
 import RunTerminal from "../components/RunTerminal";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 
 type OverlayState =
   | "none"
-  | "drawer-files"
+  | "drawer-logs"
   | "drawer-diff"
   | "drawer-git"
   | "sheet-terminal";
 
+type OverlaySize = "normal" | "maximized";
+
+const INTERNAL_ID_PATTERN =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+
+const redactInternalIds = (value: string): string =>
+  value.replace(INTERNAL_ID_PATTERN, "[internal-id]");
+
+const normalizeLogText = (value: string): string =>
+  redactInternalIds(value).replace(/\r\n|\r|\n/g, "\\n");
+
+const summarizeEventPayload = (payload: unknown): string => {
+  if (payload === undefined || payload === null) {
+    return "";
+  }
+
+  if (typeof payload === "string") {
+    return normalizeLogText(payload);
+  }
+
+  if (typeof payload === "number" || typeof payload === "boolean") {
+    return String(payload);
+  }
+
+  if (typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+    const summaryFields = [
+      record.message,
+      record.text,
+      record.error,
+      record.status,
+      record.type,
+      record.reason,
+    ];
+
+    for (const field of summaryFields) {
+      if (typeof field === "string" && field.trim().length > 0) {
+        return normalizeLogText(field.trim());
+      }
+    }
+  }
+
+  try {
+    const serialized = JSON.stringify(payload);
+    if (typeof serialized === "string") {
+      return normalizeLogText(serialized);
+    }
+  } catch {
+    return normalizeLogText(String(payload));
+  }
+
+  return normalizeLogText(String(payload));
+};
+
+const formatLogTimestamp = (ts: string | number | null): string => {
+  if (ts === null || ts === undefined) {
+    return "";
+  }
+
+  if (typeof ts === "number") {
+    const parsed = new Date(ts);
+    return Number.isNaN(parsed.getTime()) ? String(ts) : parsed.toISOString();
+  }
+
+  return ts;
+};
+
 const NewRunDetailScreen: Component = () => {
   const model = useRunDetailModel();
   const [overlayState, setOverlayState] = createSignal<OverlayState>("none");
+  const [overlaySize, setOverlaySize] = createSignal<OverlaySize>("normal");
+  const [isDiffSideBySide, setIsDiffSideBySide] = createSignal(true);
   const [lastTriggerButton, setLastTriggerButton] =
     createSignal<HTMLButtonElement | null>(null);
-  let overlayCloseButtonRef: HTMLButtonElement | undefined;
+  let drawerOverlayCloseButtonRef: HTMLButtonElement | undefined;
+  let terminalOverlayCloseButtonRef: HTMLButtonElement | undefined;
 
   const isOverlayOpen = createMemo(() => overlayState() !== "none");
+  const isTerminalOverlayOpen = createMemo(
+    () => overlayState() === "sheet-terminal",
+  );
   const isDrawerOverlay = createMemo(
     () =>
-      overlayState() === "drawer-files" ||
+      overlayState() === "drawer-logs" ||
       overlayState() === "drawer-diff" ||
       overlayState() === "drawer-git",
   );
+  const overlaySizeLabel = createMemo(() =>
+    overlaySize() === "maximized" ? "Restore panel" : "Maximize panel",
+  );
+
+  const logsLines = createMemo(() => {
+    if (model.agent.error().trim().length > 0) {
+      return [`error ${normalizeLogText(model.agent.error().trim())}`];
+    }
+
+    if (model.agent.state() === "unsupported") {
+      return ["agent stream unsupported"];
+    }
+
+    const events = model.agent.events();
+    if (events.length === 0) {
+      return [
+        model.agent.state() === "starting"
+          ? "waiting for logs..."
+          : "no logs yet",
+      ];
+    }
+
+    return events.map((event) => {
+      const ts = formatLogTimestamp(event.ts);
+      const name = event.event?.trim() || "event";
+      const payload = summarizeEventPayload(event.data);
+      const parts = [ts, name, payload].filter((part) => part.length > 0);
+      return parts.join(" ");
+    });
+  });
+
   const overlayTitle = createMemo(() => {
     switch (overlayState()) {
-      case "drawer-files":
-        return "Files";
+      case "drawer-logs":
+        return "Logs";
       case "drawer-diff":
-        return "Diff";
+        return "Review";
       case "drawer-git":
         return "Git";
       case "sheet-terminal":
@@ -48,10 +154,10 @@ const NewRunDetailScreen: Component = () => {
   });
   const overlayCloseLabel = createMemo(() => {
     switch (overlayState()) {
-      case "drawer-files":
-        return "Close Files panel";
+      case "drawer-logs":
+        return "Close Logs panel";
       case "drawer-diff":
-        return "Close Diff panel";
+        return "Close Review panel";
       case "drawer-git":
         return "Close Git panel";
       case "sheet-terminal":
@@ -66,7 +172,21 @@ const NewRunDetailScreen: Component = () => {
     triggerButton: HTMLButtonElement,
   ) => {
     setLastTriggerButton(triggerButton);
-    setOverlayState((current) => (current === nextState ? "none" : nextState));
+    setOverlayState((current) => {
+      const next = current === nextState ? "none" : nextState;
+      setOverlaySize("normal");
+      return next;
+    });
+  };
+
+  const toggleOverlaySize = () => {
+    if (overlayState() === "none") {
+      return;
+    }
+
+    setOverlaySize((current) =>
+      current === "normal" ? "maximized" : "normal",
+    );
   };
 
   const closeOverlay = () => {
@@ -74,7 +194,12 @@ const NewRunDetailScreen: Component = () => {
       return;
     }
     setOverlayState("none");
+    setOverlaySize("normal");
   };
+
+  createEffect(() => {
+    model.setIsDiffTabActive(overlayState() === "drawer-diff");
+  });
 
   createEffect(() => {
     if (!isOverlayOpen()) {
@@ -86,7 +211,14 @@ const NewRunDetailScreen: Component = () => {
     }
 
     const frame = requestAnimationFrame(() => {
-      overlayCloseButtonRef?.focus();
+      if (isDrawerOverlay()) {
+        drawerOverlayCloseButtonRef?.focus();
+        return;
+      }
+
+      if (isTerminalOverlayOpen()) {
+        terminalOverlayCloseButtonRef?.focus();
+      }
     });
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -137,7 +269,10 @@ const NewRunDetailScreen: Component = () => {
                   class="project-detail-back-link project-detail-back-link--icon task-detail-back-link"
                 />
               </section>
-              <NewRunChatWorkspace model={model} />
+              <NewRunChatWorkspace
+                model={model}
+                hideTranscriptScrollbar={isDrawerOverlay()}
+              />
               <div
                 class="run-chat-floating-toolbar"
                 role="toolbar"
@@ -146,11 +281,11 @@ const NewRunDetailScreen: Component = () => {
                 <button
                   type="button"
                   class="run-chat-floating-toolbar__button"
-                  aria-label="Files"
-                  aria-pressed={overlayState() === "drawer-files"}
-                  title="Files"
+                  aria-label="Logs"
+                  aria-pressed={overlayState() === "drawer-logs"}
+                  title="Logs"
                   onClick={(event) =>
-                    toggleOverlay("drawer-files", event.currentTarget)
+                    toggleOverlay("drawer-logs", event.currentTarget)
                   }
                 >
                   <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -174,9 +309,9 @@ const NewRunDetailScreen: Component = () => {
                 <button
                   type="button"
                   class="run-chat-floating-toolbar__button"
-                  aria-label="Diff"
+                  aria-label="Review"
                   aria-pressed={overlayState() === "drawer-diff"}
-                  title="Diff"
+                  title="Review"
                   onClick={(event) =>
                     toggleOverlay("drawer-diff", event.currentTarget)
                   }
@@ -209,7 +344,12 @@ const NewRunDetailScreen: Component = () => {
               </Show>
               <Show when={isDrawerOverlay()}>
                 <section
-                  class="run-chat-overlay-panel run-chat-overlay-panel--drawer"
+                  classList={{
+                    "run-chat-overlay-panel": true,
+                    "run-chat-overlay-panel--drawer": true,
+                    "run-chat-overlay-panel--maximized":
+                      overlaySize() === "maximized",
+                  }}
                   role="dialog"
                   aria-modal="true"
                   aria-labelledby="run-chat-overlay-title"
@@ -221,76 +361,190 @@ const NewRunDetailScreen: Component = () => {
                     >
                       {overlayTitle()}
                     </h2>
-                    <button
-                      ref={overlayCloseButtonRef}
-                      type="button"
-                      class="run-chat-overlay-panel__close"
-                      aria-label={overlayCloseLabel()}
-                      title={overlayCloseLabel()}
-                      onClick={() => closeOverlay()}
-                    >
-                      <svg viewBox="0 0 16 16" aria-hidden="true">
-                        <path
-                          d="M4 4l8 8M12 4l-8 8"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.3"
-                          stroke-linecap="round"
-                        />
-                      </svg>
-                    </button>
+                    <div class="run-chat-overlay-panel__header-actions">
+                      <div class="run-chat-overlay-panel__header-action-row">
+                        <button
+                          type="button"
+                          class="run-chat-overlay-panel__control"
+                          aria-label={overlaySizeLabel()}
+                          title={overlaySizeLabel()}
+                          onClick={() => toggleOverlaySize()}
+                        >
+                          <Show
+                            when={overlaySize() === "maximized"}
+                            fallback={
+                              <svg viewBox="0 0 16 16" aria-hidden="true">
+                                <path d="M3.75 2A1.75 1.75 0 0 0 2 3.75v8.5C2 13.216 2.784 14 3.75 14h8.5A1.75 1.75 0 0 0 14 12.25v-8.5A1.75 1.75 0 0 0 12.25 2h-8.5Zm0 1.5h8.5a.25.25 0 0 1 .25.25v8.5a.25.25 0 0 1-.25.25h-8.5a.25.25 0 0 1-.25-.25v-8.5a.25.25 0 0 1 .25-.25Z" />
+                              </svg>
+                            }
+                          >
+                            <svg viewBox="0 0 16 16" aria-hidden="true">
+                              <path d="M2.75 3A1.75 1.75 0 0 1 4.5 1.25H9a.75.75 0 0 1 0 1.5H4.5a.25.25 0 0 0-.25.25V7.5a.75.75 0 0 1-1.5 0V3Zm4.25 5.5A1.75 1.75 0 0 1 8.75 6.75h4.5A1.75 1.75 0 0 1 15 8.5v4.5a1.75 1.75 0 0 1-1.75 1.75h-4.5A1.75 1.75 0 0 1 7 13V8.5Zm1.75-.25a.25.25 0 0 0-.25.25V13c0 .138.112.25.25.25h4.5a.25.25 0 0 0 .25-.25V8.5a.25.25 0 0 0-.25-.25h-4.5Z" />
+                            </svg>
+                          </Show>
+                        </button>
+                        <button
+                          ref={drawerOverlayCloseButtonRef}
+                          type="button"
+                          class="run-chat-overlay-panel__close"
+                          aria-label={overlayCloseLabel()}
+                          title={overlayCloseLabel()}
+                          onClick={() => closeOverlay()}
+                        >
+                          <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path
+                              d="M4 4l8 8M12 4l-8 8"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.3"
+                              stroke-linecap="round"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+                      <Show when={overlayState() === "drawer-diff"}>
+                        <div
+                          class="run-chat-overlay-panel__layout-toggle"
+                          role="group"
+                          aria-label="Review layout"
+                        >
+                          <button
+                            type="button"
+                            class="run-chat-overlay-panel__layout-button"
+                            aria-label="Unified diff layout"
+                            title="Unified diff layout"
+                            aria-pressed={!isDiffSideBySide()}
+                            onClick={() => setIsDiffSideBySide(false)}
+                          >
+                            <svg viewBox="0 0 16 16" aria-hidden="true">
+                              <path d="M3 2.5A1.5 1.5 0 0 1 4.5 1h7A1.5 1.5 0 0 1 13 2.5v11a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 13.5v-11Zm1.5 0v11h7v-11h-7Zm1 2.25a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Z" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            class="run-chat-overlay-panel__layout-button"
+                            aria-label="Side-by-side diff layout"
+                            title="Side-by-side diff layout"
+                            aria-pressed={isDiffSideBySide()}
+                            onClick={() => setIsDiffSideBySide(true)}
+                          >
+                            <svg viewBox="0 0 16 16" aria-hidden="true">
+                              <path d="M2.5 1A1.5 1.5 0 0 0 1 2.5v11A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 13.5 1h-11Zm0 1.5h5v11h-5v-11Zm6.5 0h4.5v11H9v-11Zm1 2.25a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm-7 0a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 3 7.75Zm0-3a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 3 4.75Z" />
+                            </svg>
+                          </button>
+                        </div>
+                      </Show>
+                    </div>
                   </header>
-                  <p class="project-placeholder-text">Coming soon.</p>
-                </section>
-              </Show>
-              <Show when={overlayState() === "sheet-terminal"}>
-                <section
-                  class="run-chat-overlay-panel run-chat-overlay-panel--sheet"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="run-chat-overlay-title"
-                >
-                  <header class="run-chat-overlay-panel__header">
-                    <h2
-                      id="run-chat-overlay-title"
-                      class="run-chat-overlay-panel__title"
-                    >
-                      {overlayTitle()}
-                    </h2>
-                    <button
-                      ref={overlayCloseButtonRef}
-                      type="button"
-                      class="run-chat-overlay-panel__close"
-                      aria-label={overlayCloseLabel()}
-                      title={overlayCloseLabel()}
-                      onClick={() => closeOverlay()}
-                    >
-                      <svg viewBox="0 0 16 16" aria-hidden="true">
-                        <path
-                          d="M4 4l8 8M12 4l-8 8"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.3"
-                          stroke-linecap="round"
-                        />
-                      </svg>
-                    </button>
-                  </header>
-                  <div class="run-chat-overlay-panel__body run-chat-overlay-panel__body--terminal">
-                    <RunTerminal
-                      isVisible={overlayState() === "sheet-terminal"}
-                      isStarting={model.terminal.isStarting()}
-                      isReady={model.terminal.isReady()}
-                      error={model.terminal.error()}
-                      writeTerminal={model.terminal.writeTerminal}
-                      resizeTerminal={model.terminal.resizeTerminal}
-                      setTerminalFrameHandler={
-                        model.terminal.setTerminalFrameHandler
-                      }
-                    />
+                  <div
+                    classList={{
+                      "run-chat-overlay-panel__body": true,
+                      "run-chat-overlay-panel__body--logs":
+                        overlayState() === "drawer-logs",
+                      "run-chat-overlay-panel__body--diff":
+                        overlayState() === "drawer-diff",
+                    }}
+                  >
+                    <Show when={overlayState() === "drawer-logs"}>
+                      <div
+                        class="run-chat-log-stream"
+                        role="log"
+                        aria-live="polite"
+                        aria-atomic="false"
+                      >
+                        <For each={logsLines()}>{(line) => <p>{line}</p>}</For>
+                      </div>
+                    </Show>
+                    <Show when={overlayState() === "drawer-diff"}>
+                      <RunDiffDrawerPanel
+                        model={model}
+                        isActive={overlayState() === "drawer-diff"}
+                        isSideBySide={isDiffSideBySide()}
+                      />
+                    </Show>
+                    <Show when={overlayState() === "drawer-git"}>
+                      <p class="project-placeholder-text">
+                        Git view coming soon.
+                      </p>
+                    </Show>
                   </div>
                 </section>
               </Show>
+              <section
+                classList={{
+                  "run-chat-overlay-panel": true,
+                  "run-chat-overlay-panel--sheet": true,
+                  "run-chat-overlay-panel--maximized":
+                    overlaySize() === "maximized",
+                  "run-chat-overlay-panel--hidden": !isTerminalOverlayOpen(),
+                }}
+                role="dialog"
+                aria-modal={isTerminalOverlayOpen() ? "true" : undefined}
+                aria-hidden={!isTerminalOverlayOpen()}
+                aria-labelledby="run-chat-overlay-title-terminal"
+              >
+                <header class="run-chat-overlay-panel__header">
+                  <h2
+                    id="run-chat-overlay-title-terminal"
+                    class="run-chat-overlay-panel__title"
+                  >
+                    {overlayTitle()}
+                  </h2>
+                  <div class="run-chat-overlay-panel__header-actions">
+                    <button
+                      type="button"
+                      class="run-chat-overlay-panel__control"
+                      aria-label={overlaySizeLabel()}
+                      title={overlaySizeLabel()}
+                      onClick={() => toggleOverlaySize()}
+                    >
+                      <Show
+                        when={overlaySize() === "maximized"}
+                        fallback={
+                          <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M3.75 2A1.75 1.75 0 0 0 2 3.75v8.5C2 13.216 2.784 14 3.75 14h8.5A1.75 1.75 0 0 0 14 12.25v-8.5A1.75 1.75 0 0 0 12.25 2h-8.5Zm0 1.5h8.5a.25.25 0 0 1 .25.25v8.5a.25.25 0 0 1-.25.25h-8.5a.25.25 0 0 1-.25-.25v-8.5a.25.25 0 0 1 .25-.25Z" />
+                          </svg>
+                        }
+                      >
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <path d="M2.75 3A1.75 1.75 0 0 1 4.5 1.25H9a.75.75 0 0 1 0 1.5H4.5a.25.25 0 0 0-.25.25V7.5a.75.75 0 0 1-1.5 0V3Zm4.25 5.5A1.75 1.75 0 0 1 8.75 6.75h4.5A1.75 1.75 0 0 1 15 8.5v4.5a1.75 1.75 0 0 1-1.75 1.75h-4.5A1.75 1.75 0 0 1 7 13V8.5Zm1.75-.25a.25.25 0 0 0-.25.25V13c0 .138.112.25.25.25h4.5a.25.25 0 0 0 .25-.25V8.5a.25.25 0 0 0-.25-.25h-4.5Z" />
+                        </svg>
+                      </Show>
+                    </button>
+                    <button
+                      ref={terminalOverlayCloseButtonRef}
+                      type="button"
+                      class="run-chat-overlay-panel__close"
+                      aria-label={overlayCloseLabel()}
+                      title={overlayCloseLabel()}
+                      onClick={() => closeOverlay()}
+                    >
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <path
+                          d="M4 4l8 8M12 4l-8 8"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.3"
+                          stroke-linecap="round"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                </header>
+                <div class="run-chat-overlay-panel__body run-chat-overlay-panel__body--terminal">
+                  <RunTerminal
+                    isVisible={overlayState() === "sheet-terminal"}
+                    isStarting={model.terminal.isStarting()}
+                    isReady={model.terminal.isReady()}
+                    error={model.terminal.error()}
+                    writeTerminal={model.terminal.writeTerminal}
+                    resizeTerminal={model.terminal.resizeTerminal}
+                    setTerminalFrameHandler={
+                      model.terminal.setTerminalFrameHandler
+                    }
+                  />
+                </div>
+              </section>
             </>
           </Show>
         </Show>

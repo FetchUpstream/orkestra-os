@@ -2923,8 +2923,7 @@ textarea::placeholder {
 }
 
 .run-detail-monaco-panel {
-  height: 320px;
-  min-height: 320px;
+  width: 100%;
 }
 
 .run-diff-accordion {
@@ -3070,6 +3069,13 @@ textarea::placeholder {
   padding: 16px;
 }
 
+.run-chat-overlay-panel--hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(8px);
+}
+
 .run-chat-overlay-panel--drawer {
   top: 0;
   right: 0;
@@ -3091,11 +3097,34 @@ textarea::placeholder {
   border-bottom: 0;
 }
 
+.run-chat-overlay-panel--maximized.run-chat-overlay-panel--drawer {
+  width: 100vw;
+}
+
+.run-chat-overlay-panel--maximized.run-chat-overlay-panel--sheet {
+  height: 100vh;
+  min-height: 100vh;
+}
+
 .run-chat-overlay-panel__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.run-chat-overlay-panel__header-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+}
+
+.run-chat-overlay-panel__header-action-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .run-chat-overlay-panel__title {
@@ -3104,6 +3133,7 @@ textarea::placeholder {
   color: var(--text);
 }
 
+.run-chat-overlay-panel__control,
 .run-chat-overlay-panel__close {
   width: 30px;
   height: 30px;
@@ -3118,13 +3148,54 @@ textarea::placeholder {
   cursor: pointer;
 }
 
+.run-chat-overlay-panel__control:hover,
 .run-chat-overlay-panel__close:hover {
   background: var(--surface-hover);
 }
 
+.run-chat-overlay-panel__control svg,
 .run-chat-overlay-panel__close svg {
   width: 14px;
   height: 14px;
+  fill: currentColor;
+}
+
+.run-chat-overlay-panel__layout-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0;
+}
+
+.run-chat-overlay-panel__layout-button {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  padding: 0;
+  cursor: pointer;
+}
+
+.run-chat-overlay-panel__layout-button svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.run-chat-overlay-panel__layout-button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.run-chat-overlay-panel__layout-button[aria-pressed="true"] {
+  border-color: rgba(91, 138, 255, 0.35);
+  background: var(--accent-subtle);
+  color: var(--accent);
 }
 
 .run-chat-overlay-panel__body {
@@ -3134,6 +3205,40 @@ textarea::placeholder {
 
 .run-chat-overlay-panel__body--terminal {
   min-height: 240px;
+}
+
+.run-chat-overlay-panel__body--logs {
+  overflow: hidden;
+}
+
+.run-chat-overlay-panel__body--diff {
+  overflow: auto;
+}
+
+.run-chat-diff-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 2px;
+}
+
+.run-chat-log-stream {
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  overflow: auto;
+  white-space: nowrap;
+}
+
+.run-chat-log-stream p {
+  margin: 0;
 }
 
 .run-chat-back-nav {
@@ -3155,6 +3260,16 @@ textarea::placeholder {
   scroll-padding-bottom: calc(
     var(--run-chat-composer-offset, var(--run-chat-composer-gap, 148px)) + 18px
   );
+}
+
+.run-chat-transcript-scroll--scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.run-chat-transcript-scroll--scrollbar-hidden::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .run-chat-transcript {
@@ -3722,7 +3837,7 @@ textarea::placeholder {
 
 .monaco-editor-root {
   width: 100%;
-  height: 100%;
+  min-height: 120px;
 }
 
 .sr-only {
