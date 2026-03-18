@@ -2,7 +2,7 @@ import { For, Show, createSignal, type Component } from "solid-js";
 import BackIconLink from "../../../components/ui/BackIconLink";
 import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
-import MarkdownContent from "../../../components/ui/MarkdownContent";
+import RunChatMarkdown from "../../runs/components/chat/RunChatMarkdown";
 import TaskMarkdownEditor from "../../../components/ui/TaskMarkdownEditor";
 import {
   TaskDetailErrorState,
@@ -293,7 +293,7 @@ const TaskDetailScreen: Component = () => {
                                 }
                               >
                                 {(description) => (
-                                  <MarkdownContent
+                                  <RunChatMarkdown
                                     content={description()}
                                     class="task-detail-description-text"
                                   />
@@ -325,7 +325,7 @@ const TaskDetailScreen: Component = () => {
                                 }
                               >
                                 {(implementationGuide) => (
-                                  <MarkdownContent
+                                  <RunChatMarkdown
                                     content={implementationGuide()}
                                     class="task-detail-description-text"
                                   />

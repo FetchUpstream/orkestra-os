@@ -1332,7 +1332,7 @@ describe("app routing and shell", () => {
 
     const markdownRegion = screen
       .getByRole("heading", { name: "Checklist" })
-      .closest(".markdown-content");
+      .closest(".run-chat-markdown");
     expect(markdownRegion).toBeTruthy();
     const list = within(markdownRegion as HTMLElement).getByRole("list");
     expect(within(list).getByText("Ship")).toBeTruthy();
