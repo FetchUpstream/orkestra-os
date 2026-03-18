@@ -33,7 +33,7 @@ impl RunsService {
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
         let worktree = self.worktrees_service.create(CreateWorktreeRequest {
-            project_id: task_context.project_id.clone(),
+            project_key: task_context.project_key,
             repo_path: task_context.repository_path,
             branch_title: task_context.branch_title,
         })?;
@@ -345,7 +345,18 @@ mod tests {
         assert_eq!(run.status, "queued");
         assert_eq!(run.triggered_by, "user");
         assert!(run.worktree_id.is_some());
-        assert!(run.worktree_id.unwrap().starts_with("ork/"));
+        let worktree_id = run.worktree_id.unwrap();
+        let mut segments = worktree_id.split('/');
+        let project_segment = segments.next().unwrap_or_default();
+        let branch_segment = segments.next().unwrap_or_default();
+        assert_eq!(project_segment, "ALP");
+        assert!(!branch_segment.is_empty());
+        assert!(
+            branch_segment
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+        );
+        assert!(segments.next().is_none());
         assert!(run.source_branch.is_some());
     }
 

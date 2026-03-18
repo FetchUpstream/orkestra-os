@@ -1,6 +1,7 @@
 use crate::app::errors::AppError;
 use crate::app::runs::dto::{RunDiffFileDto, RunDiffFilePayloadDto, RunDiffUpdatedEventDto};
 use crate::app::runs::service::RunsService;
+use crate::app::worktrees::pathing::resolve_worktree_path;
 use git2::{Commit, Delta, Diff, DiffDelta, DiffOptions, Repository, Tree};
 use notify::RecursiveMode;
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, NoCache};
@@ -187,20 +188,7 @@ impl RunsDiffService {
             .as_deref()
             .ok_or_else(|| AppError::not_found("run worktree not found"))?
             .trim();
-        if worktree_id.is_empty() {
-            return Err(AppError::not_found("run worktree not found"));
-        }
-
-        if run.project_id.trim().is_empty() {
-            return Err(AppError::validation("run project_id is required"));
-        }
-
-        let worktree_path = self.worktrees_root.join(&run.project_id).join(worktree_id);
-        if !worktree_path.exists() {
-            return Err(AppError::not_found("run worktree path not found"));
-        }
-
-        Ok(worktree_path)
+        resolve_worktree_path(&self.worktrees_root, worktree_id)
     }
 
     fn open_repository(&self, worktree_path: &Path) -> Result<Repository, AppError> {

@@ -5,6 +5,7 @@ use crate::app::runs::dto::{
     RunOpenCodeSessionTodoDto, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::service::RunsService;
+use crate::app::worktrees::pathing::resolve_worktree_path;
 use chrono::Utc;
 use opencode::{
     OpencodeClient, OpencodeClientConfig, OpencodeServer, OpencodeServerOptions, RequestOptions,
@@ -1031,19 +1032,6 @@ impl RunsOpenCodeService {
             .as_deref()
             .ok_or_else(|| AppError::not_found("run worktree not found"))?
             .trim();
-        if worktree_id.is_empty() {
-            return Err(AppError::not_found("run worktree not found"));
-        }
-
-        if run.project_id.trim().is_empty() {
-            return Err(AppError::validation("run project_id is required"));
-        }
-
-        let worktree_path = self.worktrees_root.join(&run.project_id).join(worktree_id);
-        if !worktree_path.exists() {
-            return Err(AppError::not_found("run worktree path not found"));
-        }
-
-        Ok(worktree_path)
+        resolve_worktree_path(&self.worktrees_root, worktree_id)
     }
 }

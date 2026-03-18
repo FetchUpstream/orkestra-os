@@ -33,6 +33,7 @@ pub struct NewRun {
 #[derive(Clone, Debug)]
 pub struct TaskRunContext {
     pub project_id: String,
+    pub project_key: String,
     pub repository_id: String,
     pub repository_path: String,
     pub branch_title: String,

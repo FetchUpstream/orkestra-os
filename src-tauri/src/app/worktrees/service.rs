@@ -2,6 +2,9 @@ use crate::app::errors::AppError;
 use crate::app::worktrees::dto::{
     CreateWorktreeRequest, CreateWorktreeResponse, RemoveWorktreeRequest,
 };
+use crate::app::worktrees::pathing::{
+    choose_unique_worktree_id, sanitize_branch_segment, validate_project_key_segment,
+};
 use git2::{BranchType, ErrorCode, Repository, WorktreeAddOptions, WorktreePruneOptions};
 use std::path::PathBuf;
 
@@ -21,29 +24,17 @@ impl WorktreesService {
         &self,
         mut input: CreateWorktreeRequest,
     ) -> Result<CreateWorktreeResponse, AppError> {
-        input.project_id = input.project_id.trim().to_string();
+        input.project_key = input.project_key.trim().to_string();
         input.repo_path = input.repo_path.trim().to_string();
         input.branch_title = input.branch_title.trim().to_string();
 
-        if input.project_id.is_empty() {
-            return Err(AppError::validation("project_id is required"));
+        if input.project_key.is_empty() {
+            return Err(AppError::validation("project_key is required"));
         }
+        validate_project_key_segment(&input.project_key)?;
         if input.repo_path.is_empty() {
             return Err(AppError::validation("repo_path is required"));
         }
-
-        let slug = Self::slugify_branch_title(&input.branch_title);
-        let worktree_id = Self::generate_worktree_id(&slug);
-        let worktree_path = self.base_root.join(&input.project_id).join(&worktree_id);
-
-        std::fs::create_dir_all(
-            worktree_path
-                .parent()
-                .ok_or_else(|| AppError::validation("invalid worktree path"))?,
-        )
-        .map_err(|err| {
-            AppError::validation(format!("failed to create worktree parent directory: {err}"))
-        })?;
 
         let repo = Repository::open(&input.repo_path)
             .map_err(|err| AppError::validation(format!("failed to open repository: {err}")))?;
@@ -63,7 +54,20 @@ impl WorktreesService {
             .peel_to_commit()
             .map_err(|err| AppError::validation(format!("failed to resolve HEAD commit: {err}")))?;
 
+        let branch_slug = sanitize_branch_segment(&input.branch_title);
+        let worktree_id =
+            choose_unique_worktree_id(&self.base_root, &input.project_key, &branch_slug, &repo);
         let branch_name = worktree_id.clone();
+        let worktree_path = self.base_root.join(&worktree_id);
+        std::fs::create_dir_all(
+            worktree_path
+                .parent()
+                .ok_or_else(|| AppError::validation("invalid worktree path"))?,
+        )
+        .map_err(|err| {
+            AppError::validation(format!("failed to create worktree parent directory: {err}"))
+        })?;
+
         let branch = match repo.find_branch(&branch_name, BranchType::Local) {
             Ok(branch) => branch,
             Err(err) if err.code() == ErrorCode::NotFound => repo
@@ -128,68 +132,48 @@ impl WorktreesService {
 
         Ok(())
     }
-
-    fn generate_worktree_id(slug: &str) -> String {
-        let random = uuid::Uuid::new_v4().simple().to_string();
-        format!("ork/{slug}-{}", &random[..8])
-    }
-
-    fn slugify_branch_title(branch_title: &str) -> String {
-        let mut slug = String::new();
-        let mut in_separator = false;
-
-        for ch in branch_title.chars() {
-            if ch.is_ascii_alphanumeric() {
-                slug.push(ch.to_ascii_lowercase());
-                in_separator = false;
-            } else if !slug.is_empty() && !in_separator {
-                slug.push('-');
-                in_separator = true;
-            }
-        }
-
-        while slug.ends_with('-') {
-            slug.pop();
-        }
-
-        if slug.is_empty() {
-            "run".to_string()
-        } else {
-            slug
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::WorktreesService;
+    use crate::app::errors::AppError;
+    use crate::app::worktrees::dto::CreateWorktreeRequest;
+    use crate::app::worktrees::pathing::{compose_worktree_id, sanitize_branch_segment};
     use std::path::{Path, PathBuf};
 
     #[test]
-    fn slugify_branch_title_formats_ascii_groups() {
+    fn path_helpers_produce_project_key_and_slug_segments() {
         assert_eq!(
-            WorktreesService::slugify_branch_title("  Fix Login --- Flow!!!  "),
+            sanitize_branch_segment("  Fix Login --- Flow!!!  "),
             "fix-login-flow"
         );
-        assert_eq!(WorktreesService::slugify_branch_title("___"), "run");
-        assert_eq!(WorktreesService::slugify_branch_title("a__b--c"), "a-b-c");
-    }
-
-    #[test]
-    fn generate_worktree_id_uses_expected_format() {
-        let id = WorktreesService::generate_worktree_id("feature");
-
-        assert!(id.starts_with("ork/feature-"));
-        assert_eq!(id.len(), "ork/feature-".len() + 8);
-        assert!(id
-            .chars()
-            .skip("ork/feature-".len())
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert_eq!(
+            compose_worktree_id("ALP", "fix-login-flow"),
+            "ALP/fix-login-flow"
+        );
     }
 
     #[test]
     fn constructor_uses_app_data_worktrees_root() {
         let service = WorktreesService::new(PathBuf::from("/tmp/app-data"));
         assert_eq!(service.base_root, Path::new("/tmp/app-data/worktrees"));
+    }
+
+    #[test]
+    fn create_rejects_invalid_project_key_before_repo_checks() {
+        let service = WorktreesService::new(PathBuf::from("/tmp/app-data"));
+        let result = service.create(CreateWorktreeRequest {
+            project_key: "alp".to_string(),
+            repo_path: "/path/that/does/not/matter/yet".to_string(),
+            branch_title: "branch".to_string(),
+        });
+
+        match result {
+            Err(AppError::Validation(message)) => {
+                assert_eq!(message, "project_key must be uppercase alphanumeric")
+            }
+            _ => panic!("expected project_key validation error"),
+        }
     }
 }

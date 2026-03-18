@@ -17,8 +17,9 @@ impl RunsRepository {
         task_id: &str,
     ) -> Result<Option<TaskRunContext>, AppError> {
         let row = sqlx::query(
-            "SELECT t.project_id, t.repository_id, t.title AS branch_title, pr.repo_path AS repository_path
+            "SELECT t.project_id, p.key AS project_key, t.repository_id, t.title AS branch_title, pr.repo_path AS repository_path
              FROM tasks t
+             JOIN projects p ON p.id = t.project_id
              JOIN project_repositories pr ON pr.id = t.repository_id
              WHERE t.id = ?",
         )
@@ -28,6 +29,7 @@ impl RunsRepository {
 
         Ok(row.map(|row| TaskRunContext {
             project_id: row.get("project_id"),
+            project_key: row.get("project_key"),
             repository_id: row.get("repository_id"),
             repository_path: row.get("repository_path"),
             branch_title: row.get("branch_title"),

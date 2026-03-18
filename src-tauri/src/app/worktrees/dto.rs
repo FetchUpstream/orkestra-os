@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateWorktreeRequest {
-    pub project_id: String,
+    pub project_key: String,
     pub repo_path: String,
     pub branch_title: String,
 }
