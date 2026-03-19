@@ -87,12 +87,7 @@ impl RunsMergeService {
             self.source_annotated_commit(&context.repo, &context.source_branch)?;
         let mut rebase = context
             .repo
-            .rebase(
-                None,
-                Some(&source_annotated),
-                Some(&source_annotated),
-                None,
-            )
+            .rebase(None, Some(&source_annotated), Some(&source_annotated), None)
             .map_err(|err| AppError::validation(format!("failed to start rebase: {err}")))?;
 
         loop {
@@ -375,10 +370,13 @@ impl RunsMergeService {
             .map_err(|err| AppError::validation(format!("failed to resolve source branch: {err}")))
     }
 
-    fn ensure_head_on_worktree_branch(repo: &Repository, worktree_branch: &str) -> Result<(), AppError> {
-        let head = repo
-            .head()
-            .map_err(|err| AppError::validation(format!("failed to inspect repository HEAD: {err}")))?;
+    fn ensure_head_on_worktree_branch(
+        repo: &Repository,
+        worktree_branch: &str,
+    ) -> Result<(), AppError> {
+        let head = repo.head().map_err(|err| {
+            AppError::validation(format!("failed to inspect repository HEAD: {err}"))
+        })?;
         if !head.is_branch() {
             return Err(AppError::validation(
                 "cannot rebase: repository HEAD is detached from worktree branch".to_string(),
@@ -410,10 +408,13 @@ impl RunsMergeService {
         Ok(())
     }
 
-    fn attach_head_to_worktree_branch(repo: &Repository, worktree_branch: &str) -> Result<(), AppError> {
-        let head = repo
-            .head()
-            .map_err(|err| AppError::validation(format!("failed to inspect repository HEAD: {err}")))?;
+    fn attach_head_to_worktree_branch(
+        repo: &Repository,
+        worktree_branch: &str,
+    ) -> Result<(), AppError> {
+        let head = repo.head().map_err(|err| {
+            AppError::validation(format!("failed to inspect repository HEAD: {err}"))
+        })?;
         let head_branch = head.shorthand().unwrap_or_default();
         if head.is_branch() && head_branch == worktree_branch {
             return Ok(());
@@ -426,9 +427,9 @@ impl RunsMergeService {
             ))
         })?;
 
-        let head = repo
-            .head()
-            .map_err(|err| AppError::validation(format!("failed to inspect repository HEAD: {err}")))?;
+        let head = repo.head().map_err(|err| {
+            AppError::validation(format!("failed to inspect repository HEAD: {err}"))
+        })?;
         let head_branch = head.shorthand().unwrap_or_default();
         if !head.is_branch() || head_branch != worktree_branch {
             return Err(AppError::validation(format!(
@@ -460,9 +461,9 @@ impl RunsMergeService {
             .renames_head_to_index(true)
             .renames_index_to_workdir(true);
 
-        let statuses = repo
-            .statuses(Some(&mut options))
-            .map_err(|err| AppError::validation(format!("failed to inspect worktree status: {err}")))?;
+        let statuses = repo.statuses(Some(&mut options)).map_err(|err| {
+            AppError::validation(format!("failed to inspect worktree status: {err}"))
+        })?;
 
         let has_dirty_changes = statuses.iter().any(|entry| {
             let status = entry.status();
@@ -696,7 +697,11 @@ mod tests {
         repo.checkout_head(None).unwrap();
     }
 
-    fn start_rebase_without_finishing(repo_path: &Path, worktree_branch: &str, source_branch: &str) {
+    fn start_rebase_without_finishing(
+        repo_path: &Path,
+        worktree_branch: &str,
+        source_branch: &str,
+    ) {
         let repo = Repository::open(repo_path).unwrap();
         let worktree_oid = repo
             .find_reference(&format!("refs/heads/{worktree_branch}"))
@@ -775,7 +780,10 @@ mod tests {
         let repo = Repository::open(&worktree_path).unwrap();
         let head = repo.head().unwrap();
         assert!(head.is_branch());
-        assert_eq!(head.shorthand().unwrap_or_default(), run.worktree_id.unwrap());
+        assert_eq!(
+            head.shorthand().unwrap_or_default(),
+            run.worktree_id.unwrap()
+        );
     }
 
     #[tokio::test]
@@ -805,7 +813,10 @@ mod tests {
         let repo = Repository::open(&worktree_path).unwrap();
         let head = repo.head().unwrap();
         assert!(head.is_branch());
-        assert_eq!(head.shorthand().unwrap_or_default(), run.worktree_id.unwrap());
+        assert_eq!(
+            head.shorthand().unwrap_or_default(),
+            run.worktree_id.unwrap()
+        );
     }
 
     #[tokio::test]
@@ -825,7 +836,10 @@ mod tests {
             .join(run.worktree_id.clone().unwrap());
         detach_head(&worktree_path);
 
-        let err = merge_service.rebase_worktree_branch(&run.id).await.unwrap_err();
+        let err = merge_service
+            .rebase_worktree_branch(&run.id)
+            .await
+            .unwrap_err();
         match err {
             AppError::Validation(message) => {
                 assert!(
@@ -912,7 +926,10 @@ mod tests {
         append_commit(&repo_path, "README.md", "main-change\n", "main change");
         write_unstaged_change(&worktree_path, "README.md", "dirty\n");
 
-        let err = merge_service.rebase_worktree_branch(&run.id).await.unwrap_err();
+        let err = merge_service
+            .rebase_worktree_branch(&run.id)
+            .await
+            .unwrap_err();
         match err {
             AppError::Validation(message) => {
                 assert!(message.contains("clean the worktree"));
@@ -1041,7 +1058,10 @@ mod tests {
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service.create_run("task-1").await.unwrap();
 
-        let response = merge_service.merge_into_source_branch(&run.id).await.unwrap();
+        let response = merge_service
+            .merge_into_source_branch(&run.id)
+            .await
+            .unwrap();
         assert_eq!(response.state, "clean");
 
         let run_after = runs_service.get_run_model(&run.id).await.unwrap();
@@ -1076,7 +1096,10 @@ mod tests {
             "worktree change",
         );
 
-        let first = merge_service.merge_into_source_branch(&run.id).await.unwrap();
+        let first = merge_service
+            .merge_into_source_branch(&run.id)
+            .await
+            .unwrap();
         assert_eq!(first.state, "completing");
 
         sqlx::query("UPDATE runs SET status = 'running' WHERE id = ?")
@@ -1090,7 +1113,10 @@ mod tests {
             .await
             .unwrap();
 
-        let second = merge_service.merge_into_source_branch(&run.id).await.unwrap();
+        let second = merge_service
+            .merge_into_source_branch(&run.id)
+            .await
+            .unwrap();
         assert_eq!(second.state, "completing");
 
         let run_after = runs_service.get_run_model(&run.id).await.unwrap();
