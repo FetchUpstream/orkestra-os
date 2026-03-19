@@ -75,6 +75,12 @@ const createModelStub = (options?: {
     streamConnected?: boolean;
     error?: string;
   };
+  agentEvents?: Array<{
+    runId?: string;
+    ts?: string | number | null;
+    event?: string;
+    data?: unknown;
+  }>;
 }) => {
   const [diffPaths, setDiffPaths] = createSignal(options?.diffPaths ?? []);
   const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(
@@ -158,7 +164,13 @@ const createModelStub = (options?: {
         status: options?.agent?.storeStatus ?? "active",
         streamConnected: options?.agent?.streamConnected ?? true,
       }),
-      events: () => [],
+      events: () =>
+        options?.agentEvents?.map((event) => ({
+          runId: event.runId ?? "run-1",
+          ts: event.ts ?? null,
+          event: event.event ?? "unknown",
+          data: event.data ?? null,
+        })) ?? [],
       submitError: () => "",
       isSubmittingPrompt,
       submitPrompt: async (value: string) => {
@@ -472,5 +484,58 @@ describe("NewRunDetailScreen git actions", () => {
       screen.getByTestId("run-status-indicator").getAttribute("data-status"),
     ).toBe("red");
     expect(screen.getByText("!")).toBeTruthy();
+  });
+
+  it("renders session.idle and completed message.updated logs with completed styling", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        agentEvents: [
+          {
+            event: "session.idle",
+            data: { sessionID: "session-1" },
+          },
+          {
+            event: "message.updated",
+            data: {
+              info: {
+                id: "msg-1",
+                sessionID: "session-1",
+                time: { completed: "2026-01-01T00:00:00.000Z" },
+              },
+            },
+          },
+          {
+            event: "message.updated",
+            data: {
+              info: {
+                id: "msg-2",
+                sessionID: "session-1",
+              },
+            },
+          },
+        ],
+      }),
+    );
+
+    render(() => <NewRunDetailScreen />);
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+
+    await waitFor(() => {
+      const idleLine = screen.getByText(/session\.idle/);
+      const completedMessageLine = screen.getByText(
+        /message\.updated.*completed/i,
+      );
+      const regularMessageLine = screen.getAllByText(/message\.updated/)[1];
+
+      expect(idleLine.className).toContain(
+        "run-chat-log-stream__line--completed",
+      );
+      expect(completedMessageLine.className).toContain(
+        "run-chat-log-stream__line--completed",
+      );
+      expect(regularMessageLine.className).not.toContain(
+        "run-chat-log-stream__line--completed",
+      );
+    });
   });
 });

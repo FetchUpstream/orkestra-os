@@ -55,9 +55,9 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 vi.mock("../../../../app/lib/runs", () => ({
   bootstrapRunOpenCode: bootstrapRunOpenCodeMock,
-  appendCappedHistory: (current: unknown[], next: unknown[]) => [
+  appendCappedHistory: (current: unknown[], next: unknown[] | unknown) => [
     ...current,
-    ...next,
+    ...(Array.isArray(next) ? next : [next]),
   ],
   getRun: getRunMock,
   getRunGitMergeStatus: getRunGitMergeStatusMock,
@@ -408,5 +408,43 @@ describe("useRunDetailModel startup ownership", () => {
     });
 
     expect(modelRef!.terminal.isInputEnabled()).toBe(false);
+  });
+
+  it("forwards session.idle events to frontend event history", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+    expect(subscribeCall?.onOutputChannel).toBeTypeOf("function");
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "session.idle",
+      data: { sessionID: "session-1" },
+    });
+
+    await waitFor(() => {
+      const events = modelRef!.agent.events();
+      expect(events).toHaveLength(1);
+      expect(events[0]?.event).toBe("session.idle");
+    });
   });
 });

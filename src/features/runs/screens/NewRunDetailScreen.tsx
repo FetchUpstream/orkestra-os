@@ -32,6 +32,49 @@ const redactInternalIds = (value: string): string =>
 const normalizeLogText = (value: string): string =>
   redactInternalIds(value).replace(/\r\n|\r|\n/g, "\\n");
 
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+};
+
+const parseMaybeJson = (value: unknown): unknown => {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+};
+
+const isCompletedDebugEvent = (name: string, payload: unknown): boolean => {
+  if (name === "session.idle") {
+    return true;
+  }
+
+  if (name !== "message.updated") {
+    return false;
+  }
+
+  const parsedPayload = parseMaybeJson(payload);
+  if (!isRecord(parsedPayload)) {
+    return false;
+  }
+
+  const properties = isRecord(parsedPayload.properties)
+    ? parsedPayload.properties
+    : parsedPayload;
+  const info = isRecord(properties.info) ? properties.info : null;
+  const time = info && isRecord(info.time) ? info.time : null;
+  return time?.completed !== undefined;
+};
+
 const summarizeEventPayload = (payload: unknown): string => {
   if (payload === undefined || payload === null) {
     return "";
@@ -332,19 +375,28 @@ const NewRunDetailScreen: Component = () => {
 
   const logsLines = createMemo(() => {
     if (model.agent.error().trim().length > 0) {
-      return [`error ${normalizeLogText(model.agent.error().trim())}`];
+      return [
+        {
+          text: `error ${normalizeLogText(model.agent.error().trim())}`,
+          completed: false,
+        },
+      ];
     }
 
     if (model.agent.state() === "unsupported") {
-      return ["agent stream unsupported"];
+      return [{ text: "agent stream unsupported", completed: false }];
     }
 
     const events = model.agent.events();
     if (events.length === 0) {
       return [
-        model.agent.state() === "starting"
-          ? "waiting for logs..."
-          : "no logs yet",
+        {
+          text:
+            model.agent.state() === "starting"
+              ? "waiting for logs..."
+              : "no logs yet",
+          completed: false,
+        },
       ];
     }
 
@@ -353,7 +405,10 @@ const NewRunDetailScreen: Component = () => {
       const name = event.event?.trim() || "event";
       const payload = summarizeEventPayload(event.data);
       const parts = [ts, name, payload].filter((part) => part.length > 0);
-      return parts.join(" ");
+      return {
+        text: parts.join(" "),
+        completed: isCompletedDebugEvent(name, event.data),
+      };
     });
   });
 
@@ -775,7 +830,19 @@ const NewRunDetailScreen: Component = () => {
                         aria-live="polite"
                         aria-atomic="false"
                       >
-                        <For each={logsLines()}>{(line) => <p>{line}</p>}</For>
+                        <For each={logsLines()}>
+                          {(line) => (
+                            <p
+                              classList={{
+                                "run-chat-log-stream__line": true,
+                                "run-chat-log-stream__line--completed":
+                                  line.completed,
+                              }}
+                            >
+                              {line.text}
+                            </p>
+                          )}
+                        </For>
                       </div>
                     </Show>
                     <Show when={overlayState() === "drawer-diff"}>
