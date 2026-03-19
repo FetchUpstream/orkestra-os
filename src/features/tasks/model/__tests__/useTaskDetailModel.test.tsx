@@ -8,12 +8,16 @@ const {
   getTaskMock,
   listTaskRunsMock,
   startRunOpenCodeMock,
+  createRunMock,
+  listTaskDependenciesMock,
 } = vi.hoisted(() => ({
   paramsState: { projectId: "project-1", taskId: "task-1" },
   navigateMock: vi.fn(),
   getTaskMock: vi.fn(),
   listTaskRunsMock: vi.fn(),
   startRunOpenCodeMock: vi.fn(),
+  createRunMock: vi.fn(),
+  listTaskDependenciesMock: vi.fn(),
 }));
 
 vi.mock("@solidjs/router", () => ({
@@ -32,7 +36,7 @@ vi.mock("../../../../app/lib/projects", () => ({
 
 vi.mock("../../../../app/lib/tasks", () => ({
   getTask: getTaskMock,
-  listTaskDependencies: vi.fn(async () => ({ parents: [], children: [] })),
+  listTaskDependencies: listTaskDependenciesMock,
   listProjectTasks: vi.fn(async () => []),
   createTask: vi.fn(),
   addTaskDependency: vi.fn(),
@@ -44,7 +48,7 @@ vi.mock("../../../../app/lib/tasks", () => ({
 }));
 
 vi.mock("../../../../app/lib/runs", () => ({
-  createRun: vi.fn(),
+  createRun: createRunMock,
   deleteRun: vi.fn(),
   listTaskRuns: listTaskRunsMock,
   startRunOpenCode: startRunOpenCodeMock,
@@ -56,6 +60,8 @@ describe("useTaskDetailModel start run", () => {
     getTaskMock.mockReset();
     listTaskRunsMock.mockReset();
     startRunOpenCodeMock.mockReset();
+    createRunMock.mockReset();
+    listTaskDependenciesMock.mockReset();
 
     getTaskMock.mockResolvedValue({
       id: "task-1",
@@ -64,7 +70,10 @@ describe("useTaskDetailModel start run", () => {
       description: "Desc",
       implementationGuide: "Guide",
       status: "todo",
+      isBlocked: false,
+      blockedByCount: 0,
     });
+    listTaskDependenciesMock.mockResolvedValue({ parents: [], children: [] });
     listTaskRunsMock.mockResolvedValue([
       {
         id: "run-1",
@@ -151,5 +160,119 @@ describe("useTaskDetailModel start run", () => {
     await waitFor(() => {
       expect(ref.current?.isAnyRunStarting()).toBe(false);
     });
+  });
+
+  it("opens blocked warning and does not create run when task is blocked", async () => {
+    getTaskMock.mockResolvedValue({
+      id: "task-1",
+      projectId: "project-1",
+      title: "Task",
+      description: "Desc",
+      implementationGuide: "Guide",
+      status: "todo",
+      isBlocked: true,
+      blockedByCount: 1,
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    await ref.current?.onCreateRun();
+
+    expect(ref.current?.isBlocked()).toBe(true);
+    expect(ref.current?.taskDependencyBadgeState()).toBe("blocked");
+    expect(ref.current?.isBlockedRunWarningOpen()).toBe(true);
+    expect(createRunMock).not.toHaveBeenCalled();
+  });
+
+  it("shows ready state and allows creating run when dependencies are resolved", async () => {
+    getTaskMock.mockResolvedValue({
+      id: "task-1",
+      projectId: "project-1",
+      title: "Task",
+      description: "Desc",
+      implementationGuide: "Guide",
+      status: "todo",
+      isBlocked: false,
+      blockedByCount: 2,
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    await ref.current?.onCreateRun();
+
+    expect(ref.current?.isBlocked()).toBe(false);
+    expect(ref.current?.taskDependencyBadgeState()).toBe("ready");
+    expect(ref.current?.isBlockedRunWarningOpen()).toBe(false);
+    expect(createRunMock).toHaveBeenCalledWith("task-1");
+  });
+
+  it("shows none state and allows creating run when there are no dependencies", async () => {
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    await ref.current?.onCreateRun();
+
+    expect(ref.current?.isBlocked()).toBe(false);
+    expect(ref.current?.taskDependencyBadgeState()).toBe("none");
+    expect(ref.current?.isBlockedRunWarningOpen()).toBe(false);
+    expect(createRunMock).toHaveBeenCalledWith("task-1");
+  });
+
+  it("prevents starting existing run while blocked", async () => {
+    getTaskMock.mockResolvedValue({
+      id: "task-1",
+      projectId: "project-1",
+      title: "Task",
+      description: "Desc",
+      implementationGuide: "Guide",
+      status: "todo",
+      isBlocked: true,
+      blockedByCount: 1,
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.runs().length).toBe(2);
+    });
+
+    await ref.current?.onStartRun("run-1");
+
+    expect(startRunOpenCodeMock).not.toHaveBeenCalled();
   });
 });

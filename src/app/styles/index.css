@@ -1180,6 +1180,20 @@ textarea::placeholder {
   border: 1px solid rgba(255, 107, 107, 0.3);
 }
 
+.project-task-ready {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(107, 207, 127, 0.15);
+  color: var(--success);
+  border: 1px solid rgba(107, 207, 127, 0.3);
+}
+
 .project-task-updated {
   font-size: 0.75rem;
   color: var(--text-subtle);

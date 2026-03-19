@@ -124,6 +124,10 @@ const TaskDetailScreen: Component = () => {
     runsError,
     isLoadingRuns,
     isCreatingRun,
+    isBlocked,
+    taskDependencyBadgeState,
+    blockingParentTasks,
+    isBlockedRunWarningOpen,
     deletingRunId,
     startingRunId,
     isAnyRunStarting,
@@ -172,6 +176,7 @@ const TaskDetailScreen: Component = () => {
     setCreateDependencyDescription,
     setCreateDependencyImplementationGuide,
     setCreateDependencyStatus,
+    setIsBlockedRunWarningOpen,
     onOpenCreateDependencyModal,
     onCancelCreateDependency,
     onSubmitCreateDependency,
@@ -255,6 +260,19 @@ const TaskDetailScreen: Component = () => {
                           >
                             {formatStatus(taskValue().status)}
                           </span>
+                          <Show when={taskDependencyBadgeState() !== "none"}>
+                            <span
+                              class={
+                                taskDependencyBadgeState() === "blocked"
+                                  ? "project-task-blocked"
+                                  : "project-task-ready"
+                              }
+                            >
+                              {taskDependencyBadgeState() === "blocked"
+                                ? "Blocked"
+                                : "Ready"}
+                            </span>
+                          </Show>
                         </div>
                         <div class="task-detail-summary-strip">
                           <div class="task-detail-summary-item">
@@ -511,6 +529,11 @@ const TaskDetailScreen: Component = () => {
                               class="projects-button-primary"
                               onClick={onCreateRun}
                               disabled={isCreatingRun()}
+                              aria-label={
+                                isBlocked()
+                                  ? "New run blocked by dependencies"
+                                  : "New run"
+                              }
                             >
                               {isCreatingRun() ? "Starting..." : "New Run"}
                             </button>
@@ -565,6 +588,7 @@ const TaskDetailScreen: Component = () => {
                                             void onStartRun(runItem.id);
                                           }}
                                           disabled={
+                                            isBlocked() ||
                                             isAnyRunStarting() ||
                                             deletingRunId() === runItem.id ||
                                             warmingRunIds()[runItem.id] ||
@@ -575,16 +599,21 @@ const TaskDetailScreen: Component = () => {
                                         >
                                           {startingRunId() === runItem.id
                                             ? "Starting..."
-                                            : isAnyRunStarting()
-                                              ? "Start locked"
-                                              : warmingRunIds()[runItem.id] ||
-                                                  runItem.status === "preparing"
-                                                ? "Warming..."
-                                                : runItem.status === "completed"
-                                                  ? "Completed"
-                                                  : runItem.status === "running"
-                                                    ? "Running"
-                                                    : "Start"}
+                                            : isBlocked()
+                                              ? "Blocked"
+                                              : isAnyRunStarting()
+                                                ? "Start locked"
+                                                : warmingRunIds()[runItem.id] ||
+                                                    runItem.status ===
+                                                      "preparing"
+                                                  ? "Warming..."
+                                                  : runItem.status ===
+                                                      "completed"
+                                                    ? "Completed"
+                                                    : runItem.status ===
+                                                        "running"
+                                                      ? "Running"
+                                                      : "Start"}
                                         </button>
                                         <button
                                           type="button"
@@ -1201,6 +1230,58 @@ const TaskDetailScreen: Component = () => {
                 disabled={isCreatingDependency()}
               >
                 {isCreatingDependency() ? "Creating..." : "Create and link"}
+              </button>
+            </div>
+          </section>
+        </div>
+      </Show>
+      <Show when={isBlockedRunWarningOpen()}>
+        <div
+          class="projects-modal-backdrop"
+          role="presentation"
+          onClick={() => setIsBlockedRunWarningOpen(false)}
+        >
+          <section
+            class="projects-modal task-create-dependency-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="task-blocked-run-modal-title"
+            aria-describedby="task-blocked-run-modal-copy"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2
+              id="task-blocked-run-modal-title"
+              class="task-delete-modal-title"
+            >
+              Run blocked
+            </h2>
+            <p
+              id="task-blocked-run-modal-copy"
+              class="project-placeholder-text task-delete-modal-copy"
+            >
+              This task is blocked. Wait for{" "}
+              {(() => {
+                const blockers = blockingParentTasks().map((dependencyTask) =>
+                  dependencyDisplayLabel(dependencyTask),
+                );
+                const visible = blockers.slice(0, 3);
+                const hiddenCount = blockers.length - visible.length;
+                const blockerCopy =
+                  visible.length > 0
+                    ? visible.join(", ") +
+                      (hiddenCount > 0 ? ` +${hiddenCount} more` : "")
+                    : "prerequisite tasks";
+                return blockerCopy;
+              })()}{" "}
+              to complete first.
+            </p>
+            <div class="task-delete-modal-actions">
+              <button
+                type="button"
+                class="projects-button-primary"
+                onClick={() => setIsBlockedRunWarningOpen(false)}
+              >
+                Got it
               </button>
             </div>
           </section>

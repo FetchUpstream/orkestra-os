@@ -1,6 +1,8 @@
 import type { Project } from "../../../app/lib/projects";
 import type { Task, TaskStatus } from "../../../app/lib/tasks";
 
+export type DependencyBadgeState = "blocked" | "ready" | "none";
+
 export const TASK_STATUSES: TaskStatus[] = ["todo", "doing", "review", "done"];
 
 export const formatTaskStatus = (status: TaskStatus): string => {
@@ -32,8 +34,13 @@ export const formatUpdatedAt = (value?: string | null): string => {
   return date.toLocaleString();
 };
 
-export const isTaskBlocked = (task: Task): boolean =>
-  task.isBlocked === true || (task.blockedByCount ?? 0) > 0;
+export const isTaskBlocked = (task: Task): boolean => task.isBlocked === true;
+
+export const dependencyBadgeState = (task: Task): DependencyBadgeState => {
+  if (isTaskBlocked(task)) return "blocked";
+  if ((task.blockedByCount ?? 0) > 0) return "ready";
+  return "none";
+};
 
 export const taskDisplayKey = (
   task: Task,

@@ -27,6 +27,11 @@ import {
   getActionErrorMessage,
   getValidTransitionTargets,
 } from "../utils/taskDetail";
+import {
+  dependencyBadgeState,
+  isTaskBlocked,
+  type DependencyBadgeState,
+} from "../../projects/utils/projectDetail";
 
 export type DependencyCreateDirection = "parent" | "child";
 
@@ -85,6 +90,8 @@ export const useTaskDetailModel = () => {
   const [runsError, setRunsError] = createSignal("");
   const [isLoadingRuns, setIsLoadingRuns] = createSignal(false);
   const [isCreatingRun, setIsCreatingRun] = createSignal(false);
+  const [isBlockedRunWarningOpen, setIsBlockedRunWarningOpen] =
+    createSignal(false);
   const [deletingRunId, setDeletingRunId] = createSignal("");
   const [startingRunId, setStartingRunId] = createSignal("");
   const [warmingRunIds, setWarmingRunIds] = createSignal<
@@ -120,6 +127,22 @@ export const useTaskDetailModel = () => {
     const taskValue = task();
     if (!taskValue) return [];
     return getValidTransitionTargets(taskValue.status);
+  });
+  const blockingParentTasks = createMemo(() =>
+    (dependencies()?.parents || []).filter(
+      (dependencyTask) => dependencyTask.status !== "done",
+    ),
+  );
+  const isBlocked = createMemo(() => {
+    const taskValue = task();
+    if (!taskValue) return false;
+    return isTaskBlocked(taskValue) || blockingParentTasks().length > 0;
+  });
+  const taskDependencyBadgeState = createMemo<DependencyBadgeState>(() => {
+    const taskValue = task();
+    if (!taskValue) return "none";
+    if (isBlocked()) return "blocked";
+    return dependencyBadgeState(taskValue);
   });
 
   const dependencyTaskHref = (dependencyTaskId: string) => {
@@ -519,6 +542,10 @@ export const useTaskDetailModel = () => {
   const onCreateRun = async () => {
     const taskValue = task();
     if (!taskValue) return;
+    if (isBlocked()) {
+      setIsBlockedRunWarningOpen(true);
+      return;
+    }
     setActionError("");
     setIsCreatingRun(true);
     try {
@@ -565,6 +592,7 @@ export const useTaskDetailModel = () => {
     const taskValue = task();
     if (
       !taskValue ||
+      isBlocked() ||
       !runId ||
       isAnyRunStarting() ||
       deletingRunId() === runId
@@ -625,6 +653,10 @@ export const useTaskDetailModel = () => {
     runsError,
     isLoadingRuns,
     isCreatingRun,
+    isBlockedRunWarningOpen,
+    isBlocked,
+    taskDependencyBadgeState,
+    blockingParentTasks,
     deletingRunId,
     startingRunId,
     isAnyRunStarting,
@@ -673,6 +705,7 @@ export const useTaskDetailModel = () => {
     setCreateDependencyDescription,
     setCreateDependencyImplementationGuide,
     setCreateDependencyStatus,
+    setIsBlockedRunWarningOpen,
     onOpenCreateDependencyModal,
     onCancelCreateDependency,
     onSubmitCreateDependency,

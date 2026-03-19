@@ -2,7 +2,10 @@ import { A } from "@solidjs/router";
 import { Show, createSignal, type Component } from "solid-js";
 import type { Project } from "../../../app/lib/projects";
 import type { Task } from "../../../app/lib/tasks";
-import { taskDisplayKey } from "../../projects/utils/projectDetail";
+import {
+  dependencyBadgeState,
+  taskDisplayKey,
+} from "../../projects/utils/projectDetail";
 import { taskPriorityLabel } from "../utils/board";
 
 type Props = {
@@ -16,6 +19,7 @@ type Props = {
 
 const BoardTaskCard: Component<Props> = (props) => {
   const [dragJustEnded, setDragJustEnded] = createSignal(false);
+  const dependencyState = () => dependencyBadgeState(props.task);
   const repositoryTag = () =>
     props.task.targetRepositoryName || props.task.targetRepositoryPath || "";
 
@@ -71,6 +75,17 @@ const BoardTaskCard: Component<Props> = (props) => {
             {(tag) => <p class="project-task-repo">{tag()}</p>}
           </Show>
           <p class="project-task-repo">{taskPriorityLabel(props.task)}</p>
+          <Show when={dependencyState() !== "none"}>
+            <span
+              class={
+                dependencyState() === "blocked"
+                  ? "project-task-blocked"
+                  : "project-task-ready"
+              }
+            >
+              {dependencyState() === "blocked" ? "Blocked" : "Ready"}
+            </span>
+          </Show>
         </div>
       </A>
     </li>
