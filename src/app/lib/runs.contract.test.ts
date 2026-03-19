@@ -581,6 +581,71 @@ describe("runs contract", () => {
     expect(rebase.message).toBe("Conflict detected");
   });
 
+  it("preserves backend disable_reason for blocked rebase envelopes", async () => {
+    invokeMock.mockResolvedValue({
+      state: "blocked",
+      status: {
+        state: "noop",
+        disable_reason: "Worktree must be clean before rebasing.",
+      },
+    });
+
+    const rebase = await rebaseRunWorktreeOntoSource("run-1");
+
+    expect(rebase).toEqual({
+      status: "failed",
+      message: "Worktree must be clean before rebasing.",
+      conflictSummary: undefined,
+      conflictFingerprint: undefined,
+    });
+  });
+
+  it("maps accepted and conflict action states from nested status envelope", async () => {
+    invokeMock.mockResolvedValueOnce({
+      status: {
+        state: "rebase-in-progress",
+        message: "Rebase started",
+      },
+    });
+    invokeMock.mockResolvedValueOnce({
+      status: {
+        state: "rebase_conflict",
+        message: "Rebase hit conflicts",
+      },
+    });
+
+    const accepted = await rebaseRunWorktreeOntoSource("run-1");
+    const conflict = await rebaseRunWorktreeOntoSource("run-1");
+
+    expect(accepted).toEqual({
+      status: "accepted",
+      message: "Rebase started",
+      conflictSummary: undefined,
+      conflictFingerprint: undefined,
+    });
+    expect(conflict).toEqual({
+      status: "conflict",
+      message: "Rebase hit conflicts",
+      conflictSummary: undefined,
+      conflictFingerprint: undefined,
+    });
+  });
+
+  it("keeps unknown action state fallback safe and informative", async () => {
+    invokeMock.mockResolvedValue({
+      status: {
+        state: "new_unhandled_state",
+      },
+    });
+
+    const merge = await mergeRunWorktreeIntoSource("run-1");
+
+    expect(merge.status).toBe("failed");
+    expect(merge.message).toBe(
+      "Rebase/merge backend state: new_unhandled_state.",
+    );
+  });
+
   it("invokes canonical rebase and merge git commands", async () => {
     invokeMock.mockResolvedValueOnce({
       status: "conflict",

@@ -451,6 +451,8 @@ type RunGitMergeStatusResponse = {
 type RunGitActionResponse = {
   status?: string;
   state?: string;
+  disable_reason?: string | null;
+  disableReason?: string | null;
   conflict?: {
     chat_prompt?: string | null;
     chatPrompt?: string | null;
@@ -819,20 +821,66 @@ const toRunGitActionResult = (
     wrapped && typeof wrapped === "object"
       ? ({ ...record, ...(wrapped as object) } as RunGitActionResponse)
       : (record as RunGitActionResponse);
-  const normalizedStatus =
+
+  const nestedStatusState =
+    record.status && typeof record.status === "object"
+      ? (toOptionalTrimmedString(
+          (record.status as { state?: unknown; status?: unknown }).state,
+        ) ??
+        toOptionalTrimmedString(
+          (record.status as { state?: unknown; status?: unknown }).status,
+        ))
+      : undefined;
+
+  const rawStatus =
     topLevelState ??
-    toOptionalTrimmedString(payload.status) ??
-    toOptionalTrimmedString(payload.state);
+    nestedStatusState ??
+    toOptionalTrimmedString(payload.state) ??
+    toOptionalTrimmedString(payload.status);
+
+  const normalizedStatus = rawStatus
+    ?.replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[\s-]+/g, "_")
+    .toLowerCase();
 
   const conflictMessage = toOptionalTrimmedString(
     pick(payload.conflict?.chat_prompt, payload.conflict?.chatPrompt),
   );
 
+  const message = toOptionalTrimmedString(
+    payload.message ??
+      pick(payload.disable_reason, payload.disableReason) ??
+      payload.reason ??
+      payload.error,
+  );
+
+  const knownActionStates = new Set([
+    "accepted",
+    "ok",
+    "rebasing",
+    "rebase_in_progress",
+    "rebase_succeeded",
+    "conflict",
+    "rebase_conflict",
+    "conflicted",
+    "merged",
+    "completed",
+    "completing",
+    "merging",
+    "merge_ready",
+    "merge_conflict",
+    "failed",
+    "noop",
+    "blocked",
+  ]);
+
   return {
-    status: normalizedStatus?.toLowerCase() ?? "failed",
-    message: toOptionalTrimmedString(
-      payload.message ?? payload.reason ?? payload.error,
-    ),
+    status: normalizedStatus ?? "failed",
+    message:
+      message ??
+      (normalizedStatus && !knownActionStates.has(normalizedStatus)
+        ? `Rebase/merge backend state: ${normalizedStatus}.`
+        : undefined),
     conflictSummary: toOptionalTrimmedString(
       pick(payload.conflict_summary, payload.conflictSummary) ??
         conflictMessage,

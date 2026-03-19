@@ -869,7 +869,11 @@ export const useRunDetailModel = () => {
         setGitLastActionMessage(result.message.trim());
       }
       if (result.status === "failed") {
-        setGitActionError(result.message?.trim() || "Rebase failed.");
+        setGitActionError(
+          result.message?.trim() ||
+            gitStatus()?.rebaseDisabledReason?.trim() ||
+            "Rebase failed.",
+        );
       }
       if (result.status === "conflict") {
         setGitActionError(result.message?.trim() || "Rebase has conflicts.");
