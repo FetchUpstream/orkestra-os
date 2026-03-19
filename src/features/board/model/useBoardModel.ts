@@ -58,6 +58,16 @@ export const useBoardModel = () => {
 
   const onProjectChange = async (projectId: string) => {
     setSelectedProjectId(projectId);
+    if (!projectId) {
+      setTasks([]);
+      return;
+    }
+    await loadTasks(projectId);
+  };
+
+  const refreshSelectedProjectTasks = async () => {
+    const projectId = selectedProjectId();
+    if (!projectId) return;
     await loadTasks(projectId);
   };
 
@@ -145,6 +155,7 @@ export const useBoardModel = () => {
     isTasksLoading,
     error,
     onProjectChange,
+    refreshSelectedProjectTasks,
     isTaskStatusUpdating,
     canTaskTransitionToStatus,
     moveTaskToStatus,

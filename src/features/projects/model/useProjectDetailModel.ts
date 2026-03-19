@@ -1,13 +1,8 @@
 import { useParams } from "@solidjs/router";
 import { createSignal, onMount } from "solid-js";
 import { getProject, type Project } from "../../../app/lib/projects";
-import {
-  createTask,
-  listProjectTasks,
-  type Task,
-  type TaskStatus,
-} from "../../../app/lib/tasks";
-import { getCreateTaskErrorMessage } from "../utils/projectDetail";
+import { listProjectTasks, type Task } from "../../../app/lib/tasks";
+import { useCreateTaskModalModel } from "./useCreateTaskModalModel";
 
 export const useProjectDetailModel = () => {
   const params = useParams();
@@ -16,16 +11,7 @@ export const useProjectDetailModel = () => {
   const [error, setError] = createSignal("");
   const [isLoading, setIsLoading] = createSignal(true);
   const [isTasksLoading, setIsTasksLoading] = createSignal(false);
-  const [isModalOpen, setIsModalOpen] = createSignal(false);
-  const [isSubmittingTask, setIsSubmittingTask] = createSignal(false);
   const [taskError, setTaskError] = createSignal("");
-  const [taskFormError, setTaskFormError] = createSignal("");
-  const [taskTitle, setTaskTitle] = createSignal("");
-  const [taskDescription, setTaskDescription] = createSignal("");
-  const [taskImplementationGuide, setTaskImplementationGuide] =
-    createSignal("");
-  const [taskStatus, setTaskStatus] = createSignal<TaskStatus>("todo");
-  const [targetRepositoryId, setTargetRepositoryId] = createSignal("");
 
   const loadTasks = async (projectId: string) => {
     setIsTasksLoading(true);
@@ -39,21 +25,14 @@ export const useProjectDetailModel = () => {
     }
   };
 
-  const resetTaskForm = () => {
-    setTaskTitle("");
-    setTaskDescription("");
-    setTaskImplementationGuide("");
-    setTaskStatus("todo");
-    setTaskFormError("");
-    const selectedProject = project();
-    const defaultRepository = selectedProject?.repositories.find(
-      (repo) => repo.is_default,
-    );
-    const fallbackRepository = selectedProject?.repositories[0];
-    setTargetRepositoryId(
-      defaultRepository?.id ?? fallbackRepository?.id ?? "",
-    );
-  };
+  const taskCreateModel = useCreateTaskModalModel({
+    project,
+    projectId: () => params.projectId,
+    onTaskCreated: async (projectId) => {
+      setTaskError("");
+      await loadTasks(projectId);
+    },
+  });
 
   onMount(async () => {
     if (!params.projectId) {
@@ -65,54 +44,14 @@ export const useProjectDetailModel = () => {
       const detail = await getProject(params.projectId);
       setProject(detail);
       setTaskError("");
+      taskCreateModel.resetTaskForm();
       await loadTasks(params.projectId);
-      const defaultRepository = detail.repositories.find(
-        (repo) => repo.is_default,
-      );
-      setTargetRepositoryId(
-        defaultRepository?.id ?? detail.repositories[0]?.id ?? "",
-      );
     } catch {
       setError("Failed to load project. Please try again.");
     } finally {
       setIsLoading(false);
     }
   });
-
-  const onCreateTask: (event: Event) => Promise<void> = async (event) => {
-    event.preventDefault();
-    const projectId = params.projectId;
-    if (!projectId) return;
-    if (!taskTitle().trim()) {
-      setTaskFormError("Title is required.");
-      return;
-    }
-    setTaskFormError("");
-    setIsSubmittingTask(true);
-    try {
-      await createTask({
-        projectId,
-        title: taskTitle().trim(),
-        description: taskDescription().trim() || undefined,
-        implementationGuide: taskImplementationGuide().trim() || undefined,
-        status: taskStatus(),
-        targetRepositoryId: targetRepositoryId() || undefined,
-      });
-      setIsModalOpen(false);
-      resetTaskForm();
-      setTaskError("");
-      await loadTasks(projectId);
-    } catch (createError) {
-      const backendMessage = getCreateTaskErrorMessage(createError);
-      setTaskFormError(
-        backendMessage
-          ? `Failed to create task. ${backendMessage}`
-          : "Failed to create task. Please try again.",
-      );
-    } finally {
-      setIsSubmittingTask(false);
-    }
-  };
 
   return {
     params,
@@ -121,22 +60,7 @@ export const useProjectDetailModel = () => {
     error,
     isLoading,
     isTasksLoading,
-    isModalOpen,
-    isSubmittingTask,
     taskError,
-    taskFormError,
-    taskTitle,
-    taskDescription,
-    taskImplementationGuide,
-    taskStatus,
-    targetRepositoryId,
-    setIsModalOpen,
-    setTaskTitle,
-    setTaskDescription,
-    setTaskImplementationGuide,
-    setTaskStatus,
-    setTargetRepositoryId,
-    resetTaskForm,
-    onCreateTask,
+    ...taskCreateModel,
   };
 };

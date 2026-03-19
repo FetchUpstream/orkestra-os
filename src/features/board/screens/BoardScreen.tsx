@@ -1,6 +1,8 @@
 import { For, Show, createSignal, type Component } from "solid-js";
 import { A } from "@solidjs/router";
 import PageHeader from "../../../components/layout/PageHeader";
+import CreateTaskModal from "../../projects/components/CreateTaskModal";
+import { useCreateTaskModalModel } from "../../projects/model/useCreateTaskModalModel";
 import BoardTaskCard from "../components/BoardTaskCard";
 import { useBoardModel } from "../model/useBoardModel";
 import { BOARD_COLUMNS } from "../utils/board";
@@ -38,6 +40,13 @@ const resolveDroppedTaskId = (
 
 const BoardScreen: Component = () => {
   const model = useBoardModel();
+  const taskCreateModel = useCreateTaskModalModel({
+    project: model.selectedProject,
+    projectId: model.selectedProjectId,
+    onTaskCreated: async () => {
+      await model.refreshSelectedProjectTasks();
+    },
+  });
   const [draggingTaskId, setDraggingTaskId] = createSignal<string | null>(null);
   const [activeDropStatus, setActiveDropStatus] =
     createSignal<TaskStatus | null>(null);
@@ -76,32 +85,46 @@ const BoardScreen: Component = () => {
       <PageHeader title="Board" />
 
       <section class="projects-panel" aria-label="Project selector">
-        <div class="projects-field" style={{ "max-width": "320px" }}>
-          <label
-            for="board-project"
-            id="board-project-selector"
-            class="field-label"
-          >
-            Project
-          </label>
-          <select
-            id="board-project"
-            value={model.selectedProjectId()}
-            onChange={(event) =>
-              void model.onProjectChange(event.currentTarget.value)
-            }
-            disabled={
-              model.isProjectsLoading() || model.projects().length === 0
-            }
-          >
-            <For each={model.projects()}>
-              {(project) => (
-                <option value={project.id}>
-                  {project.name} ({project.key})
-                </option>
-              )}
-            </For>
-          </select>
+        <div class="project-section-header">
+          <div class="projects-field" style={{ "max-width": "320px" }}>
+            <label
+              for="board-project"
+              id="board-project-selector"
+              class="field-label"
+            >
+              Project
+            </label>
+            <select
+              id="board-project"
+              value={model.selectedProjectId()}
+              onChange={(event) =>
+                void model.onProjectChange(event.currentTarget.value)
+              }
+              disabled={
+                model.isProjectsLoading() || model.projects().length === 0
+              }
+            >
+              <For each={model.projects()}>
+                {(project) => (
+                  <option value={project.id}>
+                    {project.name} ({project.key})
+                  </option>
+                )}
+              </For>
+            </select>
+          </div>
+          <Show when={(model.selectedProject()?.repositories.length ?? 0) > 0}>
+            <button
+              type="button"
+              class="projects-button-primary"
+              onClick={() => {
+                taskCreateModel.resetTaskForm();
+                taskCreateModel.setIsModalOpen(true);
+              }}
+            >
+              New task
+            </button>
+          </Show>
         </div>
       </section>
 
@@ -208,6 +231,25 @@ const BoardScreen: Component = () => {
           </For>
         </div>
       </Show>
+
+      <CreateTaskModal
+        isOpen={taskCreateModel.isModalOpen}
+        project={model.selectedProject}
+        taskTitle={taskCreateModel.taskTitle}
+        taskDescription={taskCreateModel.taskDescription}
+        taskImplementationGuide={taskCreateModel.taskImplementationGuide}
+        taskStatus={taskCreateModel.taskStatus}
+        targetRepositoryId={taskCreateModel.targetRepositoryId}
+        taskFormError={taskCreateModel.taskFormError}
+        isSubmittingTask={taskCreateModel.isSubmittingTask}
+        setIsModalOpen={taskCreateModel.setIsModalOpen}
+        setTaskTitle={taskCreateModel.setTaskTitle}
+        setTaskDescription={taskCreateModel.setTaskDescription}
+        setTaskImplementationGuide={taskCreateModel.setTaskImplementationGuide}
+        setTaskStatus={taskCreateModel.setTaskStatus}
+        setTargetRepositoryId={taskCreateModel.setTargetRepositoryId}
+        onCreateTask={taskCreateModel.onCreateTask}
+      />
     </>
   );
 };
