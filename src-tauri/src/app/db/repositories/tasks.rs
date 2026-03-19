@@ -95,7 +95,20 @@ impl TasksRepository {
                 t.description,
                 t.implementation_guide,
                 t.status,
-                (SELECT COUNT(*) FROM task_dependencies td WHERE td.child_task_id = t.id) AS blocked_by_count,
+                (
+                    SELECT COUNT(*)
+                    FROM task_dependencies td
+                    WHERE td.project_id = t.project_id
+                      AND td.child_task_id = t.id
+                ) AS blocked_by_count,
+                EXISTS(
+                    SELECT 1
+                    FROM task_dependencies td
+                    JOIN tasks parent ON parent.id = td.parent_task_id AND parent.project_id = td.project_id
+                    WHERE td.child_task_id = t.id
+                      AND td.project_id = t.project_id
+                      AND parent.status != 'done'
+                ) AS is_blocked,
                 r.name AS target_repository_name,
                 r.repo_path AS target_repository_path,
                 t.created_at,
@@ -116,6 +129,7 @@ impl TasksRepository {
                 let project_key: String = row.get("project_key");
                 let task_number: i64 = row.get("task_number");
                 let blocked_by_count: i64 = row.get("blocked_by_count");
+                let is_blocked: bool = row.get("is_blocked");
                 Task {
                     id: row.get("id"),
                     project_id: row.get("project_id"),
@@ -127,7 +141,7 @@ impl TasksRepository {
                     implementation_guide: row.get("implementation_guide"),
                     status: row.get("status"),
                     blocked_by_count,
-                    is_blocked: blocked_by_count > 0,
+                    is_blocked,
                     target_repository_name: row.get("target_repository_name"),
                     target_repository_path: row.get("target_repository_path"),
                     created_at: row.get("created_at"),
@@ -149,7 +163,20 @@ impl TasksRepository {
                 t.description,
                 t.implementation_guide,
                 t.status,
-                (SELECT COUNT(*) FROM task_dependencies td WHERE td.child_task_id = t.id) AS blocked_by_count,
+                (
+                    SELECT COUNT(*)
+                    FROM task_dependencies td
+                    WHERE td.project_id = t.project_id
+                      AND td.child_task_id = t.id
+                ) AS blocked_by_count,
+                EXISTS(
+                    SELECT 1
+                    FROM task_dependencies td
+                    JOIN tasks parent ON parent.id = td.parent_task_id AND parent.project_id = td.project_id
+                    WHERE td.child_task_id = t.id
+                      AND td.project_id = t.project_id
+                      AND parent.status != 'done'
+                ) AS is_blocked,
                 r.name AS target_repository_name,
                 r.repo_path AS target_repository_path,
                 t.created_at,
@@ -167,6 +194,7 @@ impl TasksRepository {
             let project_key: String = row.get("project_key");
             let task_number: i64 = row.get("task_number");
             let blocked_by_count: i64 = row.get("blocked_by_count");
+            let is_blocked: bool = row.get("is_blocked");
             Task {
                 id: row.get("id"),
                 project_id: row.get("project_id"),
@@ -178,7 +206,7 @@ impl TasksRepository {
                 implementation_guide: row.get("implementation_guide"),
                 status: row.get("status"),
                 blocked_by_count,
-                is_blocked: blocked_by_count > 0,
+                is_blocked,
                 target_repository_name: row.get("target_repository_name"),
                 target_repository_path: row.get("target_repository_path"),
                 created_at: row.get("created_at"),
@@ -451,5 +479,119 @@ impl TasksRepository {
         .await?;
 
         Ok(result.rows_affected() > 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::db::migrations::run_migrations;
+
+    async fn setup_repository() -> TasksRepository {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        TasksRepository::new(pool)
+    }
+
+    async fn seed_project_and_repository(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("project-1")
+        .bind("Project")
+        .bind("PRJ")
+        .bind(Option::<String>::None)
+        .bind("repo-1")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("repo-1")
+        .bind("project-1")
+        .bind("Main")
+        .bind("/repo/main")
+        .bind(1)
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_task(pool: &SqlitePool, id: &str, task_number: i64, status: &str) {
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind("project-1")
+        .bind("repo-1")
+        .bind(task_number)
+        .bind(format!("Task {}", task_number))
+        .bind(Option::<String>::None)
+        .bind(status)
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_dependency(pool: &SqlitePool, parent_task_id: &str, child_task_id: &str) {
+        sqlx::query(
+            "INSERT INTO task_dependencies (project_id, parent_task_id, child_task_id, created_at)
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind("project-1")
+        .bind(parent_task_id)
+        .bind(child_task_id)
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn done_parent_dependency_does_not_block_task_for_get_and_list() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_and_repository(&pool).await;
+        seed_task(&pool, "task-parent", 1, "done").await;
+        seed_task(&pool, "task-child", 2, "todo").await;
+        seed_dependency(&pool, "task-parent", "task-child").await;
+
+        let task = repository.get_task("task-child").await.unwrap().unwrap();
+        assert!(task.blocked_by_count > 0);
+        assert!(!task.is_blocked);
+
+        let tasks = repository.list_project_tasks("project-1").await.unwrap();
+        let listed = tasks.into_iter().find(|t| t.id == "task-child").unwrap();
+        assert!(listed.blocked_by_count > 0);
+        assert!(!listed.is_blocked);
+    }
+
+    #[tokio::test]
+    async fn non_done_parent_dependency_blocks_task_for_get_and_list() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_and_repository(&pool).await;
+        seed_task(&pool, "task-parent", 1, "doing").await;
+        seed_task(&pool, "task-child", 2, "todo").await;
+        seed_dependency(&pool, "task-parent", "task-child").await;
+
+        let task = repository.get_task("task-child").await.unwrap().unwrap();
+        assert_eq!(task.blocked_by_count, 1);
+        assert!(task.is_blocked);
+
+        let tasks = repository.list_project_tasks("project-1").await.unwrap();
+        let listed = tasks.into_iter().find(|t| t.id == "task-child").unwrap();
+        assert!(listed.blocked_by_count > 0);
+        assert!(listed.is_blocked);
     }
 }

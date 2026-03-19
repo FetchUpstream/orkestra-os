@@ -205,6 +205,20 @@ describe("useTaskDetailModel start run", () => {
       isBlocked: false,
       blockedByCount: 2,
     });
+    listTaskDependenciesMock.mockResolvedValue({
+      parents: [
+        {
+          id: "task-parent",
+          displayKey: "PRJ-1",
+          title: "Parent",
+          status: "doing",
+          targetRepositoryName: "Main",
+          targetRepositoryPath: "/repo/main",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      children: [],
+    });
 
     const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
       current: null,

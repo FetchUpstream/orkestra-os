@@ -136,6 +136,7 @@ export const useTaskDetailModel = () => {
   const isBlocked = createMemo(() => {
     const taskValue = task();
     if (!taskValue) return false;
+    if (taskValue.isBlocked != null) return taskValue.isBlocked;
     return isTaskBlocked(taskValue) || blockingParentTasks().length > 0;
   });
   const taskDependencyBadgeState = createMemo<DependencyBadgeState>(() => {
