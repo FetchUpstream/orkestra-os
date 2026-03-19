@@ -38,6 +38,7 @@ export const isTaskBlocked = (task: Task): boolean => task.isBlocked === true;
 
 export const dependencyBadgeState = (task: Task): DependencyBadgeState => {
   if (isTaskBlocked(task)) return "blocked";
+  if (task.status === "doing") return "none";
   if ((task.blockedByCount ?? 0) > 0) return "ready";
   return "none";
 };

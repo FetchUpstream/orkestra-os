@@ -522,6 +522,47 @@ describe("app routing and shell", () => {
     expect(screen.queryByText("Ready")).toBeNull();
   });
 
+  it("hides ready badge on in-progress board cards", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-1",
+            title: "In progress task",
+            status: "doing",
+            display_key: "ALP-4",
+            is_blocked: false,
+            blocked_by_count: 2,
+          },
+        ]);
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("link", { name: /In progress task/i }),
+      ).toBeTruthy();
+    });
+
+    expect(screen.queryByText("Blocked")).toBeNull();
+    expect(screen.queryByText("Ready")).toBeNull();
+  });
+
   it("keeps board functional when selected project detail fetch fails", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") {
