@@ -22,9 +22,14 @@ const normalizeStatus = (
   const normalized = status.trim().toLowerCase();
 
   if (
-    ["running", "in_progress", "in-progress", "started", "processing"].includes(
-      normalized,
-    )
+    [
+      "loading",
+      "running",
+      "in_progress",
+      "in-progress",
+      "started",
+      "processing",
+    ].includes(normalized)
   ) {
     return "running";
   }
@@ -76,7 +81,40 @@ const RunChatToolRail: Component<RunChatToolRailProps> = (props) => {
                     <span class="run-chat-tool-rail__line">{rowSummary}</span>
                     <Show when={item.status}>
                       <span class="run-chat-tool-rail__status">
-                        {item.status}
+                        <Show when={statusModifier === "running"}>
+                          <span
+                            class="run-chat-tool-rail__status-slot"
+                            aria-label={item.status}
+                          >
+                            <span
+                              class="run-chat-tool-rail__status-icon run-chat-tool-rail__status-icon--spinner"
+                              aria-hidden="true"
+                            />
+                            <span class="sr-only">{item.status}</span>
+                          </span>
+                        </Show>
+                        <Show when={statusModifier === "completed"}>
+                          <span
+                            class="run-chat-tool-rail__status-slot"
+                            aria-label={item.status}
+                          >
+                            <span
+                              class="run-chat-tool-rail__status-icon run-chat-tool-rail__status-icon--check"
+                              aria-hidden="true"
+                            >
+                              ✓
+                            </span>
+                            <span class="sr-only">{item.status}</span>
+                          </span>
+                        </Show>
+                        <Show
+                          when={
+                            statusModifier !== "running" &&
+                            statusModifier !== "completed"
+                          }
+                        >
+                          {item.status}
+                        </Show>
                       </span>
                     </Show>
                   </div>
