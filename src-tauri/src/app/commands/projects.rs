@@ -1,5 +1,5 @@
 use crate::app::projects::dto::{
-    CreateProjectRequest, ProjectDetailsDto, ProjectDto, UpdateProjectRequest,
+    CloneProjectRequest, CreateProjectRequest, ProjectDetailsDto, ProjectDto, UpdateProjectRequest,
 };
 use crate::app::state::AppState;
 use crate::app::{commands::context, commands::error_mapping::map_result};
@@ -36,4 +36,14 @@ pub async fn update_project(
 ) -> Result<ProjectDetailsDto, String> {
     let service = context::projects_service(&state);
     map_result(service.update_project(&id, input).await)
+}
+
+#[tauri::command]
+pub async fn clone_project(
+    state: tauri::State<'_, AppState>,
+    source_project_id: String,
+    input: CloneProjectRequest,
+) -> Result<ProjectDetailsDto, String> {
+    let service = context::projects_service(&state);
+    map_result(service.clone_project(&source_project_id, input).await)
 }

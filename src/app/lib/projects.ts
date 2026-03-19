@@ -29,6 +29,12 @@ export type CreateProjectInput = {
 
 export type UpdateProjectInput = CreateProjectInput;
 
+export type CloneProjectInput = {
+  name: string;
+  key: string;
+  repository_destination: string;
+};
+
 type ProjectDetailsResponse = {
   project: {
     id: string;
@@ -148,4 +154,26 @@ const normalizeProject = (response: ProjectResponse): Project => {
 export const getProject = async (id: string): Promise<Project> => {
   const response = await invoke<ProjectResponse>("get_project", { id });
   return normalizeProject(response);
+};
+
+export const cloneProject = async (
+  sourceProjectId: string,
+  input: CloneProjectInput,
+): Promise<Project> => {
+  const response = await invoke<ProjectDetailsResponse>("clone_project", {
+    sourceProjectId,
+    input,
+  });
+  return {
+    id: response.project.id,
+    name: response.project.name,
+    key: response.project.key,
+    description: response.project.description,
+    repositories: response.repositories.map((repository) => ({
+      id: repository.id,
+      path: repository.repo_path,
+      name: repository.name,
+      is_default: repository.is_default,
+    })),
+  };
 };

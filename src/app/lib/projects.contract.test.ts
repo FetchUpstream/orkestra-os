@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  cloneProject,
   createProject,
   getProject,
   type CreateProjectInput,
@@ -120,5 +121,34 @@ describe("projects contract", () => {
         },
       ],
     } satisfies Project);
+  });
+
+  it("sends clone_project payload with source project id", async () => {
+    invokeMock.mockResolvedValue({
+      project: { id: "project-copy", name: "Orkestra - Copy", key: "ORC" },
+      repositories: [
+        {
+          id: "repo-copy",
+          name: "Main",
+          repo_path: "/repo/copy",
+          is_default: true,
+        },
+      ],
+    });
+
+    await cloneProject("project-1", {
+      name: "Orkestra - Copy",
+      key: "ORC",
+      repository_destination: "/repo/copy",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("clone_project", {
+      sourceProjectId: "project-1",
+      input: {
+        name: "Orkestra - Copy",
+        key: "ORC",
+        repository_destination: "/repo/copy",
+      },
+    });
   });
 });

@@ -436,6 +436,13 @@ textarea::placeholder {
   flex-shrink: 0;
 }
 
+.projects-open-cue-button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+}
+
 .projects-list-item:hover .projects-open-cue {
   background: var(--accent-subtle);
 }

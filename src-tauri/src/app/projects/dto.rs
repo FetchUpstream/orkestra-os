@@ -28,6 +28,13 @@ pub struct UpdateProjectRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CloneProjectRequest {
+    pub name: String,
+    pub key: String,
+    pub repository_destination: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateProjectRepositoryRequest {
     pub id: Option<String>,
     pub name: String,

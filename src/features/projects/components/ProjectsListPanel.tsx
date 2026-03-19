@@ -7,6 +7,7 @@ type Props = {
   activeEditProjectId: () => string | null;
   isLoadingProjectForEdit: () => boolean;
   onEditProject: (projectId: string) => void;
+  onCloneProject: (project: Project) => void;
 };
 
 const EditIcon: Component = () => (
@@ -45,6 +46,14 @@ const ProjectsListPanel: Component<Props> = (props) => (
                   >
                     Open
                   </A>
+                  <button
+                    type="button"
+                    class="projects-open-cue projects-open-cue-button"
+                    aria-label={`Clone project ${project.name} (${project.key})`}
+                    onClick={() => props.onCloneProject(project)}
+                  >
+                    Clone
+                  </button>
                   <button
                     type="button"
                     class="projects-icon-action"

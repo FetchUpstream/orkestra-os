@@ -1,7 +1,8 @@
 use crate::app::db::repositories::projects::ProjectsRepository;
 use crate::app::errors::AppError;
 use crate::app::projects::dto::{
-    CreateProjectRequest, ProjectDetailsDto, ProjectDto, ProjectRepositoryDto, UpdateProjectRequest,
+    CloneProjectRequest, CreateProjectRequest, ProjectDetailsDto, ProjectDto, ProjectRepositoryDto,
+    UpdateProjectRequest,
 };
 use crate::app::projects::models::{NewProject, NewProjectRepository, UpsertProjectRepository};
 use chrono::Utc;
@@ -182,6 +183,61 @@ impl ProjectsService {
                 updated_at: updated.project.updated_at,
             },
             repositories: updated
+                .repositories
+                .into_iter()
+                .map(|repository| ProjectRepositoryDto {
+                    id: repository.id,
+                    project_id: repository.project_id,
+                    name: repository.name,
+                    repo_path: repository.repo_path,
+                    is_default: repository.is_default,
+                    created_at: repository.created_at,
+                })
+                .collect(),
+        })
+    }
+
+    pub async fn clone_project(
+        &self,
+        source_project_id: &str,
+        mut input: CloneProjectRequest,
+    ) -> Result<ProjectDetailsDto, AppError> {
+        input.key = input.key.trim().to_string();
+        self.validate_key(&input.key)?;
+
+        if input.repository_destination.trim().is_empty() {
+            return Err(AppError::validation("repository destination is required"));
+        }
+
+        if self.repository.key_exists(&input.key).await? {
+            return Err(AppError::validation("project key already exists"));
+        }
+
+        let now = Utc::now().to_rfc3339();
+        let cloned = self
+            .repository
+            .clone_project(
+                source_project_id,
+                &uuid::Uuid::new_v4().to_string(),
+                &input.name.trim().to_string(),
+                &input.key,
+                &input.repository_destination.trim().to_string(),
+                &now,
+            )
+            .await?
+            .ok_or_else(|| AppError::not_found("project not found"))?;
+
+        Ok(ProjectDetailsDto {
+            project: ProjectDto {
+                id: cloned.project.id,
+                key: cloned.project.key,
+                name: cloned.project.name,
+                description: cloned.project.description,
+                default_repo_id: cloned.project.default_repo_id,
+                created_at: cloned.project.created_at,
+                updated_at: cloned.project.updated_at,
+            },
+            repositories: cloned
                 .repositories
                 .into_iter()
                 .map(|repository| ProjectRepositoryDto {

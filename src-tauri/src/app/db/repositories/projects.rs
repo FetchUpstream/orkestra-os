@@ -3,7 +3,7 @@ use crate::app::projects::models::{
     NewProject, Project, ProjectDetails, ProjectRepository, UpsertProjectRepository,
 };
 use sqlx::{Row, SqlitePool};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
 pub struct ProjectsRepository {
@@ -312,5 +312,314 @@ impl ProjectsRepository {
         tx.commit().await?;
 
         self.get_project(project_id).await
+    }
+
+    pub async fn clone_project(
+        &self,
+        source_project_id: &str,
+        new_project_id: &str,
+        new_name: &str,
+        new_key: &str,
+        repository_destination: &str,
+        now: &str,
+    ) -> Result<Option<ProjectDetails>, AppError> {
+        let mut tx = self.pool.begin().await?;
+
+        let source_project_row =
+            sqlx::query("SELECT id, description FROM projects WHERE id = ? LIMIT 1")
+                .bind(source_project_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+
+        let Some(source_project_row) = source_project_row else {
+            tx.rollback().await?;
+            return Ok(None);
+        };
+
+        let source_description: Option<String> = source_project_row.get("description");
+
+        let source_repository_rows = sqlx::query(
+            "SELECT id, name, repo_path, is_default
+             FROM project_repositories
+             WHERE project_id = ?
+             ORDER BY created_at ASC",
+        )
+        .bind(source_project_id)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(new_project_id)
+        .bind(new_name)
+        .bind(new_key)
+        .bind(&source_description)
+        .bind(Option::<String>::None)
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+
+        let mut selected_default_repo_id: Option<String> = None;
+        let mut repository_id_map = HashMap::new();
+
+        for row in source_repository_rows {
+            let source_repository_id: String = row.get("id");
+            let source_name: String = row.get("name");
+            let source_repo_path: String = row.get("repo_path");
+            let source_is_default = row.get::<i64, _>("is_default") == 1;
+            let next_repository_id = uuid::Uuid::new_v4().to_string();
+            let next_repo_path = if source_is_default {
+                repository_destination.to_string()
+            } else {
+                source_repo_path
+            };
+
+            sqlx::query(
+                "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&next_repository_id)
+            .bind(new_project_id)
+            .bind(&source_name)
+            .bind(&next_repo_path)
+            .bind(if source_is_default { 1_i64 } else { 0_i64 })
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+
+            if source_is_default {
+                selected_default_repo_id = Some(next_repository_id.clone());
+            }
+
+            repository_id_map.insert(source_repository_id, next_repository_id);
+        }
+
+        sqlx::query("UPDATE projects SET default_repo_id = ?, updated_at = ? WHERE id = ?")
+            .bind(&selected_default_repo_id)
+            .bind(now)
+            .bind(new_project_id)
+            .execute(&mut *tx)
+            .await?;
+
+        let source_task_rows = sqlx::query(
+            "SELECT id, repository_id, task_number, title, description, implementation_guide, status
+             FROM tasks
+             WHERE project_id = ?
+             ORDER BY task_number ASC",
+        )
+        .bind(source_project_id)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        let mut task_id_map = HashMap::new();
+
+        for row in source_task_rows {
+            let source_task_id: String = row.get("id");
+            let source_repository_id: String = row.get("repository_id");
+            let Some(next_repository_id) = repository_id_map.get(&source_repository_id) else {
+                tx.rollback().await?;
+                return Err(AppError::validation(
+                    "source project repository mapping is invalid",
+                ));
+            };
+
+            let next_task_id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO tasks (
+                    id,
+                    project_id,
+                    repository_id,
+                    task_number,
+                    title,
+                    description,
+                    implementation_guide,
+                    status,
+                    created_at,
+                    updated_at
+                 )
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&next_task_id)
+            .bind(new_project_id)
+            .bind(next_repository_id)
+            .bind(row.get::<i64, _>("task_number"))
+            .bind(row.get::<String, _>("title"))
+            .bind(row.get::<Option<String>, _>("description"))
+            .bind(row.get::<Option<String>, _>("implementation_guide"))
+            .bind(row.get::<String, _>("status"))
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+
+            task_id_map.insert(source_task_id, next_task_id);
+        }
+
+        let source_dependency_rows = sqlx::query(
+            "SELECT parent_task_id, child_task_id
+             FROM task_dependencies
+             WHERE project_id = ?",
+        )
+        .bind(source_project_id)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        for row in source_dependency_rows {
+            let parent_task_id: String = row.get("parent_task_id");
+            let child_task_id: String = row.get("child_task_id");
+            let Some(next_parent_task_id) = task_id_map.get(&parent_task_id) else {
+                tx.rollback().await?;
+                return Err(AppError::validation(
+                    "source task dependency mapping is invalid",
+                ));
+            };
+            let Some(next_child_task_id) = task_id_map.get(&child_task_id) else {
+                tx.rollback().await?;
+                return Err(AppError::validation(
+                    "source task dependency mapping is invalid",
+                ));
+            };
+
+            sqlx::query(
+                "INSERT INTO task_dependencies (project_id, parent_task_id, child_task_id, created_at)
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(new_project_id)
+            .bind(next_parent_task_id)
+            .bind(next_child_task_id)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        self.get_project(new_project_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::db::migrations::run_migrations;
+
+    async fn setup_repository() -> ProjectsRepository {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        ProjectsRepository::new(pool)
+    }
+
+    #[tokio::test]
+    async fn clone_project_copies_tasks_and_dependencies() {
+        let repository = setup_repository().await;
+
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("source-project")
+        .bind("Source")
+        .bind("SRC")
+        .bind(Option::<String>::None)
+        .bind("source-repo")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("source-repo")
+        .bind("source-project")
+        .bind("Main")
+        .bind("/repo/source")
+        .bind(1)
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, implementation_guide, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("source-task-1")
+        .bind("source-project")
+        .bind("source-repo")
+        .bind(1)
+        .bind("First")
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind("todo")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("source-task-2")
+        .bind("source-project")
+        .bind("source-repo")
+        .bind(2)
+        .bind("Second")
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind("doing")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO task_dependencies (project_id, parent_task_id, child_task_id, created_at)
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind("source-project")
+        .bind("source-task-1")
+        .bind("source-task-2")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+
+        let cloned = repository
+            .clone_project(
+                "source-project",
+                "cloned-project",
+                "Source - Copy",
+                "CPY",
+                "/repo/destination",
+                "2024-01-02T00:00:00Z",
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(cloned.project.name, "Source - Copy");
+        assert_eq!(cloned.project.key, "CPY");
+        assert_eq!(cloned.repositories.len(), 1);
+        assert_eq!(cloned.repositories[0].repo_path, "/repo/destination");
+
+        let cloned_tasks = sqlx::query(
+            "SELECT id, task_number, title FROM tasks WHERE project_id = ? ORDER BY task_number ASC",
+        )
+        .bind("cloned-project")
+        .fetch_all(&repository.pool)
+        .await
+        .unwrap();
+        assert_eq!(cloned_tasks.len(), 2);
+        assert_eq!(cloned_tasks[0].get::<i64, _>("task_number"), 1);
+        assert_eq!(cloned_tasks[1].get::<i64, _>("task_number"), 2);
+
+        let cloned_dependency_count =
+            sqlx::query("SELECT COUNT(*) AS count FROM task_dependencies WHERE project_id = ?")
+                .bind("cloned-project")
+                .fetch_one(&repository.pool)
+                .await
+                .unwrap()
+                .get::<i64, _>("count");
+        assert_eq!(cloned_dependency_count, 1);
     }
 }

@@ -1,5 +1,6 @@
 import type { Component } from "solid-js";
 import PageHeader from "../../../components/layout/PageHeader";
+import CloneProjectModal from "../components/CloneProjectModal";
 import CreateProjectPanel from "../components/CreateProjectPanel";
 import ProjectsListPanel from "../components/ProjectsListPanel";
 import { useProjectsPageModel } from "../model/useProjectsPageModel";
@@ -16,6 +17,7 @@ const ProjectsScreen: Component = () => {
           activeEditProjectId={model.editingProjectId}
           isLoadingProjectForEdit={model.isLoadingProjectForEdit}
           onEditProject={model.onEditProject}
+          onCloneProject={model.onOpenCloneModal}
         />
         <CreateProjectPanel
           mode={model.mode}
@@ -39,6 +41,22 @@ const ProjectsScreen: Component = () => {
           onSubmit={model.onSubmit}
         />
       </div>
+      <CloneProjectModal
+        isOpen={model.isCloneModalOpen}
+        sourceProjectName={model.cloneSourceProjectName}
+        sourceProjectKey={model.cloneSourceProjectKey}
+        newProjectName={model.cloneProjectName}
+        projectKey={model.cloneProjectKey}
+        repositoryDestination={model.cloneRepositoryDestination}
+        projectKeyError={model.cloneProjectKeyError}
+        error={model.cloneError}
+        isSubmitting={model.isCloning}
+        setProjectKey={model.updateCloneProjectKey}
+        setRepositoryDestination={model.setCloneRepositoryDestination}
+        setTouched={model.setCloneTouched}
+        onClose={model.closeCloneModal}
+        onSubmit={model.onSubmitClone}
+      />
     </>
   );
 };

@@ -227,6 +227,24 @@ describe("app routing and shell", () => {
           ],
         });
       }
+      if (command === "clone_project") {
+        return Promise.resolve({
+          project: {
+            id: "p-3",
+            name: "Alpha - Copy",
+            key: "ACP",
+            description: null,
+          },
+          repositories: [
+            {
+              id: "r-3",
+              name: "Main",
+              repo_path: "/repo/alpha-copy",
+              is_default: true,
+            },
+          ],
+        });
+      }
       return Promise.resolve(null);
     });
   });
@@ -3485,6 +3503,46 @@ describe("app routing and shell", () => {
       expect(
         screen.queryByText("database error: sqlx query failed"),
       ).toBeNull();
+    });
+  });
+
+  it("opens clone modal and clones a project", async () => {
+    renderAt("/projects");
+
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /Clone project Alpha/i }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: "Clone project" }),
+      ).toBeTruthy();
+      expect(screen.getByText(/New project name:/i)).toBeTruthy();
+    });
+
+    const cloneDialog = screen.getByRole("dialog", { name: "Clone project" });
+    const cloneInputs = within(cloneDialog).getAllByRole("textbox");
+
+    await fireEvent.input(cloneInputs[0], {
+      target: { value: "ACP" },
+    });
+    await fireEvent.input(cloneInputs[1], {
+      target: { value: "/repo/alpha-copy" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Clone project" }),
+    );
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("clone_project", {
+        sourceProjectId: "p-1",
+        input: {
+          name: "Alpha - Copy",
+          key: "ACP",
+          repository_destination: "/repo/alpha-copy",
+        },
+      });
+      expect(window.location.pathname).toBe("/projects/p-3");
     });
   });
 
