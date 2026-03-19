@@ -461,7 +461,7 @@ impl RunsOpenCodeService {
         let client = create_opencode_client(Some(OpencodeClientConfig {
             base_url: server.url.clone(),
             directory: Some(worktree_path.to_string_lossy().to_string()),
-            timeout: Duration::from_secs(300),
+            timeout: Duration::from_secs(1800),
             ..Default::default()
         }))
         .map_err(|err| AppError::validation(format!("failed to create OpenCode client: {err}")))?;
