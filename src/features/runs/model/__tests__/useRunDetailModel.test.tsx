@@ -44,6 +44,7 @@ const {
 
 vi.mock("@solidjs/router", () => ({
   useNavigate: () => navigateMock,
+  useLocation: () => ({ search: "" }),
   useParams: () => ({
     get runId() {
       return routeState.runId;
@@ -228,6 +229,55 @@ describe("useRunDetailModel startup ownership", () => {
     );
   });
 
+  it("treats mergeable rebase backend state as non-error guidance", async () => {
+    rebaseRunWorktreeOntoSourceMock.mockResolvedValueOnce({
+      status: "failed",
+      message: "Rebase/merge backend state: mergeable.",
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    await modelRef!.git.rebaseWorktreeOntoSource();
+
+    expect(modelRef!.git.actionError()).toBe("");
+    expect(modelRef!.git.lastActionMessage()).toBe(
+      "Rebase/merge backend state: mergeable.",
+    );
+  });
+
+  it("keeps real failed rebase messages as action errors", async () => {
+    rebaseRunWorktreeOntoSourceMock.mockResolvedValueOnce({
+      status: "failed",
+      message:
+        "Rebase failed after merged checks completed with unresolved conflicts.",
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    await modelRef!.git.rebaseWorktreeOntoSource();
+
+    expect(modelRef!.git.actionError()).toBe(
+      "Rebase failed after merged checks completed with unresolved conflicts.",
+    );
+    expect(modelRef!.git.lastActionMessage()).toBe("");
+  });
+
   it("falls back to generic message when merge throw has no message", async () => {
     mergeRunWorktreeIntoSourceMock.mockRejectedValueOnce({});
 
@@ -245,6 +295,30 @@ describe("useRunDetailModel startup ownership", () => {
 
     expect(modelRef!.git.actionError()).toBe(
       "Failed to merge worktree branch.",
+    );
+  });
+
+  it("keeps failed merge errors in actionError only", async () => {
+    mergeRunWorktreeIntoSourceMock.mockResolvedValueOnce({
+      status: "failed",
+      message: "Merge failed due to non-fast-forward update.",
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    await modelRef!.git.mergeWorktreeIntoSource();
+
+    expect(modelRef!.git.lastActionMessage()).toBe("");
+    expect(modelRef!.git.actionError()).toBe(
+      "Merge failed due to non-fast-forward update.",
     );
   });
 

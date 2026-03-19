@@ -3,7 +3,8 @@ import { createSignal } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import NewRunDetailScreen from "./NewRunDetailScreen";
 
-const submitPromptMock = vi.fn<(value: string) => Promise<boolean>>();
+const submitPromptMock =
+  vi.fn<(value: string, options?: unknown) => Promise<boolean>>();
 const modelFactoryMock = vi.fn();
 
 vi.mock("../../../components/ui/BackIconLink", () => ({
@@ -81,6 +82,8 @@ const createModelStub = (options?: {
     event?: string;
     data?: unknown;
   }>;
+  gitActionError?: string;
+  gitLastActionMessage?: string;
 }) => {
   const [diffPaths, setDiffPaths] = createSignal(options?.diffPaths ?? []);
   const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(
@@ -139,8 +142,8 @@ const createModelStub = (options?: {
       }),
       isLoading: () => false,
       statusError: () => "",
-      actionError: () => "",
-      lastActionMessage: () => "",
+      actionError: () => options?.gitActionError ?? "",
+      lastActionMessage: () => options?.gitLastActionMessage ?? "",
       isRebasePending: () => false,
       isMergePending: () => false,
       refreshStatus,
@@ -173,9 +176,9 @@ const createModelStub = (options?: {
         })) ?? [],
       submitError: () => "",
       isSubmittingPrompt,
-      submitPrompt: async (value: string) => {
+      submitPrompt: async (value: string, options?: unknown) => {
         setIsSubmittingPrompt(true);
-        const accepted = await submitPromptMock(value);
+        const accepted = await submitPromptMock(value, options);
         setIsSubmittingPrompt(false);
         return accepted;
       },
@@ -246,10 +249,49 @@ describe("NewRunDetailScreen git actions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send to agent" }));
 
     await waitFor(() => {
-      expect(submitPromptMock).toHaveBeenCalledWith("commit these files");
+      expect(submitPromptMock).toHaveBeenCalledWith("commit these files", {
+        markCommitPending: true,
+      });
       expect(screen.queryByLabelText("Commit request message")).toBeNull();
       expect(screen.queryByText("Commit Changes")).toBeNull();
     });
+  });
+
+  it("shows committing changes while commit request is in flight", async () => {
+    let resolveSubmit: ((value: boolean) => void) | undefined;
+    submitPromptMock.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        gitStatus: {
+          isRebaseAllowed: true,
+          isMergeAllowed: true,
+          requiresRebase: false,
+          isWorktreeClean: false,
+        },
+      }),
+    );
+
+    render(() => <NewRunDetailScreen />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    fireEvent.click(await screen.findByText("Commit Changes"));
+
+    const textarea = await screen.findByLabelText("Commit request message");
+    fireEvent.input(textarea, { target: { value: "commit these files" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to agent" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Committing changes" }),
+      ).toBeTruthy();
+    });
+
+    resolveSubmit?.(true);
   });
 
   it("keeps git drawer open when commit modal submitPrompt fails", async () => {
@@ -276,7 +318,9 @@ describe("NewRunDetailScreen git actions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send to agent" }));
 
     await waitFor(() => {
-      expect(submitPromptMock).toHaveBeenCalledWith("commit these files");
+      expect(submitPromptMock).toHaveBeenCalledWith("commit these files", {
+        markCommitPending: true,
+      });
       expect(screen.getByLabelText("Commit request message")).toBeTruthy();
       expect(screen.getByText("Commit Changes")).toBeTruthy();
     });
@@ -376,6 +420,56 @@ describe("NewRunDetailScreen git actions", () => {
     await waitFor(() => {
       expect(model.git.refreshStatus).toHaveBeenCalledTimes(2);
       expect(model.refreshDiffFiles).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("renders backend state guidance as non-error text", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        gitStatus: {
+          isRebaseAllowed: true,
+          isMergeAllowed: true,
+          requiresRebase: false,
+          isWorktreeClean: false,
+        },
+        gitLastActionMessage: "Rebase/merge backend state: mergeable.",
+      }),
+    );
+
+    render(() => <NewRunDetailScreen />);
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+
+    await waitFor(() => {
+      const message = screen.getByText(
+        "Rebase/merge backend state: mergeable.",
+      );
+      expect(message.className).toContain("project-placeholder-text");
+      expect(message.className).not.toContain("projects-error");
+    });
+  });
+
+  it("renders real failed messages as error text even with merged/completed words", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        gitStatus: {
+          isRebaseAllowed: true,
+          isMergeAllowed: true,
+          requiresRebase: false,
+          isWorktreeClean: false,
+        },
+        gitActionError:
+          "Rebase failed after merged checks completed with unresolved conflicts.",
+      }),
+    );
+
+    render(() => <NewRunDetailScreen />);
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+
+    await waitFor(() => {
+      const message = screen.getByText(
+        "Rebase failed after merged checks completed with unresolved conflicts.",
+      );
+      expect(message.className).toContain("projects-error");
     });
   });
 

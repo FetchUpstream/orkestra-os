@@ -501,7 +501,9 @@ const NewRunDetailScreen: Component = () => {
       return;
     }
 
-    const accepted = await model.agent.submitPrompt(commitPromptDraft());
+    const accepted = await model.agent.submitPrompt(commitPromptDraft(), {
+      markCommitPending: true,
+    });
     if (accepted) {
       closeCommitModal();
       closeOverlay();
@@ -1134,7 +1136,9 @@ const NewRunDetailScreen: Component = () => {
                           commitPromptDraft().trim().length === 0
                         }
                       >
-                        {isCommitDisabled() ? "Sending..." : "Send to agent"}
+                        {isCommitDisabled()
+                          ? "Committing changes"
+                          : "Send to agent"}
                       </button>
                     </div>
                   </section>

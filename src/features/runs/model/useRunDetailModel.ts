@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from "@solidjs/router";
+import { useLocation, useNavigate, useParams } from "@solidjs/router";
 import { listen } from "@tauri-apps/api/event";
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
@@ -35,10 +35,12 @@ import {
   reduceOpenCodeEvent,
 } from "./agentReducer";
 import type { AgentStore, OpenCodeBusEvent } from "./agentTypes";
+import { setRunCommitPending } from "./commitUiState";
 
 export const useRunDetailModel = () => {
   const navigate = useNavigate();
   const params = useParams();
+  const location = useLocation();
   const [run, setRun] = createSignal<Run | null>(null);
   const [task, setTask] = createSignal<Task | null>(null);
   const [isDiffTabActive, setIsDiffTabActive] = createSignal(false);
@@ -250,6 +252,23 @@ export const useRunDetailModel = () => {
     }
 
     return "";
+  };
+
+  const isInformationalGitStateMessage = (value: string): boolean => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    const backendStateMatch = normalized.match(
+      /^rebase\/merge backend state:\s*([a-z0-9_-]+)\.?$/,
+    );
+    if (!backendStateMatch) {
+      return false;
+    }
+
+    const backendState = backendStateMatch[1];
+    return backendState === "mergeable";
   };
 
   const normalizeReadinessPhase = (
@@ -687,7 +706,21 @@ export const useRunDetailModel = () => {
     return `/tasks/${taskValue.id}${originSearch}`;
   });
 
+  const runDetailOrigin = createMemo(() => {
+    const searchParams = new URLSearchParams(location.search);
+    return searchParams.get("origin")?.trim().toLowerCase() || "";
+  });
+
   const backHref = createMemo(() => {
+    if (runDetailOrigin() === "board") {
+      const projectId =
+        task()?.projectId?.trim() || run()?.projectId?.trim() || "";
+      if (projectId) {
+        return `/board?projectId=${encodeURIComponent(projectId)}`;
+      }
+      return "/board";
+    }
+
     const taskValue = task();
     if (taskValue?.id) {
       if (taskValue.projectId) {
@@ -708,6 +741,9 @@ export const useRunDetailModel = () => {
   });
 
   const backLabel = createMemo(() => {
+    if (runDetailOrigin() === "board") {
+      return "board";
+    }
     return backHref() === "/projects" ? "projects" : "task";
   });
 
@@ -868,15 +904,19 @@ export const useRunDetailModel = () => {
         return;
       }
 
-      if (result.message?.trim()) {
-        setGitLastActionMessage(result.message.trim());
-      }
       if (result.status === "failed") {
-        setGitActionError(
-          result.message?.trim() ||
-            gitStatus()?.rebaseDisabledReason?.trim() ||
-            "Rebase failed.",
-        );
+        const failedMessage = result.message?.trim() || "";
+        if (isInformationalGitStateMessage(failedMessage)) {
+          setGitLastActionMessage(failedMessage);
+        } else {
+          setGitActionError(
+            failedMessage ||
+              gitStatus()?.rebaseDisabledReason?.trim() ||
+              "Rebase failed.",
+          );
+        }
+      } else if (result.message?.trim()) {
+        setGitLastActionMessage(result.message.trim());
       }
       if (result.status === "conflict") {
         setGitActionError(result.message?.trim() || "Rebase has conflicts.");
@@ -914,11 +954,15 @@ export const useRunDetailModel = () => {
         return;
       }
 
-      if (result.message?.trim()) {
-        setGitLastActionMessage(result.message.trim());
-      }
       if (result.status === "failed") {
-        setGitActionError(result.message?.trim() || "Merge failed.");
+        const failedMessage = result.message?.trim() || "";
+        if (isInformationalGitStateMessage(failedMessage)) {
+          setGitLastActionMessage(failedMessage);
+        } else {
+          setGitActionError(failedMessage || "Merge failed.");
+        }
+      } else if (result.message?.trim()) {
+        setGitLastActionMessage(result.message.trim());
       }
       if (result.status === "conflict") {
         setGitActionError(result.message?.trim() || "Merge has conflicts.");
@@ -1001,6 +1045,57 @@ export const useRunDetailModel = () => {
         }
       }
     })();
+  });
+
+  createEffect(() => {
+    const runId = params.runId?.trim() ?? "";
+    const setupState = run()?.setupState?.trim().toLowerCase() ?? "pending";
+    if (!runId || setupState !== "running") {
+      return;
+    }
+
+    let disposed = false;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let isRefreshInFlight = false;
+
+    const pollRunUntilSetupTerminal = async (): Promise<void> => {
+      if (disposed || params.runId !== runId || isRefreshInFlight) {
+        return;
+      }
+
+      isRefreshInFlight = true;
+      try {
+        await refreshRunDetails(runId);
+      } catch {
+        // Ignore transient polling failures and retry while setup is running.
+      } finally {
+        isRefreshInFlight = false;
+      }
+
+      if (disposed || params.runId !== runId) {
+        return;
+      }
+
+      const latestSetupState =
+        run()?.setupState?.trim().toLowerCase() ?? "pending";
+      if (latestSetupState !== "running") {
+        return;
+      }
+
+      pollTimer = setTimeout(() => {
+        void pollRunUntilSetupTerminal();
+      }, 1000);
+    };
+
+    void pollRunUntilSetupTerminal();
+
+    onCleanup(() => {
+      disposed = true;
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+    });
   });
 
   createEffect(() => {
@@ -1340,7 +1435,7 @@ export const useRunDetailModel = () => {
 
   const submitPrompt = async (
     text: string,
-    options?: { clientRequestId?: string },
+    options?: { clientRequestId?: string; markCommitPending?: boolean },
   ): Promise<boolean> => {
     const prompt = text.trim();
     if (!prompt) {
@@ -1356,6 +1451,9 @@ export const useRunDetailModel = () => {
     const requestVersion = activeAgentRequestVersion;
     const submitVersion = ++activePromptSubmitVersion;
     setIsSubmittingPrompt(true);
+    if (options?.markCommitPending) {
+      setRunCommitPending(runId, true);
+    }
 
     try {
       const response = await submitRunOpenCodePrompt({
@@ -1401,6 +1499,9 @@ export const useRunDetailModel = () => {
       );
       return false;
     } finally {
+      if (options?.markCommitPending) {
+        setRunCommitPending(runId, false);
+      }
       if (
         requestVersion === activeAgentRequestVersion &&
         submitVersion === activePromptSubmitVersion &&

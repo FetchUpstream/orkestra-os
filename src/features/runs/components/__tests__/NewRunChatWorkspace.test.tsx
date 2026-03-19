@@ -6,10 +6,11 @@ import NewRunChatWorkspace from "../NewRunChatWorkspace";
 const createModelStub = (
   runStatus: "running" | "completed",
   withPendingPermission = false,
+  runOverrides: Record<string, unknown> = {},
 ) => {
-  const [run] = createSignal({ status: runStatus });
+  const [run, setRun] = createSignal({ status: runStatus, ...runOverrides });
 
-  return {
+  const model = {
     run,
     agent: {
       readinessPhase: () => "ready",
@@ -40,11 +41,13 @@ const createModelStub = (
   } as unknown as ReturnType<
     typeof import("../../model/useRunDetailModel").useRunDetailModel
   >;
+
+  return { model, setRun };
 };
 
 describe("NewRunChatWorkspace", () => {
   it("disables composer for completed runs and keeps read-only copy visible", () => {
-    const model = createModelStub("completed");
+    const { model } = createModelStub("completed");
     render(() => <NewRunChatWorkspace model={model} />);
 
     const textbox = screen.getByLabelText("Message agent");
@@ -53,7 +56,7 @@ describe("NewRunChatWorkspace", () => {
   });
 
   it("renders blocking permission card and disables composer", () => {
-    const model = createModelStub("running", true);
+    const { model } = createModelStub("running", true);
     render(() => <NewRunChatWorkspace model={model} />);
 
     expect(screen.getByText("Permission required")).toBeTruthy();
@@ -68,5 +71,63 @@ describe("NewRunChatWorkspace", () => {
         "Prompt submission is blocked until this permission is answered.",
       ),
     ).toBeTruthy();
+  });
+
+  it("hides cleanup status when cleanup is pending", () => {
+    const { model } = createModelStub("running", false, {
+      cleanupState: "pending",
+    });
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.queryByText("Cleanup")).toBeNull();
+  });
+
+  it("shows cleanup status copy for running and succeeded states", () => {
+    const { model, setRun } = createModelStub("running", false, {
+      cleanupState: "running",
+    });
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByText("Cleanup")).toBeTruthy();
+    expect(screen.getByText("Running cleanup script...")).toBeTruthy();
+
+    setRun({ status: "running", cleanupState: "succeeded" });
+    expect(screen.getByText("Cleanup script completed.")).toBeTruthy();
+  });
+
+  it("prefers cleanup error detail and falls back to generic copy", () => {
+    const { model, setRun } = createModelStub("running", false, {
+      cleanupState: "failed",
+      cleanupErrorMessage: "Cleanup failed on lockfile permissions.",
+    });
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByText("Cleanup")).toBeTruthy();
+    expect(
+      screen.getByText("Cleanup failed on lockfile permissions."),
+    ).toBeTruthy();
+
+    setRun({
+      status: "running",
+      cleanupState: "failed",
+      cleanupErrorMessage: "   ",
+    });
+    expect(
+      screen.getByText(
+        "Cleanup script found issues. The agent has been asked to fix them.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("updates setup card state without remount", () => {
+    const { model, setRun } = createModelStub("running", false, {
+      setupState: "running",
+    });
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByText("Running setup script...")).toBeTruthy();
+
+    setRun({ status: "running", setupState: "succeeded" });
+    expect(screen.getByText("Setup script completed.")).toBeTruthy();
   });
 });

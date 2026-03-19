@@ -353,6 +353,42 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const hasPendingPermission = createMemo(
     () => pendingPermissionRequests().length > 0,
   );
+  const setupState = createMemo(() => {
+    const state = props.model.run()?.setupState?.trim().toLowerCase();
+    if (state === "running" || state === "succeeded" || state === "failed") {
+      return state;
+    }
+    return "pending";
+  });
+  const setupMessage = createMemo(() => {
+    if (setupState() === "running") return "Running setup script...";
+    if (setupState() === "succeeded") return "Setup script completed.";
+    if (setupState() === "failed") {
+      return (
+        props.model.run()?.setupErrorMessage?.trim() ||
+        "Setup script failed. Please fix it before you continue."
+      );
+    }
+    return "Setup script pending.";
+  });
+  const cleanupState = createMemo(() => {
+    const state = props.model.run()?.cleanupState?.trim().toLowerCase();
+    if (state === "running" || state === "succeeded" || state === "failed") {
+      return state;
+    }
+    return "pending";
+  });
+  const cleanupMessage = createMemo(() => {
+    if (cleanupState() === "running") return "Running cleanup script...";
+    if (cleanupState() === "succeeded") return "Cleanup script completed.";
+    if (cleanupState() === "failed") {
+      return (
+        props.model.run()?.cleanupErrorMessage?.trim() ||
+        "Cleanup script found issues. The agent has been asked to fix them."
+      );
+    }
+    return "Cleanup script pending.";
+  });
 
   const isNearBottom = (
     element: HTMLElement,
@@ -848,6 +884,24 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         >
           <Show when={props.model.agent.error().length > 0}>
             <p class="projects-error">{props.model.agent.error()}</p>
+          </Show>
+          <section
+            class="run-setup-status-box"
+            data-state={setupState()}
+            aria-live="polite"
+          >
+            <strong>Setup</strong>
+            <p>{setupMessage()}</p>
+          </section>
+          <Show when={cleanupState() !== "pending"}>
+            <section
+              class="run-cleanup-status-box"
+              data-state={cleanupState()}
+              aria-live="polite"
+            >
+              <strong>Cleanup</strong>
+              <p>{cleanupMessage()}</p>
+            </section>
           </Show>
           <Show when={props.model.agent.state() === "unsupported"}>
             <p class="project-placeholder-text">
