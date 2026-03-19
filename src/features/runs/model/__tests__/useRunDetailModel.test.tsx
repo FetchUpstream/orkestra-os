@@ -10,6 +10,7 @@ const {
   submitRunOpenCodePromptMock,
   getRunGitMergeStatusMock,
   rebaseRunWorktreeOntoSourceMock,
+  mergeRunWorktreeIntoSourceMock,
   getRunMock,
   getTaskMock,
 } = vi.hoisted(() => ({
@@ -20,6 +21,7 @@ const {
   submitRunOpenCodePromptMock: vi.fn(),
   getRunGitMergeStatusMock: vi.fn(),
   rebaseRunWorktreeOntoSourceMock: vi.fn(),
+  mergeRunWorktreeIntoSourceMock: vi.fn(),
   getRunMock: vi.fn(),
   getTaskMock: vi.fn(),
 }));
@@ -47,7 +49,7 @@ vi.mock("../../../../app/lib/runs", () => ({
   getRunDiffFile: vi.fn(),
   killRunTerminal: vi.fn(async () => undefined),
   listRunDiffFiles: vi.fn(async () => []),
-  mergeRunWorktreeIntoSource: vi.fn(async () => ({ status: "accepted" })),
+  mergeRunWorktreeIntoSource: mergeRunWorktreeIntoSourceMock,
   openRunTerminal: vi.fn(async () => ({
     sessionId: "terminal-1",
     generation: 1,
@@ -74,6 +76,7 @@ describe("useRunDetailModel startup ownership", () => {
     submitRunOpenCodePromptMock.mockReset();
     getRunGitMergeStatusMock.mockReset();
     rebaseRunWorktreeOntoSourceMock.mockReset();
+    mergeRunWorktreeIntoSourceMock.mockReset();
     getRunMock.mockReset();
     getTaskMock.mockReset();
 
@@ -94,6 +97,7 @@ describe("useRunDetailModel startup ownership", () => {
       requiresRebase: false,
     });
     rebaseRunWorktreeOntoSourceMock.mockResolvedValue({ status: "accepted" });
+    mergeRunWorktreeIntoSourceMock.mockResolvedValue({ status: "accepted" });
     unsubscribeRunOpenCodeEventsMock.mockResolvedValue(undefined);
     getRunMock.mockResolvedValue({
       id: "run-1",
@@ -173,5 +177,47 @@ describe("useRunDetailModel startup ownership", () => {
       prompt: "Resolve file conflicts in src/app.ts",
       clientRequestId: undefined,
     });
+  });
+
+  it("surfaces backend validation message when rebase throws", async () => {
+    rebaseRunWorktreeOntoSourceMock.mockRejectedValueOnce(
+      new Error("Worktree has uncommitted changes; commit or stash first."),
+    );
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    await modelRef!.git.rebaseWorktreeOntoSource();
+
+    expect(modelRef!.git.actionError()).toBe(
+      "Worktree has uncommitted changes; commit or stash first.",
+    );
+  });
+
+  it("falls back to generic message when merge throw has no message", async () => {
+    mergeRunWorktreeIntoSourceMock.mockRejectedValueOnce({});
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    await modelRef!.git.mergeWorktreeIntoSource();
+
+    expect(modelRef!.git.actionError()).toBe(
+      "Failed to merge worktree branch.",
+    );
   });
 });

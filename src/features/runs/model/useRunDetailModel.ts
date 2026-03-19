@@ -840,9 +840,11 @@ export const useRunDetailModel = () => {
         );
       }
       await refreshGitMergeStatus();
-    } catch {
+    } catch (rebaseError) {
       if (params.runId === runId) {
-        setGitActionError("Failed to rebase worktree branch.");
+        setGitActionError(
+          getErrorMessage(rebaseError) || "Failed to rebase worktree branch.",
+        );
       }
     } finally {
       if (params.runId === runId) {
@@ -884,9 +886,11 @@ export const useRunDetailModel = () => {
       if (result.status === "merged" || result.status === "completing") {
         await refreshRunDetails(runId);
       }
-    } catch {
+    } catch (mergeError) {
       if (params.runId === runId) {
-        setGitActionError("Failed to merge worktree branch.");
+        setGitActionError(
+          getErrorMessage(mergeError) || "Failed to merge worktree branch.",
+        );
       }
     } finally {
       if (params.runId === runId) {
