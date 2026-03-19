@@ -1,4 +1,4 @@
-import type { Component } from "solid-js";
+import { createEffect, onCleanup, type Component } from "solid-js";
 import PageHeader from "../../../components/layout/PageHeader";
 import CloneProjectModal from "../components/CloneProjectModal";
 import CreateProjectPanel from "../components/CreateProjectPanel";
@@ -7,6 +7,19 @@ import { useProjectsPageModel } from "../model/useProjectsPageModel";
 
 const ProjectsScreen: Component = () => {
   const model = useProjectsPageModel();
+
+  createEffect(() => {
+    if (!model.isCloneModalOpen()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || model.isCloning()) return;
+      event.preventDefault();
+      model.closeCloneModal();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => {
+      window.removeEventListener("keydown", onKeyDown);
+    });
+  });
 
   return (
     <>
@@ -49,6 +62,7 @@ const ProjectsScreen: Component = () => {
         projectKey={model.cloneProjectKey}
         repositoryDestination={model.cloneRepositoryDestination}
         projectKeyError={model.cloneProjectKeyError}
+        repositoryDestinationError={model.cloneRepositoryDestinationError}
         error={model.cloneError}
         isSubmitting={model.isCloning}
         setProjectKey={model.updateCloneProjectKey}

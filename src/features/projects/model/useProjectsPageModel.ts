@@ -65,6 +65,13 @@ export const useProjectsPageModel = () => {
     cloneProjectKey,
     cloneTouched,
   );
+  const cloneRepositoryDestinationError = createMemo(() => {
+    if (!cloneTouched().repositoryDestination) return "";
+    if (!cloneRepositoryDestination().trim()) {
+      return "Repository destination is required.";
+    }
+    return "";
+  });
 
   const hasInvalidDefaultRepo = createMemo(() => {
     const index = defaultRepoIndex();
@@ -336,6 +343,7 @@ export const useProjectsPageModel = () => {
     isCloning,
     projectKeyError,
     cloneProjectKeyError,
+    cloneRepositoryDestinationError,
     setDescription,
     setTouched,
     setCloneTouched,

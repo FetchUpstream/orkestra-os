@@ -348,6 +348,13 @@ impl ProjectsRepository {
         .fetch_all(&mut *tx)
         .await?;
 
+        if source_repository_rows.len() != 1 {
+            tx.rollback().await?;
+            return Err(AppError::validation(
+                "cloning requires exactly one source repository",
+            ));
+        }
+
         sqlx::query(
             "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -584,6 +591,53 @@ mod tests {
         .await
         .unwrap();
 
+        sqlx::query(
+            "INSERT INTO runs (
+                id,
+                task_id,
+                project_id,
+                target_repo_id,
+                status,
+                triggered_by,
+                created_at,
+                started_at,
+                finished_at,
+                summary,
+                error_message,
+                worktree_id,
+                agent_id,
+                source_branch,
+                opencode_session_id,
+                initial_prompt_sent_at,
+                initial_prompt_client_request_id,
+                initial_prompt_claimed_at,
+                initial_prompt_claim_request_id
+             )
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("source-run-1")
+        .bind("source-task-1")
+        .bind("source-project")
+        .bind(Option::<String>::None)
+        .bind("completed")
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+
         let cloned = repository
             .clone_project(
                 "source-project",
@@ -621,5 +675,67 @@ mod tests {
                 .unwrap()
                 .get::<i64, _>("count");
         assert_eq!(cloned_dependency_count, 1);
+
+        let source_run_count =
+            sqlx::query("SELECT COUNT(*) AS count FROM runs WHERE project_id = ?")
+                .bind("source-project")
+                .fetch_one(&repository.pool)
+                .await
+                .unwrap()
+                .get::<i64, _>("count");
+        assert_eq!(source_run_count, 1);
+
+        let cloned_run_count = sqlx::query("SELECT COUNT(*) AS count FROM runs WHERE project_id = ?")
+            .bind("cloned-project")
+            .fetch_one(&repository.pool)
+            .await
+            .unwrap()
+            .get::<i64, _>("count");
+        assert_eq!(cloned_run_count, 0);
+    }
+
+    #[tokio::test]
+    async fn clone_project_rejects_zero_repository_source() {
+        let repository = setup_repository().await;
+
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("source-project")
+        .bind("Source")
+        .bind("SRC")
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&repository.pool)
+        .await
+        .unwrap();
+
+        let result = repository
+            .clone_project(
+                "source-project",
+                "cloned-project",
+                "Source - Copy",
+                "CPY",
+                "/repo/destination",
+                "2024-01-02T00:00:00Z",
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "cloning requires exactly one source repository"
+        );
+
+        let cloned_project_exists = sqlx::query("SELECT 1 FROM projects WHERE id = ? LIMIT 1")
+            .bind("cloned-project")
+            .fetch_optional(&repository.pool)
+            .await
+            .unwrap()
+            .is_some();
+        assert!(!cloned_project_exists);
     }
 }
