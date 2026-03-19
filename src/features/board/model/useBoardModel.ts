@@ -15,10 +15,45 @@ import { canTransitionStatus } from "../../tasks/utils/taskDetail";
 import { groupTasksByStatus } from "../utils/board";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "running"]);
+const FINISHED_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 const activeRunLabelForTask = (displayKey?: string | null) => {
   const normalizedDisplayKey = displayKey?.trim();
   return normalizedDisplayKey || "Current run";
+};
+
+export type BoardTaskRunMiniCard = {
+  runId: string;
+  label: string;
+  state: "active" | "awaitingReview";
+};
+
+const resolveTaskRunMiniCard = (
+  task: Task,
+  runItems: Awaited<ReturnType<typeof listTaskRuns>>,
+): BoardTaskRunMiniCard | null => {
+  if (task.status === "done") return null;
+
+  const activeRun = runItems.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
+  if (activeRun) {
+    return {
+      runId: activeRun.id,
+      label: activeRunLabelForTask(activeRun.displayKey),
+      state: "active",
+    };
+  }
+
+  if (task.status !== "review") return null;
+
+  const finishedRun = runItems.find((run) =>
+    FINISHED_RUN_STATUSES.has(run.status),
+  );
+  if (!finishedRun) return null;
+  return {
+    runId: finishedRun.id,
+    label: activeRunLabelForTask(finishedRun.displayKey),
+    state: "awaitingReview",
+  };
 };
 
 export const useBoardModel = () => {
@@ -30,8 +65,8 @@ export const useBoardModel = () => {
   const [updatingTaskIds, setUpdatingTaskIds] = createSignal<string[]>([]);
   const [isProjectsLoading, setIsProjectsLoading] = createSignal(true);
   const [isTasksLoading, setIsTasksLoading] = createSignal(false);
-  const [taskActiveRunLabels, setTaskActiveRunLabels] = createSignal<
-    Record<string, string>
+  const [taskRunMiniCards, setTaskRunMiniCards] = createSignal<
+    Record<string, BoardTaskRunMiniCard>
   >({});
   const [error, setError] = createSignal("");
   let activeTasksRequestVersion = 0;
@@ -87,23 +122,18 @@ export const useBoardModel = () => {
       const nonDoneTasks = loadedTasks.filter((task) => task.status !== "done");
       if (nonDoneTasks.length === 0) {
         if (runRequestVersion === activeTaskRunsRequestVersion) {
-          setTaskActiveRunLabels({});
+          setTaskRunMiniCards({});
         }
         return;
       }
 
-      const taskActiveRunEntries = await Promise.all(
+      const taskRunMiniCardEntries = await Promise.all(
         nonDoneTasks.map(async (task) => {
           try {
             const runs = await listTaskRuns(task.id);
-            const activeRun = runs.find((run) =>
-              ACTIVE_RUN_STATUSES.has(run.status),
-            );
-            if (!activeRun) return null;
-            return [
-              task.id,
-              activeRunLabelForTask(activeRun.displayKey),
-            ] as const;
+            const miniCard = resolveTaskRunMiniCard(task, runs);
+            if (!miniCard) return null;
+            return [task.id, miniCard] as const;
           } catch {
             return null;
           }
@@ -118,9 +148,9 @@ export const useBoardModel = () => {
         return;
       }
 
-      setTaskActiveRunLabels(
+      setTaskRunMiniCards(
         Object.fromEntries(
-          taskActiveRunEntries.filter((entry) => entry !== null),
+          taskRunMiniCardEntries.filter((entry) => entry !== null),
         ),
       );
     } catch {
@@ -131,7 +161,7 @@ export const useBoardModel = () => {
         return;
       }
       setTasks([]);
-      setTaskActiveRunLabels({});
+      setTaskRunMiniCards({});
       setError("Failed to load project tasks. Please refresh.");
     } finally {
       if (requestVersion === activeTasksRequestVersion) {
@@ -147,7 +177,7 @@ export const useBoardModel = () => {
       activeTaskRunsRequestVersion += 1;
       setSelectedProjectDetail(null);
       setTasks([]);
-      setTaskActiveRunLabels({});
+      setTaskRunMiniCards({});
       return;
     }
     await Promise.allSettled([
@@ -193,6 +223,13 @@ export const useBoardModel = () => {
         task.id === taskId ? { ...task, status: targetStatus } : task,
       ),
     );
+    if (targetStatus === "done") {
+      setTaskRunMiniCards((current) => {
+        const next = { ...current };
+        delete next[taskId];
+        return next;
+      });
+    }
 
     try {
       const updatedTask = await setTaskStatus(taskId, {
@@ -204,6 +241,29 @@ export const useBoardModel = () => {
           task.id === taskId ? { ...task, ...updatedTask } : task,
         ),
       );
+      if (updatedTask.status === "done") {
+        setTaskRunMiniCards((current) => {
+          const next = { ...current };
+          delete next[taskId];
+          return next;
+        });
+      } else {
+        try {
+          const runs = await listTaskRuns(taskId);
+          const miniCard = resolveTaskRunMiniCard(updatedTask, runs);
+          setTaskRunMiniCards((current) => {
+            const next = { ...current };
+            if (!miniCard) {
+              delete next[taskId];
+            } else {
+              next[taskId] = miniCard;
+            }
+            return next;
+          });
+        } catch {
+          // Preserve current mini-card state when run refresh fails.
+        }
+      }
     } catch {
       setTasks((currentAfterFailure) =>
         currentAfterFailure.map((task) =>
@@ -227,7 +287,7 @@ export const useBoardModel = () => {
         setSelectedProjectId("");
         setSelectedProjectDetail(null);
         setTasks([]);
-        setTaskActiveRunLabels({});
+        setTaskRunMiniCards({});
         return;
       }
 
@@ -238,7 +298,7 @@ export const useBoardModel = () => {
       setSelectedProjectId("");
       setSelectedProjectDetail(null);
       setTasks([]);
-      setTaskActiveRunLabels({});
+      setTaskRunMiniCards({});
     } finally {
       setIsProjectsLoading(false);
     }
@@ -252,7 +312,7 @@ export const useBoardModel = () => {
     groupedTasks,
     isProjectsLoading,
     isTasksLoading,
-    taskActiveRunLabels,
+    taskRunMiniCards,
     error,
     onProjectChange,
     refreshSelectedProjectTasks,

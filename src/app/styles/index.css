@@ -1061,10 +1061,21 @@ textarea::placeholder {
 }
 
 .board-column {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin-bottom: 0;
   transition:
     box-shadow 0.18s ease,
     border-color 0.18s ease,
     background-color 0.18s ease;
+}
+
+.board-columns {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: stretch;
 }
 
 .board-column--drop-active {
@@ -1082,11 +1093,27 @@ textarea::placeholder {
 }
 
 .board-task-run-details {
-  margin-top: 4px;
+  margin: 4px 16px 14px;
   padding: 6px 8px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--surface);
+}
+
+.board-task-run-details-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.board-task-run-details-link:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.board-task-run-details-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .board-task-run-details-title {
@@ -1100,6 +1127,18 @@ textarea::placeholder {
 
 .board-task-run-details-row {
   font-size: 0.78rem;
+}
+
+.board-task-run-check {
+  width: 0.8rem;
+  height: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--success);
+  font-size: 0.8rem;
+  line-height: 1;
+  flex: 0 0 auto;
 }
 
 .project-task-title {
@@ -4307,6 +4346,10 @@ textarea::placeholder {
 }
 
 @media (max-width: 640px) {
+  .board-columns {
+    grid-template-columns: 1fr;
+  }
+
   .projects-repo-row {
     grid-template-columns: 1fr;
     gap: 12px;

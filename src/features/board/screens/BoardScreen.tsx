@@ -143,14 +143,7 @@ const BoardScreen: Component = () => {
           </p>
         }
       >
-        <div
-          style={{
-            display: "grid",
-            gap: "12px",
-            "grid-template-columns": "repeat(4, minmax(0, 1fr))",
-            "align-items": "start",
-          }}
-        >
+        <div class="board-columns">
           <For each={BOARD_COLUMNS}>
             {(column) => (
               <section
@@ -216,9 +209,7 @@ const BoardScreen: Component = () => {
                           <BoardTaskCard
                             task={task}
                             project={model.selectedProject()}
-                            activeRunLabel={
-                              model.taskActiveRunLabels()[task.id]
-                            }
+                            runMiniCard={model.taskRunMiniCards()[task.id]}
                             isDragging={draggingTaskId() === task.id}
                             isStatusUpdating={model.isTaskStatusUpdating(
                               task.id,

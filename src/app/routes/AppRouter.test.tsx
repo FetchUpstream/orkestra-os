@@ -14,6 +14,10 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
 
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn().mockResolvedValue(() => {}),
+}));
+
 vi.mock("../../components/ui/TaskMarkdownEditor", () => ({
   default: (props: {
     value: string;
@@ -632,6 +636,121 @@ describe("app routing and shell", () => {
       expect(
         document.querySelector(".board-task-run-details .run-inline-spinner"),
       ).toBeTruthy();
+      const runLink = document.querySelector(
+        '.board-task-run-details-link[href="/runs/run-1"]',
+      ) as HTMLAnchorElement | null;
+      expect(runLink).toBeTruthy();
+    });
+  });
+
+  it("navigates to run detail when clicking board mini-card", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-1",
+            title: "Run in progress",
+            status: "doing",
+            display_key: "ALP-20",
+          },
+        ]);
+      }
+      if (command === "list_task_runs") {
+        const taskId = (args as { taskId?: string } | undefined)?.taskId;
+        if (taskId === "task-1") {
+          return Promise.resolve([
+            {
+              id: "run-1",
+              task_id: "task-1",
+              project_id: "p-1",
+              status: "running",
+              display_key: "RUN-20",
+              triggered_by: "user",
+              created_at: "2026-01-02T00:00:00.000Z",
+            },
+          ]);
+        }
+      }
+      return Promise.resolve([]);
+    });
+
+    renderAt("/board");
+
+    const runLink = (await screen.findByRole("link", {
+      name: "Run Details",
+    })) as HTMLAnchorElement;
+    expect(runLink.getAttribute("href")).toBe("/runs/run-1");
+
+    await fireEvent.click(runLink);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/runs/run-1");
+    });
+  });
+
+  it("shows awaiting review mini-card for review tasks with finished run", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-review",
+            title: "Review pending",
+            status: "review",
+            display_key: "ALP-22",
+          },
+        ]);
+      }
+      if (command === "list_task_runs") {
+        const taskId = (args as { taskId?: string } | undefined)?.taskId;
+        if (taskId === "task-review") {
+          return Promise.resolve([
+            {
+              id: "run-review-1",
+              task_id: "task-review",
+              project_id: "p-1",
+              status: "completed",
+              display_key: "RUN-22",
+              triggered_by: "user",
+              created_at: "2026-01-02T00:00:00.000Z",
+            },
+          ]);
+        }
+      }
+      return Promise.resolve([]);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByText("Awaiting review")).toBeTruthy();
+      expect(
+        document.querySelector(".board-task-run-details .run-inline-spinner"),
+      ).toBeNull();
+      expect(document.querySelector(".board-task-run-check")).toBeTruthy();
     });
   });
 
@@ -750,6 +869,19 @@ describe("app routing and shell", () => {
         ]);
       }
       if (command === "set_task_status") return statusUpdatePromise;
+      if (command === "list_task_runs") {
+        return Promise.resolve([
+          {
+            id: "run-task-1",
+            task_id: "task-1",
+            project_id: "p-1",
+            status: "running",
+            display_key: "RUN-1",
+            triggered_by: "user",
+            created_at: "2026-01-02T00:00:00.000Z",
+          },
+        ]);
+      }
       return Promise.resolve(null);
     });
 
@@ -789,10 +921,13 @@ describe("app routing and shell", () => {
     expect(
       screen.getByRole("heading", { name: "In Progress (1)" }),
     ).toBeTruthy();
-    expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
-      id: "task-1",
-      input: { status: "doing" },
-    });
+    expect(invokeMock).toHaveBeenCalledWith(
+      "set_task_status",
+      expect.objectContaining({
+        id: "task-1",
+        input: expect.objectContaining({ status: "doing" }),
+      }),
+    );
 
     resolveStatusUpdate?.({
       id: "task-1",
@@ -805,6 +940,8 @@ describe("app routing and shell", () => {
       expect(
         screen.getByRole("heading", { name: "In Progress (1)" }),
       ).toBeTruthy();
+      expect(screen.getByText("Run Details")).toBeTruthy();
+      expect(screen.getByText("RUN-1")).toBeTruthy();
     });
   });
 
