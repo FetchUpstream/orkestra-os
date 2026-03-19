@@ -65,7 +65,7 @@ impl ProjectsRepository {
         };
 
         let repository_rows = sqlx::query(
-            "SELECT id, project_id, name, repo_path, is_default, created_at
+            "SELECT id, project_id, name, repo_path, is_default, setup_script, cleanup_script, created_at
             FROM project_repositories
             WHERE project_id = ?
             ORDER BY created_at ASC",
@@ -82,6 +82,8 @@ impl ProjectsRepository {
                 name: row.get("name"),
                 repo_path: row.get("repo_path"),
                 is_default: row.get::<i64, _>("is_default") == 1,
+                setup_script: row.get("setup_script"),
+                cleanup_script: row.get("cleanup_script"),
                 created_at: row.get("created_at"),
             })
             .collect();
@@ -136,14 +138,16 @@ impl ProjectsRepository {
         for repository in &input.repositories {
             let repository_id = uuid::Uuid::new_v4().to_string();
             sqlx::query(
-                "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, setup_script, cleanup_script, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&repository_id)
             .bind(&input.id)
             .bind(&repository.name)
             .bind(&repository.repo_path)
             .bind(if repository.is_default { 1_i64 } else { 0_i64 })
+            .bind(&repository.setup_script)
+            .bind(&repository.cleanup_script)
             .bind(&input.created_at)
             .execute(&mut *tx)
             .await?;
@@ -158,6 +162,8 @@ impl ProjectsRepository {
                 name: repository.name.clone(),
                 repo_path: repository.repo_path.clone(),
                 is_default: repository.is_default,
+                setup_script: repository.setup_script.clone(),
+                cleanup_script: repository.cleanup_script.clone(),
                 created_at: input.created_at.clone(),
             });
         }
@@ -219,7 +225,7 @@ impl ProjectsRepository {
         .await?;
 
         let existing_repository_rows = sqlx::query(
-            "SELECT id, name, repo_path, is_default, created_at
+            "SELECT id, name, repo_path, is_default, setup_script, cleanup_script, created_at
             FROM project_repositories
             WHERE project_id = ?",
         )
@@ -245,26 +251,30 @@ impl ProjectsRepository {
             if is_existing {
                 sqlx::query(
                     "UPDATE project_repositories
-                    SET name = ?, repo_path = ?, is_default = ?
+                    SET name = ?, repo_path = ?, is_default = ?, setup_script = ?, cleanup_script = ?
                     WHERE id = ? AND project_id = ?",
                 )
                 .bind(&repository.name)
                 .bind(&repository.repo_path)
                 .bind(if repository.is_default { 1_i64 } else { 0_i64 })
+                .bind(&repository.setup_script)
+                .bind(&repository.cleanup_script)
                 .bind(&repository_id)
                 .bind(project_id)
                 .execute(&mut *tx)
                 .await?;
             } else {
                 sqlx::query(
-                    "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, setup_script, cleanup_script, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(&repository_id)
                 .bind(project_id)
                 .bind(&repository.name)
                 .bind(&repository.repo_path)
                 .bind(if repository.is_default { 1_i64 } else { 0_i64 })
+                .bind(&repository.setup_script)
+                .bind(&repository.cleanup_script)
                 .bind(updated_at)
                 .execute(&mut *tx)
                 .await?;
@@ -339,7 +349,7 @@ impl ProjectsRepository {
         let source_description: Option<String> = source_project_row.get("description");
 
         let source_repository_rows = sqlx::query(
-            "SELECT id, name, repo_path, is_default
+            "SELECT id, name, repo_path, is_default, setup_script, cleanup_script
              FROM project_repositories
              WHERE project_id = ?
              ORDER BY created_at ASC",
@@ -377,6 +387,8 @@ impl ProjectsRepository {
             let source_name: String = row.get("name");
             let source_repo_path: String = row.get("repo_path");
             let source_is_default = row.get::<i64, _>("is_default") == 1;
+            let source_setup_script: Option<String> = row.get("setup_script");
+            let source_cleanup_script: Option<String> = row.get("cleanup_script");
             let next_repository_id = uuid::Uuid::new_v4().to_string();
             let next_repo_path = if source_is_default {
                 repository_destination.to_string()
@@ -385,14 +397,16 @@ impl ProjectsRepository {
             };
 
             sqlx::query(
-                "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, setup_script, cleanup_script, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&next_repository_id)
             .bind(new_project_id)
             .bind(&source_name)
             .bind(&next_repo_path)
             .bind(if source_is_default { 1_i64 } else { 0_i64 })
+            .bind(&source_setup_script)
+            .bind(&source_cleanup_script)
             .bind(now)
             .execute(&mut *tx)
             .await?;

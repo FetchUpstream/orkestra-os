@@ -59,6 +59,8 @@ impl ProjectsService {
                     name: repository.name,
                     repo_path: repository.repo_path,
                     is_default: repository.is_default,
+                    setup_script: repository.setup_script,
+                    cleanup_script: repository.cleanup_script,
                     created_at: repository.created_at,
                 })
                 .collect(),
@@ -95,6 +97,14 @@ impl ProjectsService {
                     name: repository.name.trim().to_string(),
                     repo_path: repository.repo_path.trim().to_string(),
                     is_default: repository.is_default,
+                    setup_script: repository
+                        .setup_script
+                        .map(|script| script.trim().to_string())
+                        .filter(|script| !script.is_empty()),
+                    cleanup_script: repository
+                        .cleanup_script
+                        .map(|script| script.trim().to_string())
+                        .filter(|script| !script.is_empty()),
                 })
                 .collect(),
         };
@@ -120,6 +130,8 @@ impl ProjectsService {
                     name: repository.name,
                     repo_path: repository.repo_path,
                     is_default: repository.is_default,
+                    setup_script: repository.setup_script,
+                    cleanup_script: repository.cleanup_script,
                     created_at: repository.created_at,
                 })
                 .collect(),
@@ -156,6 +168,14 @@ impl ProjectsService {
                 name: repository.name.trim().to_string(),
                 repo_path: repository.repo_path.trim().to_string(),
                 is_default: repository.is_default,
+                setup_script: repository
+                    .setup_script
+                    .map(|script| script.trim().to_string())
+                    .filter(|script| !script.is_empty()),
+                cleanup_script: repository
+                    .cleanup_script
+                    .map(|script| script.trim().to_string())
+                    .filter(|script| !script.is_empty()),
             })
             .collect::<Vec<_>>();
 
@@ -191,6 +211,8 @@ impl ProjectsService {
                     name: repository.name,
                     repo_path: repository.repo_path,
                     is_default: repository.is_default,
+                    setup_script: repository.setup_script,
+                    cleanup_script: repository.cleanup_script,
                     created_at: repository.created_at,
                 })
                 .collect(),
@@ -264,6 +286,8 @@ impl ProjectsService {
                     name: repository.name,
                     repo_path: repository.repo_path,
                     is_default: repository.is_default,
+                    setup_script: repository.setup_script,
+                    cleanup_script: repository.cleanup_script,
                     created_at: repository.created_at,
                 })
                 .collect(),
@@ -341,12 +365,16 @@ mod tests {
                         name: "Main".to_string(),
                         repo_path: "/repo/main".to_string(),
                         is_default: true,
+                        setup_script: None,
+                        cleanup_script: None,
                     },
                     crate::app::projects::dto::CreateProjectRepositoryRequest {
                         id: None,
                         name: "Docs".to_string(),
                         repo_path: "/repo/docs".to_string(),
                         is_default: false,
+                        setup_script: None,
+                        cleanup_script: None,
                     },
                 ],
             })
@@ -385,6 +413,8 @@ mod tests {
                     name: "Main".to_string(),
                     repo_path: "/repo/main".to_string(),
                     is_default: true,
+                    setup_script: None,
+                    cleanup_script: None,
                 }],
             })
             .await
@@ -436,6 +466,8 @@ mod tests {
                     name: "Main".to_string(),
                     repo_path: "/repo/main".to_string(),
                     is_default: true,
+                    setup_script: None,
+                    cleanup_script: None,
                 }],
             })
             .await
@@ -456,6 +488,38 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "project name is required"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_project_persists_repository_setup_and_cleanup_scripts() {
+        let service = setup_service().await;
+
+        let created = service
+            .create_project(CreateProjectRequest {
+                name: "Source".to_string(),
+                description: None,
+                key: "SCR".to_string(),
+                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
+                    id: None,
+                    name: "Main".to_string(),
+                    repo_path: "/repo/main".to_string(),
+                    is_default: true,
+                    setup_script: Some("bun install".to_string()),
+                    cleanup_script: Some("bun test".to_string()),
+                }],
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(created.repositories.len(), 1);
+        assert_eq!(
+            created.repositories[0].setup_script.as_deref(),
+            Some("bun install")
+        );
+        assert_eq!(
+            created.repositories[0].cleanup_script.as_deref(),
+            Some("bun test")
         );
     }
 }

@@ -121,56 +121,107 @@ const CreateProjectPanel: Component<Props> = (props) => (
             <Index each={props.repositories()}>
               {(repo, index) => (
                 <div class="projects-repo-row" role="listitem">
-                  <input
-                    placeholder="Repository path"
-                    value={repo().path}
-                    onInput={(event) =>
-                      props.updateRepository(
-                        index,
-                        "path",
-                        event.currentTarget.value,
-                      )
-                    }
-                    required
-                    aria-label={`Repository ${index + 1} path`}
-                    aria-required="true"
-                  />
-                  <input
-                    placeholder="Display name (optional)"
-                    value={repo().name}
-                    onInput={(event) =>
-                      props.updateRepository(
-                        index,
-                        "name",
-                        event.currentTarget.value,
-                      )
-                    }
-                    aria-label={`Repository ${index + 1} display name`}
-                  />
-                  <label class="projects-default-label">
+                  <label class="projects-field">
+                    <span class="field-label">
+                      <span class="field-label-text">Repository path</span>
+                    </span>
                     <input
-                      type="radio"
-                      name="default-repository"
-                      checked={props.defaultRepoIndex() === index}
-                      onChange={() => props.setDefaultRepoIndex(index)}
-                      aria-label={`Set repository ${index + 1} as default`}
-                    />
-                    Default
-                  </label>
-                  <div class="repo-actions">
-                    <button
-                      type="button"
-                      class="projects-button-danger"
-                      onClick={() => props.removeRepository(index)}
-                      disabled={props.repositories().length === 1}
-                      title={
-                        props.repositories().length === 1
-                          ? "Cannot remove the only repository"
-                          : "Remove repository"
+                      placeholder="Repository path"
+                      value={repo().path}
+                      onInput={(event) =>
+                        props.updateRepository(
+                          index,
+                          "path",
+                          event.currentTarget.value,
+                        )
                       }
-                    >
-                      Remove
-                    </button>
+                      required
+                      aria-label={`Repository ${index + 1} path`}
+                      aria-required="true"
+                    />
+                  </label>
+                  <label class="projects-field">
+                    <span class="field-label">
+                      <span class="field-label-text">Display name</span>
+                      <span class="field-optional">optional</span>
+                    </span>
+                    <input
+                      placeholder="Display name"
+                      value={repo().name}
+                      onInput={(event) =>
+                        props.updateRepository(
+                          index,
+                          "name",
+                          event.currentTarget.value,
+                        )
+                      }
+                      aria-label={`Repository ${index + 1} display name`}
+                    />
+                  </label>
+                  <label class="projects-field">
+                    <span class="field-label">
+                      <span class="field-label-text">Setup script</span>
+                      <span class="field-optional">optional</span>
+                    </span>
+                    <textarea
+                      placeholder="Setup script"
+                      value={repo().setupScript}
+                      onInput={(event) =>
+                        props.updateRepository(
+                          index,
+                          "setupScript",
+                          event.currentTarget.value,
+                        )
+                      }
+                      aria-label={`Repository ${index + 1} setup script`}
+                      rows={2}
+                    />
+                  </label>
+                  <label class="projects-field">
+                    <span class="field-label">
+                      <span class="field-label-text">Cleanup script</span>
+                      <span class="field-optional">optional</span>
+                    </span>
+                    <textarea
+                      placeholder="Cleanup script"
+                      value={repo().cleanupScript}
+                      onInput={(event) =>
+                        props.updateRepository(
+                          index,
+                          "cleanupScript",
+                          event.currentTarget.value,
+                        )
+                      }
+                      aria-label={`Repository ${index + 1} cleanup script`}
+                      rows={2}
+                    />
+                  </label>
+                  <div class="projects-repo-controls">
+                    <label class="projects-default-label">
+                      <input
+                        type="radio"
+                        name="default-repository"
+                        checked={props.defaultRepoIndex() === index}
+                        onChange={() => props.setDefaultRepoIndex(index)}
+                        aria-label={`Set repository ${index + 1} as default`}
+                      />
+                      Default
+                    </label>
+                    <div class="repo-actions">
+                      <button
+                        type="button"
+                        class="projects-button-danger"
+                        onClick={() => props.removeRepository(index)}
+                        disabled={props.repositories().length === 1}
+                        title={
+                          props.repositories().length === 1
+                            ? "Cannot remove the only repository"
+                            : "Remove repository"
+                        }
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}

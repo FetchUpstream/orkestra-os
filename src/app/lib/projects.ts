@@ -5,6 +5,8 @@ export type ProjectRepository = {
   path: string;
   name?: string | null;
   is_default?: boolean;
+  setup_script?: string | null;
+  cleanup_script?: string | null;
 };
 
 export type Project = {
@@ -24,6 +26,8 @@ export type CreateProjectInput = {
     path: string;
     name?: string;
     is_default: boolean;
+    setup_script?: string;
+    cleanup_script?: string;
   }>;
 };
 
@@ -47,6 +51,8 @@ type ProjectDetailsResponse = {
     name: string;
     repo_path: string;
     is_default: boolean;
+    setup_script?: string | null;
+    cleanup_script?: string | null;
   }>;
 };
 
@@ -61,6 +67,8 @@ export const createProject = async (
       repo_path: repository.path,
       name: repository.name ?? repository.path,
       is_default: repository.is_default,
+      setup_script: repository.setup_script?.trim() || undefined,
+      cleanup_script: repository.cleanup_script?.trim() || undefined,
     })),
   };
 
@@ -77,6 +85,8 @@ export const createProject = async (
       path: repository.repo_path,
       name: repository.name,
       is_default: repository.is_default,
+      setup_script: repository.setup_script,
+      cleanup_script: repository.cleanup_script,
     })),
   };
 };
@@ -92,6 +102,8 @@ export const updateProject = async (
       repo_path: repository.path,
       name: repository.name ?? repository.path,
       is_default: repository.is_default,
+      setup_script: repository.setup_script?.trim() || undefined,
+      cleanup_script: repository.cleanup_script?.trim() || undefined,
     })),
   };
 
@@ -110,6 +122,8 @@ export const updateProject = async (
       path: repository.repo_path,
       name: repository.name,
       is_default: repository.is_default,
+      setup_script: repository.setup_script,
+      cleanup_script: repository.cleanup_script,
     })),
   };
 };
@@ -129,6 +143,8 @@ type ProjectResponse =
         path?: string;
         repo_path?: string;
         is_default?: boolean;
+        setup_script?: string | null;
+        cleanup_script?: string | null;
       }>;
     };
 
@@ -144,6 +160,8 @@ const normalizeProject = (response: ProjectResponse): Project => {
         path: repository.path ?? repository.repo_path ?? "",
         name: repository.name,
         is_default: repository.is_default,
+        setup_script: repository.setup_script,
+        cleanup_script: repository.cleanup_script,
       })),
     };
   }
@@ -174,6 +192,8 @@ export const cloneProject = async (
       path: repository.repo_path,
       name: repository.name,
       is_default: repository.is_default,
+      setup_script: repository.setup_script,
+      cleanup_script: repository.cleanup_script,
     })),
   };
 };

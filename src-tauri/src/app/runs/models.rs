@@ -17,6 +17,14 @@ pub struct Run {
     pub opencode_session_id: Option<String>,
     pub initial_prompt_sent_at: Option<String>,
     pub initial_prompt_client_request_id: Option<String>,
+    pub setup_state: String,
+    pub setup_started_at: Option<String>,
+    pub setup_finished_at: Option<String>,
+    pub setup_error_message: Option<String>,
+    pub cleanup_state: String,
+    pub cleanup_started_at: Option<String>,
+    pub cleanup_finished_at: Option<String>,
+    pub cleanup_error_message: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -47,4 +55,6 @@ pub struct RunInitialPromptContext {
     pub task_title: String,
     pub task_description: Option<String>,
     pub task_implementation_guide: Option<String>,
+    pub setup_script: Option<String>,
+    pub cleanup_script: Option<String>,
 }

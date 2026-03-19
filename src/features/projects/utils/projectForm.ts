@@ -5,9 +5,16 @@ export type RepoInput = {
   id?: string;
   path: string;
   name: string;
+  setupScript: string;
+  cleanupScript: string;
 };
 
-export const emptyRepo = (): RepoInput => ({ path: "", name: "" });
+export const emptyRepo = (): RepoInput => ({
+  path: "",
+  name: "",
+  setupScript: "",
+  cleanupScript: "",
+});
 
 export const getCreateProjectErrorMessage = (error: unknown): string | null => {
   const message =

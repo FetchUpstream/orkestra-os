@@ -30,6 +30,14 @@ export type Run = {
   sourceBranch?: string | null;
   initialPromptSentAt?: string | null;
   initialPromptClientRequestId?: string | null;
+  setupState?: string | null;
+  setupStartedAt?: string | null;
+  setupFinishedAt?: string | null;
+  setupErrorMessage?: string | null;
+  cleanupState?: string | null;
+  cleanupStartedAt?: string | null;
+  cleanupFinishedAt?: string | null;
+  cleanupErrorMessage?: string | null;
 };
 
 export type RunDiffFile = {
@@ -413,6 +421,22 @@ type RunResponse = {
   initialPromptSentAt?: string | null;
   initial_prompt_client_request_id?: string | null;
   initialPromptClientRequestId?: string | null;
+  setup_state?: string | null;
+  setupState?: string | null;
+  setup_started_at?: string | null;
+  setupStartedAt?: string | null;
+  setup_finished_at?: string | null;
+  setupFinishedAt?: string | null;
+  setup_error_message?: string | null;
+  setupErrorMessage?: string | null;
+  cleanup_state?: string | null;
+  cleanupState?: string | null;
+  cleanup_started_at?: string | null;
+  cleanupStartedAt?: string | null;
+  cleanup_finished_at?: string | null;
+  cleanupFinishedAt?: string | null;
+  cleanup_error_message?: string | null;
+  cleanupErrorMessage?: string | null;
 };
 
 type RunGitBranchSyncResponse = {
@@ -530,6 +554,14 @@ const toRun = (run: RunResponse): Run => ({
     run.initial_prompt_client_request_id,
     run.initialPromptClientRequestId,
   ),
+  setupState: pick(run.setup_state, run.setupState),
+  setupStartedAt: pick(run.setup_started_at, run.setupStartedAt),
+  setupFinishedAt: pick(run.setup_finished_at, run.setupFinishedAt),
+  setupErrorMessage: pick(run.setup_error_message, run.setupErrorMessage),
+  cleanupState: pick(run.cleanup_state, run.cleanupState),
+  cleanupStartedAt: pick(run.cleanup_started_at, run.cleanupStartedAt),
+  cleanupFinishedAt: pick(run.cleanup_finished_at, run.cleanupFinishedAt),
+  cleanupErrorMessage: pick(run.cleanup_error_message, run.cleanupErrorMessage),
 });
 
 const toRunDiffFile = (file: RunDiffFileResponse): RunDiffFile => ({

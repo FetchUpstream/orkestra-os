@@ -49,6 +49,8 @@ describe("projects contract", () => {
             repo_path: "/repo/main",
             name: "/repo/main",
             is_default: true,
+            setup_script: undefined,
+            cleanup_script: undefined,
           },
         ],
       },

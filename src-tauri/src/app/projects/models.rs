@@ -16,6 +16,8 @@ pub struct ProjectRepository {
     pub name: String,
     pub repo_path: String,
     pub is_default: bool,
+    pub setup_script: Option<String>,
+    pub cleanup_script: Option<String>,
     pub created_at: String,
 }
 
@@ -30,6 +32,8 @@ pub struct NewProjectRepository {
     pub name: String,
     pub repo_path: String,
     pub is_default: bool,
+    pub setup_script: Option<String>,
+    pub cleanup_script: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -38,6 +42,8 @@ pub struct UpsertProjectRepository {
     pub name: String,
     pub repo_path: String,
     pub is_default: bool,
+    pub setup_script: Option<String>,
+    pub cleanup_script: Option<String>,
 }
 
 #[derive(Clone, Debug)]

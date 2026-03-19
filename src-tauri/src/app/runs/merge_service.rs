@@ -10,6 +10,7 @@ use git2::{
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::process::Command;
 
 #[derive(Clone, Debug)]
 pub struct RunsMergeService {
@@ -45,10 +46,10 @@ impl MergeState {
 struct MergeContext {
     run_id: String,
     run_status: String,
-    run_finished_at: Option<String>,
     source_branch: String,
     worktree_branch: String,
     repo: Repository,
+    source_repo: Repository,
 }
 
 impl RunsMergeService {
@@ -144,12 +145,15 @@ impl RunsMergeService {
         if let Some(reason) = Self::dirty_worktree_disable_reason(&context.repo)? {
             return Err(AppError::validation(reason));
         }
+        if let Some(reason) = Self::source_merge_block_reason(&context)? {
+            return Err(AppError::validation(reason));
+        }
         let status_before = self.compute_status(&context)?;
-        let source_oid = Self::branch_commit_oid(&context.repo, &context.source_branch)?;
+        let source_oid = Self::branch_commit_oid(&context.source_repo, &context.source_branch)?;
         let worktree_oid = Self::branch_commit_oid(&context.repo, &context.worktree_branch)?;
         let should_finalize_existing_merge = source_oid == worktree_oid
             && context.run_status != "completed"
-            && context.run_finished_at.is_some();
+            && context.run_status != "queued";
 
         if !status_before.can_merge && !should_finalize_existing_merge {
             return Ok(RunMergeResponseDto {
@@ -161,8 +165,15 @@ impl RunsMergeService {
         let source_ref_name = Self::source_ref_name(&context.source_branch);
 
         if source_oid != worktree_oid {
+            Self::ensure_head_on_worktree_branch(&context.source_repo, &context.source_branch)
+                .map_err(|_| {
+                    AppError::validation(format!(
+                        "cannot merge: source repository HEAD must be on source branch '{}'",
+                        context.source_branch
+                    ))
+                })?;
             let mut source_ref = context
-                .repo
+                .source_repo
                 .find_reference(&source_ref_name)
                 .map_err(|err| {
                     AppError::validation(format!(
@@ -171,13 +182,13 @@ impl RunsMergeService {
                 })?;
             let worktree_annotated =
                 context
-                    .repo
+                    .source_repo
                     .find_annotated_commit(worktree_oid)
                     .map_err(|err| {
                         AppError::validation(format!("failed to load worktree commit: {err}"))
                     })?;
             let (analysis, _) = context
-                .repo
+                .source_repo
                 .merge_analysis_for_ref(&mut source_ref, &[&worktree_annotated])
                 .map_err(|err| AppError::validation(format!("failed to analyze merge: {err}")))?;
 
@@ -189,17 +200,11 @@ impl RunsMergeService {
             }
 
             if analysis.is_fast_forward() {
-                source_ref
-                    .set_target(
-                        worktree_oid,
-                        &format!(
-                            "fast-forward {} to {}",
-                            context.source_branch, context.worktree_branch
-                        ),
-                    )
-                    .map_err(|err| {
-                        AppError::validation(format!("failed to fast-forward source branch: {err}"))
-                    })?;
+                Self::fast_forward_source_branch_worktree(
+                    &context.source_repo,
+                    &context.source_branch,
+                    worktree_oid,
+                )?;
             }
         }
 
@@ -236,20 +241,24 @@ impl RunsMergeService {
         let repo = Repository::open(worktree_path).map_err(|err| {
             AppError::validation(format!("failed to open worktree repository: {err}"))
         })?;
+        let source_repo_path = self.runs_service.get_run_repository_path(run_id).await?;
+        let source_repo = Repository::open(&source_repo_path).map_err(|err| {
+            AppError::validation(format!("failed to open source repository: {err}"))
+        })?;
 
         Ok(MergeContext {
             run_id: run.id,
             run_status: run.status,
-            run_finished_at: run.finished_at,
             source_branch,
             worktree_branch,
             repo,
+            source_repo,
         })
     }
 
     fn compute_status(&self, context: &MergeContext) -> Result<RunMergeStatusDto, AppError> {
         let repo_state = context.repo.state();
-        let source_oid = Self::branch_commit_oid(&context.repo, &context.source_branch)?;
+        let source_oid = Self::branch_commit_oid(&context.source_repo, &context.source_branch)?;
         let worktree_oid = Self::branch_commit_oid(&context.repo, &context.worktree_branch)?;
         let (ahead_count, behind_count) = context
             .repo
@@ -293,7 +302,7 @@ impl RunsMergeService {
         let mut can_merge = if matches!(state, MergeState::Mergeable) {
             let source_ref_name = Self::source_ref_name(&context.source_branch);
             let mut source_ref = context
-                .repo
+                .source_repo
                 .find_reference(&source_ref_name)
                 .map_err(|err| {
                     AppError::validation(format!(
@@ -302,19 +311,21 @@ impl RunsMergeService {
                 })?;
             let worktree_annotated =
                 context
-                    .repo
+                    .source_repo
                     .find_annotated_commit(worktree_oid)
                     .map_err(|err| {
                         AppError::validation(format!("failed to load worktree commit: {err}"))
                     })?;
             let (analysis, _) = context
-                .repo
+                .source_repo
                 .merge_analysis_for_ref(&mut source_ref, &[&worktree_annotated])
                 .map_err(|err| AppError::validation(format!("failed to analyze merge: {err}")))?;
             analysis.is_fast_forward() || analysis.is_up_to_date()
         } else {
             false
         };
+
+        let source_disable_reason = Self::source_merge_block_reason(context)?;
 
         let mut disable_reason = match state {
             MergeState::NeedsRebase => Some(
@@ -334,6 +345,9 @@ impl RunsMergeService {
 
         if let Some(reason) = dirty_disable_reason {
             can_rebase = false;
+            can_merge = false;
+            disable_reason = Some(reason);
+        } else if let Some(reason) = source_disable_reason {
             can_merge = false;
             disable_reason = Some(reason);
         }
@@ -440,6 +454,53 @@ impl RunsMergeService {
         Ok(())
     }
 
+    fn fast_forward_source_branch_worktree(
+        repo: &Repository,
+        branch_name: &str,
+        target_oid: git2::Oid,
+    ) -> Result<(), AppError> {
+        let workdir = repo.workdir().ok_or_else(|| {
+            AppError::validation("source repository has no working directory".to_string())
+        })?;
+        let target = target_oid.to_string();
+        let merge_status = Command::new("git")
+            .arg("merge")
+            .arg("--ff-only")
+            .arg(target)
+            .current_dir(workdir)
+            .status()
+            .map_err(|err| AppError::validation(format!("failed to execute git merge: {err}")))?;
+
+        if !merge_status.success() {
+            return Err(AppError::validation(format!(
+                "failed to fast-forward source branch '{branch_name}'"
+            )));
+        }
+
+        let mut checkout = CheckoutBuilder::new();
+        checkout.safe();
+        repo.checkout_head(Some(&mut checkout)).map_err(|err| {
+            AppError::validation(format!(
+                "failed to safely refresh source branch '{branch_name}' working tree: {err}"
+            ))
+        })
+    }
+
+    fn source_merge_block_reason(context: &MergeContext) -> Result<Option<String>, AppError> {
+        if let Some(reason) = Self::dirty_worktree_disable_reason(&context.source_repo)? {
+            return Ok(Some(format!("source branch worktree is dirty: {reason}")));
+        }
+
+        if Self::ensure_head_on_worktree_branch(&context.source_repo, &context.source_branch).is_err() {
+            return Ok(Some(format!(
+                "source repository HEAD must be on source branch '{}' before merge",
+                context.source_branch
+            )));
+        }
+
+        Ok(None)
+    }
+
     fn is_rebase_in_progress(state: RepositoryState) -> bool {
         matches!(
             state,
@@ -454,8 +515,8 @@ impl RunsMergeService {
     fn dirty_worktree_disable_reason(repo: &Repository) -> Result<Option<String>, AppError> {
         let mut options = StatusOptions::new();
         options
-            .include_untracked(false)
-            .recurse_untracked_dirs(false)
+            .include_untracked(true)
+            .recurse_untracked_dirs(true)
             .include_ignored(false)
             .include_unmodified(false)
             .renames_head_to_index(true)
@@ -476,7 +537,8 @@ impl RunsMergeService {
                     | Status::WT_MODIFIED
                     | Status::WT_DELETED
                     | Status::WT_TYPECHANGE
-                    | Status::WT_RENAMED,
+                    | Status::WT_RENAMED
+                    | Status::WT_NEW,
             )
         });
 
@@ -732,6 +794,21 @@ mod tests {
         fs::write(repo_path.join(file), text).unwrap();
     }
 
+    fn write_untracked_file(repo_path: &Path, file: &str, text: &str) {
+        fs::write(repo_path.join(file), text).unwrap();
+    }
+
+    fn repo_status_codes(repo_path: &Path) -> Vec<String> {
+        let repo = Repository::open(repo_path).unwrap();
+        let mut options = git2::StatusOptions::new();
+        options.include_untracked(false).include_ignored(false);
+        let statuses = repo.statuses(Some(&mut options)).unwrap();
+        statuses
+            .iter()
+            .map(|entry| format!("{:?}", entry.status()))
+            .collect()
+    }
+
     #[tokio::test]
     async fn status_reports_needs_rebase_when_worktree_is_behind() {
         let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
@@ -972,6 +1049,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn untracked_worktree_file_blocks_merge_preflight() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service.create_run("task-1").await.unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        append_commit(
+            &worktree_path,
+            "README.md",
+            "worktree-change\n",
+            "worktree change",
+        );
+        write_untracked_file(&worktree_path, "UNTRACKED.md", "pending\n");
+
+        let err = merge_service
+            .merge_into_source_branch(&run.id)
+            .await
+            .unwrap_err();
+        match err {
+            AppError::Validation(message) => {
+                assert!(message.contains("clean the worktree"));
+            }
+            _ => panic!("expected validation error"),
+        }
+    }
+
+    #[tokio::test]
     async fn status_reports_mergeable_when_worktree_is_ahead_only() {
         let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
@@ -1048,6 +1158,78 @@ mod tests {
             .target()
             .unwrap();
         assert_eq!(main_oid, worktree_oid);
+        let head = repo.head().unwrap();
+        assert!(head.is_branch());
+        assert_eq!(head.shorthand().unwrap_or_default(), "main");
+        assert_eq!(head.target().unwrap(), worktree_oid);
+        let statuses = repo_status_codes(&repo_path);
+        assert!(statuses.is_empty(), "source repo statuses: {statuses:?}");
+    }
+
+    #[tokio::test]
+    async fn dirty_source_worktree_blocks_merge_with_validation_error() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service.create_run("task-1").await.unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        append_commit(
+            &worktree_path,
+            "README.md",
+            "worktree-change\n",
+            "worktree change",
+        );
+        write_unstaged_change(&repo_path, "README.md", "dirty-main\n");
+
+        let err = merge_service
+            .merge_into_source_branch(&run.id)
+            .await
+            .unwrap_err();
+        match err {
+            AppError::Validation(message) => {
+                assert!(message.contains("source branch worktree is dirty"));
+            }
+            _ => panic!("expected validation error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn untracked_source_worktree_file_blocks_merge_preflight() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service.create_run("task-1").await.unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        append_commit(
+            &worktree_path,
+            "README.md",
+            "worktree-change\n",
+            "worktree change",
+        );
+        write_untracked_file(&repo_path, "UNTRACKED.md", "pending\n");
+
+        let err = merge_service
+            .merge_into_source_branch(&run.id)
+            .await
+            .unwrap_err();
+        match err {
+            AppError::Validation(message) => {
+                assert!(message.contains("source branch worktree is dirty"));
+            }
+            _ => panic!("expected validation error"),
+        }
     }
 
     #[tokio::test]
@@ -1103,6 +1285,61 @@ mod tests {
         assert_eq!(first.state, "completing");
 
         sqlx::query("UPDATE runs SET status = 'running' WHERE id = ?")
+            .bind(&run.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE tasks SET status = 'review' WHERE id = ?")
+            .bind("task-1")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let second = merge_service
+            .merge_into_source_branch(&run.id)
+            .await
+            .unwrap();
+        assert_eq!(second.state, "completing");
+
+        let run_after = runs_service.get_run_model(&run.id).await.unwrap();
+        assert_eq!(run_after.status, "completed");
+        assert!(run_after.finished_at.is_some());
+
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_status, "done");
+    }
+
+    #[tokio::test]
+    async fn merge_retry_finalizes_when_run_not_completed_and_finished_at_missing() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service.create_run("task-1").await.unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        append_commit(
+            &worktree_path,
+            "README.md",
+            "worktree-change\n",
+            "worktree change",
+        );
+
+        let first = merge_service
+            .merge_into_source_branch(&run.id)
+            .await
+            .unwrap();
+        assert_eq!(first.state, "completing");
+
+        sqlx::query("UPDATE runs SET status = 'running', finished_at = NULL WHERE id = ?")
             .bind(&run.id)
             .execute(&pool)
             .await

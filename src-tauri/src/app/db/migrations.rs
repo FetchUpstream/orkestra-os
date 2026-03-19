@@ -143,6 +143,96 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
         sqlx::query(MIGRATION_0012).execute(pool).await?;
     }
 
+    let repository_columns = sqlx::query("PRAGMA table_info(project_repositories)")
+        .fetch_all(pool)
+        .await?;
+    let has_setup_script = repository_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "setup_script");
+    let has_cleanup_script = repository_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "cleanup_script");
+
+    if !has_setup_script {
+        sqlx::query("ALTER TABLE project_repositories ADD COLUMN setup_script TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_cleanup_script {
+        sqlx::query("ALTER TABLE project_repositories ADD COLUMN cleanup_script TEXT")
+            .execute(pool)
+            .await?;
+    }
+
+    let run_columns = sqlx::query("PRAGMA table_info(runs)")
+        .fetch_all(pool)
+        .await?;
+    let has_setup_state = run_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "setup_state");
+    let has_setup_started_at = run_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "setup_started_at");
+    let has_setup_finished_at = run_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "setup_finished_at");
+    let has_setup_error_message = run_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "setup_error_message");
+    let has_cleanup_state = run_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "cleanup_state");
+    let has_cleanup_started_at = run_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "cleanup_started_at");
+    let has_cleanup_finished_at = run_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "cleanup_finished_at");
+    let has_cleanup_error_message = run_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "cleanup_error_message");
+
+    if !has_setup_state {
+        sqlx::query("ALTER TABLE runs ADD COLUMN setup_state TEXT NOT NULL DEFAULT 'pending'")
+            .execute(pool)
+            .await?;
+    }
+    if !has_setup_started_at {
+        sqlx::query("ALTER TABLE runs ADD COLUMN setup_started_at TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_setup_finished_at {
+        sqlx::query("ALTER TABLE runs ADD COLUMN setup_finished_at TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_setup_error_message {
+        sqlx::query("ALTER TABLE runs ADD COLUMN setup_error_message TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_cleanup_state {
+        sqlx::query("ALTER TABLE runs ADD COLUMN cleanup_state TEXT NOT NULL DEFAULT 'pending'")
+            .execute(pool)
+            .await?;
+    }
+    if !has_cleanup_started_at {
+        sqlx::query("ALTER TABLE runs ADD COLUMN cleanup_started_at TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_cleanup_finished_at {
+        sqlx::query("ALTER TABLE runs ADD COLUMN cleanup_finished_at TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_cleanup_error_message {
+        sqlx::query("ALTER TABLE runs ADD COLUMN cleanup_error_message TEXT")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }
 

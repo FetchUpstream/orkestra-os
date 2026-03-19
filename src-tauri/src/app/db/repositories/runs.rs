@@ -41,10 +41,12 @@ impl RunsRepository {
         run_id: &str,
     ) -> Result<Option<RunInitialPromptContext>, AppError> {
         let row = sqlx::query(
-            "SELECT r.id AS run_id, t.title AS task_title, t.description AS task_description, t.implementation_guide AS task_implementation_guide
-             FROM runs r
-             JOIN tasks t ON t.id = r.task_id
-             WHERE r.id = ?",
+            "SELECT r.id AS run_id, t.title AS task_title, t.description AS task_description, t.implementation_guide AS task_implementation_guide,
+                    pr.setup_script AS setup_script, pr.cleanup_script AS cleanup_script
+              FROM runs r
+              JOIN tasks t ON t.id = r.task_id
+              LEFT JOIN project_repositories pr ON pr.id = r.target_repo_id
+              WHERE r.id = ?",
         )
         .bind(run_id)
         .fetch_optional(&self.pool)
@@ -55,7 +57,23 @@ impl RunsRepository {
             task_title: row.get("task_title"),
             task_description: row.get("task_description"),
             task_implementation_guide: row.get("task_implementation_guide"),
+            setup_script: row.get("setup_script"),
+            cleanup_script: row.get("cleanup_script"),
         }))
+    }
+
+    pub async fn get_run_repository_path(&self, run_id: &str) -> Result<Option<String>, AppError> {
+        let row = sqlx::query(
+            "SELECT pr.repo_path AS repository_path
+             FROM runs r
+             JOIN project_repositories pr ON pr.id = r.target_repo_id
+             WHERE r.id = ?",
+        )
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|row| row.get("repository_path")))
     }
 
     pub async fn create_run(&self, input: NewRun) -> Result<Run, AppError> {
@@ -108,7 +126,15 @@ impl RunsRepository {
                 source_branch,
                 opencode_session_id,
                 initial_prompt_sent_at,
-                initial_prompt_client_request_id
+                initial_prompt_client_request_id,
+                setup_state,
+                setup_started_at,
+                setup_finished_at,
+                setup_error_message,
+                cleanup_state,
+                cleanup_started_at,
+                cleanup_finished_at,
+                cleanup_error_message
              FROM runs
              WHERE task_id = ?
              ORDER BY created_at DESC",
@@ -139,7 +165,15 @@ impl RunsRepository {
                 source_branch,
                 opencode_session_id,
                 initial_prompt_sent_at,
-                initial_prompt_client_request_id
+                initial_prompt_client_request_id,
+                setup_state,
+                setup_started_at,
+                setup_finished_at,
+                setup_error_message,
+                cleanup_state,
+                cleanup_started_at,
+                cleanup_finished_at,
+                cleanup_error_message
              FROM runs
              WHERE id = ?",
         )
@@ -169,7 +203,15 @@ impl RunsRepository {
                 source_branch,
                 opencode_session_id,
                 initial_prompt_sent_at,
-                initial_prompt_client_request_id
+                initial_prompt_client_request_id,
+                setup_state,
+                setup_started_at,
+                setup_finished_at,
+                setup_error_message,
+                cleanup_state,
+                cleanup_started_at,
+                cleanup_finished_at,
+                cleanup_error_message
              FROM runs
              WHERE task_id = ?
                AND status IN ('queued', 'preparing', 'running')
@@ -385,6 +427,128 @@ impl RunsRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn mark_setup_running_if_pending(
+        &self,
+        run_id: &str,
+        started_at: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET setup_state = 'running',
+                 setup_started_at = COALESCE(setup_started_at, ?)
+             WHERE id = ?
+               AND setup_state = 'pending'",
+        )
+        .bind(started_at)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn mark_setup_succeeded(
+        &self,
+        run_id: &str,
+        finished_at: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET setup_state = 'succeeded',
+                 setup_finished_at = COALESCE(setup_finished_at, ?),
+                 setup_error_message = NULL
+             WHERE id = ?
+               AND setup_state != 'succeeded'",
+        )
+        .bind(finished_at)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn mark_setup_failed_if_unset(
+        &self,
+        run_id: &str,
+        finished_at: &str,
+        error_message: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET setup_state = 'failed',
+                 setup_finished_at = COALESCE(setup_finished_at, ?),
+                 setup_error_message = COALESCE(setup_error_message, ?)
+             WHERE id = ?
+               AND setup_state != 'succeeded'",
+        )
+        .bind(finished_at)
+        .bind(error_message)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn mark_cleanup_running(
+        &self,
+        run_id: &str,
+        started_at: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET cleanup_state = 'running',
+                 cleanup_started_at = ?
+             WHERE id = ?",
+        )
+        .bind(started_at)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn mark_cleanup_succeeded(
+        &self,
+        run_id: &str,
+        finished_at: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET cleanup_state = 'succeeded',
+                 cleanup_finished_at = ?,
+                 cleanup_error_message = NULL
+             WHERE id = ?",
+        )
+        .bind(finished_at)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn mark_cleanup_failed(
+        &self,
+        run_id: &str,
+        finished_at: &str,
+        error_message: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET cleanup_state = 'failed',
+                 cleanup_finished_at = ?,
+                 cleanup_error_message = ?
+             WHERE id = ?",
+        )
+        .bind(finished_at)
+        .bind(error_message)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn mark_run_completed(
         &self,
         run_id: &str,
@@ -488,6 +652,14 @@ impl RunsRepository {
             opencode_session_id: row.get("opencode_session_id"),
             initial_prompt_sent_at: row.get("initial_prompt_sent_at"),
             initial_prompt_client_request_id: row.get("initial_prompt_client_request_id"),
+            setup_state: row.get("setup_state"),
+            setup_started_at: row.get("setup_started_at"),
+            setup_finished_at: row.get("setup_finished_at"),
+            setup_error_message: row.get("setup_error_message"),
+            cleanup_state: row.get("cleanup_state"),
+            cleanup_started_at: row.get("cleanup_started_at"),
+            cleanup_finished_at: row.get("cleanup_finished_at"),
+            cleanup_error_message: row.get("cleanup_error_message"),
         }
     }
 }

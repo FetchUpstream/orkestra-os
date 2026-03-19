@@ -40,6 +40,8 @@ pub struct CreateProjectRepositoryRequest {
     pub name: String,
     pub repo_path: String,
     pub is_default: bool,
+    pub setup_script: Option<String>,
+    pub cleanup_script: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -49,6 +51,8 @@ pub struct ProjectRepositoryDto {
     pub name: String,
     pub repo_path: String,
     pub is_default: bool,
+    pub setup_script: Option<String>,
+    pub cleanup_script: Option<String>,
     pub created_at: String,
 }
 

@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
 use tokio::sync::RwLock;
+use tokio::process::Command;
 use tokio::time::{sleep, Duration, Instant};
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
@@ -108,11 +109,22 @@ struct SubscriberTaskEntry {
     handle: JoinHandle<()>,
 }
 
-#[derive(Default)]
 struct SessionRuntimeState {
     last_status_hint: Option<String>,
     pending_questions: HashSet<String>,
     pending_permissions: HashSet<String>,
+    idle_cleanup_ready: bool,
+}
+
+impl Default for SessionRuntimeState {
+    fn default() -> Self {
+        Self {
+            last_status_hint: None,
+            pending_questions: HashSet::new(),
+            pending_permissions: HashSet::new(),
+            idle_cleanup_ready: true,
+        }
+    }
 }
 
 impl RunsOpenCodeService {
@@ -228,6 +240,11 @@ impl RunsOpenCodeService {
                     AppError::validation("failed to lock OpenCode session runtime state")
                 })?;
                 state.last_status_hint = Some(status);
+                if state.last_status_hint.as_deref() == Some("busy")
+                    || state.last_status_hint.as_deref() == Some("active")
+                {
+                    state.idle_cleanup_ready = true;
+                }
                 Ok(())
             }
             "question.asked" => {
@@ -344,17 +361,49 @@ impl RunsOpenCodeService {
                     let state = session_runtime_state.lock().map_err(|_| {
                         AppError::validation("failed to lock OpenCode session runtime state")
                     })?;
-                    !state.pending_questions.is_empty() || !state.pending_permissions.is_empty()
+                    !state.pending_questions.is_empty()
+                        || !state.pending_permissions.is_empty()
+                        || !state.idle_cleanup_ready
                 };
 
                 if should_block {
                     return Ok(());
                 }
 
-                let _ = self
-                    .runs_service
-                    .transition_task_to_review_on_session_idle(run_id, &session_id)
-                    .await?;
+                let context = self.runs_service.get_run_initial_prompt_context(run_id).await?;
+                let _ = self.runs_service.mark_cleanup_running(run_id).await?;
+                let cleanup_result = self
+                    .run_lifecycle_script_in_worktree(run_id, context.cleanup_script.as_deref())
+                    .await;
+                match cleanup_result {
+                    Ok(()) => {
+                        let _ = self.runs_service.mark_cleanup_succeeded(run_id).await?;
+                        let _ = self
+                            .runs_service
+                            .transition_task_to_review_on_session_idle(run_id, &session_id)
+                            .await?;
+                    }
+                    Err(err) => {
+                        let error_text = err.to_string();
+                        let _ = self.runs_service.mark_cleanup_failed(run_id, &error_text).await?;
+                        let _ = self
+                            .submit_run_opencode_prompt(
+                                run_id,
+                                &format!(
+                                    "Cleanup script reported errors. Please fix them before continuing.\n\n{}",
+                                    error_text
+                                ),
+                                None,
+                                None,
+                            )
+                            .await;
+                    }
+                }
+
+                let mut state = session_runtime_state.lock().map_err(|_| {
+                    AppError::validation("failed to lock OpenCode session runtime state")
+                })?;
+                state.idle_cleanup_ready = false;
 
                 Ok(())
             }
@@ -455,6 +504,42 @@ impl RunsOpenCodeService {
         }
 
         sections.join("\n\n")
+    }
+
+    async fn run_lifecycle_script_in_worktree(
+        &self,
+        run_id: &str,
+        script: Option<&str>,
+    ) -> Result<(), AppError> {
+        let script = script.map(str::trim).filter(|script| !script.is_empty());
+        let Some(script) = script else {
+            return Ok(());
+        };
+
+        let run = self.runs_service.get_run(run_id).await?;
+        let worktree_path = self.resolve_worktree_path(&run)?;
+        let output = Command::new("bash")
+            .arg("-lc")
+            .arg(script)
+            .current_dir(worktree_path)
+            .output()
+            .await
+            .map_err(|err| AppError::validation(format!("failed to execute script: {err}")))?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let details = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("exit status {}", output.status)
+        };
+        Err(AppError::validation(details))
     }
 
     async fn ensure_run_ready_for_operation(
@@ -1070,10 +1155,53 @@ impl RunsOpenCodeService {
             return Err(AppError::validation("run_id is required"));
         }
 
+        let run_state = self.runs_service.get_run(run_id).await?;
+        if run_state.setup_state == "failed" {
+            return Ok(StartRunOpenCodeResponse {
+                state: "error".to_string(),
+                reason: Some("Setup script failed. Please fix it before you continue.".to_string()),
+                queued_at: Utc::now().to_rfc3339(),
+                client_request_id: Self::initial_seed_request_id_for_run(run_id),
+                ready_phase: Some("setup_failed".to_string()),
+            });
+        }
+
         let context = self
             .runs_service
             .get_run_initial_prompt_context(run_id)
             .await?;
+
+        if context.setup_script.as_deref().is_some_and(|script| !script.trim().is_empty())
+            && run_state.setup_state != "succeeded"
+        {
+            let _ = self.runs_service.mark_setup_running_if_pending(run_id).await?;
+            let setup_result = self
+                .run_lifecycle_script_in_worktree(run_id, context.setup_script.as_deref())
+                .await;
+            match setup_result {
+                Ok(()) => {
+                    let _ = self.runs_service.mark_setup_succeeded(run_id).await?;
+                }
+                Err(err) => {
+                    let _ = self
+                        .runs_service
+                        .mark_setup_failed_if_unset(run_id, &err.to_string())
+                        .await?;
+                    return Ok(StartRunOpenCodeResponse {
+                        state: "error".to_string(),
+                        reason: Some(
+                            "Setup script failed. Please fix it before you continue.".to_string(),
+                        ),
+                        queued_at: Utc::now().to_rfc3339(),
+                        client_request_id: Self::initial_seed_request_id_for_run(&context.run_id),
+                        ready_phase: Some("setup_failed".to_string()),
+                    });
+                }
+            }
+        } else if run_state.setup_state == "pending" {
+            let _ = self.runs_service.mark_setup_succeeded(run_id).await?;
+        }
+
         let prompt = Self::compose_initial_prompt(
             &context.task_title,
             context.task_description.as_deref(),
@@ -2039,6 +2167,40 @@ mod tests {
             .unwrap()
     }
 
+    async fn update_repository_scripts(
+        pool: &SqlitePool,
+        repository_id: &str,
+        setup_script: Option<&str>,
+        cleanup_script: Option<&str>,
+    ) {
+        sqlx::query(
+            "UPDATE project_repositories SET setup_script = ?, cleanup_script = ? WHERE id = ?",
+        )
+        .bind(setup_script)
+        .bind(cleanup_script)
+        .bind(repository_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn update_run_worktree_id(pool: &SqlitePool, run_id: &str, worktree_id: &str) {
+        sqlx::query("UPDATE runs SET worktree_id = ? WHERE id = ?")
+            .bind(worktree_id)
+            .bind(run_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn fetch_run_setup_state(pool: &SqlitePool, run_id: &str) -> String {
+        sqlx::query_scalar("SELECT setup_state FROM runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn session_idle_transitions_doing_task_to_review_for_matching_session() {
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
@@ -2266,5 +2428,32 @@ mod tests {
             .unwrap();
 
         assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
+    }
+
+    #[tokio::test]
+    async fn start_run_opencode_blocks_initial_prompt_when_setup_script_fails() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "queued").await;
+
+        update_repository_scripts(&pool, "repo-1", Some("exit 7"), None).await;
+        let worktree_id = "ALP/setup-fail";
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(worktree_id);
+        fs::create_dir_all(&worktree_path).unwrap();
+        update_run_worktree_id(&pool, "run-1", worktree_id).await;
+
+        let response = opencode_service.start_run_opencode("run-1").await.unwrap();
+        assert_eq!(response.state, "error");
+        assert_eq!(
+            response.reason.as_deref(),
+            Some("Setup script failed. Please fix it before you continue.")
+        );
+        assert_eq!(fetch_run_setup_state(&pool, "run-1").await, "failed");
     }
 }

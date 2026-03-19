@@ -148,6 +148,18 @@ impl RunsService {
             .ok_or_else(|| AppError::not_found("run not found"))
     }
 
+    pub async fn get_run_repository_path(&self, run_id: &str) -> Result<String, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        self.repository
+            .get_run_repository_path(run_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("run repository not found"))
+    }
+
     pub async fn delete_run(&self, run_id: &str) -> Result<(), AppError> {
         let run_id = run_id.trim();
         if run_id.is_empty() {
@@ -311,6 +323,76 @@ impl RunsService {
             .await
     }
 
+    pub async fn mark_setup_running_if_pending(&self, run_id: &str) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+        let started_at = Utc::now().to_rfc3339();
+        self.repository
+            .mark_setup_running_if_pending(run_id, &started_at)
+            .await
+    }
+
+    pub async fn mark_setup_succeeded(&self, run_id: &str) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+        let finished_at = Utc::now().to_rfc3339();
+        self.repository.mark_setup_succeeded(run_id, &finished_at).await
+    }
+
+    pub async fn mark_setup_failed_if_unset(
+        &self,
+        run_id: &str,
+        error_message: &str,
+    ) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+        let finished_at = Utc::now().to_rfc3339();
+        self.repository
+            .mark_setup_failed_if_unset(run_id, &finished_at, error_message)
+            .await
+    }
+
+    pub async fn mark_cleanup_running(&self, run_id: &str) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+        let started_at = Utc::now().to_rfc3339();
+        self.repository.mark_cleanup_running(run_id, &started_at).await
+    }
+
+    pub async fn mark_cleanup_succeeded(&self, run_id: &str) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+        let finished_at = Utc::now().to_rfc3339();
+        self.repository
+            .mark_cleanup_succeeded(run_id, &finished_at)
+            .await
+    }
+
+    pub async fn mark_cleanup_failed(
+        &self,
+        run_id: &str,
+        error_message: &str,
+    ) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+        let finished_at = Utc::now().to_rfc3339();
+        self.repository
+            .mark_cleanup_failed(run_id, &finished_at, error_message)
+            .await
+    }
+
     pub async fn transition_task_to_review_on_session_idle(
         &self,
         run_id: &str,
@@ -350,6 +432,14 @@ impl RunsService {
             source_branch: run.source_branch,
             initial_prompt_sent_at: run.initial_prompt_sent_at,
             initial_prompt_client_request_id: run.initial_prompt_client_request_id,
+            setup_state: run.setup_state,
+            setup_started_at: run.setup_started_at,
+            setup_finished_at: run.setup_finished_at,
+            setup_error_message: run.setup_error_message,
+            cleanup_state: run.cleanup_state,
+            cleanup_started_at: run.cleanup_started_at,
+            cleanup_finished_at: run.cleanup_finished_at,
+            cleanup_error_message: run.cleanup_error_message,
         }
     }
 }

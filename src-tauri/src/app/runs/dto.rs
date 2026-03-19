@@ -19,6 +19,14 @@ pub struct RunDto {
     pub source_branch: Option<String>,
     pub initial_prompt_sent_at: Option<String>,
     pub initial_prompt_client_request_id: Option<String>,
+    pub setup_state: String,
+    pub setup_started_at: Option<String>,
+    pub setup_finished_at: Option<String>,
+    pub setup_error_message: Option<String>,
+    pub cleanup_state: String,
+    pub cleanup_started_at: Option<String>,
+    pub cleanup_finished_at: Option<String>,
+    pub cleanup_error_message: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

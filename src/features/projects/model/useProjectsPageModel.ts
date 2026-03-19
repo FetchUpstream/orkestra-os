@@ -154,6 +154,8 @@ export const useProjectsPageModel = () => {
       id: repo.id,
       path: repo.path.trim(),
       name: repo.name.trim(),
+      setup_script: repo.setupScript.trim(),
+      cleanup_script: repo.cleanupScript.trim(),
     }));
 
     if (normalizedRepositories.some((repo) => !repo.path)) {
@@ -177,6 +179,8 @@ export const useProjectsPageModel = () => {
           path: repo.path,
           name: repo.name || undefined,
           is_default: index === defaultRepoIndex(),
+          setup_script: repo.setup_script || undefined,
+          cleanup_script: repo.cleanup_script || undefined,
         })),
       };
       const activeEditProjectId = editingProjectId();
@@ -219,6 +223,8 @@ export const useProjectsPageModel = () => {
           id: repository.id,
           path: repository.path,
           name: repository.name ?? "",
+          setupScript: repository.setup_script ?? "",
+          cleanupScript: repository.cleanup_script ?? "",
         }),
       );
 
