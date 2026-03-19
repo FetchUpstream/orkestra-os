@@ -11,6 +11,7 @@ import BackIconLink from "../../../components/ui/BackIconLink";
 import NewRunChatWorkspace from "../components/NewRunChatWorkspace";
 import RunDiffDrawerPanel from "../components/RunDiffDrawerPanel";
 import RunTerminal from "../components/RunTerminal";
+import { formatGitStateLabel } from "./gitStateLabels";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 
 type OverlayState =
@@ -89,41 +90,6 @@ const formatLogTimestamp = (ts: string | number | null): string => {
 
 const formatBranchDirection = (ahead: number, behind: number): string => {
   return `ahead ${ahead} / behind ${behind}`;
-};
-
-const formatGitStateLabel = (state: string): string => {
-  switch (state) {
-    case "ready":
-      return "Ready";
-    case "rebase_required":
-      return "Rebase required";
-    case "rebasing":
-      return "Rebasing";
-    case "rebase_conflict":
-      return "Rebase conflict";
-    case "rebase_failed":
-      return "Rebase failed";
-    case "rebase_succeeded":
-      return "Rebase succeeded";
-    case "merge_ready":
-      return "Merge ready";
-    case "merging":
-      return "Merging";
-    case "merge_conflict":
-      return "Merge conflict";
-    case "merge_failed":
-      return "Merge failed";
-    case "merged":
-      return "Merged";
-    case "completing":
-      return "Completing run";
-    case "completed":
-      return "Completed";
-    case "unsupported":
-      return "Unsupported";
-    default:
-      return "Unknown";
-  }
 };
 
 const NewRunDetailScreen: Component = () => {
@@ -601,7 +567,16 @@ const NewRunDetailScreen: Component = () => {
                               </div>
                               <p class="run-chat-git-drawer__state">
                                 Backend state:{" "}
-                                {formatGitStateLabel(status().state)}
+                                {formatGitStateLabel(
+                                  status().state,
+                                  status().rawState,
+                                )}
+                              </p>
+                              <p class="project-placeholder-text">
+                                Ahead/behind counts reflect committed branch
+                                divergence only. Review diffs can still include
+                                uncommitted worktree changes, and a dirty
+                                worktree blocks rebase/merge until cleaned.
                               </p>
                               <Show
                                 when={model.git.lastActionMessage().length > 0}
