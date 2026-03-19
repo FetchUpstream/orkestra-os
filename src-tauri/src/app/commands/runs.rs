@@ -1,5 +1,6 @@
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent, RunDiffFileDto,
+    ReplyRunOpenCodePermissionResponse,
     RunDiffFilePayloadDto, RunDto, RunMergeResponseDto, RunMergeStatusDto,
     RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, RunRebaseResponseDto,
     StartRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
@@ -17,6 +18,16 @@ pub struct SubmitRunOpenCodePromptRequest {
     pub prompt: String,
     pub client_request_id: Option<String>,
     pub agent: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyRunOpenCodePermissionRequest {
+    pub run_id: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub decision: String,
+    pub remember: Option<bool>,
 }
 
 #[tauri::command]
@@ -203,6 +214,25 @@ pub async fn submit_run_opencode_prompt(
                 &request.prompt,
                 request.client_request_id,
                 request.agent,
+            )
+            .await,
+    )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn reply_run_opencode_permission(
+    state: tauri::State<'_, AppState>,
+    request: ReplyRunOpenCodePermissionRequest,
+) -> Result<ReplyRunOpenCodePermissionResponse, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(
+        service
+            .reply_run_opencode_permission(
+                &request.run_id,
+                &request.session_id,
+                &request.request_id,
+                &request.decision,
+                request.remember.unwrap_or(false),
             )
             .await,
     )

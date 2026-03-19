@@ -1,6 +1,7 @@
 use crate::app::errors::AppError;
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent, RunDto,
+    ReplyRunOpenCodePermissionResponse,
     RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, StartRunOpenCodeResponse,
     SubmitRunOpenCodePromptResponse,
 };
@@ -941,6 +942,122 @@ impl RunsOpenCodeService {
             reason: None,
             queued_at: Utc::now().to_rfc3339(),
             client_request_id,
+        })
+    }
+
+    pub async fn reply_run_opencode_permission(
+        &self,
+        run_id: &str,
+        session_id: &str,
+        request_id: &str,
+        decision: &str,
+        remember: bool,
+    ) -> Result<ReplyRunOpenCodePermissionResponse, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Err(AppError::validation("session_id is required"));
+        }
+
+        let request_id = request_id.trim();
+        if request_id.is_empty() {
+            return Err(AppError::validation("request_id is required"));
+        }
+
+        let decision = decision.trim().to_lowercase();
+        if decision != "allow" && decision != "deny" {
+            return Err(AppError::validation("decision must be allow or deny"));
+        }
+
+        let run = self.runs_service.get_run_model(run_id).await?;
+        let canonical_session_id = run
+            .opencode_session_id
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| AppError::validation("OpenCode session not initialized for run"))?;
+        if canonical_session_id != session_id {
+            return Err(AppError::validation("session mismatch for run"));
+        }
+
+        let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
+        if ensured.state == "unsupported" {
+            return Ok(ReplyRunOpenCodePermissionResponse {
+                state: "unsupported".to_string(),
+                reason: ensured.reason,
+                replied_at: Utc::now().to_rfc3339(),
+            });
+        }
+
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+
+        {
+            let in_memory_session_id = handle
+                .session_id
+                .lock()
+                .map_err(|_| AppError::validation("failed to lock OpenCode session id"))?
+                .clone();
+            if let Some(in_memory_session_id) = in_memory_session_id {
+                if in_memory_session_id.trim() != session_id {
+                    return Err(AppError::validation("stale session for permission reply"));
+                }
+            }
+        }
+
+        {
+            let state = handle.session_runtime_state.lock().map_err(|_| {
+                AppError::validation("failed to lock OpenCode session runtime state")
+            })?;
+            if !state.pending_permissions.contains(request_id) {
+                return Err(AppError::validation("permission request is stale"));
+            }
+        }
+
+        let response = handle
+            .client
+            .call_operation(
+                "permission.reply",
+                RequestOptions::default()
+                    .with_path("requestID", request_id.to_string())
+                    .with_body(serde_json::json!({
+                        "sessionID": session_id,
+                        "decision": decision,
+                        "action": decision,
+                        "allowed": decision == "allow",
+                        "remember": remember,
+                    })),
+            )
+            .await
+            .map_err(|err| {
+                AppError::validation(format!("failed to reply to OpenCode permission: {err}"))
+            })?;
+
+        let response_state = response
+            .data
+            .get("state")
+            .and_then(|value| value.as_str())
+            .unwrap_or("accepted");
+        if response_state.eq_ignore_ascii_case("unsupported") {
+            let reason = response
+                .data
+                .get("reason")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            return Ok(ReplyRunOpenCodePermissionResponse {
+                state: "unsupported".to_string(),
+                reason,
+                replied_at: Utc::now().to_rfc3339(),
+            });
+        }
+
+        Ok(ReplyRunOpenCodePermissionResponse {
+            state: "accepted".to_string(),
+            reason: None,
+            replied_at: Utc::now().to_rfc3339(),
         })
     }
 

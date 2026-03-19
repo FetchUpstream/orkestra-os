@@ -297,9 +297,43 @@ const normalizePermission = (value: unknown): UiPermissionRequest | null => {
   if (!requestId || !sessionId) {
     return null;
   }
+
+  const kind = asString(
+    pickRecordValue(value, "kind", "permission", "tool", "action"),
+  );
+  const rawPatterns = pickRecordValue(
+    value,
+    "pathPatterns",
+    "paths",
+    "patterns",
+    "path_pattern",
+    "pathPattern",
+  );
+  const pathPatterns = asArray(rawPatterns)
+    .map((item) => asString(item))
+    .filter(
+      (item): item is string => typeof item === "string" && item.length > 0,
+    );
+  const metadataSource = pickRecordValue(value, "metadata", "meta");
+  const metadata = isRecord(metadataSource)
+    ? Object.entries(metadataSource).reduce<Record<string, string>>(
+        (acc, [metaKey, metaValue]) => {
+          const normalizedValue = asString(metaValue);
+          if (normalizedValue) {
+            acc[metaKey] = normalizedValue;
+          }
+          return acc;
+        },
+        {},
+      )
+    : undefined;
+
   return {
     requestId,
     sessionId,
+    kind,
+    pathPatterns,
+    metadata,
     raw: value,
   };
 };

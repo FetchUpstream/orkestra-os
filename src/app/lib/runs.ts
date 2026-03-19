@@ -119,6 +119,20 @@ export type SubmitRunOpenCodePromptResult = {
   clientRequestId?: string;
 };
 
+export type ReplyRunOpenCodePermissionParams = {
+  runId: string;
+  sessionId: string;
+  requestId: string;
+  decision: "allow" | "deny";
+  remember?: boolean;
+};
+
+export type ReplyRunOpenCodePermissionResult = {
+  status: "accepted" | "unsupported";
+  reason?: string;
+  repliedAt: string;
+};
+
 export type StartRunOpenCodeResult = {
   state: RunOpenCodeAgentState;
   reason?: string;
@@ -318,6 +332,14 @@ type SubmitRunOpenCodePromptResponse = {
   queuedAt?: string;
   client_request_id?: string | null;
   clientRequestId?: string | null;
+};
+
+type ReplyRunOpenCodePermissionResponse = {
+  state?: string;
+  status?: string;
+  reason?: string | null;
+  replied_at?: string;
+  repliedAt?: string;
 };
 
 type RunOpenCodeSnapshotResponse = {
@@ -1189,6 +1211,34 @@ export const submitRunOpenCodePrompt = async ({
     queuedAt: pick(response.queued_at, response.queuedAt) ?? "",
     clientRequestId:
       pick(response.client_request_id, response.clientRequestId) ?? undefined,
+  };
+};
+
+export const replyRunOpenCodePermission = async ({
+  runId,
+  sessionId,
+  requestId,
+  decision,
+  remember = false,
+}: ReplyRunOpenCodePermissionParams): Promise<ReplyRunOpenCodePermissionResult> => {
+  const response = await invoke<ReplyRunOpenCodePermissionResponse>(
+    "reply_run_opencode_permission",
+    {
+      request: {
+        runId,
+        sessionId,
+        requestId,
+        decision,
+        remember,
+      },
+    },
+  );
+
+  const state = response.state ?? response.status;
+  return {
+    status: state === "unsupported" ? "unsupported" : "accepted",
+    reason: response.reason ?? undefined,
+    repliedAt: pick(response.replied_at, response.repliedAt) ?? "",
   };
 };
 

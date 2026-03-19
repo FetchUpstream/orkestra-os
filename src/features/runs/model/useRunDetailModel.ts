@@ -12,6 +12,7 @@ import {
   mergeRunWorktreeIntoSource,
   openRunTerminal,
   rebaseRunWorktreeOntoSource,
+  replyRunOpenCodePermission,
   resizeRunTerminal,
   setRunDiffWatch,
   submitRunOpenCodePrompt,
@@ -78,6 +79,8 @@ export const useRunDetailModel = () => {
   >(null);
   const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(false);
   const [submitError, setSubmitError] = createSignal("");
+  const [isReplyingPermission, setIsReplyingPermission] = createSignal(false);
+  const [permissionReplyError, setPermissionReplyError] = createSignal("");
   const [gitStatus, setGitStatus] = createSignal<RunGitMergeStatus | null>(
     null,
   );
@@ -1408,6 +1411,82 @@ export const useRunDetailModel = () => {
     }
   };
 
+  const replyPermission = async (
+    requestId: string,
+    decision: "allow" | "deny",
+  ): Promise<boolean> => {
+    const normalizedRequestId = requestId.trim();
+    if (!normalizedRequestId) {
+      setPermissionReplyError("Missing permission request.");
+      return false;
+    }
+
+    const runId = params.runId?.trim() ?? "";
+    if (!runId) {
+      setPermissionReplyError("Missing run.");
+      return false;
+    }
+
+    const requestVersion = activeAgentRequestVersion;
+    const store = agentStore();
+    const pending = store.pendingPermissionsById[normalizedRequestId];
+    const sessionId = store.sessionId?.trim() ?? "";
+    if (!pending || !sessionId || pending.sessionId !== sessionId) {
+      setPermissionReplyError(
+        "Permission request is stale. Please wait for refresh.",
+      );
+      return false;
+    }
+
+    setIsReplyingPermission(true);
+
+    try {
+      const response = await replyRunOpenCodePermission({
+        runId,
+        sessionId,
+        requestId: normalizedRequestId,
+        decision,
+        remember: false,
+      });
+
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== runId
+      ) {
+        return false;
+      }
+
+      if (response.status === "accepted") {
+        setPermissionReplyError("");
+        return true;
+      }
+
+      setPermissionReplyError(
+        response.reason?.trim() ||
+          "Permission reply is not supported for this run.",
+      );
+      return false;
+    } catch (replyError) {
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== runId
+      ) {
+        return false;
+      }
+      setPermissionReplyError(
+        getErrorMessage(replyError) || "Failed to reply to permission request.",
+      );
+      return false;
+    } finally {
+      if (
+        requestVersion === activeAgentRequestVersion &&
+        params.runId === runId
+      ) {
+        setIsReplyingPermission(false);
+      }
+    }
+  };
+
   createEffect(() => {
     const runId = params.runId;
     const requestVersion = ++activeAgentRequestVersion;
@@ -1420,6 +1499,8 @@ export const useRunDetailModel = () => {
     activePromptSubmitVersion += 1;
     setIsSubmittingPrompt(false);
     setSubmitError("");
+    setIsReplyingPermission(false);
+    setPermissionReplyError("");
     setAgentState("idle");
     isAgentUiSubscribed = true;
 
@@ -1850,7 +1931,10 @@ export const useRunDetailModel = () => {
       error: agentError,
       isSubmittingPrompt,
       submitError,
+      isReplyingPermission,
+      permissionReplyError,
       submitPrompt,
+      replyPermission,
       ensureAgentForRun,
       subscribeAgentEvents,
       unsubscribeAgentEvents,

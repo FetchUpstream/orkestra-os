@@ -18,7 +18,7 @@ import {
   RunChatUserMessage,
   type RunChatToolRailItem,
 } from "./chat";
-import type { UiPart } from "../model/agentTypes";
+import type { UiPart, UiPermissionRequest } from "../model/agentTypes";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime } from "../../tasks/utils/taskDetail";
 
@@ -95,6 +95,57 @@ const getNestedValueByKeys = (
   }
 
   return undefined;
+};
+
+const toStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => toSingleLine(item, 200))
+    .filter(
+      (item): item is string => typeof item === "string" && item.length > 0,
+    );
+};
+
+const parsePermissionCardData = (
+  permission: UiPermissionRequest,
+): {
+  requestId: string;
+  kind: string;
+  pathPatterns: string[];
+  metadata: Array<{ key: string; value: string }>;
+} => {
+  const raw = isRecord(permission.raw) ? permission.raw : {};
+  const metadataRecord =
+    permission.metadata && isRecord(permission.metadata)
+      ? permission.metadata
+      : {};
+  const kind =
+    toSingleLine(permission.kind, 80) ||
+    toSingleLine(raw.kind, 80) ||
+    toSingleLine(raw.permission, 80) ||
+    "unspecified";
+  const pathPatternsFromState = toStringArray(permission.pathPatterns);
+  const pathPatternsFromRaw = toStringArray(
+    raw.pathPatterns ?? raw.paths ?? raw.patterns,
+  );
+  const pathPatterns =
+    pathPatternsFromState.length > 0
+      ? pathPatternsFromState
+      : pathPatternsFromRaw;
+  const metadata: Array<{ key: string; value: string }> = [
+    ...Object.entries(metadataRecord)
+      .map(([key, value]) => ({ key, value: toSingleLine(value, 120) || "" }))
+      .filter((entry) => entry.value.length > 0),
+  ];
+
+  return {
+    requestId: permission.requestId,
+    kind,
+    pathPatterns,
+    metadata,
+  };
 };
 
 const toToolLabel = (toolName: string | null | undefined): string => {
@@ -290,6 +341,17 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
   const isRunCompleted = createMemo(
     () => props.model.run()?.status === "completed",
+  );
+  const pendingPermissionRequests = createMemo(() => {
+    const byId = props.model.agent.store().pendingPermissionsById;
+    return Object.values(byId);
+  });
+  const pendingPermissionCard = createMemo(() => {
+    const [first] = pendingPermissionRequests();
+    return first ? parsePermissionCardData(first) : null;
+  });
+  const hasPendingPermission = createMemo(
+    () => pendingPermissionRequests().length > 0,
   );
 
   const isNearBottom = (
@@ -792,6 +854,83 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               Agent stream is not available for this run.
             </p>
           </Show>
+          <Show when={pendingPermissionCard() !== null}>
+            {(() => {
+              const card = pendingPermissionCard();
+              if (!card) {
+                return null;
+              }
+              return (
+                <section
+                  class="run-chat-permission-card"
+                  aria-live="polite"
+                  aria-label="Permission required"
+                >
+                  <h3 class="run-chat-permission-card__title">
+                    Permission required
+                  </h3>
+                  <p class="run-chat-permission-card__line">
+                    <strong>Type:</strong> {card.kind}
+                  </p>
+                  <Show
+                    when={card.pathPatterns.length > 0}
+                    fallback={
+                      <p class="run-chat-permission-card__line">
+                        <strong>Paths:</strong> Any path
+                      </p>
+                    }
+                  >
+                    <div class="run-chat-permission-card__line">
+                      <strong>Paths:</strong>
+                      <ul class="run-chat-permission-card__list">
+                        {card.pathPatterns.map((pattern: string) => (
+                          <li>{pattern}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </Show>
+                  <Show when={card.metadata.length > 0}>
+                    <p class="run-chat-permission-card__line">
+                      <strong>Details:</strong>{" "}
+                      {card.metadata
+                        .map((entry: { key: string; value: string }) => {
+                          return `${entry.key}=${entry.value}`;
+                        })
+                        .join(" | ")}
+                    </p>
+                  </Show>
+                  <div class="run-chat-permission-card__actions">
+                    <button
+                      type="button"
+                      class="projects-button-muted"
+                      disabled={props.model.agent.isReplyingPermission()}
+                      onClick={() => {
+                        void props.model.agent.replyPermission(
+                          card.requestId,
+                          "deny",
+                        );
+                      }}
+                    >
+                      Deny
+                    </button>
+                    <button
+                      type="button"
+                      class="projects-button-primary"
+                      disabled={props.model.agent.isReplyingPermission()}
+                      onClick={() => {
+                        void props.model.agent.replyPermission(
+                          card.requestId,
+                          "allow",
+                        );
+                      }}
+                    >
+                      Allow
+                    </button>
+                  </div>
+                </section>
+              );
+            })()}
+          </Show>
           <Show
             when={transcriptMessageOrder().length > 0}
             fallback={
@@ -870,8 +1009,10 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             }}
             disabled={
               isRunCompleted() ||
+              hasPendingPermission() ||
               isComposerBlockedByReadiness() ||
-              props.model.agent.state() === "unsupported"
+              props.model.agent.state() === "unsupported" ||
+              props.model.agent.isReplyingPermission()
             }
             submitting={props.model.agent.isSubmittingPrompt()}
             placeholder="What do you want to do?"
@@ -886,6 +1027,16 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           <Show when={isRunCompleted()}>
             <p class="project-placeholder-text" aria-live="polite">
               Run completed. Read-only.
+            </p>
+          </Show>
+          <Show when={hasPendingPermission()}>
+            <p class="project-placeholder-text" aria-live="polite">
+              Prompt submission is blocked until this permission is answered.
+            </p>
+          </Show>
+          <Show when={props.model.agent.permissionReplyError().length > 0}>
+            <p class="projects-error">
+              {props.model.agent.permissionReplyError()}
             </p>
           </Show>
           <Show when={props.model.agent.submitError().length > 0}>

@@ -113,6 +113,9 @@ export type UiQuestionRequest = {
 export type UiPermissionRequest = {
   requestId: string;
   sessionId: string;
+  kind?: string;
+  pathPatterns?: string[];
+  metadata?: Record<string, string>;
   raw?: unknown;
 };
 

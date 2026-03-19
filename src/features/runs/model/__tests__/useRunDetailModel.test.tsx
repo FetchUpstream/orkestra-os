@@ -19,6 +19,7 @@ const {
   subscribeRunOpenCodeEventsMock,
   unsubscribeRunOpenCodeEventsMock,
   submitRunOpenCodePromptMock,
+  replyRunOpenCodePermissionMock,
   getRunGitMergeStatusMock,
   rebaseRunWorktreeOntoSourceMock,
   mergeRunWorktreeIntoSourceMock,
@@ -32,6 +33,7 @@ const {
   subscribeRunOpenCodeEventsMock: vi.fn(),
   unsubscribeRunOpenCodeEventsMock: vi.fn(),
   submitRunOpenCodePromptMock: vi.fn(),
+  replyRunOpenCodePermissionMock: vi.fn(),
   getRunGitMergeStatusMock: vi.fn(),
   rebaseRunWorktreeOntoSourceMock: vi.fn(),
   mergeRunWorktreeIntoSourceMock: vi.fn(),
@@ -73,6 +75,7 @@ vi.mock("../../../../app/lib/runs", () => ({
   resizeRunTerminal: vi.fn(async () => undefined),
   setRunDiffWatch: vi.fn(async () => undefined),
   submitRunOpenCodePrompt: submitRunOpenCodePromptMock,
+  replyRunOpenCodePermission: replyRunOpenCodePermissionMock,
   subscribeRunOpenCodeEvents: subscribeRunOpenCodeEventsMock,
   unsubscribeRunOpenCodeEvents: unsubscribeRunOpenCodeEventsMock,
   writeRunTerminal: writeRunTerminalMock,
@@ -91,6 +94,7 @@ describe("useRunDetailModel startup ownership", () => {
     subscribeRunOpenCodeEventsMock.mockReset();
     unsubscribeRunOpenCodeEventsMock.mockReset();
     submitRunOpenCodePromptMock.mockReset();
+    replyRunOpenCodePermissionMock.mockReset();
     getRunGitMergeStatusMock.mockReset();
     rebaseRunWorktreeOntoSourceMock.mockReset();
     mergeRunWorktreeIntoSourceMock.mockReset();
@@ -118,6 +122,10 @@ describe("useRunDetailModel startup ownership", () => {
     mergeRunWorktreeIntoSourceMock.mockResolvedValue({ status: "accepted" });
     writeRunTerminalMock.mockResolvedValue(undefined);
     unsubscribeRunOpenCodeEventsMock.mockResolvedValue(undefined);
+    replyRunOpenCodePermissionMock.mockResolvedValue({
+      status: "accepted",
+      repliedAt: "2026-01-01T00:00:00.000Z",
+    });
     getRunMock.mockResolvedValue({
       id: "run-1",
       taskId: "task-1",
@@ -445,6 +453,58 @@ describe("useRunDetailModel startup ownership", () => {
       const events = modelRef!.agent.events();
       expect(events).toHaveLength(1);
       expect(events[0]?.event).toBe("session.idle");
+    });
+  });
+
+  it("replies to pending permission using run and session context", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "permission.asked",
+      data: {
+        requestID: "perm-1",
+        sessionID: "session-1",
+        kind: "write",
+      },
+    });
+
+    await waitFor(() => {
+      const pending = modelRef!.agent.store().pendingPermissionsById;
+      expect(pending["perm-1"]).toBeTruthy();
+      expect(modelRef!.agent.store().sessionId).toBe("session-1");
+    });
+
+    const accepted = await modelRef!.agent.replyPermission("perm-1", "allow");
+
+    expect(accepted).toBe(true);
+    expect(replyRunOpenCodePermissionMock).toHaveBeenCalledWith({
+      runId: "run-1",
+      sessionId: "session-1",
+      requestId: "perm-1",
+      decision: "allow",
+      remember: false,
     });
   });
 });

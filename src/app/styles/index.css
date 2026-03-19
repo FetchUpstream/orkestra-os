@@ -4030,6 +4030,42 @@ textarea::placeholder {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.run-chat-permission-card {
+  margin: 0 auto 12px;
+  width: min(var(--run-chat-rail-max), calc(100% - 24px));
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 12px;
+  background: rgba(251, 191, 36, 0.08);
+  padding: 12px;
+}
+
+.run-chat-permission-card__title {
+  margin: 0 0 8px;
+  font-size: 0.88rem;
+  color: #fbbf24;
+}
+
+.run-chat-permission-card__line {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.run-chat-permission-card__line + .run-chat-permission-card__line {
+  margin-top: 6px;
+}
+
+.run-chat-permission-card__list {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}
+
+.run-chat-permission-card__actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
 .run-chat-composer-shell {
   width: min(var(--run-chat-rail-max), calc(100% - 24px));
   margin: 0 auto;

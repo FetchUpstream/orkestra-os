@@ -73,6 +73,14 @@ pub struct SubmitRunOpenCodePromptResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReplyRunOpenCodePermissionResponse {
+    pub state: String,
+    pub reason: Option<String>,
+    pub replied_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StartRunOpenCodeResponse {
     pub state: String,
     pub reason: Option<String>,
