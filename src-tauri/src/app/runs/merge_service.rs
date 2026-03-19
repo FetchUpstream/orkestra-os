@@ -5,8 +5,8 @@ use crate::app::runs::dto::{
 use crate::app::runs::service::RunsService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
 use git2::{
-    AnnotatedCommit, BranchType, ErrorCode, Repository, RepositoryState, Signature, Status,
-    StatusOptions,
+    build::CheckoutBuilder, AnnotatedCommit, BranchType, ErrorCode, Repository, RepositoryState,
+    Signature, Status, StatusOptions,
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -85,12 +85,10 @@ impl RunsMergeService {
         Self::ensure_head_on_worktree_branch(&context.repo, &context.worktree_branch)?;
         let source_annotated =
             self.source_annotated_commit(&context.repo, &context.source_branch)?;
-        let worktree_annotated =
-            self.branch_annotated_commit(&context.repo, &context.worktree_branch)?;
         let mut rebase = context
             .repo
             .rebase(
-                Some(&worktree_annotated),
+                None,
                 Some(&source_annotated),
                 Some(&source_annotated),
                 None,
@@ -113,6 +111,7 @@ impl RunsMergeService {
                 AppError::validation(format!("failed to inspect rebase index: {err}"))
             })?;
             if index.has_conflicts() {
+                Self::attach_head_to_worktree_branch(&context.repo, &context.worktree_branch)?;
                 let conflict = Self::build_conflict_payload(&context.repo, &context.source_branch)?;
                 let status = self.compute_status(&context)?;
                 return Ok(RunRebaseResponseDto {
@@ -132,6 +131,7 @@ impl RunsMergeService {
         rebase
             .finish(Some(&signature))
             .map_err(|err| AppError::validation(format!("failed to finish rebase: {err}")))?;
+        Self::reattach_head_to_branch_if_needed(&context.repo, &context.worktree_branch)?;
 
         let status = self.compute_status(&context)?;
         Ok(RunRebaseResponseDto {
@@ -390,6 +390,52 @@ impl RunsMergeService {
                 "cannot rebase: repository HEAD is on '{head_branch}', expected worktree branch '{worktree_branch}'"
             )));
         }
+        Ok(())
+    }
+
+    fn reattach_head_to_branch_if_needed(
+        repo: &Repository,
+        worktree_branch: &str,
+    ) -> Result<(), AppError> {
+        Self::attach_head_to_worktree_branch(repo, worktree_branch)?;
+
+        let mut checkout = CheckoutBuilder::new();
+        checkout.safe();
+        repo.checkout_head(Some(&mut checkout)).map_err(|err| {
+            AppError::validation(format!(
+                "failed to safely checkout worktree branch '{worktree_branch}': {err}"
+            ))
+        })?;
+
+        Ok(())
+    }
+
+    fn attach_head_to_worktree_branch(repo: &Repository, worktree_branch: &str) -> Result<(), AppError> {
+        let head = repo
+            .head()
+            .map_err(|err| AppError::validation(format!("failed to inspect repository HEAD: {err}")))?;
+        let head_branch = head.shorthand().unwrap_or_default();
+        if head.is_branch() && head_branch == worktree_branch {
+            return Ok(());
+        }
+
+        let worktree_ref_name = Self::source_ref_name(worktree_branch);
+        repo.set_head(&worktree_ref_name).map_err(|err| {
+            AppError::validation(format!(
+                "failed to reattach HEAD to worktree branch '{worktree_branch}': {err}"
+            ))
+        })?;
+
+        let head = repo
+            .head()
+            .map_err(|err| AppError::validation(format!("failed to inspect repository HEAD: {err}")))?;
+        let head_branch = head.shorthand().unwrap_or_default();
+        if !head.is_branch() || head_branch != worktree_branch {
+            return Err(AppError::validation(format!(
+                "repository HEAD is on '{head_branch}', expected worktree branch '{worktree_branch}'"
+            )));
+        }
+
         Ok(())
     }
 
@@ -725,6 +771,41 @@ mod tests {
         let conflict = response.conflict.expect("expected conflict payload");
         assert!(conflict.files.iter().any(|file| file == "README.md"));
         assert!(conflict.chat_prompt.contains("Conflicting files"));
+
+        let repo = Repository::open(&worktree_path).unwrap();
+        let head = repo.head().unwrap();
+        assert!(head.is_branch());
+        assert_eq!(head.shorthand().unwrap_or_default(), run.worktree_id.unwrap());
+    }
+
+    #[tokio::test]
+    async fn rebase_success_keeps_head_attached_to_worktree_branch() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service.create_run("task-1").await.unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        append_commit(&repo_path, "README.md", "main-change\n", "main change");
+        append_commit(
+            &worktree_path,
+            "NOTES.md",
+            "worktree-change\n",
+            "worktree change",
+        );
+
+        let response = merge_service.rebase_worktree_branch(&run.id).await.unwrap();
+        assert_eq!(response.state, "mergeable");
+
+        let repo = Repository::open(&worktree_path).unwrap();
+        let head = repo.head().unwrap();
+        assert!(head.is_branch());
+        assert_eq!(head.shorthand().unwrap_or_default(), run.worktree_id.unwrap());
     }
 
     #[tokio::test]
