@@ -24,8 +24,10 @@ import {
   type Run,
 } from "../../../app/lib/runs";
 import {
+  filterDependencyCandidates,
   getActionErrorMessage,
   getValidTransitionTargets,
+  isDependencyCandidateLinkable,
 } from "../utils/taskDetail";
 import {
   dependencyBadgeState,
@@ -54,10 +56,6 @@ export const useTaskDetailModel = () => {
   const [dependenciesError, setDependenciesError] = createSignal("");
   const [isLoadingDependencies, setIsLoadingDependencies] = createSignal(false);
   const [candidateTasks, setCandidateTasks] = createSignal<Task[]>([]);
-  const [selectedParentTaskId, setSelectedParentTaskId] = createSignal("");
-  const [selectedChildTaskId, setSelectedChildTaskId] = createSignal("");
-  const [isAddingParent, setIsAddingParent] = createSignal(false);
-  const [isAddingChild, setIsAddingChild] = createSignal(false);
   const [removingDependencyKey, setRemovingDependencyKey] = createSignal("");
   const [isEditing, setIsEditing] = createSignal(false);
   const [editTitle, setEditTitle] = createSignal("");
@@ -84,6 +82,14 @@ export const useTaskDetailModel = () => {
   const [createDependencyStatus, setCreateDependencyStatus] =
     createSignal<TaskStatus>("todo");
   const [isCreatingDependency, setIsCreatingDependency] = createSignal(false);
+  const [isLinkDependencyModalOpen, setIsLinkDependencyModalOpen] =
+    createSignal(false);
+  const [linkDependencyDirection, setLinkDependencyDirection] =
+    createSignal<DependencyCreateDirection>("parent");
+  const [linkDependencySearch, setLinkDependencySearch] = createSignal("");
+  const [showDoneLinkCandidates, setShowDoneLinkCandidates] =
+    createSignal(false);
+  const [isLinkingDependency, setIsLinkingDependency] = createSignal(false);
   const [defaultProjectRepositoryId, setDefaultProjectRepositoryId] =
     createSignal("");
   const [runs, setRuns] = createSignal<Run[]>([]);
@@ -169,12 +175,11 @@ export const useTaskDetailModel = () => {
     const taskValue = task();
     const currentDependencies = dependencies();
     if (!taskValue || !currentDependencies) return [];
-    const blockedIds = new Set([
-      taskValue.id,
-      ...currentDependencies.parents.map((dependencyTask) => dependencyTask.id),
-    ]);
-    return candidateTasks().filter(
-      (candidateTask) => !blockedIds.has(candidateTask.id),
+    const linkedTaskIds = new Set(
+      currentDependencies.parents.map((dependencyTask) => dependencyTask.id),
+    );
+    return candidateTasks().filter((candidateTask) =>
+      isDependencyCandidateLinkable(candidateTask, taskValue.id, linkedTaskIds),
     );
   });
 
@@ -182,15 +187,23 @@ export const useTaskDetailModel = () => {
     const taskValue = task();
     const currentDependencies = dependencies();
     if (!taskValue || !currentDependencies) return [];
-    const blockedIds = new Set([
-      taskValue.id,
-      ...currentDependencies.children.map(
-        (dependencyTask) => dependencyTask.id,
-      ),
-    ]);
-    return candidateTasks().filter(
-      (candidateTask) => !blockedIds.has(candidateTask.id),
+    const linkedTaskIds = new Set(
+      currentDependencies.children.map((dependencyTask) => dependencyTask.id),
     );
+    return candidateTasks().filter((candidateTask) =>
+      isDependencyCandidateLinkable(candidateTask, taskValue.id, linkedTaskIds),
+    );
+  });
+
+  const filteredLinkCandidates = createMemo(() => {
+    const candidates =
+      linkDependencyDirection() === "parent"
+        ? availableParentCandidates()
+        : availableChildCandidates();
+    return filterDependencyCandidates(candidates, {
+      searchTerm: linkDependencySearch(),
+      includeDone: showDoneLinkCandidates(),
+    });
   });
 
   const refreshDependencies = async (taskId: string) => {
@@ -296,6 +309,58 @@ export const useTaskDetailModel = () => {
   const onCancelCreateDependency = () => {
     if (isCreatingDependency()) return;
     setIsCreateDependencyModalOpen(false);
+  };
+
+  const onOpenLinkDependencyModal = (direction: DependencyCreateDirection) => {
+    setActionError("");
+    setLinkDependencyDirection(direction);
+    setLinkDependencySearch("");
+    setShowDoneLinkCandidates(false);
+    setIsLinkDependencyModalOpen(true);
+  };
+
+  const onCancelLinkDependency = () => {
+    if (isLinkingDependency()) return;
+    setIsLinkDependencyModalOpen(false);
+  };
+
+  const onLinkDependency = async (dependencyTaskId: string) => {
+    const taskValue = task();
+    if (!taskValue || !dependencyTaskId || isLinkingDependency()) return;
+    const currentLinkedTasks =
+      linkDependencyDirection() === "parent"
+        ? (dependencies()?.parents ?? [])
+        : (dependencies()?.children ?? []);
+    const linkedTaskIds = new Set(
+      currentLinkedTasks.map((dependencyTask) => dependencyTask.id),
+    );
+    if (
+      !isDependencyCandidateLinkable(
+        { id: dependencyTaskId, title: "", status: "todo" },
+        taskValue.id,
+        linkedTaskIds,
+      )
+    ) {
+      return;
+    }
+
+    setActionError("");
+    setIsLinkingDependency(true);
+    try {
+      if (linkDependencyDirection() === "parent") {
+        await addTaskDependency(dependencyTaskId, taskValue.id);
+      } else {
+        await addTaskDependency(taskValue.id, dependencyTaskId);
+      }
+      await refreshDependencies(taskValue.id);
+      setIsLinkDependencyModalOpen(false);
+    } catch (mutationError) {
+      setActionError(
+        getActionErrorMessage("Failed to add dependency.", mutationError),
+      );
+    } finally {
+      setIsLinkingDependency(false);
+    }
   };
 
   const onSubmitCreateDependency = async () => {
@@ -482,44 +547,6 @@ export const useTaskDetailModel = () => {
     }
   };
 
-  const onAddParentDependency = async () => {
-    const taskValue = task();
-    const parentTaskId = selectedParentTaskId();
-    if (!taskValue || !parentTaskId) return;
-    setActionError("");
-    setIsAddingParent(true);
-    try {
-      await addTaskDependency(parentTaskId, taskValue.id);
-      await refreshDependencies(taskValue.id);
-      setSelectedParentTaskId("");
-    } catch (mutationError) {
-      setActionError(
-        getActionErrorMessage("Failed to add dependency.", mutationError),
-      );
-    } finally {
-      setIsAddingParent(false);
-    }
-  };
-
-  const onAddChildDependency = async () => {
-    const taskValue = task();
-    const childTaskId = selectedChildTaskId();
-    if (!taskValue || !childTaskId) return;
-    setActionError("");
-    setIsAddingChild(true);
-    try {
-      await addTaskDependency(taskValue.id, childTaskId);
-      await refreshDependencies(taskValue.id);
-      setSelectedChildTaskId("");
-    } catch (mutationError) {
-      setActionError(
-        getActionErrorMessage("Failed to add dependency.", mutationError),
-      );
-    } finally {
-      setIsAddingChild(false);
-    }
-  };
-
   const onRemoveDependency = async (
     parentTaskId: string,
     childTaskId: string,
@@ -663,10 +690,6 @@ export const useTaskDetailModel = () => {
     isAnyRunStarting,
     warmingRunIds,
     runStartErrors,
-    selectedParentTaskId,
-    selectedChildTaskId,
-    isAddingParent,
-    isAddingChild,
     removingDependencyKey,
     isEditing,
     editTitle,
@@ -685,12 +708,16 @@ export const useTaskDetailModel = () => {
     createDependencyImplementationGuide,
     createDependencyStatus,
     isCreatingDependency,
+    isLinkDependencyModalOpen,
+    linkDependencyDirection,
+    linkDependencySearch,
+    showDoneLinkCandidates,
+    filteredLinkCandidates,
+    isLinkingDependency,
     backHref,
     backLabel,
     canMoveTask,
     validTransitionOptions,
-    availableParentCandidates,
-    availableChildCandidates,
     navigateToDependencyTask,
     refreshDependencies,
     refreshRuns,
@@ -700,16 +727,19 @@ export const useTaskDetailModel = () => {
     setEditDescription,
     setEditImplementationGuide,
     setMoveRepositoryId,
-    setSelectedParentTaskId,
-    setSelectedChildTaskId,
     setCreateDependencyTitle,
     setCreateDependencyDescription,
     setCreateDependencyImplementationGuide,
     setCreateDependencyStatus,
+    setLinkDependencySearch,
+    setShowDoneLinkCandidates,
     setIsBlockedRunWarningOpen,
     onOpenCreateDependencyModal,
     onCancelCreateDependency,
     onSubmitCreateDependency,
+    onOpenLinkDependencyModal,
+    onCancelLinkDependency,
+    onLinkDependency,
     onSaveEdit,
     onCancelEdit,
     onSetStatus,
@@ -717,8 +747,6 @@ export const useTaskDetailModel = () => {
     onRequestDeleteTask,
     onCancelDeleteTask,
     onConfirmDeleteTask,
-    onAddParentDependency,
-    onAddChildDependency,
     onRemoveDependency,
     onCreateRun,
     onStartRun,

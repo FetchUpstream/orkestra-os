@@ -1915,36 +1915,44 @@ textarea::placeholder {
   gap: 8px;
 }
 
-.task-dependencies-add-button {
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-alt);
-  color: var(--text-muted);
-  font-size: 1rem;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
-}
-
-.task-dependencies-add-button:hover:not(:disabled) {
-  background: var(--surface-hover);
-  border-color: var(--accent);
-  color: var(--text);
-}
-
 .task-create-dependency-modal {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.task-link-dependency-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.task-link-candidate-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(300px, 48vh);
+  overflow: auto;
+}
+
+.task-link-candidate-item {
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-alt);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.task-link-candidate-item .projects-button-primary {
+  min-width: 70px;
 }
 
 .task-dependencies-list {
@@ -2026,16 +2034,6 @@ textarea::placeholder {
   flex-shrink: 0;
 }
 
-.task-dependency-controls {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-}
-
-.task-dependency-selector-field {
-  flex: 1;
-}
-
 .task-dependencies-error-block {
   display: flex;
   flex-direction: column;
@@ -2083,6 +2081,7 @@ textarea::placeholder {
   z-index: 1;
   height: 26px;
   min-height: 26px;
+  min-width: 52px;
   padding: 0 8px;
   font-size: 0.72rem;
 }
@@ -2104,8 +2103,12 @@ textarea::placeholder {
     box-shadow 0.15s ease;
 }
 
-.task-runs-link--with-action {
+.task-runs-link--with-start-action {
   padding-right: 118px;
+}
+
+.task-runs-link--with-delete-action {
+  padding-right: 48px;
 }
 
 .task-runs-link:hover {
@@ -4304,15 +4307,6 @@ textarea::placeholder {
     align-items: flex-start;
   }
 
-  .task-dependency-controls {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .task-dependency-controls button {
-    width: 100%;
-  }
-
   .task-runs-link {
     flex-wrap: wrap;
     align-items: flex-start;
@@ -4323,7 +4317,7 @@ textarea::placeholder {
     width: 100%;
   }
 
-  .task-runs-link--with-action {
+  .task-runs-link--with-start-action {
     padding-right: 110px;
   }
 

@@ -1,4 +1,11 @@
-import { For, Show, createSignal, type Component } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  createSignal,
+  onCleanup,
+  type Component,
+} from "solid-js";
 import BackIconLink from "../../../components/ui/BackIconLink";
 import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
@@ -133,10 +140,6 @@ const TaskDetailScreen: Component = () => {
     isAnyRunStarting,
     warmingRunIds,
     runStartErrors,
-    selectedParentTaskId,
-    selectedChildTaskId,
-    isAddingParent,
-    isAddingChild,
     removingDependencyKey,
     isEditing,
     editTitle,
@@ -155,12 +158,16 @@ const TaskDetailScreen: Component = () => {
     createDependencyImplementationGuide,
     createDependencyStatus,
     isCreatingDependency,
+    isLinkDependencyModalOpen,
+    linkDependencyDirection,
+    linkDependencySearch,
+    showDoneLinkCandidates,
+    filteredLinkCandidates,
+    isLinkingDependency,
     backHref,
     backLabel,
     canMoveTask,
     validTransitionOptions,
-    availableParentCandidates,
-    availableChildCandidates,
     navigateToDependencyTask,
     refreshDependencies,
     refreshRuns,
@@ -170,12 +177,12 @@ const TaskDetailScreen: Component = () => {
     setEditDescription,
     setEditImplementationGuide,
     setMoveRepositoryId,
-    setSelectedParentTaskId,
-    setSelectedChildTaskId,
     setCreateDependencyTitle,
     setCreateDependencyDescription,
     setCreateDependencyImplementationGuide,
     setCreateDependencyStatus,
+    setLinkDependencySearch,
+    setShowDoneLinkCandidates,
     setIsBlockedRunWarningOpen,
     onOpenCreateDependencyModal,
     onCancelCreateDependency,
@@ -187,14 +194,29 @@ const TaskDetailScreen: Component = () => {
     onRequestDeleteTask,
     onCancelDeleteTask,
     onConfirmDeleteTask,
-    onAddParentDependency,
-    onAddChildDependency,
+    onOpenLinkDependencyModal,
+    onCancelLinkDependency,
+    onLinkDependency,
     onRemoveDependency,
     onCreateRun,
     onStartRun,
     onDeleteRun,
   } = useTaskDetailModel();
   const [isTransitionMenuOpen, setIsTransitionMenuOpen] = createSignal(false);
+
+  createEffect(() => {
+    if (!isLinkDependencyModalOpen()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCancelLinkDependency();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => {
+      window.removeEventListener("keydown", onKeyDown);
+    });
+  });
 
   return (
     <>
@@ -579,42 +601,33 @@ const TaskDetailScreen: Component = () => {
                                   <For each={runs()}>
                                     {(runItem) => (
                                       <li class="task-runs-item">
-                                        <button
-                                          type="button"
-                                          class="projects-button-muted task-runs-start-button"
-                                          onClick={(event) => {
-                                            event.preventDefault();
-                                            event.stopPropagation();
-                                            void onStartRun(runItem.id);
-                                          }}
-                                          disabled={
-                                            isBlocked() ||
-                                            isAnyRunStarting() ||
-                                            deletingRunId() === runItem.id ||
-                                            warmingRunIds()[runItem.id] ||
-                                            runItem.status === "running" ||
-                                            runItem.status === "preparing" ||
-                                            runItem.status === "completed"
-                                          }
-                                        >
-                                          {startingRunId() === runItem.id
-                                            ? "Starting..."
-                                            : isBlocked()
-                                              ? "Blocked"
-                                              : isAnyRunStarting()
-                                                ? "Start locked"
-                                                : warmingRunIds()[runItem.id] ||
-                                                    runItem.status ===
-                                                      "preparing"
-                                                  ? "Warming..."
-                                                  : runItem.status ===
-                                                      "completed"
-                                                    ? "Completed"
-                                                    : runItem.status ===
-                                                        "running"
-                                                      ? "Running"
-                                                      : "Start"}
-                                        </button>
+                                        {(() => {
+                                          const isLocallyStarting =
+                                            startingRunId() === runItem.id;
+                                          const canShowStartAction =
+                                            runItem.status === "queued" &&
+                                            !isLocallyStarting &&
+                                            !isBlocked() &&
+                                            !isAnyRunStarting() &&
+                                            deletingRunId() !== runItem.id &&
+                                            !warmingRunIds()[runItem.id];
+
+                                          return (
+                                            <Show when={canShowStartAction}>
+                                              <button
+                                                type="button"
+                                                class="projects-button-muted task-runs-start-button"
+                                                onClick={(event) => {
+                                                  event.preventDefault();
+                                                  event.stopPropagation();
+                                                  void onStartRun(runItem.id);
+                                                }}
+                                              >
+                                                Start
+                                              </button>
+                                            </Show>
+                                          );
+                                        })()}
                                         <button
                                           type="button"
                                           class="task-control-icon-button task-control-icon-button-danger task-runs-delete-button"
@@ -641,7 +654,16 @@ const TaskDetailScreen: Component = () => {
                                         </button>
                                         <A
                                           href={`/runs/${runItem.id}`}
-                                          class="task-runs-link task-runs-link--with-action"
+                                          class={`task-runs-link ${
+                                            runItem.status === "queued" &&
+                                            startingRunId() !== runItem.id &&
+                                            !isBlocked() &&
+                                            !isAnyRunStarting() &&
+                                            deletingRunId() !== runItem.id &&
+                                            !warmingRunIds()[runItem.id]
+                                              ? "task-runs-link--with-start-action"
+                                              : "task-runs-link--with-delete-action"
+                                          }`}
                                         >
                                           <div class="task-runs-content">
                                             <div class="task-runs-primary-row">
@@ -748,14 +770,23 @@ const TaskDetailScreen: Component = () => {
                                       </h3>
                                       <button
                                         type="button"
-                                        class="task-dependencies-add-button"
+                                        class="projects-button-muted"
                                         onClick={() =>
                                           onOpenCreateDependencyModal("parent")
                                         }
-                                        aria-label="Create and add parent dependency"
-                                        title="Create parent dependency"
+                                        aria-label="Create parent dependency"
                                       >
-                                        +
+                                        Create
+                                      </button>
+                                      <button
+                                        type="button"
+                                        class="projects-button-muted"
+                                        onClick={() =>
+                                          onOpenLinkDependencyModal("parent")
+                                        }
+                                        aria-label="Link parent dependency"
+                                      >
+                                        Link
                                       </button>
                                     </div>
                                     <Show
@@ -848,62 +879,6 @@ const TaskDetailScreen: Component = () => {
                                         </For>
                                       </ul>
                                     </Show>
-                                    <div class="task-dependency-controls">
-                                      <label class="projects-field task-dependency-selector-field">
-                                        <span class="field-label">
-                                          <span class="field-label-text">
-                                            Add parent dependency
-                                          </span>
-                                        </span>
-                                        <select
-                                          value={selectedParentTaskId()}
-                                          onChange={(event) =>
-                                            setSelectedParentTaskId(
-                                              event.currentTarget.value,
-                                            )
-                                          }
-                                          disabled={isAddingParent()}
-                                          aria-label="Add parent dependency"
-                                        >
-                                          <option value="">Select task</option>
-                                          <For
-                                            each={availableParentCandidates()}
-                                          >
-                                            {(candidateTask) => (
-                                              <option value={candidateTask.id}>
-                                                {dependencyDisplayLabel({
-                                                  id: candidateTask.id,
-                                                  displayKey:
-                                                    candidateTask.displayKey ||
-                                                    "",
-                                                  title: candidateTask.title,
-                                                  status: candidateTask.status,
-                                                  targetRepositoryName:
-                                                    candidateTask.targetRepositoryName,
-                                                  targetRepositoryPath:
-                                                    candidateTask.targetRepositoryPath,
-                                                  updatedAt:
-                                                    candidateTask.updatedAt,
-                                                })}
-                                              </option>
-                                            )}
-                                          </For>
-                                        </select>
-                                      </label>
-                                      <button
-                                        type="button"
-                                        class="projects-button-muted"
-                                        onClick={onAddParentDependency}
-                                        disabled={
-                                          !selectedParentTaskId() ||
-                                          isAddingParent()
-                                        }
-                                      >
-                                        {isAddingParent()
-                                          ? "Adding..."
-                                          : "Add parent"}
-                                      </button>
-                                    </div>
                                   </div>
 
                                   <div class="task-dependencies-section">
@@ -913,14 +888,23 @@ const TaskDetailScreen: Component = () => {
                                       </h3>
                                       <button
                                         type="button"
-                                        class="task-dependencies-add-button"
+                                        class="projects-button-muted"
                                         onClick={() =>
                                           onOpenCreateDependencyModal("child")
                                         }
-                                        aria-label="Create and add blocked task"
-                                        title="Create blocked task"
+                                        aria-label="Create blocked task"
                                       >
-                                        +
+                                        Create
+                                      </button>
+                                      <button
+                                        type="button"
+                                        class="projects-button-muted"
+                                        onClick={() =>
+                                          onOpenLinkDependencyModal("child")
+                                        }
+                                        aria-label="Link blocked task"
+                                      >
+                                        Link
                                       </button>
                                     </div>
                                     <Show
@@ -1013,62 +997,6 @@ const TaskDetailScreen: Component = () => {
                                         </For>
                                       </ul>
                                     </Show>
-                                    <div class="task-dependency-controls">
-                                      <label class="projects-field task-dependency-selector-field">
-                                        <span class="field-label">
-                                          <span class="field-label-text">
-                                            Add blocked task
-                                          </span>
-                                        </span>
-                                        <select
-                                          value={selectedChildTaskId()}
-                                          onChange={(event) =>
-                                            setSelectedChildTaskId(
-                                              event.currentTarget.value,
-                                            )
-                                          }
-                                          disabled={isAddingChild()}
-                                          aria-label="Add child dependency"
-                                        >
-                                          <option value="">Select task</option>
-                                          <For
-                                            each={availableChildCandidates()}
-                                          >
-                                            {(candidateTask) => (
-                                              <option value={candidateTask.id}>
-                                                {dependencyDisplayLabel({
-                                                  id: candidateTask.id,
-                                                  displayKey:
-                                                    candidateTask.displayKey ||
-                                                    "",
-                                                  title: candidateTask.title,
-                                                  status: candidateTask.status,
-                                                  targetRepositoryName:
-                                                    candidateTask.targetRepositoryName,
-                                                  targetRepositoryPath:
-                                                    candidateTask.targetRepositoryPath,
-                                                  updatedAt:
-                                                    candidateTask.updatedAt,
-                                                })}
-                                              </option>
-                                            )}
-                                          </For>
-                                        </select>
-                                      </label>
-                                      <button
-                                        type="button"
-                                        class="projects-button-muted"
-                                        onClick={onAddChildDependency}
-                                        disabled={
-                                          !selectedChildTaskId() ||
-                                          isAddingChild()
-                                        }
-                                      >
-                                        {isAddingChild()
-                                          ? "Adding..."
-                                          : "Add child"}
-                                      </button>
-                                    </div>
                                   </div>
                                 </div>
                               )}
@@ -1230,6 +1158,134 @@ const TaskDetailScreen: Component = () => {
                 disabled={isCreatingDependency()}
               >
                 {isCreatingDependency() ? "Creating..." : "Create and link"}
+              </button>
+            </div>
+          </section>
+        </div>
+      </Show>
+      <Show when={isLinkDependencyModalOpen()}>
+        <div
+          class="projects-modal-backdrop"
+          role="presentation"
+          onClick={onCancelLinkDependency}
+        >
+          <section
+            class="projects-modal task-create-dependency-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="task-link-dependency-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2
+              id="task-link-dependency-modal-title"
+              class="task-delete-modal-title"
+            >
+              {linkDependencyDirection() === "parent"
+                ? "Link blocking prerequisite"
+                : "Link blocked task"}
+            </h2>
+            <label class="projects-field">
+              <span class="field-label">
+                <span class="field-label-text">Search tasks</span>
+              </span>
+              <input
+                value={linkDependencySearch()}
+                onInput={(event) =>
+                  setLinkDependencySearch(event.currentTarget.value)
+                }
+                placeholder="Search by key, title, or repository"
+                aria-label="Search dependency tasks"
+              />
+            </label>
+            <label class="task-link-dependency-toggle">
+              <input
+                type="checkbox"
+                checked={showDoneLinkCandidates()}
+                onChange={(event) =>
+                  setShowDoneLinkCandidates(event.currentTarget.checked)
+                }
+              />
+              Show done tasks
+            </label>
+            <Show
+              when={filteredLinkCandidates().length > 0}
+              fallback={
+                <p class="project-placeholder-text">
+                  No tasks match your filters.
+                </p>
+              }
+            >
+              <ul class="task-link-candidate-list" aria-label="Link candidates">
+                <For each={filteredLinkCandidates()}>
+                  {(candidateTask) => (
+                    <li class="task-link-candidate-item">
+                      <div class="task-dependency-main">
+                        <p class="task-dependency-title">
+                          {dependencyDisplayLabel({
+                            id: candidateTask.id,
+                            displayKey: candidateTask.displayKey || "",
+                            title: candidateTask.title,
+                            status: candidateTask.status,
+                            targetRepositoryName:
+                              candidateTask.targetRepositoryName,
+                            targetRepositoryPath:
+                              candidateTask.targetRepositoryPath,
+                            updatedAt: candidateTask.updatedAt,
+                          })}
+                        </p>
+                        <div class="task-dependency-meta">
+                          <span
+                            class={`project-task-status project-task-status--${candidateTask.status}`}
+                          >
+                            {formatStatus(candidateTask.status)}
+                          </span>
+                          <span class="task-dependency-scope">
+                            {dependencyScopeLabel({
+                              id: candidateTask.id,
+                              displayKey: candidateTask.displayKey || "",
+                              title: candidateTask.title,
+                              status: candidateTask.status,
+                              targetRepositoryName:
+                                candidateTask.targetRepositoryName,
+                              targetRepositoryPath:
+                                candidateTask.targetRepositoryPath,
+                              updatedAt: candidateTask.updatedAt,
+                            })}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        class="projects-button-primary"
+                        onClick={() => void onLinkDependency(candidateTask.id)}
+                        disabled={isLinkingDependency()}
+                        aria-label={`Link ${dependencyDisplayLabel({
+                          id: candidateTask.id,
+                          displayKey: candidateTask.displayKey || "",
+                          title: candidateTask.title,
+                          status: candidateTask.status,
+                          targetRepositoryName:
+                            candidateTask.targetRepositoryName,
+                          targetRepositoryPath:
+                            candidateTask.targetRepositoryPath,
+                          updatedAt: candidateTask.updatedAt,
+                        })}`}
+                      >
+                        {isLinkingDependency() ? "Linking..." : "Link"}
+                      </button>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+            <div class="task-delete-modal-actions">
+              <button
+                type="button"
+                class="projects-button-muted"
+                onClick={onCancelLinkDependency}
+                disabled={isLinkingDependency()}
+              >
+                Cancel
               </button>
             </div>
           </section>

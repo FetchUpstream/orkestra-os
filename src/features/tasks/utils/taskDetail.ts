@@ -39,6 +39,45 @@ export const dependencyDisplayLabel = (dependencyTask: TaskDependencyTask) => {
   return key ? `${key} - ${dependencyTask.title}` : dependencyTask.title;
 };
 
+type DependencyCandidateLike = {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  displayKey?: string | null;
+  targetRepositoryName?: string | null;
+  targetRepositoryPath?: string | null;
+};
+
+export const isDependencyCandidateLinkable = (
+  candidateTask: DependencyCandidateLike,
+  currentTaskId: string,
+  linkedTaskIds: Set<string>,
+) => {
+  if (!candidateTask.id || candidateTask.id === currentTaskId) return false;
+  return !linkedTaskIds.has(candidateTask.id);
+};
+
+export const filterDependencyCandidates = <T extends DependencyCandidateLike>(
+  candidateTasks: T[],
+  options: { searchTerm: string; includeDone: boolean },
+) => {
+  const query = options.searchTerm.trim().toLowerCase();
+  return candidateTasks.filter((candidateTask) => {
+    if (!options.includeDone && candidateTask.status === "done") return false;
+    if (!query) return true;
+
+    const key = candidateTask.displayKey?.trim().toLowerCase() || "";
+    const title = candidateTask.title.trim().toLowerCase();
+    const repository =
+      candidateTask.targetRepositoryName?.trim().toLowerCase() ||
+      candidateTask.targetRepositoryPath?.trim().toLowerCase() ||
+      "";
+    return (
+      key.includes(query) || title.includes(query) || repository.includes(query)
+    );
+  });
+};
+
 export const nextStatus = (status: TaskStatus): TaskStatus => {
   if (status === "todo") return "doing";
   if (status === "doing") return "review";
