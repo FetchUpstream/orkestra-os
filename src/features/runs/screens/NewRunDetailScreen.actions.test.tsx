@@ -46,6 +46,8 @@ const createModelStub = (options?: {
     options?.isSubmittingPrompt ?? false,
   );
 
+  const refreshStatus = vi.fn(async () => undefined);
+
   return {
     error: () => "",
     isLoading: () => false,
@@ -91,6 +93,7 @@ const createModelStub = (options?: {
       lastActionMessage: () => "",
       isRebasePending: () => false,
       isMergePending: () => false,
+      refreshStatus,
       rebaseWorktreeOntoSource: vi.fn(async () => undefined),
       mergeWorktreeIntoSource: vi.fn(async () => undefined),
     },
@@ -118,7 +121,7 @@ const createModelStub = (options?: {
     },
   } as unknown as ReturnType<
     typeof import("../model/useRunDetailModel").useRunDetailModel
-  >;
+  > & { git: { refreshStatus: ReturnType<typeof vi.fn> } };
 };
 
 describe("NewRunDetailScreen git actions", () => {
@@ -150,7 +153,7 @@ describe("NewRunDetailScreen git actions", () => {
     });
   });
 
-  it("opens commit modal with editable prefill and submits through submitPrompt", async () => {
+  it("closes commit modal and git drawer after successful submitPrompt", async () => {
     submitPromptMock.mockResolvedValue(true);
     modelFactoryMock.mockReturnValue(
       createModelStub({
@@ -183,6 +186,38 @@ describe("NewRunDetailScreen git actions", () => {
 
     await waitFor(() => {
       expect(submitPromptMock).toHaveBeenCalledWith("commit these files");
+      expect(screen.queryByLabelText("Commit request message")).toBeNull();
+      expect(screen.queryByText("Commit Changes")).toBeNull();
+    });
+  });
+
+  it("keeps git drawer open when commit modal submitPrompt fails", async () => {
+    submitPromptMock.mockResolvedValue(false);
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        gitStatus: {
+          isRebaseAllowed: true,
+          isMergeAllowed: true,
+          requiresRebase: false,
+          isWorktreeClean: false,
+        },
+        diffPaths: ["src/foo.ts"],
+      }),
+    );
+
+    render(() => <NewRunDetailScreen />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    fireEvent.click(await screen.findByText("Commit Changes"));
+
+    const textarea = await screen.findByLabelText("Commit request message");
+    fireEvent.input(textarea, { target: { value: "commit these files" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to agent" }));
+
+    await waitFor(() => {
+      expect(submitPromptMock).toHaveBeenCalledWith("commit these files");
+      expect(screen.getByLabelText("Commit request message")).toBeTruthy();
+      expect(screen.getByText("Commit Changes")).toBeTruthy();
     });
   });
 
@@ -247,6 +282,39 @@ describe("NewRunDetailScreen git actions", () => {
 
     await waitFor(() => {
       expect(screen.queryByText("Commit Changes")).toBeNull();
+    });
+  });
+
+  it("refreshes git status and diff files when git drawer opens", async () => {
+    const model = createModelStub();
+    modelFactoryMock.mockReturnValue(model);
+
+    render(() => <NewRunDetailScreen />);
+
+    await waitFor(() => {
+      expect(model.git.refreshStatus).toHaveBeenCalledTimes(0);
+      expect(model.refreshDiffFiles).toHaveBeenCalledTimes(0);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+
+    await waitFor(() => {
+      expect(model.git.refreshStatus).toHaveBeenCalledTimes(1);
+      expect(model.refreshDiffFiles).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+
+    await waitFor(() => {
+      expect(model.git.refreshStatus).toHaveBeenCalledTimes(1);
+      expect(model.refreshDiffFiles).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+
+    await waitFor(() => {
+      expect(model.git.refreshStatus).toHaveBeenCalledTimes(2);
+      expect(model.refreshDiffFiles).toHaveBeenCalledTimes(2);
     });
   });
 });

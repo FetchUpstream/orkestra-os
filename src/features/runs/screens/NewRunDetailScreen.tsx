@@ -344,11 +344,27 @@ const NewRunDetailScreen: Component = () => {
     const accepted = await model.agent.submitPrompt(commitPromptDraft());
     if (accepted) {
       closeCommitModal();
+      closeOverlay();
     }
   };
 
   createEffect(() => {
     model.setIsDiffTabActive(overlayState() === "drawer-diff");
+  });
+
+  createEffect((previousOverlayState: OverlayState | undefined) => {
+    const currentOverlayState = overlayState();
+    if (
+      currentOverlayState === "drawer-git" &&
+      previousOverlayState !== "drawer-git"
+    ) {
+      void model.git.refreshStatus();
+      void model.refreshDiffFiles().catch(() => {
+        // Preserve existing non-crashing behavior when refresh fails.
+      });
+    }
+
+    return currentOverlayState;
   });
 
   createEffect(() => {
