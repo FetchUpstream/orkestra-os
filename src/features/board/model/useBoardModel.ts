@@ -10,8 +10,16 @@ import {
   type Task,
   type TaskStatus,
 } from "../../../app/lib/tasks";
+import { listTaskRuns } from "../../../app/lib/runs";
 import { canTransitionStatus } from "../../tasks/utils/taskDetail";
 import { groupTasksByStatus } from "../utils/board";
+
+const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "running"]);
+
+const activeRunLabelForTask = (displayKey?: string | null) => {
+  const normalizedDisplayKey = displayKey?.trim();
+  return normalizedDisplayKey || "Current run";
+};
 
 export const useBoardModel = () => {
   const [projects, setProjects] = createSignal<Project[]>([]);
@@ -22,9 +30,13 @@ export const useBoardModel = () => {
   const [updatingTaskIds, setUpdatingTaskIds] = createSignal<string[]>([]);
   const [isProjectsLoading, setIsProjectsLoading] = createSignal(true);
   const [isTasksLoading, setIsTasksLoading] = createSignal(false);
+  const [taskActiveRunLabels, setTaskActiveRunLabels] = createSignal<
+    Record<string, string>
+  >({});
   const [error, setError] = createSignal("");
   let activeTasksRequestVersion = 0;
   let activeProjectDetailRequestVersion = 0;
+  let activeTaskRunsRequestVersion = 0;
 
   const selectedProject = createMemo(
     () =>
@@ -59,6 +71,7 @@ export const useBoardModel = () => {
 
   const loadTasks = async (projectId: string) => {
     const requestVersion = ++activeTasksRequestVersion;
+    const runRequestVersion = ++activeTaskRunsRequestVersion;
     setIsTasksLoading(true);
     setError("");
 
@@ -71,6 +84,45 @@ export const useBoardModel = () => {
         return;
       }
       setTasks(loadedTasks);
+      const nonDoneTasks = loadedTasks.filter((task) => task.status !== "done");
+      if (nonDoneTasks.length === 0) {
+        if (runRequestVersion === activeTaskRunsRequestVersion) {
+          setTaskActiveRunLabels({});
+        }
+        return;
+      }
+
+      const taskActiveRunEntries = await Promise.all(
+        nonDoneTasks.map(async (task) => {
+          try {
+            const runs = await listTaskRuns(task.id);
+            const activeRun = runs.find((run) =>
+              ACTIVE_RUN_STATUSES.has(run.status),
+            );
+            if (!activeRun) return null;
+            return [
+              task.id,
+              activeRunLabelForTask(activeRun.displayKey),
+            ] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      if (
+        runRequestVersion !== activeTaskRunsRequestVersion ||
+        requestVersion !== activeTasksRequestVersion ||
+        selectedProjectId() !== projectId
+      ) {
+        return;
+      }
+
+      setTaskActiveRunLabels(
+        Object.fromEntries(
+          taskActiveRunEntries.filter((entry) => entry !== null),
+        ),
+      );
     } catch {
       if (
         requestVersion !== activeTasksRequestVersion ||
@@ -79,6 +131,7 @@ export const useBoardModel = () => {
         return;
       }
       setTasks([]);
+      setTaskActiveRunLabels({});
       setError("Failed to load project tasks. Please refresh.");
     } finally {
       if (requestVersion === activeTasksRequestVersion) {
@@ -91,8 +144,10 @@ export const useBoardModel = () => {
     setSelectedProjectId(projectId);
     if (!projectId) {
       activeProjectDetailRequestVersion += 1;
+      activeTaskRunsRequestVersion += 1;
       setSelectedProjectDetail(null);
       setTasks([]);
+      setTaskActiveRunLabels({});
       return;
     }
     await Promise.allSettled([
@@ -140,7 +195,10 @@ export const useBoardModel = () => {
     );
 
     try {
-      const updatedTask = await setTaskStatus(taskId, { status: targetStatus });
+      const updatedTask = await setTaskStatus(taskId, {
+        status: targetStatus,
+        sourceAction: "board_manual_move",
+      });
       setTasks((currentTasks) =>
         currentTasks.map((task) =>
           task.id === taskId ? { ...task, ...updatedTask } : task,
@@ -169,6 +227,7 @@ export const useBoardModel = () => {
         setSelectedProjectId("");
         setSelectedProjectDetail(null);
         setTasks([]);
+        setTaskActiveRunLabels({});
         return;
       }
 
@@ -179,6 +238,7 @@ export const useBoardModel = () => {
       setSelectedProjectId("");
       setSelectedProjectDetail(null);
       setTasks([]);
+      setTaskActiveRunLabels({});
     } finally {
       setIsProjectsLoading(false);
     }
@@ -192,6 +252,7 @@ export const useBoardModel = () => {
     groupedTasks,
     isProjectsLoading,
     isTasksLoading,
+    taskActiveRunLabels,
     error,
     onProjectChange,
     refreshSelectedProjectTasks,

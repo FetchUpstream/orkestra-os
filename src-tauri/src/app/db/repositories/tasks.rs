@@ -244,19 +244,21 @@ impl TasksRepository {
         &self,
         id: &str,
         input: UpdateTaskStatus,
-    ) -> Result<Option<Task>, AppError> {
-        sqlx::query(
+    ) -> Result<(Option<Task>, bool), AppError> {
+        let result = sqlx::query(
             "UPDATE tasks
-             SET status = ?, updated_at = ?
-             WHERE id = ?",
+              SET status = ?, updated_at = ?
+             WHERE id = ?
+               AND status != ?",
         )
         .bind(&input.status)
         .bind(&input.updated_at)
         .bind(id)
+        .bind(&input.status)
         .execute(&self.pool)
         .await?;
 
-        self.get_task(id).await
+        Ok((self.get_task(id).await?, result.rows_affected() > 0))
     }
 
     pub async fn move_task_repository(
@@ -593,5 +595,39 @@ mod tests {
         let listed = tasks.into_iter().find(|t| t.id == "task-child").unwrap();
         assert!(listed.blocked_by_count > 0);
         assert!(listed.is_blocked);
+    }
+
+    #[tokio::test]
+    async fn update_task_status_reports_only_persisted_status_changes() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_and_repository(&pool).await;
+        seed_task(&pool, "task-1", 1, "todo").await;
+
+        let (first_update, first_changed) = repository
+            .update_task_status(
+                "task-1",
+                UpdateTaskStatus {
+                    status: "doing".to_string(),
+                    updated_at: "2024-01-02T00:00:00Z".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(first_changed);
+        assert_eq!(first_update.unwrap().status, "doing");
+
+        let (second_update, second_changed) = repository
+            .update_task_status(
+                "task-1",
+                UpdateTaskStatus {
+                    status: "doing".to_string(),
+                    updated_at: "2024-01-03T00:00:00Z".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(!second_changed);
+        assert_eq!(second_update.unwrap().status, "doing");
     }
 }

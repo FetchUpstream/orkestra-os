@@ -21,6 +21,7 @@ pub struct UpdateTaskRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SetTaskStatusRequest {
     pub status: String,
+    pub source_action: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

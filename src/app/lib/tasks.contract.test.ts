@@ -218,7 +218,25 @@ describe("tasks contract", () => {
 
     expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
       id: "task-123",
-      input: { status: "doing" },
+      input: { status: "doing", source_action: undefined },
+    });
+  });
+
+  it("sends board source_action in set_task_status command", async () => {
+    invokeMock.mockResolvedValue({
+      id: "task-123",
+      title: "Task",
+      status: "doing" satisfies TaskStatus,
+    });
+
+    await setTaskStatus("task-123", {
+      status: "doing",
+      sourceAction: "board_manual_move",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
+      id: "task-123",
+      input: { status: "doing", source_action: "board_manual_move" },
     });
   });
 

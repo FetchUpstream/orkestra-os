@@ -11,6 +11,7 @@ import { taskPriorityLabel } from "../utils/board";
 type Props = {
   task: Task;
   project: Project | null;
+  activeRunLabel?: string;
   isDragging?: boolean;
   isStatusUpdating?: boolean;
   onDragStart?: (taskId: string, event: DragEvent) => void;
@@ -20,6 +21,8 @@ type Props = {
 const BoardTaskCard: Component<Props> = (props) => {
   const [dragJustEnded, setDragJustEnded] = createSignal(false);
   const dependencyState = () => dependencyBadgeState(props.task);
+  const showActiveRunDetails = () =>
+    props.task.status !== "done" && Boolean(props.activeRunLabel);
   const repositoryTag = () =>
     props.task.targetRepositoryName || props.task.targetRepositoryPath || "";
 
@@ -85,6 +88,15 @@ const BoardTaskCard: Component<Props> = (props) => {
             >
               {dependencyState() === "blocked" ? "Blocked" : "Ready"}
             </span>
+          </Show>
+          <Show when={showActiveRunDetails()}>
+            <div class="board-task-run-details" aria-label="Run Details">
+              <p class="board-task-run-details-title">Run Details</p>
+              <p class="run-inline-loading-row board-task-run-details-row">
+                <span class="run-inline-spinner" aria-hidden="true" />
+                <span>{props.activeRunLabel}</span>
+              </p>
+            </div>
           </Show>
         </div>
       </A>

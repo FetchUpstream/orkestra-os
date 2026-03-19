@@ -150,6 +150,39 @@ impl RunsRepository {
         Ok(row.map(Self::map_row_to_run))
     }
 
+    pub async fn get_latest_active_run_for_task(&self, task_id: &str) -> Result<Option<Run>, AppError> {
+        let row = sqlx::query(
+            "SELECT
+                id,
+                task_id,
+                project_id,
+                target_repo_id,
+                status,
+                triggered_by,
+                created_at,
+                started_at,
+                finished_at,
+                summary,
+                error_message,
+                worktree_id,
+                agent_id,
+                source_branch,
+                opencode_session_id,
+                initial_prompt_sent_at,
+                initial_prompt_client_request_id
+             FROM runs
+             WHERE task_id = ?
+               AND status IN ('queued', 'preparing', 'running')
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )
+        .bind(task_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(Self::map_row_to_run))
+    }
+
     pub async fn delete_run(&self, run_id: &str) -> Result<bool, AppError> {
         let result = sqlx::query("DELETE FROM runs WHERE id = ?")
             .bind(run_id)

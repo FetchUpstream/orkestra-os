@@ -216,6 +216,9 @@ const BoardScreen: Component = () => {
                           <BoardTaskCard
                             task={task}
                             project={model.selectedProject()}
+                            activeRunLabel={
+                              model.taskActiveRunLabels()[task.id]
+                            }
                             isDragging={draggingTaskId() === task.id}
                             isStatusUpdating={model.isTaskStatusUpdating(
                               task.id,

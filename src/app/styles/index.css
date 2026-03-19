@@ -491,6 +491,20 @@ textarea::placeholder {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+@media (max-width: 640px) {
+  .projects-card-content {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .projects-card-actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+}
+
 /* Form Styles */
 .projects-form {
   display: flex;
@@ -1065,6 +1079,27 @@ textarea::placeholder {
   gap: 4px;
   min-width: 0;
   flex: 1;
+}
+
+.board-task-run-details {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.board-task-run-details-title {
+  margin: 0 0 2px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.board-task-run-details-row {
+  font-size: 0.78rem;
 }
 
 .project-task-title {
@@ -3347,6 +3382,14 @@ textarea::placeholder {
 
 .run-chat-log-stream p {
   margin: 0;
+}
+
+.run-chat-log-stream__line {
+  color: var(--text-muted);
+}
+
+.run-chat-log-stream__line--completed {
+  color: var(--success);
 }
 
 .run-chat-header {

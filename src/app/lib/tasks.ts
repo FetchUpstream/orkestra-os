@@ -52,6 +52,7 @@ export type UpdateTaskInput = {
 
 export type SetTaskStatusInput = {
   status: TaskStatus;
+  sourceAction?: "board_manual_move";
 };
 
 export type MoveTaskInput = {
@@ -200,6 +201,7 @@ export const setTaskStatus = async (
     id: taskId,
     input: {
       status: input.status,
+      source_action: input.sourceAction,
     },
   });
   return toTask(response);

@@ -56,6 +56,41 @@ impl RunsService {
         Ok(Self::to_dto(created))
     }
 
+    pub async fn create_or_reuse_active_run(&self, task_id: &str) -> Result<RunDto, AppError> {
+        let task_id = task_id.trim();
+        if task_id.is_empty() {
+            return Err(AppError::validation("task_id is required"));
+        }
+
+        if let Some(existing) = self.repository.get_latest_active_run_for_task(task_id).await? {
+            return Ok(Self::to_dto(existing));
+        }
+
+        match self.create_run(task_id).await {
+            Ok(created) => Ok(created),
+            Err(err) if Self::is_active_run_uniqueness_violation(&err) => {
+                if let Some(existing) = self.repository.get_latest_active_run_for_task(task_id).await? {
+                    return Ok(Self::to_dto(existing));
+                }
+
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn is_active_run_uniqueness_violation(err: &AppError) -> bool {
+        let AppError::Database(sqlx::Error::Database(db_err)) = err else {
+            return false;
+        };
+
+        let code_matches = db_err.code().as_deref() == Some("2067");
+        let message = db_err.message();
+        code_matches
+            && (message.contains("idx_runs_single_active_per_task")
+                || message.contains("runs.task_id"))
+    }
+
     pub async fn list_task_runs(&self, task_id: &str) -> Result<Vec<RunDto>, AppError> {
         let task_id = task_id.trim();
         if task_id.is_empty() {
@@ -451,6 +486,10 @@ mod tests {
     }
 
     async fn seed_run(pool: &SqlitePool, run_id: &str, task_id: &str) {
+        seed_run_with_status(pool, run_id, task_id, "queued").await;
+    }
+
+    async fn seed_run_with_status(pool: &SqlitePool, run_id: &str, task_id: &str, status: &str) {
         sqlx::query(
             "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -459,7 +498,7 @@ mod tests {
         .bind(task_id)
         .bind("project-1")
         .bind("repo-1")
-        .bind("queued")
+        .bind(status)
         .bind("user")
         .bind("2024-01-01T00:00:00Z")
         .execute(pool)
@@ -517,6 +556,85 @@ mod tests {
             Err(AppError::Validation(message)) => assert_eq!(message, "task_id is required"),
             _ => panic!("expected validation error"),
         }
+    }
+
+    #[tokio::test]
+    async fn create_or_reuse_active_run_reuses_existing_active_run() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run_with_status(&pool, "run-active", "task-1", "running").await;
+
+        let run = service.create_or_reuse_active_run("task-1").await.unwrap();
+
+        assert_eq!(run.id, "run-active");
+        let run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE task_id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(run_count, 1);
+    }
+
+    #[tokio::test]
+    async fn create_or_reuse_active_run_creates_new_when_no_active_run_exists() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run_with_status(&pool, "run-old", "task-1", "completed").await;
+
+        let run = service.create_or_reuse_active_run("task-1").await.unwrap();
+
+        assert_ne!(run.id, "run-old");
+        assert_eq!(run.status, "queued");
+        let active_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runs WHERE task_id = ? AND status IN ('queued','preparing','running')",
+        )
+        .bind("task-1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(active_count, 1);
+    }
+
+    #[tokio::test]
+    async fn create_or_reuse_active_run_is_concurrent_safe_with_single_active_run() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let service_clone = service.clone();
+            tasks.push(tokio::spawn(async move {
+                service_clone
+                    .create_or_reuse_active_run("task-1")
+                    .await
+                    .unwrap()
+            }));
+        }
+
+        let mut returned_run_ids = Vec::new();
+        for task in tasks {
+            returned_run_ids.push(task.await.unwrap().id);
+        }
+
+        let first_id = returned_run_ids.first().cloned().unwrap();
+        assert!(returned_run_ids
+            .iter()
+            .all(|run_id| run_id.as_str() == first_id.as_str()));
+
+        let active_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runs WHERE task_id = ? AND status IN ('queued','preparing','running')",
+        )
+        .bind("task-1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(active_count, 1);
     }
 
     #[tokio::test]
