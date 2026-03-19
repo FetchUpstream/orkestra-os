@@ -92,6 +92,51 @@ const formatBranchDirection = (ahead: number, behind: number): string => {
   return `ahead ${ahead} / behind ${behind}`;
 };
 
+const resolveRunDisplay = (
+  runValue: ReturnType<typeof useRunDetailModel>["run"] extends () => infer T
+    ? T
+    : never,
+): string => {
+  const displayKey = runValue?.displayKey?.trim();
+  if (displayKey) {
+    return displayKey;
+  }
+
+  if (
+    typeof runValue?.runNumber === "number" &&
+    Number.isFinite(runValue.runNumber)
+  ) {
+    return String(runValue.runNumber);
+  }
+
+  return "";
+};
+
+const resolveTaskTitle = (
+  taskTitleValue: string | undefined,
+  runValue: ReturnType<typeof useRunDetailModel>["run"] extends () => infer T
+    ? T
+    : never,
+): string => {
+  const taskTitle = taskTitleValue?.trim();
+  if (taskTitle) {
+    return taskTitle;
+  }
+
+  const runWithTaskTitle = runValue as {
+    taskTitle?: unknown;
+    task_title?: unknown;
+  } | null;
+  const candidateTaskTitle =
+    typeof runWithTaskTitle?.taskTitle === "string"
+      ? runWithTaskTitle.taskTitle
+      : typeof runWithTaskTitle?.task_title === "string"
+        ? runWithTaskTitle.task_title
+        : "";
+
+  return candidateTaskTitle.trim();
+};
+
 const NewRunDetailScreen: Component = () => {
   const model = useRunDetailModel();
   const [overlayState, setOverlayState] = createSignal<OverlayState>("none");
@@ -223,6 +268,66 @@ const NewRunDetailScreen: Component = () => {
       return "";
     }
     return status.mergeDisabledReason || "Merge is currently unavailable.";
+  });
+  const runHeaderTitle = createMemo(() => {
+    const runValue = model.run();
+    const taskTitle = resolveTaskTitle(model.task()?.title, runValue);
+    const runDisplay = resolveRunDisplay(runValue);
+
+    if (taskTitle && runDisplay) {
+      return `RUN #${runDisplay} ${taskTitle}`;
+    }
+
+    if (taskTitle) {
+      return taskTitle;
+    }
+
+    if (runDisplay) {
+      return `RUN #${runDisplay}`;
+    }
+
+    return "Current task";
+  });
+  const runHeaderStatus = createMemo<"red" | "orange" | "green">(() => {
+    const agentState = model.agent.state();
+    const readinessPhase = model.agent.readinessPhase();
+    const agentStore = model.agent.store();
+    const hasAgentError = model.agent.error().trim().length > 0;
+    const runStatus = model.run()?.status;
+
+    const isRed =
+      agentState === "error" ||
+      agentState === "unsupported" ||
+      agentStore.status === "error" ||
+      hasAgentError ||
+      runStatus === "failed" ||
+      runStatus === "cancelled";
+
+    if (isRed) {
+      return "red";
+    }
+
+    const isGreen =
+      agentState === "running" &&
+      readinessPhase === "ready" &&
+      agentStore.streamConnected === true &&
+      agentStore.status !== "connecting";
+
+    if (isGreen) {
+      return "green";
+    }
+
+    return "orange";
+  });
+  const runHeaderStatusText = createMemo(() => {
+    const status = runHeaderStatus();
+    if (status === "red") {
+      return "Agent unavailable";
+    }
+    if (status === "green") {
+      return "Agent ready";
+    }
+    return "Agent connecting";
   });
 
   const logsLines = createMemo(() => {
@@ -454,12 +559,36 @@ const NewRunDetailScreen: Component = () => {
             }
           >
             <>
-              <section class="run-chat-back-nav" aria-label="Run navigation">
+              <section class="run-chat-header" aria-label="Run navigation">
                 <BackIconLink
                   href={model.backHref()}
                   label={model.backLabel()}
                   class="project-detail-back-link project-detail-back-link--icon task-detail-back-link"
                 />
+                <h1 class="run-chat-header__title">{runHeaderTitle()}</h1>
+                <span
+                  class="run-chat-header__status"
+                  aria-label={runHeaderStatusText()}
+                >
+                  <span
+                    class="run-chat-header__status-indicator"
+                    data-status={runHeaderStatus()}
+                    data-testid="run-status-indicator"
+                    aria-hidden="true"
+                  >
+                    <span
+                      class="run-chat-header__status-glyph"
+                      aria-hidden="true"
+                    >
+                      {runHeaderStatus() === "red"
+                        ? "!"
+                        : runHeaderStatus() === "green"
+                          ? "\u2713"
+                          : "~"}
+                    </span>
+                  </span>
+                  <span class="sr-only">{runHeaderStatusText()}</span>
+                </span>
               </section>
               <NewRunChatWorkspace
                 model={model}

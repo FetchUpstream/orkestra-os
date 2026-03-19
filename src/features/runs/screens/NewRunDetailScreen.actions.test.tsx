@@ -27,6 +27,22 @@ vi.mock("../model/useRunDetailModel", () => ({
 }));
 
 const createModelStub = (options?: {
+  run?: {
+    id?: string;
+    displayKey?: string | null;
+    runNumber?: number | null;
+    taskTitle?: string | null;
+    status?:
+      | "queued"
+      | "preparing"
+      | "running"
+      | "completed"
+      | "failed"
+      | "cancelled";
+  };
+  task?: {
+    title?: string | null;
+  };
   gitStatus?: {
     state?: string;
     rawState?: string;
@@ -40,6 +56,25 @@ const createModelStub = (options?: {
   diffPaths?: string[];
   refreshedDiffPaths?: string[];
   isSubmittingPrompt?: boolean;
+  agent?: {
+    state?:
+      | "idle"
+      | "accepted"
+      | "starting"
+      | "running"
+      | "unsupported"
+      | "error";
+    readinessPhase?:
+      | "warming_backend"
+      | "creating_session"
+      | "ready"
+      | "reconnecting"
+      | "submit_failed"
+      | null;
+    storeStatus?: "connecting" | "idle" | "active" | "error";
+    streamConnected?: boolean;
+    error?: string;
+  };
 }) => {
   const [diffPaths, setDiffPaths] = createSignal(options?.diffPaths ?? []);
   const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(
@@ -51,7 +86,16 @@ const createModelStub = (options?: {
   return {
     error: () => "",
     isLoading: () => false,
-    run: () => ({ id: "run-1", status: "running" }),
+    run: () => ({
+      id: options?.run?.id ?? "run-1",
+      status: options?.run?.status ?? "running",
+      displayKey:
+        options?.run?.displayKey !== undefined ? options.run.displayKey : "123",
+      runNumber:
+        options?.run?.runNumber !== undefined ? options.run.runNumber : 123,
+      taskTitle: options?.run?.taskTitle,
+    }),
+    task: () => ({ title: options?.task?.title ?? "Ship redesign" }),
     backHref: () => "/tasks/task-1",
     backLabel: () => "task",
     setIsDiffTabActive: vi.fn(),
@@ -107,8 +151,13 @@ const createModelStub = (options?: {
       setTerminalFrameHandler: vi.fn(),
     },
     agent: {
-      error: () => "",
-      state: () => "running",
+      error: () => options?.agent?.error ?? "",
+      state: () => options?.agent?.state ?? "running",
+      readinessPhase: () => options?.agent?.readinessPhase ?? "ready",
+      store: () => ({
+        status: options?.agent?.storeStatus ?? "active",
+        streamConnected: options?.agent?.streamConnected ?? true,
+      }),
       events: () => [],
       submitError: () => "",
       isSubmittingPrompt,
@@ -316,5 +365,112 @@ describe("NewRunDetailScreen git actions", () => {
       expect(model.git.refreshStatus).toHaveBeenCalledTimes(2);
       expect(model.refreshDiffFiles).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it("renders inline run title and green status indicator when ready", () => {
+    modelFactoryMock.mockReturnValue(createModelStub());
+
+    render(() => <NewRunDetailScreen />);
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
+      "RUN #123 Ship redesign",
+    );
+    expect(screen.getByLabelText("Agent ready")).toBeTruthy();
+    expect(
+      screen.getByTestId("run-status-indicator").getAttribute("data-status"),
+    ).toBe("green");
+    expect(screen.getByText("✓")).toBeTruthy();
+  });
+
+  it("renders task title without synthetic run number fallback", () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        task: { title: "" },
+        run: {
+          id: "run-27",
+          displayKey: "",
+          runNumber: null,
+          taskTitle: "Fix websocket transport",
+        },
+      }),
+    );
+
+    render(() => <NewRunDetailScreen />);
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
+      "Fix websocket transport",
+    );
+  });
+
+  it("uses fallback title and red status indicator when unavailable", () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        task: { title: "" },
+        run: { displayKey: "", runNumber: null, status: "failed" },
+        agent: {
+          state: "error",
+          readinessPhase: "reconnecting",
+          storeStatus: "error",
+          streamConnected: false,
+          error: "Backend unavailable",
+        },
+      }),
+    );
+
+    render(() => <NewRunDetailScreen />);
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
+      "Current task",
+    );
+    expect(screen.getByLabelText("Agent unavailable")).toBeTruthy();
+    expect(
+      screen.getByTestId("run-status-indicator").getAttribute("data-status"),
+    ).toBe("red");
+  });
+
+  it("renders orange status indicator for warming and connecting state", () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        agent: {
+          state: "starting",
+          readinessPhase: "warming_backend",
+          storeStatus: "connecting",
+          streamConnected: false,
+          error: "",
+        },
+        run: { status: "running" },
+      }),
+    );
+
+    render(() => <NewRunDetailScreen />);
+
+    expect(screen.getByLabelText("Agent connecting")).toBeTruthy();
+    expect(
+      screen.getByTestId("run-status-indicator").getAttribute("data-status"),
+    ).toBe("orange");
+    expect(screen.getByText("~")).toBeTruthy();
+  });
+
+  it("prioritizes red over orange and green status signals", () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        agent: {
+          state: "running",
+          readinessPhase: "ready",
+          storeStatus: "error",
+          streamConnected: true,
+          error: "",
+        },
+        run: { status: "running" },
+      }),
+    );
+
+    render(() => <NewRunDetailScreen />);
+
+    expect(screen.getByLabelText("Agent unavailable")).toBeTruthy();
+    expect(
+      screen.getByTestId("run-status-indicator").getAttribute("data-status"),
+    ).toBe("red");
+    expect(screen.getByText("!")).toBeTruthy();
   });
 });

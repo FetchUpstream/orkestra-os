@@ -3339,10 +3339,86 @@ textarea::placeholder {
   margin: 0;
 }
 
-.run-chat-back-nav {
-  width: min(820px, 100%);
-  margin: 0 auto;
-  padding: 0 20px 4px;
+.run-chat-header {
+  width: 100%;
+  margin: 0;
+  padding: 0 20px 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.run-chat-header__title {
+  margin: 0;
+  min-width: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.run-chat-header__status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.run-chat-header__status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  background: var(--text-subtle);
+  color: var(--text-subtle);
+}
+
+.run-chat-header__status-glyph {
+  font-size: 7px;
+  line-height: 1;
+  font-weight: 700;
+  color: #101318;
+  transform: translateY(-0.2px);
+}
+
+.run-chat-header__status-indicator[data-status="red"] {
+  background: #e45858;
+  color: #e45858;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #e45858 35%, transparent);
+}
+
+.run-chat-header__status-indicator[data-status="orange"] {
+  background: #d88825;
+  color: #d88825;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #101318 28%, transparent);
+  animation: run-chat-status-pulse 1.6s ease-in-out infinite;
+}
+
+.run-chat-header__status-indicator[data-status="green"] {
+  background: #2ea65a;
+  color: #2ea65a;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #101318 22%, transparent);
+}
+
+@keyframes run-chat-status-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, #d88825 0%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, #d88825 45%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-chat-header__status-indicator[data-status="orange"] {
+    animation-duration: 3.2s;
+  }
 }
 
 .run-chat-transcript-scroll {
@@ -4167,7 +4243,7 @@ textarea::placeholder {
     max-width: min(88%, 520px);
   }
 
-  .run-chat-back-nav {
+  .run-chat-header {
     padding-left: 16px;
     padding-right: 16px;
   }
@@ -4335,9 +4411,13 @@ textarea::placeholder {
     padding-top: 16px;
   }
 
-  .run-chat-back-nav {
+  .run-chat-header {
     padding-left: 12px;
     padding-right: 12px;
+  }
+
+  .run-chat-header__title {
+    font-size: 0.86rem;
   }
 
   .run-chat-user-message,
