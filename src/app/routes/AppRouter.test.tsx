@@ -8,14 +8,46 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AppRouter from "../../router";
 
-const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+const { invokeMock, listenMock, emitTauriEvent } = vi.hoisted(() => {
+  const listeners = new Map<
+    string,
+    Set<(event: { payload: unknown }) => void>
+  >();
+  return {
+    invokeMock: vi.fn(),
+    listenMock: vi.fn(
+      async (
+        eventName: string,
+        handler: (event: { payload: unknown }) => void,
+      ) => {
+        let handlers = listeners.get(eventName);
+        if (!handlers) {
+          handlers = new Set();
+          listeners.set(eventName, handlers);
+        }
+        handlers.add(handler);
+        return () => {
+          handlers?.delete(handler);
+          if (handlers && handlers.size === 0) {
+            listeners.delete(eventName);
+          }
+        };
+      },
+    ),
+    emitTauriEvent: (eventName: string, payload: unknown) => {
+      for (const handler of listeners.get(eventName) ?? []) {
+        handler({ payload });
+      }
+    },
+  };
+});
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn().mockResolvedValue(() => {}),
+  listen: listenMock,
 }));
 
 vi.mock("../../components/ui/TaskMarkdownEditor", () => ({
@@ -90,6 +122,7 @@ describe("app routing and shell", () => {
   beforeEach(() => {
     setViewportMobile(false);
     invokeMock.mockReset();
+    listenMock.mockClear();
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects")
         return Promise.resolve([
@@ -250,6 +283,62 @@ describe("app routing and shell", () => {
         });
       }
       return Promise.resolve(null);
+    });
+  });
+
+  it("refreshes board tasks when backend emits task-updated", async () => {
+    let taskStatus: "todo" | "doing" = "todo";
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-live-1",
+            title: "Live update task",
+            status: taskStatus,
+            display_key: "ALP-101",
+          },
+        ]);
+      }
+      if (command === "list_task_runs") {
+        return Promise.resolve([]);
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (0)" }),
+      ).toBeTruthy();
+    });
+
+    taskStatus = "doing";
+    emitTauriEvent("task-updated", {
+      task_id: "task-live-1",
+      project_id: "p-1",
+      status: "doing",
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (1)" }),
+      ).toBeTruthy();
     });
   });
 
@@ -445,8 +534,11 @@ describe("app routing and shell", () => {
           {
             id: "task-1",
             title: "Blocked board task",
+            description: "Dependency chain is still running",
             status: "todo",
             display_key: "ALP-1",
+            target_repository_name: "InfraRepo",
+            priority: "P0",
             is_blocked: true,
           },
         ]);
@@ -460,7 +552,13 @@ describe("app routing and shell", () => {
       expect(
         screen.getByRole("link", { name: /Blocked board task/i }),
       ).toBeTruthy();
+      expect(screen.getByText("ALP-1")).toBeTruthy();
       expect(screen.getByText("Blocked")).toBeTruthy();
+      expect(
+        screen.getByText("Dependency chain is still running"),
+      ).toBeTruthy();
+      expect(screen.queryByText("InfraRepo")).toBeNull();
+      expect(screen.queryByText("Priority: P0")).toBeNull();
     });
   });
 
@@ -544,7 +642,7 @@ describe("app routing and shell", () => {
     expect(screen.queryByText("Ready")).toBeNull();
   });
 
-  it("hides ready badge on in-progress board cards", async () => {
+  it("hides dependency badges on non-todo board cards", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") {
         return Promise.resolve([
@@ -561,12 +659,28 @@ describe("app routing and shell", () => {
       if (command === "list_project_tasks") {
         return Promise.resolve([
           {
-            id: "task-1",
-            title: "In progress task",
+            id: "task-doing",
+            title: "Doing task",
             status: "doing",
             display_key: "ALP-4",
+            is_blocked: true,
+            blocked_by_count: 1,
+          },
+          {
+            id: "task-review",
+            title: "Review task",
+            status: "review",
+            display_key: "ALP-5",
             is_blocked: false,
             blocked_by_count: 2,
+          },
+          {
+            id: "task-done",
+            title: "Done task",
+            status: "done",
+            display_key: "ALP-6",
+            is_blocked: true,
+            blocked_by_count: 3,
           },
         ]);
       }
@@ -576,9 +690,9 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("link", { name: /In progress task/i }),
-      ).toBeTruthy();
+      expect(screen.getByRole("link", { name: /Doing task/i })).toBeTruthy();
+      expect(screen.getByRole("link", { name: /Review task/i })).toBeTruthy();
+      expect(screen.getByRole("link", { name: /Done task/i })).toBeTruthy();
     });
 
     expect(screen.queryByText("Blocked")).toBeNull();
@@ -632,18 +746,18 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Run Details")).toBeTruthy();
-      expect(screen.getByText("RUN-20")).toBeTruthy();
+      expect(screen.getByText("Coding")).toBeTruthy();
       expect(
         document.querySelector(".board-task-run-details .run-inline-spinner"),
       ).toBeTruthy();
       const runLink = document.querySelector(
-        '.board-task-run-details-link[href="/runs/run-1"]',
+        '.board-task-run-details-link[href="/runs/run-1?origin=board"]',
       ) as HTMLAnchorElement | null;
       expect(runLink).toBeTruthy();
     });
   });
 
-  it("navigates to run detail when clicking board mini-card", async () => {
+  it("returns to board when run detail is opened from board mini-card", async () => {
     invokeMock.mockImplementation((command: string, args?: unknown) => {
       if (command === "list_projects") {
         return Promise.resolve([
@@ -683,6 +797,33 @@ describe("app routing and shell", () => {
           ]);
         }
       }
+      if (command === "get_run") {
+        return Promise.resolve({
+          id: "run-1",
+          task_id: "task-1",
+          project_id: "p-1",
+          status: "running",
+          display_key: "RUN-20",
+          triggered_by: "user",
+          created_at: "2026-01-02T00:00:00.000Z",
+          started_at: "2026-01-02T00:01:00.000Z",
+          finished_at: null,
+          summary: null,
+          error_message: null,
+        });
+      }
+      if (command === "get_task") {
+        return Promise.resolve({
+          id: "task-1",
+          title: "Run in progress",
+          description: "",
+          status: "doing",
+          project_id: "p-1",
+          target_repository_id: "r-1",
+          target_repository_name: "Main",
+          display_key: "ALP-20",
+        });
+      }
       return Promise.resolve([]);
     });
 
@@ -691,16 +832,27 @@ describe("app routing and shell", () => {
     const runLink = (await screen.findByRole("link", {
       name: "Run Details",
     })) as HTMLAnchorElement;
-    expect(runLink.getAttribute("href")).toBe("/runs/run-1");
+    expect(runLink.getAttribute("href")).toBe("/runs/run-1?origin=board");
 
     await fireEvent.click(runLink);
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/runs/run-1");
     });
+    expect(window.location.search).toBe("?origin=board");
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "Back to board" })).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("link", { name: "Back to board" }));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/board");
+      expect(window.location.search).toBe("?projectId=p-1");
+    });
   });
 
-  it("shows awaiting review mini-card for review tasks with finished run", async () => {
+  it("shows waiting-for-merge mini-card for review tasks with completed run", async () => {
     invokeMock.mockImplementation((command: string, args?: unknown) => {
       if (command === "list_projects") {
         return Promise.resolve([
@@ -746,11 +898,65 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(screen.getByText(/Awaiting review/i)).toBeTruthy();
+      expect(screen.getByText("Waiting for merge")).toBeTruthy();
       expect(
         document.querySelector(".board-task-run-details .run-inline-spinner"),
       ).toBeNull();
-      expect(document.querySelector(".board-task-run-check")).toBeTruthy();
+      expect(document.querySelector(".board-task-run-warning")).toBeTruthy();
+    });
+  });
+
+  it("shows waiting mini-card with warning icon for review tasks with active run", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-review-active",
+            title: "Review waiting",
+            status: "review",
+            display_key: "ALP-23",
+          },
+        ]);
+      }
+      if (command === "list_task_runs") {
+        const taskId = (args as { taskId?: string } | undefined)?.taskId;
+        if (taskId === "task-review-active") {
+          return Promise.resolve([
+            {
+              id: "run-review-active",
+              task_id: "task-review-active",
+              project_id: "p-1",
+              status: "running",
+              display_key: "RUN-23",
+              triggered_by: "user",
+              created_at: "2026-01-02T00:00:00.000Z",
+            },
+          ]);
+        }
+      }
+      return Promise.resolve([]);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByText("Waiting")).toBeTruthy();
+      expect(
+        document.querySelector(".board-task-run-details .run-inline-spinner"),
+      ).toBeNull();
+      expect(document.querySelector(".board-task-run-warning")).toBeTruthy();
     });
   });
 
@@ -941,7 +1147,129 @@ describe("app routing and shell", () => {
         screen.getByRole("heading", { name: "In Progress (1)" }),
       ).toBeTruthy();
       expect(screen.getByText("Run Details")).toBeTruthy();
-      expect(screen.getByText("RUN-1")).toBeTruthy();
+      expect(screen.getByText("Coding")).toBeTruthy();
+    });
+  });
+
+  it("shows mini-card immediately for optimistic move to in progress", async () => {
+    let resolveStatusUpdate: ((value: unknown) => void) | undefined;
+    const statusUpdatePromise = new Promise((resolve) => {
+      resolveStatusUpdate = resolve;
+    });
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-optimistic-mini-card",
+            title: "Optimistic mini-card",
+            status: "todo",
+            display_key: "ALP-31",
+          },
+        ]);
+      }
+      if (command === "set_task_status") return statusUpdatePromise;
+      if (command === "list_task_runs") {
+        return Promise.resolve([
+          {
+            id: "run-task-optimistic-mini-card",
+            task_id: "task-optimistic-mini-card",
+            project_id: "p-1",
+            status: "running",
+            display_key: "RUN-31",
+            triggered_by: "user",
+            created_at: "2026-01-02T00:00:00.000Z",
+          },
+        ]);
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+    });
+
+    const inProgressSection = screen
+      .getByRole("heading", { name: "In Progress (0)" })
+      .closest("section") as HTMLElement;
+    const taskCard = screen
+      .getByRole("link", { name: /Optimistic mini-card/i })
+      .closest("li") as HTMLElement;
+
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData(format: string, value: string) {
+        this.data[format] = value;
+      },
+      getData(format: string) {
+        return this.data[format] ?? "";
+      },
+    };
+
+    await fireEvent.dragStart(taskCard, { dataTransfer });
+    await fireEvent.dragOver(inProgressSection, { dataTransfer });
+    await fireEvent.drop(inProgressSection, { dataTransfer });
+
+    expect(
+      screen.getByRole("heading", { name: "In Progress (1)" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Run Details")).toBeTruthy();
+    expect(screen.getByText("Coding")).toBeTruthy();
+    expect(window.location.pathname).toBe("/board");
+    expect(document.querySelector(".board-task-run-details-link")).toBeNull();
+
+    const optimisticMiniCard = document.querySelector(
+      ".board-task-run-details",
+    ) as HTMLElement | null;
+    expect(optimisticMiniCard).toBeTruthy();
+    if (optimisticMiniCard) {
+      await fireEvent.click(optimisticMiniCard);
+    }
+    expect(window.location.pathname).toBe("/board");
+
+    resolveStatusUpdate?.({
+      id: "task-optimistic-mini-card",
+      title: "Optimistic mini-card",
+      status: "doing",
+      display_key: "ALP-31",
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Coding")).toBeTruthy();
+      const runLink = document.querySelector(
+        '.board-task-run-details-link[href="/runs/run-task-optimistic-mini-card?origin=board"]',
+      ) as HTMLAnchorElement | null;
+      expect(runLink).toBeTruthy();
+    });
+
+    const runLink = document.querySelector(
+      '.board-task-run-details-link[href="/runs/run-task-optimistic-mini-card?origin=board"]',
+    ) as HTMLAnchorElement | null;
+    expect(runLink).toBeTruthy();
+    if (runLink) {
+      await fireEvent.click(runLink);
+    }
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(
+        "/runs/run-task-optimistic-mini-card",
+      );
     });
   });
 
@@ -1411,6 +1739,94 @@ describe("app routing and shell", () => {
       expect(
         screen.getByRole("heading", { name: "In Progress (0)" }),
       ).toBeTruthy();
+      expect(
+        screen.getByText("Failed to update task status. Please try again."),
+      ).toBeTruthy();
+    });
+  });
+
+  it("restores previous mini-card when optimistic move to done fails", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-done-fail",
+            title: "Done failure",
+            status: "review",
+            display_key: "ALP-41",
+          },
+        ]);
+      }
+      if (command === "list_task_runs") {
+        const taskId = (args as { taskId?: string } | undefined)?.taskId;
+        if (taskId === "task-done-fail") {
+          return Promise.resolve([
+            {
+              id: "run-done-fail",
+              task_id: "task-done-fail",
+              project_id: "p-1",
+              status: "completed",
+              display_key: "RUN-41",
+              triggered_by: "user",
+              created_at: "2026-01-02T00:00:00.000Z",
+            },
+          ]);
+        }
+      }
+      if (command === "set_task_status") {
+        return Promise.reject(new Error("save failed"));
+      }
+      return Promise.resolve([]);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Review (1)" })).toBeTruthy();
+      expect(screen.getByText("Waiting for merge")).toBeTruthy();
+    });
+
+    const doneSection = screen
+      .getByRole("heading", { name: "Done (0)" })
+      .closest("section") as HTMLElement;
+    const taskCard = screen
+      .getByRole("link", { name: /Done failure/i })
+      .closest("li") as HTMLElement;
+
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData(format: string, value: string) {
+        this.data[format] = value;
+      },
+      getData(format: string) {
+        return this.data[format] ?? "";
+      },
+    };
+
+    await fireEvent.dragStart(taskCard, { dataTransfer });
+    await fireEvent.dragOver(doneSection, { dataTransfer });
+    await fireEvent.drop(doneSection, { dataTransfer });
+
+    expect(screen.getByRole("heading", { name: "Done (1)" })).toBeTruthy();
+    expect(screen.queryByText("Run Details")).toBeNull();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Review (1)" })).toBeTruthy();
+      expect(screen.getByText("Waiting for merge")).toBeTruthy();
       expect(
         screen.getByText("Failed to update task status. Please try again."),
       ).toBeTruthy();

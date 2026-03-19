@@ -7,7 +7,6 @@ import {
   dependencyBadgeState,
   taskDisplayKey,
 } from "../../projects/utils/projectDetail";
-import { taskPriorityLabel } from "../utils/board";
 
 type Props = {
   task: Task;
@@ -22,10 +21,14 @@ type Props = {
 const BoardTaskCard: Component<Props> = (props) => {
   const [dragJustEnded, setDragJustEnded] = createSignal(false);
   const dependencyState = () => dependencyBadgeState(props.task);
+  const showDependencyBadge = () =>
+    props.task.status === "todo" && dependencyState() !== "none";
   const showRunMiniCard = () =>
     props.task.status !== "done" && !!props.runMiniCard;
-  const repositoryTag = () =>
-    props.task.targetRepositoryName || props.task.targetRepositoryPath || "";
+  const isRunStateActive = () => {
+    const state = props.runMiniCard?.state;
+    return state === "coding" || state === "committing";
+  };
 
   const onDragStart = (event: DragEvent) => {
     setDragJustEnded(false);
@@ -72,14 +75,7 @@ const BoardTaskCard: Component<Props> = (props) => {
       >
         <div class="project-task-main">
           <p class="project-task-title">{props.task.title}</p>
-          <p class="project-task-repo">
-            {taskDisplayKey(props.task, props.project) || "Task"}
-          </p>
-          <Show when={repositoryTag()}>
-            {(tag) => <p class="project-task-repo">{tag()}</p>}
-          </Show>
-          <p class="project-task-repo">{taskPriorityLabel(props.task)}</p>
-          <Show when={dependencyState() !== "none"}>
+          <Show when={showDependencyBadge()}>
             <span
               class={
                 dependencyState() === "blocked"
@@ -90,37 +86,62 @@ const BoardTaskCard: Component<Props> = (props) => {
               {dependencyState() === "blocked" ? "Blocked" : "Ready"}
             </span>
           </Show>
+          <div class="board-task-title-separator" aria-hidden="true" />
+          <Show when={props.task.description?.trim()}>
+            <p class="board-task-description">{props.task.description}</p>
+          </Show>
+          <span class="project-key-badge board-task-key-tag">
+            {taskDisplayKey(props.task, props.project) || "Task"}
+          </span>
         </div>
       </A>
       <Show when={showRunMiniCard() && props.runMiniCard}>
         {(miniCard) => (
-          <A
-            href={`/runs/${miniCard().runId}`}
-            class="board-task-run-details board-task-run-details-link"
-            aria-label="Run Details"
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
+          <Show
+            when={miniCard().isNavigable}
+            fallback={
+              <div class="board-task-run-details" aria-label="Run Details">
+                <p class="board-task-run-details-title">Run Details</p>
+                <p class="run-inline-loading-row board-task-run-details-row">
+                  <Show
+                    when={isRunStateActive()}
+                    fallback={
+                      <span class="board-task-run-warning" aria-hidden="true">
+                        !
+                      </span>
+                    }
+                  >
+                    <span class="run-inline-spinner" aria-hidden="true" />
+                  </Show>
+                  <span>{miniCard().label}</span>
+                </p>
+              </div>
+            }
           >
-            <p class="board-task-run-details-title">Run Details</p>
-            <p class="run-inline-loading-row board-task-run-details-row">
-              <Show
-                when={miniCard().state === "active"}
-                fallback={
-                  <span class="board-task-run-check" aria-hidden="true">
-                    ✓
-                  </span>
-                }
-              >
-                <span class="run-inline-spinner" aria-hidden="true" />
-              </Show>
-              <span>
-                {miniCard().state === "active"
-                  ? miniCard().label
-                  : `Awaiting review - ${miniCard().label}`}
-              </span>
-            </p>
-          </A>
+            <A
+              href={`/runs/${miniCard().runId}?origin=board`}
+              class="board-task-run-details board-task-run-details-link"
+              aria-label="Run Details"
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
+            >
+              <p class="board-task-run-details-title">Run Details</p>
+              <p class="run-inline-loading-row board-task-run-details-row">
+                <Show
+                  when={isRunStateActive()}
+                  fallback={
+                    <span class="board-task-run-warning" aria-hidden="true">
+                      !
+                    </span>
+                  }
+                >
+                  <span class="run-inline-spinner" aria-hidden="true" />
+                </Show>
+                <span>{miniCard().label}</span>
+              </p>
+            </A>
+          </Show>
         )}
       </Show>
     </li>

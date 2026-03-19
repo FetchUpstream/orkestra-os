@@ -2,9 +2,10 @@ use crate::app::state::AppState;
 use crate::app::tasks::dto::{
     AddTaskDependencyRequest, CreateTaskRequest, DeleteTaskResponse, MoveTaskRequest,
     RemoveTaskDependencyRequest, RemoveTaskDependencyResponse, SetTaskStatusRequest,
-    TaskDependenciesDto, TaskDependencyEdgeDto, TaskDto, UpdateTaskRequest,
+    TaskDependenciesDto, TaskDependencyEdgeDto, TaskDto, TaskUpdatedEventDto, UpdateTaskRequest,
 };
 use crate::app::{commands::context, commands::error_mapping::map_result};
+use tauri::Emitter;
 
 #[tauri::command]
 pub async fn create_task(
@@ -42,12 +43,20 @@ pub async fn update_task(
 
 #[tauri::command]
 pub async fn set_task_status(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: String,
     input: SetTaskStatusRequest,
 ) -> Result<TaskDto, String> {
     let service = context::tasks_service(&state);
-    map_result(service.set_task_status(&id, input).await)
+    let updated = map_result(service.set_task_status(&id, input).await)?;
+    let payload = TaskUpdatedEventDto {
+        task_id: updated.id.clone(),
+        project_id: updated.project_id.clone(),
+        status: updated.status.clone(),
+    };
+    let _ = app.emit("task-updated", payload);
+    Ok(updated)
 }
 
 #[tauri::command]

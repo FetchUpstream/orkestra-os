@@ -1,4 +1,5 @@
-import { createMemo, createSignal, onMount } from "solid-js";
+import { listen } from "@tauri-apps/api/event";
+import { createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import {
   getProject,
   listProjects,
@@ -13,19 +14,23 @@ import {
 import { listTaskRuns } from "../../../app/lib/runs";
 import { canTransitionStatus } from "../../tasks/utils/taskDetail";
 import { groupTasksByStatus } from "../utils/board";
+import { isRunCommitPending } from "../../runs/model/commitUiState";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "running"]);
 const FINISHED_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
-const activeRunLabelForTask = (displayKey?: string | null) => {
-  const normalizedDisplayKey = displayKey?.trim();
-  return normalizedDisplayKey || "Current run";
-};
+const optimisticDoingMiniCard = (taskId: string): BoardTaskRunMiniCard => ({
+  runId: `pending-${taskId}`,
+  label: "Coding",
+  state: "coding",
+  isNavigable: false,
+});
 
 export type BoardTaskRunMiniCard = {
   runId: string;
   label: string;
-  state: "active" | "awaitingReview";
+  state: "coding" | "committing" | "waiting" | "waitingForMerge";
+  isNavigable: boolean;
 };
 
 const resolveTaskRunMiniCard = (
@@ -34,26 +39,43 @@ const resolveTaskRunMiniCard = (
 ): BoardTaskRunMiniCard | null => {
   if (task.status === "done") return null;
 
+  if (task.status === "review") {
+    const activeRun = runItems.find((run) =>
+      ACTIVE_RUN_STATUSES.has(run.status),
+    );
+    if (activeRun) {
+      return {
+        runId: activeRun.id,
+        label: "Waiting",
+        state: "waiting",
+        isNavigable: true,
+      };
+    }
+
+    const finishedRun = runItems.find((run) =>
+      FINISHED_RUN_STATUSES.has(run.status),
+    );
+    if (!finishedRun) return null;
+    return {
+      runId: finishedRun.id,
+      label:
+        finishedRun.status === "completed" ? "Waiting for merge" : "Waiting",
+      state: finishedRun.status === "completed" ? "waitingForMerge" : "waiting",
+      isNavigable: true,
+    };
+  }
+
   const activeRun = runItems.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
   if (activeRun) {
     return {
       runId: activeRun.id,
-      label: activeRunLabelForTask(activeRun.displayKey),
-      state: "active",
+      label: isRunCommitPending(activeRun.id) ? "Committing changes" : "Coding",
+      state: isRunCommitPending(activeRun.id) ? "committing" : "coding",
+      isNavigable: true,
     };
   }
 
-  if (task.status !== "review") return null;
-
-  const finishedRun = runItems.find((run) =>
-    FINISHED_RUN_STATUSES.has(run.status),
-  );
-  if (!finishedRun) return null;
-  return {
-    runId: finishedRun.id,
-    label: activeRunLabelForTask(finishedRun.displayKey),
-    state: "awaitingReview",
-  };
+  return null;
 };
 
 export const useBoardModel = () => {
@@ -72,6 +94,8 @@ export const useBoardModel = () => {
   let activeTasksRequestVersion = 0;
   let activeProjectDetailRequestVersion = 0;
   let activeTaskRunsRequestVersion = 0;
+  let boardEventSubscriptionDisposed = false;
+  let removeBoardEventSubscription: (() => void) | null = null;
 
   const selectedProject = createMemo(
     () =>
@@ -215,6 +239,7 @@ export const useBoardModel = () => {
     if (!taskToMove || taskToMove.status === targetStatus) return;
     if (!canTransitionStatus(taskToMove.status, targetStatus)) return;
     const previousStatus = taskToMove.status;
+    const previousMiniCard = taskRunMiniCards()[taskId];
 
     setUpdatingTaskIds((current) => [...current, taskId]);
     setError("");
@@ -229,6 +254,11 @@ export const useBoardModel = () => {
         delete next[taskId];
         return next;
       });
+    } else if (targetStatus === "doing") {
+      setTaskRunMiniCards((current) => ({
+        ...current,
+        [taskId]: optimisticDoingMiniCard(taskId),
+      }));
     }
 
     try {
@@ -270,6 +300,15 @@ export const useBoardModel = () => {
           task.id === taskId ? { ...task, status: previousStatus } : task,
         ),
       );
+      setTaskRunMiniCards((current) => {
+        const next = { ...current };
+        if (previousMiniCard) {
+          next[taskId] = previousMiniCard;
+        } else {
+          delete next[taskId];
+        }
+        return next;
+      });
       setError("Failed to update task status. Please try again.");
     } finally {
       setUpdatingTaskIds((current) => current.filter((id) => id !== taskId));
@@ -277,6 +316,36 @@ export const useBoardModel = () => {
   };
 
   onMount(async () => {
+    boardEventSubscriptionDisposed = false;
+    void (async () => {
+      const unlisten = await listen<{
+        task_id?: string;
+        taskId?: string;
+        project_id?: string;
+        projectId?: string;
+        status?: TaskStatus;
+      }>("task-updated", (event) => {
+        if (boardEventSubscriptionDisposed) {
+          return;
+        }
+
+        const payloadProjectId =
+          event.payload.project_id ?? event.payload.projectId ?? "";
+        const currentProjectId = selectedProjectId();
+        if (!currentProjectId || payloadProjectId !== currentProjectId) {
+          return;
+        }
+
+        void loadTasks(currentProjectId);
+      });
+
+      if (boardEventSubscriptionDisposed) {
+        unlisten();
+        return;
+      }
+      removeBoardEventSubscription = unlisten;
+    })();
+
     setError("");
     try {
       const loadedProjects = await listProjects();
@@ -301,6 +370,14 @@ export const useBoardModel = () => {
       setTaskRunMiniCards({});
     } finally {
       setIsProjectsLoading(false);
+    }
+  });
+
+  onCleanup(() => {
+    boardEventSubscriptionDisposed = true;
+    if (removeBoardEventSubscription) {
+      removeBoardEventSubscription();
+      removeBoardEventSubscription = null;
     }
   });
 
