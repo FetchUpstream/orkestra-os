@@ -746,7 +746,7 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(screen.getByText("Awaiting review")).toBeTruthy();
+      expect(screen.getByText(/Awaiting review/i)).toBeTruthy();
       expect(
         document.querySelector(".board-task-run-details .run-inline-spinner"),
       ).toBeNull();

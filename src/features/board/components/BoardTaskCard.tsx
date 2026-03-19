@@ -117,7 +117,7 @@ const BoardTaskCard: Component<Props> = (props) => {
               <span>
                 {miniCard().state === "active"
                   ? miniCard().label
-                  : "Awaiting review"}
+                  : `Awaiting review - ${miniCard().label}`}
               </span>
             </p>
           </A>
