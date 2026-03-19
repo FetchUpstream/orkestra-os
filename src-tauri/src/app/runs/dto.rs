@@ -101,6 +101,7 @@ pub struct RunMergeStatusDto {
     pub worktree_branch: String,
     pub ahead_count: usize,
     pub behind_count: usize,
+    pub is_worktree_clean: bool,
     pub state: String,
     pub can_rebase: bool,
     pub can_merge: bool,

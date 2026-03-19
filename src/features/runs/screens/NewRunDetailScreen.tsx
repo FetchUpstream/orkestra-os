@@ -572,11 +572,19 @@ const NewRunDetailScreen: Component = () => {
                                   status().rawState,
                                 )}
                               </p>
+                              <p class="run-chat-git-drawer__state">
+                                Worktree:{" "}
+                                {status().isWorktreeClean === true
+                                  ? "Clean"
+                                  : status().isWorktreeClean === false
+                                    ? "Dirty"
+                                    : "Unknown"}
+                              </p>
                               <p class="project-placeholder-text">
                                 Ahead/behind counts reflect committed branch
-                                divergence only. Review diffs can still include
-                                uncommitted worktree changes, and a dirty
-                                worktree blocks rebase/merge until cleaned.
+                                divergence only. Worktree cleanliness is shown
+                                separately. Review diffs can still include
+                                uncommitted worktree changes.
                               </p>
                               <Show
                                 when={model.git.lastActionMessage().length > 0}

@@ -333,10 +333,75 @@ describe("runs contract", () => {
     const status = await getRunGitMergeStatus("run-1");
 
     expect(status.state).toBe("needs_rebase");
+    expect(status.rawState).toBeUndefined();
     expect(status.rebaseDisabledReason).toBe("worktree must be clean");
     expect(status.mergeDisabledReason).toBe("worktree must be clean");
     expect(status.isRebaseAllowed).toBe(false);
     expect(status.isMergeAllowed).toBe(false);
+  });
+
+  it("maps git2 ahead_count/behind_count into branch divergence and dirty flag", async () => {
+    invokeMock.mockResolvedValue({
+      status: {
+        state: "mergeable",
+        source_branch: "main",
+        worktree_branch: "feature/abc",
+        ahead_count: 1,
+        behind_count: 0,
+        is_worktree_clean: false,
+        can_rebase: false,
+        can_merge: false,
+        disable_reason: "clean the worktree",
+      },
+    });
+
+    const status = await getRunGitMergeStatus("run-1");
+
+    expect(status.sourceBranch).toEqual({
+      name: "main",
+      ahead: 0,
+      behind: 1,
+    });
+    expect(status.worktreeBranch).toEqual({
+      name: "feature/abc",
+      ahead: 1,
+      behind: 0,
+    });
+    expect(status.isWorktreeClean).toBe(false);
+  });
+
+  it("normalizes merge-state variants from backend", async () => {
+    invokeMock.mockResolvedValueOnce({
+      status: {
+        state: "rebase-in-progress",
+      },
+    });
+    invokeMock.mockResolvedValueOnce({
+      status: {
+        state: "mergeReady",
+      },
+    });
+
+    const hyphen = await getRunGitMergeStatus("run-1");
+    const camel = await getRunGitMergeStatus("run-1");
+
+    expect(hyphen.state).toBe("rebase_in_progress");
+    expect(hyphen.rawState).toBeUndefined();
+    expect(camel.state).toBe("merge_ready");
+    expect(camel.rawState).toBeUndefined();
+  });
+
+  it("preserves raw unknown merge-state for UI fallback", async () => {
+    invokeMock.mockResolvedValue({
+      status: {
+        state: "new-backend-state",
+      },
+    });
+
+    const status = await getRunGitMergeStatus("run-1");
+
+    expect(status.state).toBe("unknown");
+    expect(status.rawState).toBe("new-backend-state");
   });
 
   it("fails closed for mergeability booleans from malformed payload", async () => {

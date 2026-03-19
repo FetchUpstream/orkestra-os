@@ -263,6 +263,7 @@ impl RunsMergeService {
             })?
             .has_conflicts();
         let dirty_disable_reason = Self::dirty_worktree_disable_reason(&context.repo)?;
+        let is_worktree_clean = dirty_disable_reason.is_none();
 
         let mut state = if context.run_status == "completed" {
             MergeState::Merged
@@ -341,6 +342,7 @@ impl RunsMergeService {
             worktree_branch: context.worktree_branch.clone(),
             ahead_count,
             behind_count,
+            is_worktree_clean,
             state: state.as_str().to_string(),
             can_rebase,
             can_merge,
@@ -806,6 +808,8 @@ mod tests {
         write_unstaged_change(&worktree_path, "README.md", "dirty\n");
 
         let status = merge_service.get_merge_status(&run.id).await.unwrap();
+        assert_eq!(status.state, "clean");
+        assert!(!status.is_worktree_clean);
         assert!(!status.can_rebase);
         assert!(!status.can_merge);
         assert!(status

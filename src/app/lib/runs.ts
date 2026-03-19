@@ -180,8 +180,10 @@ export type RunGitMergeState =
 
 export type RunGitMergeStatus = {
   state: RunGitMergeState;
+  rawState?: string;
   sourceBranch: RunGitBranchSync;
   worktreeBranch: RunGitBranchSync;
+  isWorktreeClean?: boolean;
   isRebaseAllowed: boolean;
   isMergeAllowed: boolean;
   requiresRebase: boolean;
@@ -412,6 +414,12 @@ type RunGitMergeStatusResponse = {
   worktreeAhead?: number;
   worktree_behind?: number;
   worktreeBehind?: number;
+  ahead_count?: number;
+  aheadCount?: number;
+  behind_count?: number;
+  behindCount?: number;
+  is_worktree_clean?: boolean;
+  isWorktreeClean?: boolean;
   source?: RunGitBranchSyncResponse;
   worktree?: RunGitBranchSyncResponse;
   branches?: {
@@ -635,7 +643,10 @@ const toOptionalTrimmedString = (value: unknown): string | undefined => {
 };
 
 const toRunGitMergeState = (state: unknown): RunGitMergeState => {
-  const normalizedState = toOptionalTrimmedString(state)?.toLowerCase();
+  const normalizedState = toOptionalTrimmedString(state)
+    ?.replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[\s-]+/g, "_")
+    .toLowerCase();
   if (!normalizedState) {
     return "unknown";
   }
@@ -707,27 +718,39 @@ const unwrapRunGitMergeStatusPayload = (
 
 const toRunGitMergeStatus = (response: unknown): RunGitMergeStatus => {
   const payload = unwrapRunGitMergeStatusPayload(response);
+  const rawState = toOptionalTrimmedString(payload.state);
+  const state = toRunGitMergeState(payload.state);
   const source = pick(payload.source, payload.branches?.source);
   const worktree = pick(payload.worktree, payload.branches?.worktree);
+  const worktreeAheadCount = pick(payload.ahead_count, payload.aheadCount);
+  const worktreeBehindCount = pick(payload.behind_count, payload.behindCount);
 
   const sourceBranch = toRunGitBranchSync(
     pick(payload.source_branch, payload.sourceBranch) ?? "source",
     source,
-    pick(payload.source_ahead, payload.sourceAhead),
-    pick(payload.source_behind, payload.sourceBehind),
+    pick(payload.source_ahead, payload.sourceAhead) ?? worktreeBehindCount,
+    pick(payload.source_behind, payload.sourceBehind) ?? worktreeAheadCount,
   );
 
   const worktreeBranch = toRunGitBranchSync(
     pick(payload.worktree_branch, payload.worktreeBranch) ?? "worktree",
     worktree,
-    pick(payload.worktree_ahead, payload.worktreeAhead),
-    pick(payload.worktree_behind, payload.worktreeBehind),
+    pick(payload.worktree_ahead, payload.worktreeAhead) ?? worktreeAheadCount,
+    pick(payload.worktree_behind, payload.worktreeBehind) ??
+      worktreeBehindCount,
   );
 
   return {
-    state: toRunGitMergeState(payload.state),
+    state,
+    rawState: state === "unknown" ? rawState : undefined,
     sourceBranch,
     worktreeBranch,
+    isWorktreeClean:
+      pick(payload.is_worktree_clean, payload.isWorktreeClean) === true
+        ? true
+        : pick(payload.is_worktree_clean, payload.isWorktreeClean) === false
+          ? false
+          : undefined,
     isRebaseAllowed: pick(payload.can_rebase, payload.canRebase) === true,
     isMergeAllowed: pick(payload.can_merge, payload.canMerge) === true,
     requiresRebase:
