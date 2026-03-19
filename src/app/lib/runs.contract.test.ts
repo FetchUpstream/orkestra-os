@@ -476,8 +476,9 @@ describe("runs contract", () => {
     );
   });
 
-  it("normalizes malformed action status/state/message fields safely", async () => {
+  it("parses backend action envelope state even when status is nested object", async () => {
     invokeMock.mockResolvedValueOnce({
+      state: "accepted",
       status: { state: "accepted" },
       message: 42,
       conflict_summary: ["nope"],
@@ -494,7 +495,7 @@ describe("runs contract", () => {
     const merge = await mergeRunWorktreeIntoSource("run-1");
 
     expect(rebase).toEqual({
-      status: "failed",
+      status: "accepted",
       message: undefined,
       conflictSummary: undefined,
       conflictFingerprint: undefined,
@@ -507,7 +508,80 @@ describe("runs contract", () => {
     });
   });
 
-  it("invokes explicit rebase and merge git commands", async () => {
+  it("maps nested backend rebase conflict payload without false failed state", async () => {
+    invokeMock.mockResolvedValue({
+      state: "conflict",
+      status: {
+        state: "rebase_conflict",
+      },
+      conflict: {
+        chat_prompt: "Resolve conflicts in file A and B",
+      },
+    });
+
+    const rebase = await rebaseRunWorktreeOntoSource("run-1");
+
+    expect(rebase).toEqual({
+      status: "conflict",
+      message: undefined,
+      conflictSummary: "Resolve conflicts in file A and B",
+      conflictFingerprint: undefined,
+    });
+  });
+
+  it("treats conflicted action state as conflict with nested status payload", async () => {
+    invokeMock.mockResolvedValue({
+      state: "conflicted",
+      status: {
+        state: "merge_conflict",
+      },
+      conflict: {
+        chat_prompt: "Resolve merge conflicts",
+      },
+    });
+
+    const merge = await mergeRunWorktreeIntoSource("run-1");
+
+    expect(merge).toEqual({
+      status: "conflict",
+      message: undefined,
+      conflictSummary: "Resolve merge conflicts",
+      conflictFingerprint: undefined,
+    });
+  });
+
+  it("keeps top-level action state canonical over nested status.state", async () => {
+    invokeMock.mockResolvedValue({
+      state: "accepted",
+      status: {
+        state: "conflicted",
+      },
+      conflict_summary: "nested should not win",
+    });
+
+    const rebase = await rebaseRunWorktreeOntoSource("run-1");
+
+    expect(rebase).toEqual({
+      status: "accepted",
+      message: undefined,
+      conflictSummary: "nested should not win",
+      conflictFingerprint: undefined,
+    });
+  });
+
+  it("does not map valid conflicted action state to failed", async () => {
+    invokeMock.mockResolvedValue({
+      state: "conflicted",
+      message: "Conflict detected",
+    });
+
+    const rebase = await rebaseRunWorktreeOntoSource("run-1");
+
+    expect(rebase.status).toBe("conflict");
+    expect(rebase.message).toBe("Conflict detected");
+  });
+
+  it("invokes canonical rebase and merge git commands", async () => {
     invokeMock.mockResolvedValueOnce({
       status: "conflict",
       conflict_summary: "x",
@@ -519,14 +593,14 @@ describe("runs contract", () => {
 
     expect(invokeMock).toHaveBeenNthCalledWith(
       1,
-      "rebase_run_worktree_onto_source",
+      "rebase_run_worktree_branch",
       {
         runId: "run-1",
       },
     );
     expect(invokeMock).toHaveBeenNthCalledWith(
       2,
-      "merge_run_worktree_into_source",
+      "merge_run_into_source_branch",
       {
         runId: "run-1",
       },
