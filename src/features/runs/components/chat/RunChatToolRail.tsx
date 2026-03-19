@@ -24,6 +24,7 @@ const normalizeStatus = (
   if (
     [
       "loading",
+      "pending",
       "running",
       "in_progress",
       "in-progress",
