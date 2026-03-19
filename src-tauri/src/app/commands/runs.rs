@@ -95,12 +95,28 @@ pub async fn rebase_run_worktree_branch(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub async fn rebase_run_worktree_onto_source(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<RunRebaseResponseDto, String> {
+    rebase_run_worktree_branch(state, run_id).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
 pub async fn merge_run_into_source_branch(
     state: tauri::State<'_, AppState>,
     run_id: String,
 ) -> Result<RunMergeResponseDto, String> {
     let service = context::runs_merge_service(&state);
     map_result(service.merge_into_source_branch(&run_id).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn merge_run_worktree_into_source(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<RunMergeResponseDto, String> {
+    merge_run_into_source_branch(state, run_id).await
 }
 
 #[tauri::command]

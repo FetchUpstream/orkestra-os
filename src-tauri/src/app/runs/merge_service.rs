@@ -45,6 +45,7 @@ impl MergeState {
 struct MergeContext {
     run_id: String,
     run_status: String,
+    run_finished_at: Option<String>,
     source_branch: String,
     worktree_branch: String,
     repo: Repository,
@@ -149,7 +150,13 @@ impl RunsMergeService {
             return Err(AppError::validation(reason));
         }
         let status_before = self.compute_status(&context)?;
-        if !status_before.can_merge {
+        let source_oid = Self::branch_commit_oid(&context.repo, &context.source_branch)?;
+        let worktree_oid = Self::branch_commit_oid(&context.repo, &context.worktree_branch)?;
+        let should_finalize_existing_merge = source_oid == worktree_oid
+            && context.run_status != "completed"
+            && context.run_finished_at.is_some();
+
+        if !status_before.can_merge && !should_finalize_existing_merge {
             return Ok(RunMergeResponseDto {
                 state: status_before.state.clone(),
                 status: status_before,
@@ -157,8 +164,6 @@ impl RunsMergeService {
         }
 
         let source_ref_name = Self::source_ref_name(&context.source_branch);
-        let worktree_oid = Self::branch_commit_oid(&context.repo, &context.worktree_branch)?;
-        let source_oid = Self::branch_commit_oid(&context.repo, &context.source_branch)?;
 
         if source_oid != worktree_oid {
             let mut source_ref = context
@@ -181,28 +186,29 @@ impl RunsMergeService {
                 .merge_analysis_for_ref(&mut source_ref, &[&worktree_annotated])
                 .map_err(|err| AppError::validation(format!("failed to analyze merge: {err}")))?;
 
-            if !analysis.is_fast_forward() {
+            if !analysis.is_fast_forward() && !analysis.is_up_to_date() {
                 return Ok(RunMergeResponseDto {
                     state: MergeState::NeedsRebase.as_str().to_string(),
                     status: self.compute_status(&context)?,
                 });
             }
 
-            source_ref
-                .set_target(
-                    worktree_oid,
-                    &format!(
-                        "fast-forward {} to {}",
-                        context.source_branch, context.worktree_branch
-                    ),
-                )
-                .map_err(|err| {
-                    AppError::validation(format!("failed to fast-forward source branch: {err}"))
-                })?;
+            if analysis.is_fast_forward() {
+                source_ref
+                    .set_target(
+                        worktree_oid,
+                        &format!(
+                            "fast-forward {} to {}",
+                            context.source_branch, context.worktree_branch
+                        ),
+                    )
+                    .map_err(|err| {
+                        AppError::validation(format!("failed to fast-forward source branch: {err}"))
+                    })?;
+            }
         }
 
-        let marked_completed = self.runs_service.mark_run_completed(run_id).await?;
-        Self::ensure_completion_persisted(marked_completed)?;
+        let _ = self.runs_service.mark_run_completed(run_id).await?;
         let mut status = self.compute_status(&context)?;
         status.state = MergeState::Merged.as_str().to_string();
         status.can_merge = false;
@@ -239,6 +245,7 @@ impl RunsMergeService {
         Ok(MergeContext {
             run_id: run.id,
             run_status: run.status,
+            run_finished_at: run.finished_at,
             source_branch,
             worktree_branch,
             repo,
@@ -395,16 +402,6 @@ impl RunsMergeService {
                 | RepositoryState::ApplyMailbox
                 | RepositoryState::ApplyMailboxOrRebase
         )
-    }
-
-    fn ensure_completion_persisted(marked_completed: bool) -> Result<(), AppError> {
-        if marked_completed {
-            Ok(())
-        } else {
-            Err(AppError::validation(
-                "merge applied but run completion was not persisted".to_string(),
-            ))
-        }
     }
 
     fn dirty_worktree_disable_reason(repo: &Repository) -> Result<Option<String>, AppError> {
@@ -876,17 +873,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn completion_ack_false_returns_validation_error() {
-        let err = RunsMergeService::ensure_completion_persisted(false).unwrap_err();
-        match err {
-            AppError::Validation(message) => {
-                assert!(message.contains("completion was not persisted"));
-            }
-            _ => panic!("expected validation error"),
-        }
-    }
-
     #[tokio::test]
     async fn status_reports_mergeable_when_worktree_is_ahead_only() {
         let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
@@ -945,6 +931,13 @@ mod tests {
         assert_eq!(run_after.status, "completed");
         assert!(run_after.finished_at.is_some());
 
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_status, "done");
+
         let repo = Repository::open(&repo_path).unwrap();
         let main_oid = repo
             .find_reference("refs/heads/main")
@@ -957,5 +950,77 @@ mod tests {
             .target()
             .unwrap();
         assert_eq!(main_oid, worktree_oid);
+    }
+
+    #[tokio::test]
+    async fn clean_run_without_merge_evidence_cannot_be_completed() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service.create_run("task-1").await.unwrap();
+
+        let response = merge_service.merge_into_source_branch(&run.id).await.unwrap();
+        assert_eq!(response.state, "clean");
+
+        let run_after = runs_service.get_run_model(&run.id).await.unwrap();
+        assert_ne!(run_after.status, "completed");
+        assert!(run_after.finished_at.is_none());
+
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_ne!(task_status, "done");
+    }
+
+    #[tokio::test]
+    async fn merge_is_idempotent_at_up_to_date_tip_with_merge_evidence() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service.create_run("task-1").await.unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        append_commit(
+            &worktree_path,
+            "README.md",
+            "worktree-change\n",
+            "worktree change",
+        );
+
+        let first = merge_service.merge_into_source_branch(&run.id).await.unwrap();
+        assert_eq!(first.state, "completing");
+
+        sqlx::query("UPDATE runs SET status = 'running' WHERE id = ?")
+            .bind(&run.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE tasks SET status = 'review' WHERE id = ?")
+            .bind("task-1")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let second = merge_service.merge_into_source_branch(&run.id).await.unwrap();
+        assert_eq!(second.state, "completing");
+
+        let run_after = runs_service.get_run_model(&run.id).await.unwrap();
+        assert_eq!(run_after.status, "completed");
+        assert!(run_after.finished_at.is_some());
+
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_status, "done");
     }
 }

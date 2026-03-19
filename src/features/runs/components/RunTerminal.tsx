@@ -14,6 +14,7 @@ type RunTerminalProps = {
   isVisible: boolean;
   isStarting: boolean;
   isReady: boolean;
+  isInputEnabled: boolean;
   error: string;
   writeTerminal: (data: string) => Promise<void>;
   resizeTerminal: (cols: number, rows: number) => Promise<void>;
@@ -61,6 +62,7 @@ const RunTerminal: Component<RunTerminalProps> = (props) => {
   onMount(() => {
     terminal = new Terminal({
       cursorBlink: true,
+      disableStdin: !props.isInputEnabled,
       fontFamily: "var(--font-mono)",
       fontSize: 12,
       lineHeight: 1.35,
@@ -74,6 +76,9 @@ const RunTerminal: Component<RunTerminalProps> = (props) => {
     }
 
     const inputSubscription = terminal.onData((data) => {
+      if (!props.isInputEnabled) {
+        return;
+      }
       void props.writeTerminal(data);
     });
 
@@ -129,6 +134,12 @@ const RunTerminal: Component<RunTerminalProps> = (props) => {
       terminal = null;
       fitAddon = null;
     });
+  });
+
+  createEffect(() => {
+    if (terminal) {
+      terminal.options.disableStdin = !props.isInputEnabled;
+    }
   });
 
   createEffect(() => {

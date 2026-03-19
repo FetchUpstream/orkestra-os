@@ -569,7 +569,8 @@ const TaskDetailScreen: Component = () => {
                                             deletingRunId() === runItem.id ||
                                             warmingRunIds()[runItem.id] ||
                                             runItem.status === "running" ||
-                                            runItem.status === "preparing"
+                                            runItem.status === "preparing" ||
+                                            runItem.status === "completed"
                                           }
                                         >
                                           {startingRunId() === runItem.id
@@ -579,9 +580,11 @@ const TaskDetailScreen: Component = () => {
                                               : warmingRunIds()[runItem.id] ||
                                                   runItem.status === "preparing"
                                                 ? "Warming..."
-                                                : runItem.status === "running"
-                                                  ? "Running"
-                                                  : "Start"}
+                                                : runItem.status === "completed"
+                                                  ? "Completed"
+                                                  : runItem.status === "running"
+                                                    ? "Running"
+                                                    : "Start"}
                                         </button>
                                         <button
                                           type="button"

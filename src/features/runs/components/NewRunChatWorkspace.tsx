@@ -288,6 +288,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       phase === "reconnecting"
     );
   });
+  const isRunCompleted = createMemo(
+    () => props.model.run()?.status === "completed",
+  );
 
   const isNearBottom = (
     element: HTMLElement,
@@ -866,6 +869,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               })();
             }}
             disabled={
+              isRunCompleted() ||
               isComposerBlockedByReadiness() ||
               props.model.agent.state() === "unsupported"
             }
@@ -877,6 +881,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           <Show when={agentReadinessCopy() !== null}>
             <p class="project-placeholder-text" aria-live="polite">
               {agentReadinessCopy()}
+            </p>
+          </Show>
+          <Show when={isRunCompleted()}>
+            <p class="project-placeholder-text" aria-live="polite">
+              Run completed. Read-only.
             </p>
           </Show>
           <Show when={props.model.agent.submitError().length > 0}>

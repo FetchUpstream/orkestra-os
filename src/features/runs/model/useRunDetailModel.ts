@@ -1,4 +1,4 @@
-import { useParams } from "@solidjs/router";
+import { useNavigate, useParams } from "@solidjs/router";
 import { listen } from "@tauri-apps/api/event";
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
@@ -36,6 +36,7 @@ import {
 import type { AgentStore, OpenCodeBusEvent } from "./agentTypes";
 
 export const useRunDetailModel = () => {
+  const navigate = useNavigate();
   const params = useParams();
   const [run, setRun] = createSignal<Run | null>(null);
   const [task, setTask] = createSignal<Task | null>(null);
@@ -86,6 +87,8 @@ export const useRunDetailModel = () => {
   const [isGitMergePending, setIsGitMergePending] = createSignal(false);
   const [gitActionError, setGitActionError] = createSignal("");
   const [gitLastActionMessage, setGitLastActionMessage] = createSignal("");
+  const [postMergeCompletionMessage, setPostMergeCompletionMessage] =
+    createSignal("");
   let activeRunRequestVersion = 0;
   let activeDiffRefreshVersion = 0;
   let diffRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -109,7 +112,15 @@ export const useRunDetailModel = () => {
   let terminalRunId: string | null = null;
   let terminalRouteInstanceId = crypto.randomUUID();
   let terminalFrameHandler: ((frame: RunTerminalFrame) => void) | null = null;
+  let postMergeRedirectTimer: ReturnType<typeof setTimeout> | null = null;
   const sentGitConflictFingerprints = new Set<string>();
+
+  const clearPostMergeRedirectTimer = (): void => {
+    if (postMergeRedirectTimer) {
+      clearTimeout(postMergeRedirectTimer);
+      postMergeRedirectTimer = null;
+    }
+  };
 
   const areDiffFilesEqual = (
     current: RunDiffFile[],
@@ -201,6 +212,21 @@ export const useRunDetailModel = () => {
 
     return false;
   };
+
+  const isTerminalInputEnabled = createMemo(() => {
+    const status = run()?.status;
+    if (!status) {
+      return false;
+    }
+
+    return (
+      status === "queued" || status === "preparing" || status === "running"
+    );
+  });
+
+  const isTerminalInputBlocked = createMemo(
+    () => run()?.status === "completed",
+  );
 
   const getErrorMessage = (value: unknown): string => {
     if (value instanceof Error) {
@@ -739,6 +765,17 @@ export const useRunDetailModel = () => {
     return `${minutes}m ${seconds}s`;
   });
 
+  const isRunCompleted = createMemo(() => run()?.status === "completed");
+
+  const boardHref = createMemo(() => {
+    const projectId =
+      task()?.projectId?.trim() || run()?.projectId?.trim() || "";
+    if (projectId) {
+      return `/board?projectId=${encodeURIComponent(projectId)}`;
+    }
+    return "/board";
+  });
+
   const refreshRunDetails = async (runId: string): Promise<void> => {
     const loadedRun = await getRun(runId);
     if (params.runId !== runId) {
@@ -820,6 +857,8 @@ export const useRunDetailModel = () => {
     setIsGitRebasePending(true);
     setGitActionError("");
     setGitLastActionMessage("");
+    setPostMergeCompletionMessage("");
+    clearPostMergeRedirectTimer();
     try {
       const result = await rebaseRunWorktreeOntoSource(runId);
       if (params.runId !== runId) {
@@ -885,6 +924,18 @@ export const useRunDetailModel = () => {
       await refreshGitMergeStatus();
       if (result.status === "merged" || result.status === "completing") {
         await refreshRunDetails(runId);
+        if (run()?.status === "completed" && task()?.status === "done") {
+          setPostMergeCompletionMessage(
+            "Merge completed. Returning to board...",
+          );
+          clearPostMergeRedirectTimer();
+          postMergeRedirectTimer = setTimeout(() => {
+            if (params.runId !== runId) {
+              return;
+            }
+            navigate(boardHref(), { replace: true });
+          }, 1200);
+        }
       }
     } catch (mergeError) {
       if (params.runId === runId) {
@@ -1497,6 +1548,11 @@ export const useRunDetailModel = () => {
   };
 
   const writeTerminal = async (data: string): Promise<void> => {
+    if (isTerminalInputBlocked()) {
+      setTerminalError("Run already completed. Terminal input is disabled.");
+      return;
+    }
+
     const sessionId = terminalSessionId();
     const generation = terminalGeneration();
     if (!sessionId || generation === null) {
@@ -1548,6 +1604,10 @@ export const useRunDetailModel = () => {
     onCleanup(() => {
       void disposeTerminal();
     });
+  });
+
+  onCleanup(() => {
+    clearPostMergeRedirectTimer();
   });
 
   const refreshDiffFiles = async (): Promise<void> => {
@@ -1762,11 +1822,14 @@ export const useRunDetailModel = () => {
       rebaseWorktreeOntoSource,
       mergeWorktreeIntoSource,
     },
+    isRunCompleted,
+    postMergeCompletionMessage,
     terminal: {
       sessionId: terminalSessionId,
       generation: terminalGeneration,
       isStarting: isTerminalStarting,
       isReady: isTerminalReady,
+      isInputEnabled: isTerminalInputEnabled,
       error: terminalError,
       initTerminalForRun,
       writeTerminal,

@@ -136,7 +136,7 @@ impl RunsService {
         let started_at = Utc::now().to_rfc3339();
         let updated = self
             .repository
-            .update_run_status(run_id, "queued", "running", Some(&started_at))
+            .transition_queued_to_running_and_mark_task_doing(run_id, &started_at)
             .await?;
 
         if !updated {
@@ -272,7 +272,7 @@ impl RunsService {
 
         let finished_at = Utc::now().to_rfc3339();
         self.repository
-            .mark_run_completed(run_id, &finished_at)
+            .finalize_run_completion_and_task_done(run_id, &finished_at)
             .await
     }
 
@@ -323,6 +323,10 @@ mod tests {
     }
 
     async fn seed_task(pool: &SqlitePool, task_id: &str, repo_path: &Path) {
+        seed_task_with_status(pool, task_id, repo_path, "todo").await;
+    }
+
+    async fn seed_task_with_status(pool: &SqlitePool, task_id: &str, repo_path: &Path, status: &str) {
         let project_id = "project-1";
         let repository_id = "repo-1";
 
@@ -365,7 +369,7 @@ mod tests {
         .bind(1)
         .bind("Task")
         .bind(Option::<String>::None)
-        .bind("todo")
+        .bind(status)
         .bind("2024-01-01T00:00:00Z")
         .bind("2024-01-01T00:00:00Z")
         .execute(pool)
@@ -728,5 +732,57 @@ mod tests {
             run.initial_prompt_client_request_id.as_deref(),
             Some("claim-b")
         );
+    }
+
+    #[tokio::test]
+    async fn transition_to_running_marks_todo_task_doing() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task_with_status(&pool, "task-1", &repo_path, "todo").await;
+        seed_run(&pool, "run-1", "task-1").await;
+
+        let updated = service.transition_queued_to_running("run-1").await.unwrap();
+
+        assert_eq!(updated.status, "running");
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_status, "doing");
+    }
+
+    #[tokio::test]
+    async fn transition_to_running_is_concurrent_single_winner_and_idempotent() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task_with_status(&pool, "task-1", &repo_path, "review").await;
+        seed_run(&pool, "run-1", "task-1").await;
+
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let service_clone = service.clone();
+            tasks.push(tokio::spawn(async move {
+                service_clone.transition_queued_to_running("run-1").await.unwrap()
+            }));
+        }
+
+        for task in tasks {
+            let run = task.await.unwrap();
+            assert_eq!(run.status, "running");
+        }
+
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_status, "doing");
+
+        let run_after = service.get_run_model("run-1").await.unwrap();
+        assert_eq!(run_after.status, "running");
+        assert!(run_after.started_at.is_some());
     }
 }

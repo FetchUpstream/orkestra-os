@@ -125,7 +125,11 @@ const NewRunDetailScreen: Component = () => {
     if (!status) {
       return true;
     }
-    return model.git.isRebasePending() || !status.isRebaseAllowed;
+    return (
+      model.isRunCompleted() ||
+      model.git.isRebasePending() ||
+      !status.isRebaseAllowed
+    );
   });
   const isMergeDisabled = createMemo(() => {
     const status = gitStatus();
@@ -133,6 +137,7 @@ const NewRunDetailScreen: Component = () => {
       return true;
     }
     return (
+      model.isRunCompleted() ||
       model.git.isMergePending() ||
       status.requiresRebase ||
       !status.isMergeAllowed
@@ -146,6 +151,9 @@ const NewRunDetailScreen: Component = () => {
     if (model.git.isRebasePending()) {
       return "Rebase already running.";
     }
+    if (model.isRunCompleted()) {
+      return "Run already completed.";
+    }
     if (status.isRebaseAllowed) {
       return "";
     }
@@ -158,6 +166,9 @@ const NewRunDetailScreen: Component = () => {
     }
     if (model.git.isMergePending()) {
       return "Merge already running.";
+    }
+    if (model.isRunCompleted()) {
+      return "Run already completed.";
     }
     if (mergeRequiresRebase()) {
       return "Rebase worktree onto source before merge.";
@@ -593,6 +604,18 @@ const NewRunDetailScreen: Component = () => {
                                   {model.git.lastActionMessage()}
                                 </p>
                               </Show>
+                              <Show
+                                when={
+                                  model.postMergeCompletionMessage().length > 0
+                                }
+                              >
+                                <p
+                                  class="project-placeholder-text"
+                                  aria-live="polite"
+                                >
+                                  {model.postMergeCompletionMessage()}
+                                </p>
+                              </Show>
                               <Show when={model.git.actionError().length > 0}>
                                 <p class="projects-error">
                                   {model.git.actionError()}
@@ -706,6 +729,7 @@ const NewRunDetailScreen: Component = () => {
                     isVisible={overlayState() === "sheet-terminal"}
                     isStarting={model.terminal.isStarting()}
                     isReady={model.terminal.isReady()}
+                    isInputEnabled={model.terminal.isInputEnabled()}
                     error={model.terminal.error()}
                     writeTerminal={model.terminal.writeTerminal}
                     resizeTerminal={model.terminal.resizeTerminal}

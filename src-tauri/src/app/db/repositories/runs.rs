@@ -183,6 +183,46 @@ impl RunsRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn transition_queued_to_running_and_mark_task_doing(
+        &self,
+        run_id: &str,
+        started_at: &str,
+    ) -> Result<bool, AppError> {
+        let mut tx = self.pool.begin().await?;
+
+        let run_update = sqlx::query(
+            "UPDATE runs
+             SET status = 'running',
+                 started_at = COALESCE(started_at, ?)
+             WHERE id = ?
+               AND status = 'queued'",
+        )
+        .bind(started_at)
+        .bind(run_id)
+        .execute(&mut *tx)
+        .await?;
+
+        if run_update.rows_affected() == 0 {
+            tx.commit().await?;
+            return Ok(false);
+        }
+
+        sqlx::query(
+            "UPDATE tasks
+             SET status = 'doing',
+                 updated_at = ?
+             WHERE id = (SELECT task_id FROM runs WHERE id = ?)
+               AND status IN ('todo', 'review')",
+        )
+        .bind(started_at)
+        .bind(run_id)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(true)
+    }
+
     pub async fn update_opencode_session_id(
         &self,
         run_id: &str,
@@ -330,6 +370,42 @@ impl RunsRepository {
         .await?;
 
         Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn finalize_run_completion_and_task_done(
+        &self,
+        run_id: &str,
+        finished_at: &str,
+    ) -> Result<bool, AppError> {
+        let mut tx = self.pool.begin().await?;
+
+        let run_update = sqlx::query(
+            "UPDATE runs
+             SET status = 'completed',
+                 finished_at = COALESCE(finished_at, ?)
+             WHERE id = ?
+               AND status != 'completed'",
+        )
+        .bind(finished_at)
+        .bind(run_id)
+        .execute(&mut *tx)
+        .await?;
+
+        let task_update = sqlx::query(
+            "UPDATE tasks
+             SET status = 'done',
+                 updated_at = ?
+             WHERE id = (SELECT task_id FROM runs WHERE id = ?)
+               AND status != 'done'",
+        )
+        .bind(finished_at)
+        .bind(run_id)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(run_update.rows_affected() > 0 || task_update.rows_affected() > 0)
     }
 
     fn map_row_to_run(row: sqlx::sqlite::SqliteRow) -> Run {
