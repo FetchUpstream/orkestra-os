@@ -97,10 +97,15 @@ const NewRunDetailScreen: Component = () => {
   const [overlayState, setOverlayState] = createSignal<OverlayState>("none");
   const [overlaySize, setOverlaySize] = createSignal<OverlaySize>("normal");
   const [isDiffSideBySide, setIsDiffSideBySide] = createSignal(true);
+  const [isCommitModalOpen, setIsCommitModalOpen] = createSignal(false);
+  const [commitPromptDraft, setCommitPromptDraft] = createSignal("");
+  const [isCommitPrefillLoading, setIsCommitPrefillLoading] =
+    createSignal(false);
   const [lastTriggerButton, setLastTriggerButton] =
     createSignal<HTMLButtonElement | null>(null);
   let drawerOverlayCloseButtonRef: HTMLButtonElement | undefined;
   let terminalOverlayCloseButtonRef: HTMLButtonElement | undefined;
+  let commitModalTextareaRef: HTMLTextAreaElement | undefined;
 
   const isOverlayOpen = createMemo(() => overlayState() !== "none");
   const isTerminalOverlayOpen = createMemo(
@@ -116,9 +121,50 @@ const NewRunDetailScreen: Component = () => {
     overlaySize() === "maximized" ? "Restore panel" : "Maximize panel",
   );
   const gitStatus = createMemo(() => model.git.status());
+  const changedFilePaths = createMemo(() => {
+    const files = model.diffFiles();
+    const uniquePaths = new Set<string>();
+    for (const file of files) {
+      const path = file.path.trim();
+      if (path.length > 0) {
+        uniquePaths.add(path);
+      }
+    }
+    return Array.from(uniquePaths);
+  });
+  const commitPromptPrefill = createMemo(() => {
+    if (isCommitPrefillLoading() || model.isDiffFilesLoading()) {
+      return "There are still uncommited changes, please attomically commit the following changes\n- Loading changed files...";
+    }
+    const fileList = changedFilePaths();
+    const renderedFiles =
+      fileList.length > 0
+        ? fileList.map((path) => `- ${path}`).join("\n")
+        : "- (Unable to determine changed files)";
+    return `There are still uncommited changes, please attomically commit the following changes\n${renderedFiles}`;
+  });
+  const isCommitDisabled = createMemo(() => model.agent.isSubmittingPrompt());
+  const isCommitActionVisible = createMemo(() => {
+    const status = gitStatus();
+    return status?.isWorktreeClean === false;
+  });
   const mergeRequiresRebase = createMemo(() => {
     const status = gitStatus();
     return status?.requiresRebase === true;
+  });
+  const isRebaseActionVisible = createMemo(() => {
+    const status = gitStatus();
+    if (!status) {
+      return false;
+    }
+    return status.isRebaseAllowed || status.requiresRebase;
+  });
+  const isMergeActionVisible = createMemo(() => {
+    const status = gitStatus();
+    if (!status) {
+      return false;
+    }
+    return status.isMergeAllowed && !status.requiresRebase;
   });
   const isRebaseDisabled = createMemo(() => {
     const status = gitStatus();
@@ -265,6 +311,42 @@ const NewRunDetailScreen: Component = () => {
     setOverlaySize("normal");
   };
 
+  const openCommitModal = () => {
+    const loadingPrefill =
+      "There are still uncommited changes, please attomically commit the following changes\n- Loading changed files...";
+    setIsCommitPrefillLoading(true);
+    setCommitPromptDraft(loadingPrefill);
+    setIsCommitModalOpen(true);
+
+    void model
+      .refreshDiffFiles()
+      .catch(() => {
+        // Keep existing fallback text when refresh fails.
+      })
+      .finally(() => {
+        setIsCommitPrefillLoading(false);
+        if (!isCommitModalOpen()) {
+          return;
+        }
+        setCommitPromptDraft(commitPromptPrefill());
+      });
+  };
+
+  const closeCommitModal = () => {
+    setIsCommitModalOpen(false);
+  };
+
+  const confirmCommitPrompt = async () => {
+    if (isCommitDisabled()) {
+      return;
+    }
+
+    const accepted = await model.agent.submitPrompt(commitPromptDraft());
+    if (accepted) {
+      closeCommitModal();
+    }
+  };
+
   createEffect(() => {
     model.setIsDiffTabActive(overlayState() === "drawer-diff");
   });
@@ -291,8 +373,34 @@ const NewRunDetailScreen: Component = () => {
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (isCommitModalOpen()) {
+          return;
+        }
         event.preventDefault();
         closeOverlay();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", onKeyDown);
+    });
+  });
+
+  createEffect(() => {
+    if (!isCommitModalOpen()) {
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      commitModalTextareaRef?.focus();
+    });
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeCommitModal();
       }
     };
 
@@ -622,37 +730,52 @@ const NewRunDetailScreen: Component = () => {
                                 </p>
                               </Show>
                               <div class="run-chat-git-drawer__actions">
-                                <button
-                                  type="button"
-                                  class="run-chat-git-drawer__button"
-                                  disabled={isRebaseDisabled()}
-                                  title={rebaseDisabledReason() || undefined}
-                                  onClick={() => {
-                                    void model.git.rebaseWorktreeOntoSource();
-                                  }}
-                                >
-                                  Rebase Worktree onto Source
-                                </button>
-                                <Show when={rebaseDisabledReason().length > 0}>
-                                  <p class="project-placeholder-text">
-                                    {rebaseDisabledReason()}
-                                  </p>
+                                <Show when={isRebaseActionVisible()}>
+                                  <button
+                                    type="button"
+                                    class="run-chat-git-drawer__button"
+                                    disabled={isRebaseDisabled()}
+                                    title={rebaseDisabledReason() || undefined}
+                                    onClick={() => {
+                                      void model.git.rebaseWorktreeOntoSource();
+                                    }}
+                                  >
+                                    Rebase Worktree onto Source
+                                  </button>
+                                  <Show
+                                    when={rebaseDisabledReason().length > 0}
+                                  >
+                                    <p class="project-placeholder-text">
+                                      {rebaseDisabledReason()}
+                                    </p>
+                                  </Show>
                                 </Show>
-                                <button
-                                  type="button"
-                                  class="run-chat-git-drawer__button"
-                                  disabled={isMergeDisabled()}
-                                  title={mergeDisabledReason() || undefined}
-                                  onClick={() => {
-                                    void model.git.mergeWorktreeIntoSource();
-                                  }}
-                                >
-                                  Merge Worktree into Source
-                                </button>
-                                <Show when={mergeDisabledReason().length > 0}>
-                                  <p class="project-placeholder-text">
-                                    {mergeDisabledReason()}
-                                  </p>
+                                <Show when={isMergeActionVisible()}>
+                                  <button
+                                    type="button"
+                                    class="run-chat-git-drawer__button"
+                                    disabled={isMergeDisabled()}
+                                    title={mergeDisabledReason() || undefined}
+                                    onClick={() => {
+                                      void model.git.mergeWorktreeIntoSource();
+                                    }}
+                                  >
+                                    Merge Worktree into Source
+                                  </button>
+                                  <Show when={mergeDisabledReason().length > 0}>
+                                    <p class="project-placeholder-text">
+                                      {mergeDisabledReason()}
+                                    </p>
+                                  </Show>
+                                </Show>
+                                <Show when={isCommitActionVisible()}>
+                                  <button
+                                    type="button"
+                                    class="run-chat-git-drawer__button"
+                                    onClick={() => openCommitModal()}
+                                  >
+                                    Commit Changes
+                                  </button>
                                 </Show>
                               </div>
                             </>
@@ -739,6 +862,72 @@ const NewRunDetailScreen: Component = () => {
                   />
                 </div>
               </section>
+              <Show when={isCommitModalOpen()}>
+                <div
+                  class="projects-modal-backdrop"
+                  role="presentation"
+                  onClick={() => closeCommitModal()}
+                >
+                  <section
+                    class="projects-modal task-create-dependency-modal"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="run-commit-modal-title"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <h2
+                      id="run-commit-modal-title"
+                      class="task-delete-modal-title"
+                    >
+                      Ask agent to commit changes
+                    </h2>
+                    <label
+                      class="projects-field"
+                      for="run-commit-modal-message"
+                    >
+                      <span class="field-label">
+                        <span class="field-label-text">Message</span>
+                      </span>
+                      <textarea
+                        ref={commitModalTextareaRef}
+                        id="run-commit-modal-message"
+                        rows={8}
+                        aria-label="Commit request message"
+                        value={commitPromptDraft()}
+                        onInput={(event) =>
+                          setCommitPromptDraft(event.currentTarget.value)
+                        }
+                      />
+                    </label>
+                    <Show when={model.agent.submitError().length > 0}>
+                      <p class="projects-error">{model.agent.submitError()}</p>
+                    </Show>
+                    <div class="task-delete-modal-actions">
+                      <button
+                        type="button"
+                        class="projects-button-muted"
+                        onClick={() => closeCommitModal()}
+                        disabled={isCommitDisabled()}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        class="projects-button-primary"
+                        onClick={() => {
+                          void confirmCommitPrompt();
+                        }}
+                        disabled={
+                          isCommitDisabled() ||
+                          commitPromptDraft().trim().length === 0
+                        }
+                      >
+                        {isCommitDisabled() ? "Sending..." : "Send to agent"}
+                      </button>
+                    </div>
+                  </section>
+                </div>
+              </Show>
             </>
           </Show>
         </Show>

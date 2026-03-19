@@ -1612,7 +1612,7 @@ export const useRunDetailModel = () => {
 
   const refreshDiffFiles = async (): Promise<void> => {
     const runId = params.runId;
-    if (!runId || !isDiffTabActive()) return;
+    if (!runId) return;
     const requestVersion = ++activeDiffRefreshVersion;
     setIsDiffFilesLoading(true);
     setDiffFilesError("");
@@ -1810,6 +1810,7 @@ export const useRunDetailModel = () => {
     diffFilePayloads,
     diffFileLoadingPaths,
     loadDiffFile,
+    refreshDiffFiles,
     git: {
       status: gitStatus,
       isLoading: isGitStatusLoading,
