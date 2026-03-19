@@ -408,6 +408,34 @@ impl RunsRepository {
         Ok(run_update.rows_affected() > 0 || task_update.rows_affected() > 0)
     }
 
+    pub async fn transition_task_doing_to_review_on_session_idle(
+        &self,
+        run_id: &str,
+        opencode_session_id: &str,
+        updated_at: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE tasks
+             SET status = 'review',
+                 updated_at = ?
+             WHERE id = (
+                 SELECT task_id
+                 FROM runs
+                 WHERE id = ?
+                   AND status IN ('queued', 'preparing', 'running')
+                   AND opencode_session_id = ?
+             )
+               AND status = 'doing'",
+        )
+        .bind(updated_at)
+        .bind(run_id)
+        .bind(opencode_session_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     fn map_row_to_run(row: sqlx::sqlite::SqliteRow) -> Run {
         Run {
             id: row.get("id"),

@@ -11,7 +11,7 @@ use opencode::{
     create_opencode_client, create_opencode_server, types::PartInput, OpencodeClient,
     OpencodeClientConfig, OpencodeServer, OpencodeServerOptions, RequestOptions,
 };
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -22,7 +22,7 @@ use tokio::time::{sleep, Duration, Instant};
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 fn format_error_chain<E>(err: &E) -> Option<String>
 where
@@ -99,6 +99,7 @@ struct RunOpenCodeHandle {
     subscriber_lifecycle_lock: tokio::sync::Mutex<()>,
     event_tx: tokio::sync::broadcast::Sender<RawAgentEvent>,
     buffered_events: Arc<Mutex<VecDeque<RawAgentEvent>>>,
+    session_runtime_state: Arc<Mutex<SessionRuntimeState>>,
 }
 
 struct SubscriberTaskEntry {
@@ -106,7 +107,260 @@ struct SubscriberTaskEntry {
     handle: JoinHandle<()>,
 }
 
+#[derive(Default)]
+struct SessionRuntimeState {
+    last_status_hint: Option<String>,
+    pending_questions: HashSet<String>,
+    pending_permissions: HashSet<String>,
+}
+
 impl RunsOpenCodeService {
+    async fn event_matches_current_run_session(
+        &self,
+        run_id: &str,
+        session_id: &str,
+    ) -> Result<bool, AppError> {
+        let run = self.runs_service.get_run_model(run_id).await?;
+        let current = run
+            .opencode_session_id
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty());
+
+        Ok(current.as_deref() == Some(session_id.trim()))
+    }
+
+    fn parse_payload_property(payload: &str, keys: &[&str]) -> Option<String> {
+        let value: serde_json::Value = serde_json::from_str(payload).ok()?;
+        let object = value.as_object()?;
+        let properties = object.get("properties").and_then(|value| value.as_object());
+        for source in [Some(object), properties] {
+            let Some(source) = source else {
+                continue;
+            };
+            for key in keys {
+                let value = source.get(*key).and_then(|value| value.as_str());
+                if let Some(value) = value {
+                    let trimmed = value.trim();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn parse_status_hint(payload: &str) -> Option<String> {
+        let value: serde_json::Value = serde_json::from_str(payload).ok()?;
+        let object = value.as_object()?;
+        let properties = object.get("properties").and_then(|value| value.as_object());
+
+        for source in [Some(object), properties] {
+            let Some(source) = source else {
+                continue;
+            };
+            let Some(status) = source.get("status") else {
+                continue;
+            };
+
+            if let Some(status) = status.as_str() {
+                let trimmed = status.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+                continue;
+            }
+
+            let Some(status_obj) = status.as_object() else {
+                continue;
+            };
+            let Some(status_type) = status_obj.get("type").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let trimmed = status_type.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+
+        None
+    }
+
+    async fn process_runtime_event(
+        &self,
+        run_id: &str,
+        event_name: &str,
+        payload: &str,
+        session_runtime_state: &Arc<Mutex<SessionRuntimeState>>,
+    ) -> Result<(), AppError> {
+        let runtime_event_name = if event_name == "message" {
+            Self::parse_payload_property(payload, &["type"]).unwrap_or_else(|| event_name.to_string())
+        } else {
+            event_name.to_string()
+        };
+
+        match runtime_event_name.as_str() {
+            "session.status" => {
+                let Some(session_id) =
+                    Self::parse_payload_property(payload, &["sessionID", "sessionId"])
+                else {
+                    return Ok(());
+                };
+
+                if !self
+                    .event_matches_current_run_session(run_id, &session_id)
+                    .await?
+                {
+                    return Ok(());
+                }
+
+                let Some(status) = Self::parse_status_hint(payload) else {
+                    return Ok(());
+                };
+
+                if status != "busy" && status != "idle" && status != "active" && status != "error"
+                {
+                    return Ok(());
+                }
+
+                let mut state = session_runtime_state.lock().map_err(|_| {
+                    AppError::validation("failed to lock OpenCode session runtime state")
+                })?;
+                state.last_status_hint = Some(status);
+                Ok(())
+            }
+            "question.asked" => {
+                let Some(session_id) =
+                    Self::parse_payload_property(payload, &["sessionID", "sessionId"])
+                else {
+                    return Ok(());
+                };
+                if !self
+                    .event_matches_current_run_session(run_id, &session_id)
+                    .await?
+                {
+                    return Ok(());
+                }
+
+                let Some(request_id) =
+                    Self::parse_payload_property(payload, &["requestID", "requestId"])
+                else {
+                    return Ok(());
+                };
+                let mut state = session_runtime_state.lock().map_err(|_| {
+                    AppError::validation("failed to lock OpenCode session runtime state")
+                })?;
+                state.pending_questions.insert(request_id);
+                Ok(())
+            }
+            "question.replied" | "question.rejected" => {
+                let Some(session_id) =
+                    Self::parse_payload_property(payload, &["sessionID", "sessionId"])
+                else {
+                    return Ok(());
+                };
+                if !self
+                    .event_matches_current_run_session(run_id, &session_id)
+                    .await?
+                {
+                    return Ok(());
+                }
+
+                let Some(request_id) =
+                    Self::parse_payload_property(payload, &["requestID", "requestId"])
+                else {
+                    return Ok(());
+                };
+                let mut state = session_runtime_state.lock().map_err(|_| {
+                    AppError::validation("failed to lock OpenCode session runtime state")
+                })?;
+                state.pending_questions.remove(&request_id);
+                Ok(())
+            }
+            "permission.asked" => {
+                let Some(session_id) =
+                    Self::parse_payload_property(payload, &["sessionID", "sessionId"])
+                else {
+                    return Ok(());
+                };
+                if !self
+                    .event_matches_current_run_session(run_id, &session_id)
+                    .await?
+                {
+                    return Ok(());
+                }
+
+                let Some(request_id) =
+                    Self::parse_payload_property(payload, &["requestID", "requestId"])
+                else {
+                    return Ok(());
+                };
+                let mut state = session_runtime_state.lock().map_err(|_| {
+                    AppError::validation("failed to lock OpenCode session runtime state")
+                })?;
+                state.pending_permissions.insert(request_id);
+                Ok(())
+            }
+            "permission.replied" => {
+                let Some(session_id) =
+                    Self::parse_payload_property(payload, &["sessionID", "sessionId"])
+                else {
+                    return Ok(());
+                };
+                if !self
+                    .event_matches_current_run_session(run_id, &session_id)
+                    .await?
+                {
+                    return Ok(());
+                }
+
+                let Some(request_id) =
+                    Self::parse_payload_property(payload, &["requestID", "requestId"])
+                else {
+                    return Ok(());
+                };
+                let mut state = session_runtime_state.lock().map_err(|_| {
+                    AppError::validation("failed to lock OpenCode session runtime state")
+                })?;
+                state.pending_permissions.remove(&request_id);
+                Ok(())
+            }
+            "session.idle" => {
+                let Some(session_id) =
+                    Self::parse_payload_property(payload, &["sessionID", "sessionId"])
+                else {
+                    return Ok(());
+                };
+
+                if !self
+                    .event_matches_current_run_session(run_id, &session_id)
+                    .await?
+                {
+                    return Ok(());
+                }
+
+                let should_block = {
+                    let state = session_runtime_state.lock().map_err(|_| {
+                        AppError::validation("failed to lock OpenCode session runtime state")
+                    })?;
+                    !state.pending_questions.is_empty() || !state.pending_permissions.is_empty()
+                };
+
+                if should_block {
+                    return Ok(());
+                }
+
+                let _ = self
+                    .runs_service
+                    .transition_task_to_review_on_session_idle(run_id, &session_id)
+                    .await?;
+
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn initial_seed_request_id_for_run(run_id: &str) -> String {
         format!("initial-run-message:{run_id}")
     }
@@ -501,6 +755,7 @@ impl RunsOpenCodeService {
             subscriber_lifecycle_lock: tokio::sync::Mutex::new(()),
             event_tx: event_tx.clone(),
             buffered_events: buffered_events.clone(),
+            session_runtime_state: Arc::new(Mutex::new(SessionRuntimeState::default())),
         });
 
         self.handles
@@ -514,6 +769,7 @@ impl RunsOpenCodeService {
             client,
             event_tx,
             buffered_events,
+            handle.session_runtime_state.clone(),
         );
 
         if run.status == "queued" {
@@ -1094,9 +1350,11 @@ impl RunsOpenCodeService {
         client: OpencodeClient,
         event_tx: tokio::sync::broadcast::Sender<RawAgentEvent>,
         buffered_events: Arc<Mutex<VecDeque<RawAgentEvent>>>,
+        session_runtime_state: Arc<Mutex<SessionRuntimeState>>,
     ) {
         let handles = self.handles.clone();
         let init_locks = self.init_locks.clone();
+        let runs_opencode_service = self.clone();
         tauri::async_runtime::spawn(async move {
             let mut reconnect_attempt: u32 = 0;
 
@@ -1198,6 +1456,24 @@ impl RunsOpenCodeService {
                     };
 
                     let event_name = sse.event.unwrap_or_else(|| "message".to_string());
+                    if let Err(err) = runs_opencode_service
+                        .process_runtime_event(
+                            &run_id,
+                            &event_name,
+                            &sse.data,
+                            &session_runtime_state,
+                        )
+                        .await
+                    {
+                        warn!(
+                            target: "opencode.runtime",
+                            marker = "runtime_event_processing_failed",
+                            run_id = run_id.as_str(),
+                            event_name = event_name.as_str(),
+                            error = %err,
+                            "OpenCode runtime event processing failed"
+                        );
+                    }
                     RunsOpenCodeService::push_event(
                         &event_tx,
                         &buffered_events,
@@ -1596,6 +1872,7 @@ mod tests {
             subscriber_lifecycle_lock: tokio::sync::Mutex::new(()),
             event_tx,
             buffered_events: Arc::new(Mutex::new(VecDeque::new())),
+            session_runtime_state: Arc::new(Mutex::new(super::SessionRuntimeState::default())),
         });
 
         let mut handles = opencode_service.handles.write().await;
@@ -1617,5 +1894,260 @@ mod tests {
             .await
             .unwrap();
         assert!(reclaimed);
+    }
+
+    async fn set_run_session_id(pool: &SqlitePool, run_id: &str, session_id: &str) {
+        sqlx::query("UPDATE runs SET opencode_session_id = ? WHERE id = ?")
+            .bind(session_id)
+            .bind(run_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn set_task_status(pool: &SqlitePool, task_id: &str, status: &str) {
+        sqlx::query("UPDATE tasks SET status = ? WHERE id = ?")
+            .bind(status)
+            .bind(task_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn fetch_task_status(pool: &SqlitePool, task_id: &str) -> String {
+        sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind(task_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn session_idle_transitions_doing_task_to_review_for_matching_session() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+        set_task_status(&pool, "task-1", "doing").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.idle",
+                r#"{"sessionID":"session-1"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_task_status(&pool, "task-1").await, "review");
+    }
+
+    #[tokio::test]
+    async fn session_status_idle_hint_does_not_transition_task() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+        set_task_status(&pool, "task-1", "doing").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.status",
+                r#"{"sessionID":"session-1","status":"idle"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
+    }
+
+    #[tokio::test]
+    async fn session_idle_mismatch_and_pending_blockers_prevent_transition() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+        set_task_status(&pool, "task-1", "doing").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.idle",
+                r#"{"sessionID":"session-stale"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "question.asked",
+                r#"{"sessionID":"session-1","requestID":"q-1"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.idle",
+                r#"{"sessionID":"session-1"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
+    }
+
+    #[tokio::test]
+    async fn duplicate_session_idle_events_are_idempotent() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+        set_task_status(&pool, "task-1", "doing").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.idle",
+                r#"{"sessionID":"session-1"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.idle",
+                r#"{"sessionID":"session-1"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_task_status(&pool, "task-1").await, "review");
+    }
+
+    #[tokio::test]
+    async fn pending_permission_blocks_session_idle_transition() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+        set_task_status(&pool, "task-1", "doing").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "permission.asked",
+                r#"{"sessionID":"session-1","requestID":"p-1"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.idle",
+                r#"{"sessionID":"session-1"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
+    }
+
+    #[tokio::test]
+    async fn wrapped_session_idle_payload_transitions_task_to_review() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+        set_task_status(&pool, "task-1", "doing").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.idle",
+                r#"{"type":"session.idle","properties":{"sessionID":"session-1"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_task_status(&pool, "task-1").await, "review");
+    }
+
+    #[tokio::test]
+    async fn message_envelope_routes_inner_type_and_preserves_blockers() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+        set_task_status(&pool, "task-1", "doing").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"session.status","properties":{"sessionID":"session-1","status":{"type":"busy"}}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        {
+            let guard = state.lock().unwrap();
+            assert_eq!(guard.last_status_hint.as_deref(), Some("busy"));
+        }
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.asked","properties":{"sessionID":"session-1","requestID":"q-1"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"session.idle","properties":{"sessionID":"session-1"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
     }
 }

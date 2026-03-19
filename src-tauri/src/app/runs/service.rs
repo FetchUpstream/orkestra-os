@@ -276,6 +276,27 @@ impl RunsService {
             .await
     }
 
+    pub async fn transition_task_to_review_on_session_idle(
+        &self,
+        run_id: &str,
+        opencode_session_id: &str,
+    ) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let opencode_session_id = opencode_session_id.trim();
+        if opencode_session_id.is_empty() {
+            return Err(AppError::validation("opencode_session_id is required"));
+        }
+
+        let updated_at = Utc::now().to_rfc3339();
+        self.repository
+            .transition_task_doing_to_review_on_session_idle(run_id, opencode_session_id, &updated_at)
+            .await
+    }
+
     fn to_dto(run: Run) -> RunDto {
         RunDto {
             id: run.id,
@@ -326,7 +347,12 @@ mod tests {
         seed_task_with_status(pool, task_id, repo_path, "todo").await;
     }
 
-    async fn seed_task_with_status(pool: &SqlitePool, task_id: &str, repo_path: &Path, status: &str) {
+    async fn seed_task_with_status(
+        pool: &SqlitePool,
+        task_id: &str,
+        repo_path: &Path,
+        status: &str,
+    ) {
         let project_id = "project-1";
         let repository_id = "repo-1";
 
@@ -765,7 +791,10 @@ mod tests {
         for _ in 0..8 {
             let service_clone = service.clone();
             tasks.push(tokio::spawn(async move {
-                service_clone.transition_queued_to_running("run-1").await.unwrap()
+                service_clone
+                    .transition_queued_to_running("run-1")
+                    .await
+                    .unwrap()
             }));
         }
 
@@ -784,5 +813,68 @@ mod tests {
         let run_after = service.get_run_model("run-1").await.unwrap();
         assert_eq!(run_after.status, "running");
         assert!(run_after.started_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn session_idle_transition_updates_task_to_review_only_for_active_run() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task_with_status(&pool, "task-1", &repo_path, "doing").await;
+        seed_run(&pool, "run-1", "task-1").await;
+
+        sqlx::query("UPDATE runs SET status = 'running', opencode_session_id = 'session-1' WHERE id = ?")
+            .bind("run-1")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let transitioned = service
+            .transition_task_to_review_on_session_idle("run-1", "session-1")
+            .await
+            .unwrap();
+        assert!(transitioned);
+
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_status, "review");
+    }
+
+    #[tokio::test]
+    async fn session_idle_transition_does_not_update_terminal_or_mismatched_run() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task_with_status(&pool, "task-1", &repo_path, "doing").await;
+        seed_run(&pool, "run-1", "task-1").await;
+
+        sqlx::query(
+            "UPDATE runs SET status = 'completed', opencode_session_id = 'session-1' WHERE id = ?",
+        )
+        .bind("run-1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let transitioned_terminal = service
+            .transition_task_to_review_on_session_idle("run-1", "session-1")
+            .await
+            .unwrap();
+        let transitioned_mismatch = service
+            .transition_task_to_review_on_session_idle("run-1", "other-session")
+            .await
+            .unwrap();
+        assert!(!transitioned_terminal);
+        assert!(!transitioned_mismatch);
+
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_status, "doing");
     }
 }
