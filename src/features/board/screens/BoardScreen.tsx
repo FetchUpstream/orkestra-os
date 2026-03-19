@@ -41,7 +41,7 @@ const resolveDroppedTaskId = (
 const BoardScreen: Component = () => {
   const model = useBoardModel();
   const taskCreateModel = useCreateTaskModalModel({
-    project: model.selectedProject,
+    project: model.selectedProjectDetail,
     projectId: model.selectedProjectId,
     onTaskCreated: async () => {
       await model.refreshSelectedProjectTasks();
@@ -113,7 +113,9 @@ const BoardScreen: Component = () => {
               </For>
             </select>
           </div>
-          <Show when={(model.selectedProject()?.repositories.length ?? 0) > 0}>
+          <Show
+            when={(model.selectedProjectDetail()?.repositories.length ?? 0) > 0}
+          >
             <button
               type="button"
               class="projects-button-primary"
@@ -234,7 +236,7 @@ const BoardScreen: Component = () => {
 
       <CreateTaskModal
         isOpen={taskCreateModel.isModalOpen}
-        project={model.selectedProject}
+        project={model.selectedProjectDetail}
         taskTitle={taskCreateModel.taskTitle}
         taskDescription={taskCreateModel.taskDescription}
         taskImplementationGuide={taskCreateModel.taskImplementationGuide}

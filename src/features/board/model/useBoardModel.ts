@@ -1,5 +1,9 @@
 import { createMemo, createSignal, onMount } from "solid-js";
-import { listProjects, type Project } from "../../../app/lib/projects";
+import {
+  getProject,
+  listProjects,
+  type Project,
+} from "../../../app/lib/projects";
 import {
   listProjectTasks,
   setTaskStatus,
@@ -13,11 +17,14 @@ export const useBoardModel = () => {
   const [projects, setProjects] = createSignal<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = createSignal("");
   const [tasks, setTasks] = createSignal<Task[]>([]);
+  const [selectedProjectDetail, setSelectedProjectDetail] =
+    createSignal<Project | null>(null);
   const [updatingTaskIds, setUpdatingTaskIds] = createSignal<string[]>([]);
   const [isProjectsLoading, setIsProjectsLoading] = createSignal(true);
   const [isTasksLoading, setIsTasksLoading] = createSignal(false);
   const [error, setError] = createSignal("");
   let activeTasksRequestVersion = 0;
+  let activeProjectDetailRequestVersion = 0;
 
   const selectedProject = createMemo(
     () =>
@@ -25,6 +32,30 @@ export const useBoardModel = () => {
   );
 
   const groupedTasks = createMemo(() => groupTasksByStatus(tasks()));
+
+  const loadSelectedProjectDetail = async (projectId: string) => {
+    const requestVersion = ++activeProjectDetailRequestVersion;
+    setSelectedProjectDetail(null);
+
+    try {
+      const loadedProject = await getProject(projectId);
+      if (
+        requestVersion !== activeProjectDetailRequestVersion ||
+        selectedProjectId() !== projectId
+      ) {
+        return;
+      }
+      setSelectedProjectDetail(loadedProject);
+    } catch {
+      if (
+        requestVersion !== activeProjectDetailRequestVersion ||
+        selectedProjectId() !== projectId
+      ) {
+        return;
+      }
+      setSelectedProjectDetail(null);
+    }
+  };
 
   const loadTasks = async (projectId: string) => {
     const requestVersion = ++activeTasksRequestVersion;
@@ -59,10 +90,15 @@ export const useBoardModel = () => {
   const onProjectChange = async (projectId: string) => {
     setSelectedProjectId(projectId);
     if (!projectId) {
+      activeProjectDetailRequestVersion += 1;
+      setSelectedProjectDetail(null);
       setTasks([]);
       return;
     }
-    await loadTasks(projectId);
+    await Promise.allSettled([
+      loadTasks(projectId),
+      loadSelectedProjectDetail(projectId),
+    ]);
   };
 
   const refreshSelectedProjectTasks = async () => {
@@ -131,6 +167,7 @@ export const useBoardModel = () => {
       const firstProjectId = loadedProjects[0]?.id;
       if (!firstProjectId) {
         setSelectedProjectId("");
+        setSelectedProjectDetail(null);
         setTasks([]);
         return;
       }
@@ -140,6 +177,7 @@ export const useBoardModel = () => {
       setError("Failed to load projects. Please refresh.");
       setProjects([]);
       setSelectedProjectId("");
+      setSelectedProjectDetail(null);
       setTasks([]);
     } finally {
       setIsProjectsLoading(false);
@@ -150,6 +188,7 @@ export const useBoardModel = () => {
     projects,
     selectedProjectId,
     selectedProject,
+    selectedProjectDetail,
     groupedTasks,
     isProjectsLoading,
     isTasksLoading,

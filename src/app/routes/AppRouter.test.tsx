@@ -343,6 +343,98 @@ describe("app routing and shell", () => {
     expect(screen.getByText("Manage and configure agents.")).toBeTruthy();
   });
 
+  it("loads board with project summaries and uses project detail for new task", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      if (command === "create_task") {
+        return Promise.resolve({
+          id: "task-1",
+          title: "Created from board",
+          status: "todo",
+          display_key: "ALP-8",
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Project")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "New task" })).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    await fireEvent.input(screen.getByLabelText("Title"), {
+      target: { value: "Created from board" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("create_task", {
+        input: {
+          project_id: "p-1",
+          title: "Created from board",
+          description: undefined,
+          implementation_guide: undefined,
+          status: "todo",
+          repository_id: "r-1",
+        },
+      });
+    });
+  });
+
+  it("keeps board functional when selected project detail fetch fails", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.reject(new Error("project detail unavailable"));
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Project")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+    });
+
+    expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
+    expect(
+      screen.queryByText("Failed to load project tasks. Please refresh."),
+    ).toBeNull();
+  });
+
   it("optimistically moves board cards across columns and persists status", async () => {
     let resolveStatusUpdate: ((value: unknown) => void) | undefined;
     const statusUpdatePromise = new Promise((resolve) => {

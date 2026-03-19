@@ -20,17 +20,19 @@ export const useCreateTaskModalModel = (options: Options) => {
   const [taskStatus, setTaskStatus] = createSignal<TaskStatus>("todo");
   const [targetRepositoryId, setTargetRepositoryId] = createSignal("");
 
+  const getProjectRepositories = () => options.project()?.repositories ?? [];
+
   const resetTaskForm = () => {
     setTaskTitle("");
     setTaskDescription("");
     setTaskImplementationGuide("");
     setTaskStatus("todo");
     setTaskFormError("");
-    const selectedProject = options.project();
-    const defaultRepository = selectedProject?.repositories.find(
-      (repo) => repo.is_default,
+    const repositories = getProjectRepositories();
+    const defaultRepository = repositories.find(
+      (repo) => repo.is_default && !!repo.id,
     );
-    const fallbackRepository = selectedProject?.repositories[0];
+    const fallbackRepository = repositories.find((repo) => !!repo.id);
     setTargetRepositoryId(
       defaultRepository?.id ?? fallbackRepository?.id ?? "",
     );
@@ -42,6 +44,16 @@ export const useCreateTaskModalModel = (options: Options) => {
     if (!projectId) return;
     if (!taskTitle().trim()) {
       setTaskFormError("Title is required.");
+      return;
+    }
+    const repositories = getProjectRepositories();
+    const hasAvailableTargetRepository = repositories.some((repo) => !!repo.id);
+    if (!hasAvailableTargetRepository) {
+      setTaskFormError("No target repository is available for this project.");
+      return;
+    }
+    if (!targetRepositoryId()) {
+      setTaskFormError("Select a target repository.");
       return;
     }
 
