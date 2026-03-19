@@ -4,7 +4,10 @@ use crate::app::runs::dto::{
 };
 use crate::app::runs::service::RunsService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
-use git2::{AnnotatedCommit, BranchType, ErrorCode, Repository, RepositoryState, Signature};
+use git2::{
+    AnnotatedCommit, BranchType, ErrorCode, Repository, RepositoryState, Signature, Status,
+    StatusOptions,
+};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -65,6 +68,9 @@ impl RunsMergeService {
         run_id: &str,
     ) -> Result<RunRebaseResponseDto, AppError> {
         let context = self.load_context(run_id).await?;
+        if let Some(reason) = Self::dirty_worktree_disable_reason(&context.repo)? {
+            return Err(AppError::validation(reason));
+        }
         let status_before = self.compute_status(&context)?;
 
         if !status_before.can_rebase {
@@ -139,6 +145,9 @@ impl RunsMergeService {
         run_id: &str,
     ) -> Result<RunMergeResponseDto, AppError> {
         let context = self.load_context(run_id).await?;
+        if let Some(reason) = Self::dirty_worktree_disable_reason(&context.repo)? {
+            return Err(AppError::validation(reason));
+        }
         let status_before = self.compute_status(&context)?;
         if !status_before.can_merge {
             return Ok(RunMergeResponseDto {
@@ -253,6 +262,7 @@ impl RunsMergeService {
                 AppError::validation(format!("failed to inspect repository index: {err}"))
             })?
             .has_conflicts();
+        let dirty_disable_reason = Self::dirty_worktree_disable_reason(&context.repo)?;
 
         let mut state = if context.run_status == "completed" {
             MergeState::Merged
@@ -276,8 +286,8 @@ impl RunsMergeService {
             };
         }
 
-        let can_rebase = matches!(state, MergeState::NeedsRebase);
-        let can_merge = if matches!(state, MergeState::Mergeable) {
+        let mut can_rebase = matches!(state, MergeState::NeedsRebase);
+        let mut can_merge = if matches!(state, MergeState::Mergeable) {
             let source_ref_name = Self::source_ref_name(&context.source_branch);
             let mut source_ref = context
                 .repo
@@ -303,7 +313,7 @@ impl RunsMergeService {
             false
         };
 
-        let disable_reason = match state {
+        let mut disable_reason = match state {
             MergeState::NeedsRebase => Some(
                 "worktree branch is behind source branch; rebase is required before merge"
                     .to_string(),
@@ -318,6 +328,12 @@ impl RunsMergeService {
             MergeState::Completing => Some("merge is finalizing run completion".to_string()),
             MergeState::Mergeable => None,
         };
+
+        if let Some(reason) = dirty_disable_reason {
+            can_rebase = false;
+            can_merge = false;
+            disable_reason = Some(reason);
+        }
 
         Ok(RunMergeStatusDto {
             run_id: context.run_id.clone(),
@@ -386,6 +402,45 @@ impl RunsMergeService {
             Err(AppError::validation(
                 "merge applied but run completion was not persisted".to_string(),
             ))
+        }
+    }
+
+    fn dirty_worktree_disable_reason(repo: &Repository) -> Result<Option<String>, AppError> {
+        let mut options = StatusOptions::new();
+        options
+            .include_untracked(false)
+            .recurse_untracked_dirs(false)
+            .include_ignored(false)
+            .include_unmodified(false)
+            .renames_head_to_index(true)
+            .renames_index_to_workdir(true);
+
+        let statuses = repo
+            .statuses(Some(&mut options))
+            .map_err(|err| AppError::validation(format!("failed to inspect worktree status: {err}")))?;
+
+        let has_dirty_changes = statuses.iter().any(|entry| {
+            let status = entry.status();
+            status.intersects(
+                Status::INDEX_NEW
+                    | Status::INDEX_MODIFIED
+                    | Status::INDEX_DELETED
+                    | Status::INDEX_RENAMED
+                    | Status::INDEX_TYPECHANGE
+                    | Status::WT_MODIFIED
+                    | Status::WT_DELETED
+                    | Status::WT_TYPECHANGE
+                    | Status::WT_RENAMED,
+            )
+        });
+
+        if has_dirty_changes {
+            Ok(Some(
+                "worktree has staged or unstaged changes; clean the worktree before rebasing or merging"
+                    .to_string(),
+            ))
+        } else {
+            Ok(None)
         }
     }
 
@@ -615,6 +670,18 @@ mod tests {
             .unwrap();
     }
 
+    fn write_staged_change(repo_path: &Path, file: &str, text: &str) {
+        let repo = Repository::open(repo_path).unwrap();
+        fs::write(repo_path.join(file), text).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new(file)).unwrap();
+        index.write().unwrap();
+    }
+
+    fn write_unstaged_change(repo_path: &Path, file: &str, text: &str) {
+        fs::write(repo_path.join(file), text).unwrap();
+    }
+
     #[tokio::test]
     async fn status_reports_needs_rebase_when_worktree_is_behind() {
         let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
@@ -721,6 +788,88 @@ mod tests {
             .disable_reason
             .unwrap_or_default()
             .contains("rebase in progress"));
+    }
+
+    #[tokio::test]
+    async fn dirty_worktree_status_loads_and_disables_actions() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service.create_run("task-1").await.unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        write_unstaged_change(&worktree_path, "README.md", "dirty\n");
+
+        let status = merge_service.get_merge_status(&run.id).await.unwrap();
+        assert!(!status.can_rebase);
+        assert!(!status.can_merge);
+        assert!(status
+            .disable_reason
+            .unwrap_or_default()
+            .contains("clean the worktree"));
+    }
+
+    #[tokio::test]
+    async fn dirty_worktree_blocks_rebase_with_validation_error() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service.create_run("task-1").await.unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        append_commit(&repo_path, "README.md", "main-change\n", "main change");
+        write_unstaged_change(&worktree_path, "README.md", "dirty\n");
+
+        let err = merge_service.rebase_worktree_branch(&run.id).await.unwrap_err();
+        match err {
+            AppError::Validation(message) => {
+                assert!(message.contains("clean the worktree"));
+            }
+            _ => panic!("expected validation error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dirty_worktree_blocks_merge_with_validation_error() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service.create_run("task-1").await.unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        append_commit(
+            &worktree_path,
+            "README.md",
+            "worktree-change\n",
+            "worktree change",
+        );
+        write_staged_change(&worktree_path, "README.md", "staged-dirty\n");
+
+        let err = merge_service
+            .merge_into_source_branch(&run.id)
+            .await
+            .unwrap_err();
+        match err {
+            AppError::Validation(message) => {
+                assert!(message.contains("clean the worktree"));
+            }
+            _ => panic!("expected validation error"),
+        }
     }
 
     #[test]

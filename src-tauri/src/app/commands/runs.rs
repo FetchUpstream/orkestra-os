@@ -78,6 +78,14 @@ pub async fn get_run_merge_status(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub async fn get_run_git_merge_status(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<RunMergeStatusDto, String> {
+    get_run_merge_status(state, run_id).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
 pub async fn rebase_run_worktree_branch(
     state: tauri::State<'_, AppState>,
     run_id: String,

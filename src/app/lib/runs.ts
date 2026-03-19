@@ -155,6 +155,13 @@ export type RunGitBranchSync = {
 };
 
 export type RunGitMergeState =
+  | "clean"
+  | "needs_rebase"
+  | "rebase_in_progress"
+  | "mergeable"
+  | "conflicted"
+  | "merged"
+  | "completing"
   | "ready"
   | "rebase_required"
   | "rebasing"
@@ -421,6 +428,8 @@ type RunGitMergeStatusResponse = {
   rebaseDisabledReason?: string | null;
   merge_disabled_reason?: string | null;
   mergeDisabledReason?: string | null;
+  disable_reason?: string | null;
+  disableReason?: string | null;
   conflict_summary?: string | null;
   conflictSummary?: string | null;
   conflict_fingerprint?: string | null;
@@ -633,6 +642,11 @@ const toRunGitMergeState = (state: unknown): RunGitMergeState => {
 
   switch (normalizedState) {
     case "ready":
+    case "clean":
+    case "needs_rebase":
+    case "rebase_in_progress":
+    case "mergeable":
+    case "conflicted":
     case "rebase_required":
     case "rebasing":
     case "rebase_conflict":
@@ -719,10 +733,16 @@ const toRunGitMergeStatus = (response: unknown): RunGitMergeStatus => {
     requiresRebase:
       pick(payload.requires_rebase, payload.requiresRebase) === true,
     rebaseDisabledReason: toOptionalTrimmedString(
-      pick(payload.rebase_disabled_reason, payload.rebaseDisabledReason),
+      pick(
+        pick(payload.rebase_disabled_reason, payload.rebaseDisabledReason),
+        pick(payload.disable_reason, payload.disableReason),
+      ),
     ),
     mergeDisabledReason: toOptionalTrimmedString(
-      pick(payload.merge_disabled_reason, payload.mergeDisabledReason),
+      pick(
+        pick(payload.merge_disabled_reason, payload.mergeDisabledReason),
+        pick(payload.disable_reason, payload.disableReason),
+      ),
     ),
     conflictSummary: toOptionalTrimmedString(
       pick(payload.conflict_summary, payload.conflictSummary),

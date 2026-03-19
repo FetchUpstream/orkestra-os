@@ -39,6 +39,7 @@ pub fn run() {
             app::commands::runs::list_run_diff_files,
             app::commands::runs::get_run_diff_file,
             app::commands::runs::get_run_merge_status,
+            app::commands::runs::get_run_git_merge_status,
             app::commands::runs::rebase_run_worktree_branch,
             app::commands::runs::merge_run_into_source_branch,
             app::commands::runs::set_run_diff_watch,

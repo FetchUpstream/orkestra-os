@@ -314,6 +314,31 @@ describe("runs contract", () => {
     } satisfies RunGitMergeStatus);
   });
 
+  it("supports backend merge-state vocabulary and disable_reason fallback", async () => {
+    invokeMock.mockResolvedValue({
+      status: {
+        state: "needs_rebase",
+        source_branch: "main",
+        worktree_branch: "feature/abc",
+        source_ahead: 0,
+        source_behind: 1,
+        worktree_ahead: 1,
+        worktree_behind: 1,
+        can_rebase: false,
+        can_merge: false,
+        disable_reason: "worktree must be clean",
+      },
+    });
+
+    const status = await getRunGitMergeStatus("run-1");
+
+    expect(status.state).toBe("needs_rebase");
+    expect(status.rebaseDisabledReason).toBe("worktree must be clean");
+    expect(status.mergeDisabledReason).toBe("worktree must be clean");
+    expect(status.isRebaseAllowed).toBe(false);
+    expect(status.isMergeAllowed).toBe(false);
+  });
+
   it("fails closed for mergeability booleans from malformed payload", async () => {
     invokeMock.mockResolvedValue({
       status: {
