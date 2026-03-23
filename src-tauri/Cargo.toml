@@ -40,3 +40,4 @@ base64 = "0.22.1"
 opencode = { version = "1.2.20", package = "opencode-client-sdk" }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
+sentry = "0.47.0"

@@ -22,6 +22,7 @@
     "@codemirror/view": "^6.39.17",
     "@kobalte/core": "^0.13.11",
     "@modular-forms/solid": "^0.25.1",
+    "@sentry/solid": "^10.45.0",
     "@solidjs/router": "^0.15.4",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-opener": "^2",
@@ -37,6 +38,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@sentry/vite-plugin": "^5.1.1",
     "@solidjs/testing-library": "^0.8.10",
     "@tailwindcss/vite": "^4.2.1",
     "@tauri-apps/cli": "^2",
