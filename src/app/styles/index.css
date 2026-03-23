@@ -2208,6 +2208,16 @@ textarea::placeholder {
   gap: 10px;
 }
 
+.task-runs-defaults-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.task-runs-default-field {
+  min-width: 0;
+}
+
 .task-runs-list {
   margin: 0;
   padding: 0;
@@ -4286,6 +4296,27 @@ textarea::placeholder {
   cursor: not-allowed;
 }
 
+.run-chat-override-panel {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.run-chat-override-toggle {
+  align-self: flex-start;
+}
+
+.run-chat-override-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.run-chat-override-field {
+  min-width: 0;
+}
+
 .monaco-editor-root {
   width: 100%;
   min-height: 120px;
@@ -4559,6 +4590,10 @@ textarea::placeholder {
     width: 100%;
   }
 
+  .task-runs-defaults-grid {
+    grid-template-columns: 1fr;
+  }
+
   .task-runs-link--with-start-action {
     padding-right: 110px;
   }
@@ -4685,6 +4720,10 @@ textarea::placeholder {
   .run-chat-composer__input,
   .run-chat-composer__textarea {
     max-height: min(42vh, 320px);
+  }
+
+  .run-chat-override-grid {
+    grid-template-columns: 1fr;
   }
 }
 

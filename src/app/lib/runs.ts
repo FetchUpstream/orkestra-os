@@ -27,6 +27,8 @@ export type Run = {
   errorMessage?: string | null;
   worktreeId?: string | null;
   agentId?: string | null;
+  providerId?: string | null;
+  modelId?: string | null;
   sourceBranch?: string | null;
   initialPromptSentAt?: string | null;
   initialPromptClientRequestId?: string | null;
@@ -118,6 +120,24 @@ export type SubmitRunOpenCodePromptParams = {
   prompt: string;
   clientRequestId?: string;
   agent?: string;
+  agentId?: string;
+  providerId?: string;
+  modelId?: string;
+};
+
+export type RunSelectionOption = {
+  id: string;
+  label: string;
+};
+
+export type RunModelOption = RunSelectionOption & {
+  providerId?: string;
+};
+
+export type RunSelectionOptions = {
+  agents: RunSelectionOption[];
+  providers: RunSelectionOption[];
+  models: RunModelOption[];
 };
 
 export type SubmitRunOpenCodePromptResult = {
@@ -415,6 +435,10 @@ type RunResponse = {
   worktreeId?: string | null;
   agent_id?: string | null;
   agentId?: string | null;
+  provider_id?: string | null;
+  providerId?: string | null;
+  model_id?: string | null;
+  modelId?: string | null;
   source_branch?: string | null;
   sourceBranch?: string | null;
   initial_prompt_sent_at?: string | null;
@@ -437,6 +461,27 @@ type RunResponse = {
   cleanupFinishedAt?: string | null;
   cleanup_error_message?: string | null;
   cleanupErrorMessage?: string | null;
+};
+
+type RunSelectionItemResponse = {
+  id?: string;
+  value?: string;
+  key?: string;
+  name?: string;
+  label?: string;
+  display_name?: string;
+  displayName?: string;
+  provider_id?: string;
+  providerId?: string;
+};
+
+type RunSelectionOptionsResponse = {
+  agents?: unknown;
+  providers?: unknown;
+  models?: unknown;
+  data?: unknown;
+  payload?: unknown;
+  result?: unknown;
 };
 
 type RunGitBranchSyncResponse = {
@@ -545,6 +590,8 @@ const toRun = (run: RunResponse): Run => ({
   errorMessage: pick(run.error_message, run.errorMessage),
   worktreeId: pick(run.worktree_id, run.worktreeId),
   agentId: pick(run.agent_id, run.agentId),
+  providerId: pick(run.provider_id, run.providerId),
+  modelId: pick(run.model_id, run.modelId),
   sourceBranch: pick(run.source_branch, run.sourceBranch),
   initialPromptSentAt: pick(
     run.initial_prompt_sent_at,
@@ -708,6 +755,98 @@ const toOptionalTrimmedString = (value: unknown): string | undefined => {
 
   const normalized = value.trim();
   return normalized ? normalized : undefined;
+};
+
+const toSelectionLabel = (
+  value: RunSelectionItemResponse,
+  fallbackLabel: string,
+): string => {
+  const label = toOptionalTrimmedString(
+    value.display_name ?? value.displayName ?? value.label ?? value.name,
+  );
+  if (label) {
+    return label;
+  }
+  return fallbackLabel;
+};
+
+const toSelectionId = (value: RunSelectionItemResponse): string => {
+  return toOptionalTrimmedString(value.id ?? value.value ?? value.key) ?? "";
+};
+
+const toSelectionOptions = (
+  source: unknown,
+  fallbackLabel: string,
+): RunSelectionOption[] => {
+  if (!Array.isArray(source)) {
+    return [];
+  }
+  return source
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const value = item as RunSelectionItemResponse;
+      const id = toSelectionId(value);
+      if (!id) {
+        return null;
+      }
+      return {
+        id,
+        label: toSelectionLabel(value, fallbackLabel),
+      };
+    })
+    .filter((item): item is RunSelectionOption => item !== null);
+};
+
+const toModelSelectionOptions = (source: unknown): RunModelOption[] => {
+  if (!Array.isArray(source)) {
+    return [];
+  }
+  return source
+    .map((item): RunModelOption | null => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const value = item as RunSelectionItemResponse;
+      const id = toSelectionId(value);
+      if (!id) {
+        return null;
+      }
+      const providerId = toOptionalTrimmedString(
+        value.provider_id ?? value.providerId,
+      );
+      return {
+        id,
+        label: toSelectionLabel(value, "Model"),
+        ...(providerId ? { providerId } : {}),
+      };
+    })
+    .filter((item): item is RunModelOption => item !== null);
+};
+
+const unwrapRunSelectionOptionsPayload = (
+  response: unknown,
+): RunSelectionOptionsResponse => {
+  if (!response || typeof response !== "object") {
+    return {};
+  }
+
+  const record = response as RunSelectionOptionsResponse;
+  const wrapped = pick(record.data, pick(record.payload, record.result));
+  if (wrapped && typeof wrapped === "object") {
+    return wrapped as RunSelectionOptionsResponse;
+  }
+  return record;
+};
+
+const toRunSelectionOptions = (response: unknown): RunSelectionOptions => {
+  const payload = unwrapRunSelectionOptionsPayload(response);
+  return {
+    agents: toSelectionOptions(payload.agents, "Agent"),
+    providers: toSelectionOptions(payload.providers, "Provider"),
+    models: toModelSelectionOptions(payload.models),
+  };
 };
 
 const toRunGitMergeState = (state: unknown): RunGitMergeState => {
@@ -967,10 +1106,65 @@ const toBootstrapRunOpenCodeResult = (
   };
 };
 
-export const createRun = async (taskId: string): Promise<Run> => {
-  const response = await invoke<RunResponse>("create_run", { taskId });
+export const createRun = async (
+  taskId: string,
+  defaults?: {
+    agentId?: string;
+    providerId?: string;
+    modelId?: string;
+  },
+): Promise<Run> => {
+  const response = await invoke<RunResponse>("create_run", {
+    request: {
+      taskId,
+      agentId: defaults?.agentId,
+      providerId: defaults?.providerId,
+      modelId: defaults?.modelId,
+    },
+  });
   return toRun(response);
 };
+
+export const getRunSelectionOptions =
+  async (): Promise<RunSelectionOptions> => {
+    const [agentsResponse, providersResponse] = await Promise.all([
+      invoke<unknown>("list_run_opencode_agents"),
+      invoke<unknown>("list_run_opencode_providers"),
+    ]);
+
+    const agentsPayload =
+      agentsResponse && typeof agentsResponse === "object"
+        ? (agentsResponse as { agents?: unknown }).agents
+        : undefined;
+    const providersPayload =
+      providersResponse && typeof providersResponse === "object"
+        ? (providersResponse as { providers?: unknown }).providers
+        : undefined;
+
+    const providers = toSelectionOptions(providersPayload, "Provider");
+    const models = toModelSelectionOptions(
+      Array.isArray(providersPayload)
+        ? providersPayload.flatMap((provider) => {
+            if (!provider || typeof provider !== "object") return [];
+            const providerRecord = provider as {
+              id?: string;
+              models?: unknown[];
+            };
+            if (!Array.isArray(providerRecord.models)) return [];
+            return providerRecord.models.map((model) => ({
+              ...(model && typeof model === "object" ? model : {}),
+              providerId: providerRecord.id,
+            }));
+          })
+        : [],
+    );
+
+    return toRunSelectionOptions({
+      agents: agentsPayload,
+      providers,
+      models,
+    });
+  };
 
 export const listTaskRuns = async (taskId: string): Promise<Run[]> => {
   const response = await invoke<RunResponse[]>("list_task_runs", { taskId });
@@ -1221,7 +1415,10 @@ export const submitRunOpenCodePrompt = async ({
   runId,
   prompt,
   clientRequestId,
-  agent = "build",
+  agent,
+  agentId,
+  providerId,
+  modelId,
 }: SubmitRunOpenCodePromptParams): Promise<SubmitRunOpenCodePromptResult> => {
   const response = await invoke<SubmitRunOpenCodePromptResponse>(
     "submit_run_opencode_prompt",
@@ -1231,6 +1428,9 @@ export const submitRunOpenCodePrompt = async ({
         prompt,
         clientRequestId,
         agent,
+        agentId,
+        providerId,
+        modelId,
       },
     },
   );

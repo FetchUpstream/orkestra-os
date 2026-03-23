@@ -1,5 +1,6 @@
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent, RunDiffFileDto,
+    RunAgentsResponseDto, RunProvidersResponseDto,
     ReplyRunOpenCodePermissionResponse,
     RunDiffFilePayloadDto, RunDto, RunMergeResponseDto, RunMergeStatusDto,
     RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, RunRebaseResponseDto,
@@ -18,6 +19,18 @@ pub struct SubmitRunOpenCodePromptRequest {
     pub prompt: String,
     pub client_request_id: Option<String>,
     pub agent: Option<String>,
+    pub agent_id: Option<String>,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateRunRequest {
+    pub task_id: String,
+    pub agent_id: Option<String>,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,10 +46,19 @@ pub struct ReplyRunOpenCodePermissionRequest {
 #[tauri::command]
 pub async fn create_run(
     state: tauri::State<'_, AppState>,
-    task_id: String,
+    request: CreateRunRequest,
 ) -> Result<RunDto, String> {
     let service = context::runs_service(&state);
-    map_result(service.create_run(&task_id).await)
+    map_result(
+        service
+            .create_run_with_defaults(
+                &request.task_id,
+                request.agent_id.as_deref(),
+                request.provider_id.as_deref(),
+                request.model_id.as_deref(),
+            )
+            .await,
+    )
 }
 
 #[tauri::command]
@@ -213,10 +235,28 @@ pub async fn submit_run_opencode_prompt(
                 &request.run_id,
                 &request.prompt,
                 request.client_request_id,
-                request.agent,
+                request.agent_id.or(request.agent),
+                request.provider_id,
+                request.model_id,
             )
             .await,
     )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn list_run_opencode_providers(
+    state: tauri::State<'_, AppState>,
+) -> Result<RunProvidersResponseDto, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(service.list_run_opencode_providers().await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn list_run_opencode_agents(
+    state: tauri::State<'_, AppState>,
+) -> Result<RunAgentsResponseDto, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(service.list_run_opencode_agents().await)
 }
 
 #[tauri::command(rename_all = "camelCase")]

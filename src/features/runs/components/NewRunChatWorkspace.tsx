@@ -1,4 +1,5 @@
 import {
+  For,
   Show,
   createEffect,
   createMemo,
@@ -285,6 +286,10 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   );
   const [runChatComposerOffsetPx, setRunChatComposerOffsetPx] =
     createSignal("0px");
+  const [isOverrideOpen, setIsOverrideOpen] = createSignal(false);
+  const [overrideAgentId, setOverrideAgentId] = createSignal("");
+  const [overrideProviderId, setOverrideProviderId] = createSignal("");
+  const [overrideModelId, setOverrideModelId] = createSignal("");
 
   let transcriptScrollRef: HTMLDivElement | undefined;
   let transcriptBottomRef: HTMLDivElement | undefined;
@@ -342,6 +347,58 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const isRunCompleted = createMemo(
     () => props.model.run()?.status === "completed",
   );
+  const runAgentOptions = createMemo(
+    () => props.model.agent.runAgentOptions?.() ?? [],
+  );
+  const runProviderOptions = createMemo(
+    () => props.model.agent.runProviderOptions?.() ?? [],
+  );
+  const runModelOptions = createMemo(
+    () => props.model.agent.runModelOptions?.() ?? [],
+  );
+  const runSelectionOptionsError = createMemo(
+    () => props.model.agent.runSelectionOptionsError?.() ?? "",
+  );
+  const hasRunSelectionOptions = createMemo(() => {
+    return (
+      runAgentOptions().length > 0 ||
+      runProviderOptions().length > 0 ||
+      runModelOptions().length > 0
+    );
+  });
+  const effectiveProviderForModel = createMemo(() => {
+    const override = overrideProviderId().trim();
+    if (override) {
+      return override;
+    }
+    return props.model.run()?.providerId?.trim() || "";
+  });
+  const visibleRunModelOptions = createMemo(() => {
+    const providerId = effectiveProviderForModel();
+    if (!providerId) {
+      return runModelOptions();
+    }
+    return runModelOptions().filter(
+      (option) => !option.providerId || option.providerId === providerId,
+    );
+  });
+  const doesModelMatchProvider = (
+    modelId: string,
+    providerId: string,
+  ): boolean => {
+    if (!modelId || !providerId) {
+      return true;
+    }
+
+    const selectedModel = runModelOptions().find(
+      (option) => option.id === modelId,
+    );
+    if (!selectedModel || !selectedModel.providerId) {
+      return true;
+    }
+
+    return selectedModel.providerId === providerId;
+  };
   const pendingPermissionRequests = createMemo(() => {
     const byId = props.model.agent.store().pendingPermissionsById;
     return Object.values(byId);
@@ -803,6 +860,18 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
 
   createEffect(() => {
+    const modelId = overrideModelId().trim();
+    if (!modelId) {
+      return;
+    }
+
+    const providerId = effectiveProviderForModel();
+    if (!doesModelMatchProvider(modelId, providerId)) {
+      setOverrideModelId("");
+    }
+  });
+
+  createEffect(() => {
     const revision = transcriptScrollRevision();
     if (revision === "0") {
       return;
@@ -1055,9 +1124,26 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             onInput={setComposerValue}
             onSubmit={(value) => {
               void (async () => {
-                const success = await props.model.agent.submitPrompt(value);
+                const success = await props.model.agent.submitPrompt(value, {
+                  agentId: overrideAgentId().trim() || undefined,
+                  providerId: overrideProviderId().trim() || undefined,
+                  modelId: (() => {
+                    const modelId = overrideModelId().trim();
+                    if (!modelId) {
+                      return undefined;
+                    }
+                    const providerId = effectiveProviderForModel();
+                    return doesModelMatchProvider(modelId, providerId)
+                      ? modelId
+                      : undefined;
+                  })(),
+                });
                 if (success) {
                   setComposerValue("");
+                  setOverrideAgentId("");
+                  setOverrideProviderId("");
+                  setOverrideModelId("");
+                  setIsOverrideOpen(false);
                 }
               })();
             }}
@@ -1073,6 +1159,86 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             textareaLabel="Message agent"
             submitLabel="Send"
           />
+          <Show when={hasRunSelectionOptions()}>
+            <div class="run-chat-override-panel">
+              <button
+                type="button"
+                class="projects-button-muted run-chat-override-toggle"
+                onClick={() => setIsOverrideOpen((current) => !current)}
+                disabled={props.model.agent.isSubmittingPrompt()}
+              >
+                {isOverrideOpen()
+                  ? "Hide message override"
+                  : "Optional: override agent/provider/model"}
+              </button>
+              <Show when={isOverrideOpen()}>
+                <div class="run-chat-override-grid">
+                  <label class="projects-field run-chat-override-field">
+                    <span class="field-label">
+                      <span class="field-label-text">Agent</span>
+                    </span>
+                    <select
+                      value={overrideAgentId()}
+                      onChange={(event) =>
+                        setOverrideAgentId(event.currentTarget.value)
+                      }
+                      aria-label="Prompt override agent"
+                    >
+                      <option value="">Use run default</option>
+                      <For each={runAgentOptions()}>
+                        {(option: { id: string; label: string }) => (
+                          <option value={option.id}>{option.label}</option>
+                        )}
+                      </For>
+                    </select>
+                  </label>
+                  <label class="projects-field run-chat-override-field">
+                    <span class="field-label">
+                      <span class="field-label-text">Provider</span>
+                    </span>
+                    <select
+                      value={overrideProviderId()}
+                      onChange={(event) =>
+                        setOverrideProviderId(event.currentTarget.value)
+                      }
+                      aria-label="Prompt override provider"
+                    >
+                      <option value="">Use run default</option>
+                      <For each={runProviderOptions()}>
+                        {(option: { id: string; label: string }) => (
+                          <option value={option.id}>{option.label}</option>
+                        )}
+                      </For>
+                    </select>
+                  </label>
+                  <label class="projects-field run-chat-override-field">
+                    <span class="field-label">
+                      <span class="field-label-text">Model</span>
+                    </span>
+                    <select
+                      value={overrideModelId()}
+                      onChange={(event) =>
+                        setOverrideModelId(event.currentTarget.value)
+                      }
+                      aria-label="Prompt override model"
+                    >
+                      <option value="">Use run default</option>
+                      <For each={visibleRunModelOptions()}>
+                        {(option: { id: string; label: string }) => (
+                          <option value={option.id}>{option.label}</option>
+                        )}
+                      </For>
+                    </select>
+                  </label>
+                </div>
+              </Show>
+            </div>
+          </Show>
+          <Show when={runSelectionOptionsError().length > 0}>
+            <p class="project-placeholder-text" aria-live="polite">
+              {runSelectionOptionsError()}
+            </p>
+          </Show>
           <Show when={agentReadinessCopy() !== null}>
             <p class="project-placeholder-text" aria-live="polite">
               {agentReadinessCopy()}

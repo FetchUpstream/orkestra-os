@@ -140,6 +140,14 @@ const TaskDetailScreen: Component = () => {
     isAnyRunStarting,
     warmingRunIds,
     runStartErrors,
+    runAgentOptions,
+    runProviderOptions,
+    visibleRunModelOptions,
+    runSelectionOptionsError,
+    hasRunSelectionOptions,
+    selectedRunAgentId,
+    selectedRunProviderId,
+    selectedRunModelId,
     removingDependencyKey,
     isEditing,
     editTitle,
@@ -173,6 +181,9 @@ const TaskDetailScreen: Component = () => {
     refreshRuns,
     setActionError,
     setIsEditing,
+    setSelectedRunAgentId,
+    setSelectedRunProviderId,
+    setSelectedRunModelId,
     setEditTitle,
     setEditDescription,
     setEditImplementationGuide,
@@ -560,6 +571,87 @@ const TaskDetailScreen: Component = () => {
                               {isCreatingRun() ? "Starting..." : "New Run"}
                             </button>
                           </div>
+                          <Show when={hasRunSelectionOptions()}>
+                            <div class="task-runs-defaults-grid">
+                              <label class="projects-field task-runs-default-field">
+                                <span class="field-label">
+                                  <span class="field-label-text">Agent</span>
+                                </span>
+                                <select
+                                  value={selectedRunAgentId()}
+                                  onChange={(event) =>
+                                    setSelectedRunAgentId(
+                                      event.currentTarget.value,
+                                    )
+                                  }
+                                  disabled={isCreatingRun()}
+                                  aria-label="Default run agent"
+                                >
+                                  <option value="">Use run default</option>
+                                  <For each={runAgentOptions()}>
+                                    {(option) => (
+                                      <option value={option.id}>
+                                        {option.label}
+                                      </option>
+                                    )}
+                                  </For>
+                                </select>
+                              </label>
+                              <label class="projects-field task-runs-default-field">
+                                <span class="field-label">
+                                  <span class="field-label-text">Provider</span>
+                                </span>
+                                <select
+                                  value={selectedRunProviderId()}
+                                  onChange={(event) =>
+                                    setSelectedRunProviderId(
+                                      event.currentTarget.value,
+                                    )
+                                  }
+                                  disabled={isCreatingRun()}
+                                  aria-label="Default run provider"
+                                >
+                                  <option value="">Use run default</option>
+                                  <For each={runProviderOptions()}>
+                                    {(option) => (
+                                      <option value={option.id}>
+                                        {option.label}
+                                      </option>
+                                    )}
+                                  </For>
+                                </select>
+                              </label>
+                              <label class="projects-field task-runs-default-field">
+                                <span class="field-label">
+                                  <span class="field-label-text">Model</span>
+                                </span>
+                                <select
+                                  value={selectedRunModelId()}
+                                  onChange={(event) =>
+                                    setSelectedRunModelId(
+                                      event.currentTarget.value,
+                                    )
+                                  }
+                                  disabled={isCreatingRun()}
+                                  aria-label="Default run model"
+                                >
+                                  <option value="">Use run default</option>
+                                  <For each={visibleRunModelOptions()}>
+                                    {(option) => (
+                                      <option value={option.id}>
+                                        {option.label}
+                                      </option>
+                                    )}
+                                  </For>
+                                </select>
+                              </label>
+                            </div>
+                          </Show>
+                          <Show when={runSelectionOptionsError()}>
+                            <p class="project-placeholder-text">
+                              {runSelectionOptionsError()}
+                            </p>
+                          </Show>
                           <Show
                             when={!runsError()}
                             fallback={

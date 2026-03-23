@@ -19,8 +19,11 @@ import {
 import {
   createRun,
   deleteRun,
+  getRunSelectionOptions,
   listTaskRuns,
   startRunOpenCode,
+  type RunSelectionOption,
+  type RunModelOption,
   type Run,
 } from "../../../app/lib/runs";
 import {
@@ -100,6 +103,20 @@ export const useTaskDetailModel = () => {
     createSignal(false);
   const [deletingRunId, setDeletingRunId] = createSignal("");
   const [startingRunId, setStartingRunId] = createSignal("");
+  const [runAgentOptions, setRunAgentOptions] = createSignal<
+    RunSelectionOption[]
+  >([]);
+  const [runProviderOptions, setRunProviderOptions] = createSignal<
+    RunSelectionOption[]
+  >([]);
+  const [runModelOptions, setRunModelOptions] = createSignal<RunModelOption[]>(
+    [],
+  );
+  const [runSelectionOptionsError, setRunSelectionOptionsError] =
+    createSignal("");
+  const [selectedRunAgentId, setSelectedRunAgentId] = createSignal("");
+  const [selectedRunProviderId, setSelectedRunProviderId] = createSignal("");
+  const [selectedRunModelId, setSelectedRunModelId] = createSignal("");
   const [warmingRunIds, setWarmingRunIds] = createSignal<
     Record<string, boolean>
   >({});
@@ -150,6 +167,52 @@ export const useTaskDetailModel = () => {
     if (!taskValue) return "none";
     if (isBlocked()) return "blocked";
     return dependencyBadgeState(taskValue);
+  });
+  const visibleRunModelOptions = createMemo(() => {
+    const providerId = selectedRunProviderId().trim();
+    if (!providerId) {
+      return runModelOptions();
+    }
+    return runModelOptions().filter(
+      (option) => !option.providerId || option.providerId === providerId,
+    );
+  });
+
+  const doesModelMatchProvider = (
+    modelId: string,
+    providerId: string,
+  ): boolean => {
+    if (!modelId || !providerId) {
+      return true;
+    }
+
+    const selectedModel = runModelOptions().find(
+      (option) => option.id === modelId,
+    );
+    if (!selectedModel || !selectedModel.providerId) {
+      return true;
+    }
+
+    return selectedModel.providerId === providerId;
+  };
+
+  createEffect(() => {
+    const providerId = selectedRunProviderId().trim();
+    const modelId = selectedRunModelId().trim();
+    if (!modelId) {
+      return;
+    }
+    if (!doesModelMatchProvider(modelId, providerId)) {
+      setSelectedRunModelId("");
+    }
+  });
+
+  const hasRunSelectionOptions = createMemo(() => {
+    return (
+      runAgentOptions().length > 0 ||
+      runProviderOptions().length > 0 ||
+      runModelOptions().length > 0
+    );
   });
 
   const dependencyTaskHref = (dependencyTaskId: string) => {
@@ -230,6 +293,21 @@ export const useTaskDetailModel = () => {
       setRuns([]);
     } finally {
       setIsLoadingRuns(false);
+    }
+  };
+
+  const refreshRunSelectionOptions = async () => {
+    setRunSelectionOptionsError("");
+    try {
+      const options = await getRunSelectionOptions();
+      setRunAgentOptions(options.agents);
+      setRunProviderOptions(options.providers);
+      setRunModelOptions(options.models);
+    } catch {
+      setRunSelectionOptionsError("Failed to load run options.");
+      setRunAgentOptions([]);
+      setRunProviderOptions([]);
+      setRunModelOptions([]);
     }
   };
 
@@ -436,6 +514,7 @@ export const useTaskDetailModel = () => {
           loadProjectContext(resolvedProjectId),
           refreshDependencies(detail.id),
           refreshRuns(detail.id),
+          refreshRunSelectionOptions(),
           loadDependencyCandidates(resolvedProjectId),
         ]);
       } catch {
@@ -577,7 +656,11 @@ export const useTaskDetailModel = () => {
     setActionError("");
     setIsCreatingRun(true);
     try {
-      await createRun(taskValue.id);
+      await createRun(taskValue.id, {
+        agentId: selectedRunAgentId().trim() || undefined,
+        providerId: selectedRunProviderId().trim() || undefined,
+        modelId: selectedRunModelId().trim() || undefined,
+      });
       await refreshRuns(taskValue.id);
     } catch (mutationError) {
       setActionError(
@@ -690,6 +773,15 @@ export const useTaskDetailModel = () => {
     isAnyRunStarting,
     warmingRunIds,
     runStartErrors,
+    runAgentOptions,
+    runProviderOptions,
+    runModelOptions,
+    visibleRunModelOptions,
+    runSelectionOptionsError,
+    hasRunSelectionOptions,
+    selectedRunAgentId,
+    selectedRunProviderId,
+    selectedRunModelId,
     removingDependencyKey,
     isEditing,
     editTitle,
@@ -723,6 +815,9 @@ export const useTaskDetailModel = () => {
     refreshRuns,
     setActionError,
     setIsEditing,
+    setSelectedRunAgentId,
+    setSelectedRunProviderId,
+    setSelectedRunModelId,
     setEditTitle,
     setEditDescription,
     setEditImplementationGuide,

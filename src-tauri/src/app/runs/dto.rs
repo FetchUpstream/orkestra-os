@@ -16,6 +16,8 @@ pub struct RunDto {
     pub error_message: Option<String>,
     pub worktree_id: Option<String>,
     pub agent_id: Option<String>,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
     pub source_branch: Option<String>,
     pub initial_prompt_sent_at: Option<String>,
     pub initial_prompt_client_request_id: Option<String>,
@@ -27,6 +29,42 @@ pub struct RunDto {
     pub cleanup_started_at: Option<String>,
     pub cleanup_finished_at: Option<String>,
     pub cleanup_error_message: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunModelSelectionDto {
+    pub provider_id: String,
+    pub provider_name: Option<String>,
+    pub model_id: String,
+    pub model_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunProviderDto {
+    pub id: String,
+    pub name: Option<String>,
+    pub models: Vec<RunModelSelectionDto>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunProvidersResponseDto {
+    pub providers: Vec<RunProviderDto>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunAgentDto {
+    pub id: String,
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunAgentsResponseDto {
+    pub agents: Vec<RunAgentDto>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

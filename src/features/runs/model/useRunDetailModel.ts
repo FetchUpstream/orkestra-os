@@ -5,6 +5,7 @@ import {
   bootstrapRunOpenCode,
   appendCappedHistory,
   getRun,
+  getRunSelectionOptions,
   getRunGitMergeStatus,
   getRunDiffFile,
   killRunTerminal,
@@ -20,6 +21,8 @@ import {
   unsubscribeRunOpenCodeEvents,
   type BootstrapRunOpenCodeResult,
   type Run,
+  type RunSelectionOption,
+  type RunModelOption,
   type RunDiffFile,
   type RunDiffFilePayload,
   type RunGitMergeStatus,
@@ -81,6 +84,17 @@ export const useRunDetailModel = () => {
   >(null);
   const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(false);
   const [submitError, setSubmitError] = createSignal("");
+  const [runAgentOptions, setRunAgentOptions] = createSignal<
+    RunSelectionOption[]
+  >([]);
+  const [runProviderOptions, setRunProviderOptions] = createSignal<
+    RunSelectionOption[]
+  >([]);
+  const [runModelOptions, setRunModelOptions] = createSignal<RunModelOption[]>(
+    [],
+  );
+  const [runSelectionOptionsError, setRunSelectionOptionsError] =
+    createSignal("");
   const [isReplyingPermission, setIsReplyingPermission] = createSignal(false);
   const [permissionReplyError, setPermissionReplyError] = createSignal("");
   const [gitStatus, setGitStatus] = createSignal<RunGitMergeStatus | null>(
@@ -833,6 +847,18 @@ export const useRunDetailModel = () => {
   });
 
   const isRunCompleted = createMemo(() => run()?.status === "completed");
+  const runDefaultProviderId = createMemo(
+    () => run()?.providerId?.trim() || "",
+  );
+  const visibleRunModelOptions = createMemo(() => {
+    const providerId = runDefaultProviderId();
+    if (!providerId) {
+      return runModelOptions();
+    }
+    return runModelOptions().filter(
+      (option) => !option.providerId || option.providerId === providerId,
+    );
+  });
 
   const boardHref = createMemo(() => {
     const projectId =
@@ -867,6 +893,21 @@ export const useRunDetailModel = () => {
         return;
       }
       setTask(null);
+    }
+  };
+
+  const refreshRunSelectionOptions = async (): Promise<void> => {
+    setRunSelectionOptionsError("");
+    try {
+      const options = await getRunSelectionOptions();
+      setRunAgentOptions(options.agents);
+      setRunProviderOptions(options.providers);
+      setRunModelOptions(options.models);
+    } catch {
+      setRunSelectionOptionsError("Failed to load run options.");
+      setRunAgentOptions([]);
+      setRunProviderOptions([]);
+      setRunModelOptions([]);
     }
   };
 
@@ -1080,6 +1121,18 @@ export const useRunDetailModel = () => {
         }
       }
     })();
+  });
+
+  createEffect(() => {
+    const runId = params.runId?.trim() ?? "";
+    if (!runId) {
+      setRunSelectionOptionsError("");
+      setRunAgentOptions([]);
+      setRunProviderOptions([]);
+      setRunModelOptions([]);
+      return;
+    }
+    void refreshRunSelectionOptions();
   });
 
   createEffect(() => {
@@ -1515,7 +1568,13 @@ export const useRunDetailModel = () => {
 
   const submitPrompt = async (
     text: string,
-    options?: { clientRequestId?: string; markCommitPending?: boolean },
+    options?: {
+      clientRequestId?: string;
+      markCommitPending?: boolean;
+      agentId?: string;
+      providerId?: string;
+      modelId?: string;
+    },
   ): Promise<boolean> => {
     const prompt = text.trim();
     if (!prompt) {
@@ -1540,6 +1599,9 @@ export const useRunDetailModel = () => {
         runId,
         prompt,
         clientRequestId: options?.clientRequestId,
+        agentId: options?.agentId,
+        providerId: options?.providerId,
+        modelId: options?.modelId,
       });
 
       if (
@@ -2113,6 +2175,11 @@ export const useRunDetailModel = () => {
       error: agentError,
       isSubmittingPrompt,
       submitError,
+      runAgentOptions,
+      runProviderOptions,
+      runModelOptions,
+      visibleRunModelOptions,
+      runSelectionOptionsError,
       isReplyingPermission,
       permissionReplyError,
       submitPrompt,

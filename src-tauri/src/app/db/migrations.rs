@@ -191,6 +191,12 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     let has_cleanup_error_message = run_columns
         .iter()
         .any(|row| row.get::<String, _>("name") == "cleanup_error_message");
+    let has_provider_id = run_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "provider_id");
+    let has_model_id = run_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "model_id");
 
     if !has_setup_state {
         sqlx::query("ALTER TABLE runs ADD COLUMN setup_state TEXT NOT NULL DEFAULT 'pending'")
@@ -229,6 +235,16 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     }
     if !has_cleanup_error_message {
         sqlx::query("ALTER TABLE runs ADD COLUMN cleanup_error_message TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_provider_id {
+        sqlx::query("ALTER TABLE runs ADD COLUMN provider_id TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_model_id {
+        sqlx::query("ALTER TABLE runs ADD COLUMN model_id TEXT")
             .execute(pool)
             .await?;
     }
@@ -289,6 +305,12 @@ mod tests {
         assert!(run_columns
             .iter()
             .any(|row| row.get::<String, _>("name") == "initial_prompt_claim_request_id"));
+        assert!(run_columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "provider_id"));
+        assert!(run_columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "model_id"));
     }
 
     #[tokio::test]

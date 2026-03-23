@@ -19,6 +19,7 @@ const {
   subscribeRunOpenCodeEventsMock,
   unsubscribeRunOpenCodeEventsMock,
   submitRunOpenCodePromptMock,
+  getRunSelectionOptionsMock,
   replyRunOpenCodePermissionMock,
   getRunGitMergeStatusMock,
   rebaseRunWorktreeOntoSourceMock,
@@ -33,6 +34,7 @@ const {
   subscribeRunOpenCodeEventsMock: vi.fn(),
   unsubscribeRunOpenCodeEventsMock: vi.fn(),
   submitRunOpenCodePromptMock: vi.fn(),
+  getRunSelectionOptionsMock: vi.fn(),
   replyRunOpenCodePermissionMock: vi.fn(),
   getRunGitMergeStatusMock: vi.fn(),
   rebaseRunWorktreeOntoSourceMock: vi.fn(),
@@ -76,6 +78,7 @@ vi.mock("../../../../app/lib/runs", () => ({
   resizeRunTerminal: vi.fn(async () => undefined),
   setRunDiffWatch: vi.fn(async () => undefined),
   submitRunOpenCodePrompt: submitRunOpenCodePromptMock,
+  getRunSelectionOptions: getRunSelectionOptionsMock,
   replyRunOpenCodePermission: replyRunOpenCodePermissionMock,
   subscribeRunOpenCodeEvents: subscribeRunOpenCodeEventsMock,
   unsubscribeRunOpenCodeEvents: unsubscribeRunOpenCodeEventsMock,
@@ -95,6 +98,7 @@ describe("useRunDetailModel startup ownership", () => {
     subscribeRunOpenCodeEventsMock.mockReset();
     unsubscribeRunOpenCodeEventsMock.mockReset();
     submitRunOpenCodePromptMock.mockReset();
+    getRunSelectionOptionsMock.mockReset();
     replyRunOpenCodePermissionMock.mockReset();
     getRunGitMergeStatusMock.mockReset();
     rebaseRunWorktreeOntoSourceMock.mockReset();
@@ -153,6 +157,11 @@ describe("useRunDetailModel startup ownership", () => {
       status: "doing",
       projectId: "project-1",
     });
+    getRunSelectionOptionsMock.mockResolvedValue({
+      agents: [],
+      providers: [],
+      models: [],
+    });
   });
 
   it("boots and subscribes for observation without auto-seeding", async () => {
@@ -204,6 +213,71 @@ describe("useRunDetailModel startup ownership", () => {
       runId: "run-1",
       prompt: "Resolve file conflicts in src/app.ts",
       clientRequestId: undefined,
+      agentId: undefined,
+      providerId: undefined,
+      modelId: undefined,
+    });
+  });
+
+  it("submits prompt with message-level selection overrides", async () => {
+    submitRunOpenCodePromptMock.mockResolvedValue({
+      status: "accepted",
+      queuedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    const accepted = await modelRef!.agent.submitPrompt("Ship it", {
+      agentId: "agent-1",
+      providerId: "provider-1",
+      modelId: "model-1",
+    });
+
+    expect(accepted).toBe(true);
+    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith({
+      runId: "run-1",
+      prompt: "Ship it",
+      clientRequestId: undefined,
+      agentId: "agent-1",
+      providerId: "provider-1",
+      modelId: "model-1",
+    });
+  });
+
+  it("does not inject implicit agent when no prompt override is provided", async () => {
+    submitRunOpenCodePromptMock.mockResolvedValue({
+      status: "accepted",
+      queuedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    const accepted = await modelRef!.agent.submitPrompt("Ship it");
+
+    expect(accepted).toBe(true);
+    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith({
+      runId: "run-1",
+      prompt: "Ship it",
+      clientRequestId: undefined,
+      agentId: undefined,
+      providerId: undefined,
+      modelId: undefined,
     });
   });
 

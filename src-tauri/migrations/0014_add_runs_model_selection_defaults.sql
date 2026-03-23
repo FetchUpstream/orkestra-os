@@ -1,0 +1,2 @@
+ALTER TABLE runs ADD COLUMN provider_id TEXT;
+ALTER TABLE runs ADD COLUMN model_id TEXT;

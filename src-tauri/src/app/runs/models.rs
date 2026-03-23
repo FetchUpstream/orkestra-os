@@ -13,6 +13,8 @@ pub struct Run {
     pub error_message: Option<String>,
     pub worktree_id: Option<String>,
     pub agent_id: Option<String>,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
     pub source_branch: Option<String>,
     pub opencode_session_id: Option<String>,
     pub initial_prompt_sent_at: Option<String>,
@@ -37,6 +39,9 @@ pub struct NewRun {
     pub triggered_by: String,
     pub created_at: String,
     pub worktree_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
     pub source_branch: Option<String>,
 }
 

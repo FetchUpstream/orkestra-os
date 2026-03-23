@@ -78,7 +78,7 @@ impl RunsRepository {
 
     pub async fn create_run(&self, input: NewRun) -> Result<Run, AppError> {
         sqlx::query(
-            "INSERT INTO runs (
+             "INSERT INTO runs (
                 id,
                 task_id,
                 project_id,
@@ -87,8 +87,11 @@ impl RunsRepository {
                 triggered_by,
                 created_at,
                 worktree_id,
+                agent_id,
+                provider_id,
+                model_id,
                 source_branch
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&input.id)
         .bind(&input.task_id)
@@ -98,6 +101,9 @@ impl RunsRepository {
         .bind(&input.triggered_by)
         .bind(&input.created_at)
         .bind(&input.worktree_id)
+        .bind(&input.agent_id)
+        .bind(&input.provider_id)
+        .bind(&input.model_id)
         .bind(&input.source_branch)
         .execute(&self.pool)
         .await?;
@@ -123,6 +129,8 @@ impl RunsRepository {
                 error_message,
                 worktree_id,
                 agent_id,
+                provider_id,
+                model_id,
                 source_branch,
                 opencode_session_id,
                 initial_prompt_sent_at,
@@ -162,6 +170,8 @@ impl RunsRepository {
                 error_message,
                 worktree_id,
                 agent_id,
+                provider_id,
+                model_id,
                 source_branch,
                 opencode_session_id,
                 initial_prompt_sent_at,
@@ -200,6 +210,8 @@ impl RunsRepository {
                 error_message,
                 worktree_id,
                 agent_id,
+                provider_id,
+                model_id,
                 source_branch,
                 opencode_session_id,
                 initial_prompt_sent_at,
@@ -648,6 +660,8 @@ impl RunsRepository {
             error_message: row.get("error_message"),
             worktree_id: row.get("worktree_id"),
             agent_id: row.get("agent_id"),
+            provider_id: row.get("provider_id"),
+            model_id: row.get("model_id"),
             source_branch: row.get("source_branch"),
             opencode_session_id: row.get("opencode_session_id"),
             initial_prompt_sent_at: row.get("initial_prompt_sent_at"),

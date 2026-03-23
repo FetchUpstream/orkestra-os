@@ -1,4 +1,4 @@
-import { render, screen } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import NewRunChatWorkspace from "../NewRunChatWorkspace";
@@ -36,6 +36,12 @@ const createModelStub = (
       submitError: () => "",
       permissionReplyError: () => "",
       submitPrompt: vi.fn(async () => true),
+      runAgentOptions: () => [{ id: "agent-1", label: "Planner" }],
+      runProviderOptions: () => [{ id: "provider-1", label: "OpenAI" }],
+      runModelOptions: () => [
+        { id: "model-1", label: "GPT-5", providerId: "provider-1" },
+      ],
+      runSelectionOptionsError: () => "",
       replyPermission: vi.fn(async () => true),
     },
   } as unknown as ReturnType<
@@ -129,5 +135,141 @@ describe("NewRunChatWorkspace", () => {
 
     setRun({ status: "running", setupState: "succeeded" });
     expect(screen.getByText("Setup script completed.")).toBeTruthy();
+  });
+
+  it("submits composer message with optional override values", async () => {
+    const submitPromptMock = vi.fn(async () => true);
+    const { model } = createModelStub("running");
+    model.agent.submitPrompt = submitPromptMock;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Optional: override agent/provider/model",
+      }),
+    );
+    await fireEvent.change(screen.getByLabelText("Prompt override agent"), {
+      target: { value: "agent-1" },
+    });
+    await fireEvent.change(screen.getByLabelText("Prompt override provider"), {
+      target: { value: "provider-1" },
+    });
+    await fireEvent.change(screen.getByLabelText("Prompt override model"), {
+      target: { value: "model-1" },
+    });
+    await fireEvent.input(screen.getByLabelText("Message agent"), {
+      target: { value: "Hello" },
+    });
+    await fireEvent.submit(screen.getByLabelText("Chat composer"));
+
+    expect(submitPromptMock).toHaveBeenCalledWith("Hello", {
+      agentId: "agent-1",
+      providerId: "provider-1",
+      modelId: "model-1",
+    });
+  });
+
+  it("resets one-shot overrides after successful submit", async () => {
+    const submitPromptMock = vi.fn(async () => true);
+    const { model } = createModelStub("running");
+    model.agent.submitPrompt = submitPromptMock;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Optional: override agent/provider/model",
+      }),
+    );
+    await fireEvent.change(screen.getByLabelText("Prompt override agent"), {
+      target: { value: "agent-1" },
+    });
+    await fireEvent.change(screen.getByLabelText("Prompt override provider"), {
+      target: { value: "provider-1" },
+    });
+    await fireEvent.change(screen.getByLabelText("Prompt override model"), {
+      target: { value: "model-1" },
+    });
+    await fireEvent.input(screen.getByLabelText("Message agent"), {
+      target: { value: "Hello" },
+    });
+    await fireEvent.submit(screen.getByLabelText("Chat composer"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", {
+          name: "Optional: override agent/provider/model",
+        }),
+      ).toBeTruthy();
+    });
+    expect(
+      (screen.getByLabelText("Message agent") as HTMLTextAreaElement).value,
+    ).toBe("");
+
+    await fireEvent.input(screen.getByLabelText("Message agent"), {
+      target: { value: "Second" },
+    });
+    await fireEvent.submit(screen.getByLabelText("Chat composer"));
+
+    expect(submitPromptMock).toHaveBeenNthCalledWith(1, "Hello", {
+      agentId: "agent-1",
+      providerId: "provider-1",
+      modelId: "model-1",
+    });
+    expect(submitPromptMock).toHaveBeenNthCalledWith(2, "Second", {
+      agentId: undefined,
+      providerId: undefined,
+      modelId: undefined,
+    });
+  });
+
+  it("clears stale override model and prevents mismatch submission", async () => {
+    const submitPromptMock = vi.fn(async () => true);
+    const { model } = createModelStub("running");
+    model.agent.submitPrompt = submitPromptMock;
+    model.agent.runProviderOptions = () => [
+      { id: "provider-1", label: "OpenAI" },
+      { id: "provider-2", label: "Anthropic" },
+    ];
+    model.agent.runModelOptions = () => [
+      { id: "model-1", label: "GPT-5", providerId: "provider-1" },
+      { id: "model-2", label: "Claude", providerId: "provider-2" },
+    ];
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Optional: override agent/provider/model",
+      }),
+    );
+    await fireEvent.change(screen.getByLabelText("Prompt override provider"), {
+      target: { value: "provider-1" },
+    });
+    await fireEvent.change(screen.getByLabelText("Prompt override model"), {
+      target: { value: "model-1" },
+    });
+    await fireEvent.change(screen.getByLabelText("Prompt override provider"), {
+      target: { value: "provider-2" },
+    });
+
+    await waitFor(() => {
+      expect(
+        (screen.getByLabelText("Prompt override model") as HTMLSelectElement)
+          .value,
+      ).toBe("");
+    });
+
+    await fireEvent.input(screen.getByLabelText("Message agent"), {
+      target: { value: "Hello" },
+    });
+    await fireEvent.submit(screen.getByLabelText("Chat composer"));
+
+    expect(submitPromptMock).toHaveBeenCalledWith("Hello", {
+      agentId: undefined,
+      providerId: "provider-2",
+      modelId: undefined,
+    });
   });
 });

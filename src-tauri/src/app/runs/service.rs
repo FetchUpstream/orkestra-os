@@ -21,10 +21,28 @@ impl RunsService {
     }
 
     pub async fn create_run(&self, task_id: &str) -> Result<RunDto, AppError> {
+        self.create_run_with_defaults(task_id, None, None, None).await
+    }
+
+    pub async fn create_run_with_defaults(
+        &self,
+        task_id: &str,
+        agent_id: Option<&str>,
+        provider_id: Option<&str>,
+        model_id: Option<&str>,
+    ) -> Result<RunDto, AppError> {
         let task_id = task_id.trim();
         if task_id.is_empty() {
             return Err(AppError::validation("task_id is required"));
         }
+
+        let selected_agent_id = normalize_optional_nonempty(agent_id);
+        let selected_provider_id = normalize_optional_nonempty(provider_id);
+        let selected_model_id = normalize_optional_nonempty(model_id);
+        let (provider_id, model_id) = match (selected_provider_id, selected_model_id) {
+            (Some(provider_id), Some(model_id)) => (Some(provider_id), Some(model_id)),
+            _ => (None, None),
+        };
 
         let task_context = self
             .repository
@@ -49,6 +67,9 @@ impl RunsService {
                 triggered_by: "user".to_string(),
                 created_at: Utc::now().to_rfc3339(),
                 worktree_id: Some(worktree.worktree_id),
+                agent_id: selected_agent_id,
+                provider_id,
+                model_id,
                 source_branch: worktree.source_branch,
             })
             .await?;
@@ -429,6 +450,8 @@ impl RunsService {
             error_message: run.error_message,
             worktree_id: run.worktree_id,
             agent_id: run.agent_id,
+            provider_id: run.provider_id,
+            model_id: run.model_id,
             source_branch: run.source_branch,
             initial_prompt_sent_at: run.initial_prompt_sent_at,
             initial_prompt_client_request_id: run.initial_prompt_client_request_id,
@@ -442,6 +465,13 @@ impl RunsService {
             cleanup_error_message: run.cleanup_error_message,
         }
     }
+}
+
+fn normalize_optional_nonempty(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 #[cfg(test)]
@@ -622,6 +652,45 @@ mod tests {
             .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-'));
         assert!(segments.next().is_none());
         assert!(run.source_branch.is_some());
+    }
+
+    #[tokio::test]
+    async fn create_run_with_defaults_persists_agent_and_model_pair() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+
+        let run = service
+            .create_run_with_defaults(
+                "task-1",
+                Some("build"),
+                Some("provider-a"),
+                Some("model-a"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(run.agent_id.as_deref(), Some("build"));
+        assert_eq!(run.provider_id.as_deref(), Some("provider-a"));
+        assert_eq!(run.model_id.as_deref(), Some("model-a"));
+    }
+
+    #[tokio::test]
+    async fn create_run_with_partial_model_defaults_drops_unpaired_model_selection() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+
+        let run = service
+            .create_run_with_defaults("task-1", Some("build"), Some("provider-a"), None)
+            .await
+            .unwrap();
+
+        assert_eq!(run.agent_id.as_deref(), Some("build"));
+        assert_eq!(run.provider_id, None);
+        assert_eq!(run.model_id, None);
     }
 
     #[tokio::test]

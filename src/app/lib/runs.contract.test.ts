@@ -3,10 +3,12 @@ import {
   bootstrapRunOpenCode,
   createRun,
   getRun,
+  getRunSelectionOptions,
   getRunGitMergeStatus,
   listTaskRuns,
   mergeRunWorktreeIntoSource,
   rebaseRunWorktreeOntoSource,
+  submitRunOpenCodePrompt,
   type BootstrapRunOpenCodeResult,
   type Run,
   type RunGitMergeStatus,
@@ -37,7 +39,88 @@ describe("runs contract", () => {
     await createRun("task-1");
 
     expect(invokeMock).toHaveBeenCalledWith("create_run", {
-      taskId: "task-1",
+      request: {
+        taskId: "task-1",
+        agentId: undefined,
+        providerId: undefined,
+        modelId: undefined,
+      },
+    });
+  });
+
+  it("passes run defaults into create_run request", async () => {
+    invokeMock.mockResolvedValue({
+      id: "run-2",
+      task_id: "task-2",
+      project_id: "project-1",
+      status: "queued" satisfies RunStatus,
+      triggered_by: "user",
+      created_at: "2026-01-01T00:00:00.000Z",
+    });
+
+    await createRun("task-2", {
+      agentId: "agent-1",
+      providerId: "provider-1",
+      modelId: "model-1",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("create_run", {
+      request: {
+        taskId: "task-2",
+        agentId: "agent-1",
+        providerId: "provider-1",
+        modelId: "model-1",
+      },
+    });
+  });
+
+  it("normalizes run selection options payload", async () => {
+    invokeMock.mockResolvedValueOnce({
+      agents: [{ id: "agent-1", display_name: "Planner" }],
+    });
+    invokeMock.mockResolvedValueOnce({
+      providers: [
+        {
+          id: "provider-1",
+          name: "OpenAI",
+          models: [{ id: "model-1", label: "GPT-5" }],
+        },
+      ],
+    });
+
+    const options = await getRunSelectionOptions();
+
+    expect(options).toEqual({
+      agents: [{ id: "agent-1", label: "Planner" }],
+      providers: [{ id: "provider-1", label: "OpenAI" }],
+      models: [{ id: "model-1", label: "GPT-5", providerId: "provider-1" }],
+    });
+  });
+
+  it("passes optional message overrides to submit_run_opencode_prompt", async () => {
+    invokeMock.mockResolvedValue({
+      status: "accepted",
+      queued_at: "2026-01-01T00:00:00.000Z",
+    });
+
+    await submitRunOpenCodePrompt({
+      runId: "run-1",
+      prompt: "hello",
+      agentId: "agent-1",
+      providerId: "provider-1",
+      modelId: "model-1",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("submit_run_opencode_prompt", {
+      request: {
+        runId: "run-1",
+        prompt: "hello",
+        clientRequestId: undefined,
+        agent: undefined,
+        agentId: "agent-1",
+        providerId: "provider-1",
+        modelId: "model-1",
+      },
     });
   });
 

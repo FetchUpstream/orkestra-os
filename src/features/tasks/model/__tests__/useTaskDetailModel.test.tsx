@@ -10,6 +10,7 @@ const {
   startRunOpenCodeMock,
   createRunMock,
   listTaskDependenciesMock,
+  getRunSelectionOptionsMock,
 } = vi.hoisted(() => ({
   paramsState: { projectId: "project-1", taskId: "task-1" },
   navigateMock: vi.fn(),
@@ -18,6 +19,7 @@ const {
   startRunOpenCodeMock: vi.fn(),
   createRunMock: vi.fn(),
   listTaskDependenciesMock: vi.fn(),
+  getRunSelectionOptionsMock: vi.fn(),
 }));
 
 vi.mock("@solidjs/router", () => ({
@@ -52,6 +54,7 @@ vi.mock("../../../../app/lib/runs", () => ({
   deleteRun: vi.fn(),
   listTaskRuns: listTaskRunsMock,
   startRunOpenCode: startRunOpenCodeMock,
+  getRunSelectionOptions: getRunSelectionOptionsMock,
 }));
 
 describe("useTaskDetailModel start run", () => {
@@ -62,6 +65,7 @@ describe("useTaskDetailModel start run", () => {
     startRunOpenCodeMock.mockReset();
     createRunMock.mockReset();
     listTaskDependenciesMock.mockReset();
+    getRunSelectionOptionsMock.mockReset();
 
     getTaskMock.mockResolvedValue({
       id: "task-1",
@@ -97,6 +101,11 @@ describe("useTaskDetailModel start run", () => {
       queuedAt: "2026-01-01T00:00:01.000Z",
       clientRequestId: "initial-run-message:run-1",
       readyPhase: "warm_handle",
+    });
+    getRunSelectionOptionsMock.mockResolvedValue({
+      agents: [],
+      providers: [],
+      models: [],
     });
   });
 
@@ -237,7 +246,11 @@ describe("useTaskDetailModel start run", () => {
     expect(ref.current?.isBlocked()).toBe(false);
     expect(ref.current?.taskDependencyBadgeState()).toBe("ready");
     expect(ref.current?.isBlockedRunWarningOpen()).toBe(false);
-    expect(createRunMock).toHaveBeenCalledWith("task-1");
+    expect(createRunMock).toHaveBeenCalledWith("task-1", {
+      agentId: undefined,
+      providerId: undefined,
+      modelId: undefined,
+    });
   });
 
   it("hides ready state once task is in progress even when blockers are resolved", async () => {
@@ -283,7 +296,11 @@ describe("useTaskDetailModel start run", () => {
     expect(ref.current?.isBlocked()).toBe(false);
     expect(ref.current?.taskDependencyBadgeState()).toBe("none");
     expect(ref.current?.isBlockedRunWarningOpen()).toBe(false);
-    expect(createRunMock).toHaveBeenCalledWith("task-1");
+    expect(createRunMock).toHaveBeenCalledWith("task-1", {
+      agentId: undefined,
+      providerId: undefined,
+      modelId: undefined,
+    });
   });
 
   it("shows none state and allows creating run when there are no dependencies", async () => {
@@ -304,7 +321,79 @@ describe("useTaskDetailModel start run", () => {
     expect(ref.current?.isBlocked()).toBe(false);
     expect(ref.current?.taskDependencyBadgeState()).toBe("none");
     expect(ref.current?.isBlockedRunWarningOpen()).toBe(false);
-    expect(createRunMock).toHaveBeenCalledWith("task-1");
+    expect(createRunMock).toHaveBeenCalledWith("task-1", {
+      agentId: undefined,
+      providerId: undefined,
+      modelId: undefined,
+    });
+  });
+
+  it("passes selected run defaults into createRun", async () => {
+    getRunSelectionOptionsMock.mockResolvedValue({
+      agents: [{ id: "agent-1", label: "Planner" }],
+      providers: [{ id: "provider-1", label: "OpenAI" }],
+      models: [{ id: "model-1", label: "GPT-5", providerId: "provider-1" }],
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    ref.current?.setSelectedRunAgentId("agent-1");
+    ref.current?.setSelectedRunProviderId("provider-1");
+    ref.current?.setSelectedRunModelId("model-1");
+
+    await ref.current?.onCreateRun();
+
+    expect(createRunMock).toHaveBeenCalledWith("task-1", {
+      agentId: "agent-1",
+      providerId: "provider-1",
+      modelId: "model-1",
+    });
+  });
+
+  it("clears stale selected model when provider changes", async () => {
+    getRunSelectionOptionsMock.mockResolvedValue({
+      agents: [],
+      providers: [
+        { id: "provider-1", label: "OpenAI" },
+        { id: "provider-2", label: "Anthropic" },
+      ],
+      models: [
+        { id: "model-1", label: "GPT-5", providerId: "provider-1" },
+        { id: "model-2", label: "Claude", providerId: "provider-2" },
+      ],
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    ref.current?.setSelectedRunProviderId("provider-1");
+    ref.current?.setSelectedRunModelId("model-1");
+    expect(ref.current?.selectedRunModelId()).toBe("model-1");
+
+    ref.current?.setSelectedRunProviderId("provider-2");
+
+    await waitFor(() => {
+      expect(ref.current?.selectedRunModelId()).toBe("");
+    });
   });
 
   it("prevents starting existing run while blocked", async () => {

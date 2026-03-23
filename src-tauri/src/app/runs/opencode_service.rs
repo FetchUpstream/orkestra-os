@@ -1,6 +1,7 @@
 use crate::app::errors::AppError;
 use crate::app::runs::dto::{
-    BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent, RunDto,
+    BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent, RunAgentDto,
+    RunAgentsResponseDto, RunDto, RunModelSelectionDto, RunProviderDto, RunProvidersResponseDto,
     ReplyRunOpenCodePermissionResponse,
     RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, StartRunOpenCodeResponse,
     SubmitRunOpenCodePromptResponse,
@@ -66,6 +67,45 @@ fn value_array_to_todo_wrappers(value: serde_json::Value) -> Vec<RunOpenCodeSess
         .unwrap_or_default()
 }
 
+fn to_nonempty_trimmed_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn parse_string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    let object = value.as_object()?;
+    for key in keys {
+        let found = object.get(*key).and_then(|candidate| candidate.as_str());
+        if let Some(found) = to_nonempty_trimmed_string(found) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn parse_array_payload(value: serde_json::Value) -> Vec<serde_json::Value> {
+    if let Some(array) = value.as_array() {
+        return array.clone();
+    }
+    if let Some(object) = value.as_object() {
+        for key in ["items", "data", "providers", "agents"] {
+            if let Some(array) = object.get(key).and_then(|candidate| candidate.as_array()) {
+                return array.clone();
+            }
+        }
+    }
+    vec![]
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PromptSelection {
+    agent: String,
+    provider_id: String,
+    model_id: String,
+}
+
 const MAX_BUFFERED_EVENTS: usize = 500;
 const EVENT_BROADCAST_CAPACITY: usize = 512;
 const STREAM_RECONNECT_BASE_DELAY_MS: u64 = 250;
@@ -128,6 +168,40 @@ impl Default for SessionRuntimeState {
 }
 
 impl RunsOpenCodeService {
+    fn resolve_prompt_selection(
+        run_defaults_agent: Option<&str>,
+        run_defaults_provider_id: Option<&str>,
+        run_defaults_model_id: Option<&str>,
+        prompt_agent: Option<&str>,
+        prompt_provider_id: Option<&str>,
+        prompt_model_id: Option<&str>,
+    ) -> PromptSelection {
+        let prompt_provider = to_nonempty_trimmed_string(prompt_provider_id);
+        let prompt_model = to_nonempty_trimmed_string(prompt_model_id);
+        let run_provider = to_nonempty_trimmed_string(run_defaults_provider_id);
+        let run_model = to_nonempty_trimmed_string(run_defaults_model_id);
+
+        let (provider_id, model_id) = if let (Some(provider_id), Some(model_id)) =
+            (prompt_provider, prompt_model)
+        {
+            (provider_id, model_id)
+        } else if let (Some(provider_id), Some(model_id)) = (run_provider, run_model) {
+            (provider_id, model_id)
+        } else {
+            ("kimi-for-coding".to_string(), "k2p5".to_string())
+        };
+
+        let agent = to_nonempty_trimmed_string(prompt_agent)
+            .or_else(|| to_nonempty_trimmed_string(run_defaults_agent))
+            .unwrap_or_else(|| "build".to_string());
+
+        PromptSelection {
+            agent,
+            provider_id,
+            model_id,
+        }
+    }
+
     async fn event_matches_current_run_session(
         &self,
         run_id: &str,
@@ -393,6 +467,8 @@ impl RunsOpenCodeService {
                                     "Cleanup script reported errors. Please fix them before continuing.\n\n{}",
                                     error_text
                                 ),
+                                None,
+                                None,
                                 None,
                                 None,
                             )
@@ -716,6 +792,105 @@ impl RunsOpenCodeService {
         }
     }
 
+    async fn with_ephemeral_client<T, F>(&self, op: F) -> Result<T, AppError>
+    where
+        F: for<'a> FnOnce(
+            &'a OpencodeClient,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<T, AppError>> + Send + 'a>,
+        >,
+    {
+        let mut options = OpencodeServerOptions {
+            cwd: Some(self.worktrees_root.clone()),
+            ..Default::default()
+        };
+        options.port = 0;
+        options.config = Some(serde_json::json!({}));
+
+        let server = create_opencode_server(Some(options)).await.map_err(|err| {
+            AppError::validation(format!("failed to start OpenCode server: {err}"))
+        })?;
+        let client = create_opencode_client(Some(OpencodeClientConfig {
+            base_url: server.url.clone(),
+            timeout: Duration::from_secs(30),
+            ..Default::default()
+        }))
+        .map_err(|err| AppError::validation(format!("failed to create OpenCode client: {err}")))?;
+
+        op(&client).await
+    }
+
+    pub async fn list_run_opencode_providers(&self) -> Result<RunProvidersResponseDto, AppError> {
+        self.with_ephemeral_client(|client| {
+            Box::pin(async move {
+                let response = client
+                    .config()
+                    .providers(RequestOptions::default())
+                    .await
+                    .map_err(|err| {
+                        AppError::validation(format!("failed to list OpenCode providers: {err}"))
+                    })?;
+
+                let providers = parse_array_payload(response.data)
+                    .into_iter()
+                    .filter_map(|provider| {
+                        let id = parse_string_field(&provider, &["id", "providerID", "providerId"])?;
+                        let name = parse_string_field(&provider, &["name", "title", "displayName"]);
+                        let models = provider
+                            .as_object()
+                            .and_then(|object| object.get("models").cloned())
+                            .map(parse_array_payload)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter_map(|model| {
+                                let model_id =
+                                    parse_string_field(&model, &["id", "modelID", "modelId"])?;
+                                let model_name =
+                                    parse_string_field(&model, &["name", "title", "displayName"]);
+                                Some(RunModelSelectionDto {
+                                    provider_id: id.clone(),
+                                    provider_name: name.clone(),
+                                    model_id,
+                                    model_name,
+                                })
+                            })
+                            .collect();
+                        Some(RunProviderDto { id, name, models })
+                    })
+                    .collect();
+
+                Ok(RunProvidersResponseDto { providers })
+            })
+        })
+        .await
+    }
+
+    pub async fn list_run_opencode_agents(&self) -> Result<RunAgentsResponseDto, AppError> {
+        self.with_ephemeral_client(|client| {
+            Box::pin(async move {
+                let response = client
+                    .app()
+                    .agents(RequestOptions::default())
+                    .await
+                    .map_err(|err| {
+                        AppError::validation(format!("failed to list OpenCode agents: {err}"))
+                    })?;
+
+                let agents = parse_array_payload(response.data)
+                    .into_iter()
+                    .filter_map(|agent| {
+                        let id = parse_string_field(&agent, &["id", "agentID", "agentId"])?;
+                        let name = parse_string_field(&agent, &["name", "title", "displayName"]);
+                        Some(RunAgentDto { id, name })
+                    })
+                    .collect();
+
+                Ok(RunAgentsResponseDto { agents })
+            })
+        })
+        .await
+    }
+
     async fn get_or_create_init_lock(&self, run_id: &str) -> Arc<tokio::sync::Mutex<()>> {
         if let Some(lock) = self.init_locks.read().await.get(run_id).cloned() {
             return lock;
@@ -795,7 +970,109 @@ impl RunsOpenCodeService {
         options.port = 0;
         options.config = Some(serde_json::json!({}));
 
+        let path = std::env::var("PATH").unwrap_or_default();
+        let shell = std::env::var("SHELL").unwrap_or_default();
+        let home = std::env::var("HOME").unwrap_or_default();
+        info!(
+            target: "opencode.runtime",
+            marker = "ensure",
+            run_id = run.id.as_str(),
+            path = path.as_str(),
+            shell = shell.as_str(),
+            home = home.as_str(),
+            "OpenCode launch PATH"
+        );
+        match Command::new("opencode").arg("--version").output().await {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                info!(
+                    target: "opencode.runtime",
+                    marker = "ensure",
+                    run_id = run.id.as_str(),
+                    success = output.status.success(),
+                    status = output.status.code(),
+                    stdout = stdout.as_str(),
+                    stderr = stderr.as_str(),
+                    "OpenCode --version diagnostics"
+                );
+            }
+            Err(err) => {
+                error!(
+                    target: "opencode.runtime",
+                    marker = "ensure",
+                    run_id = run.id.as_str(),
+                    error = err.to_string(),
+                    error_kind = ?err.kind(),
+                    "OpenCode --version invocation failed"
+                );
+            }
+        }
+
         let server = create_opencode_server(Some(options)).await.map_err(|err| {
+            match &err {
+                opencode::Error::CLINotFound(inner) => {
+                    error!(
+                        target: "opencode.runtime",
+                        marker = "ensure",
+                        run_id = run.id.as_str(),
+                        error_variant = "CLINotFound",
+                        cli_path = ?inner.cli_path,
+                        message = inner.message.as_str(),
+                        "OpenCode server launch failed"
+                    );
+                }
+                opencode::Error::Process(inner) => {
+                    error!(
+                        target: "opencode.runtime",
+                        marker = "ensure",
+                        run_id = run.id.as_str(),
+                        error_variant = "Process",
+                        exit_code = ?inner.exit_code,
+                        output = ?inner.output,
+                        message = inner.message.as_str(),
+                        "OpenCode server launch failed"
+                    );
+                }
+                opencode::Error::Io(inner) => {
+                    error!(
+                        target: "opencode.runtime",
+                        marker = "ensure",
+                        run_id = run.id.as_str(),
+                        error_variant = "Io",
+                        io_kind = ?inner.kind(),
+                        message = inner.to_string(),
+                        "OpenCode server launch failed"
+                    );
+                }
+                opencode::Error::ServerStartupTimeout { timeout_ms } => {
+                    error!(
+                        target: "opencode.runtime",
+                        marker = "ensure",
+                        run_id = run.id.as_str(),
+                        error_variant = "ServerStartupTimeout",
+                        timeout_ms = *timeout_ms,
+                        "OpenCode server launch failed"
+                    );
+                }
+                _ => {
+                    error!(
+                        target: "opencode.runtime",
+                        marker = "ensure",
+                        run_id = run.id.as_str(),
+                        error_variant = "Other",
+                        error = err.to_string(),
+                        "OpenCode server launch failed"
+                    );
+                }
+            }
+            error!(
+                target: "opencode.runtime",
+                marker = "ensure",
+                run_id = run.id.as_str(),
+                error = err.to_string(),
+                "OpenCode server launch failed"
+            );
             AppError::validation(format!("failed to start OpenCode server: {err}"))
         })?;
         let client = create_opencode_client(Some(OpencodeClientConfig {
@@ -887,6 +1164,8 @@ impl RunsOpenCodeService {
         prompt: &str,
         client_request_id: Option<String>,
         agent: Option<String>,
+        provider_id: Option<String>,
+        model_id: Option<String>,
     ) -> Result<SubmitRunOpenCodePromptResponse, AppError> {
         let submit_start = Instant::now();
         let run_id = run_id.trim();
@@ -969,21 +1248,25 @@ impl RunsOpenCodeService {
             }
         };
 
-        let selected_agent = agent
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("build");
+        let run_defaults = self.runs_service.get_run_model(run_id).await?;
+        let selected = Self::resolve_prompt_selection(
+            run_defaults.agent_id.as_deref(),
+            run_defaults.provider_id.as_deref(),
+            run_defaults.model_id.as_deref(),
+            agent.as_deref(),
+            provider_id.as_deref(),
+            model_id.as_deref(),
+        );
 
         let mut request = RequestOptions::default().with_path("id", session_id);
         if let Some(request_id) = client_request_id.as_ref() {
             request = request.with_header("x-request-id", request_id.clone());
         }
         request = request.with_body(serde_json::json!({
-            "agent": selected_agent,
+            "agent": selected.agent,
             "model": {
-                "providerID": "kimi-for-coding",
-                "modelID": "k2p5",
+                "providerID": selected.provider_id,
+                "modelID": selected.model_id,
             },
             "parts": [PartInput::Raw(serde_json::json!({
                 "type": "text",
@@ -1226,6 +1509,8 @@ impl RunsOpenCodeService {
                 &context.run_id,
                 &prompt,
                 Some(client_request_id.clone()),
+                None,
+                None,
                 None,
             )
             .await?;
@@ -1946,6 +2231,60 @@ mod tests {
         );
     }
 
+    #[test]
+    fn resolve_prompt_selection_prefers_prompt_override_then_run_defaults_then_backend_defaults() {
+        let selected = RunsOpenCodeService::resolve_prompt_selection(
+            Some("run-agent"),
+            Some("run-provider"),
+            Some("run-model"),
+            Some("prompt-agent"),
+            Some("prompt-provider"),
+            Some("prompt-model"),
+        );
+        assert_eq!(
+            selected,
+            super::PromptSelection {
+                agent: "prompt-agent".to_string(),
+                provider_id: "prompt-provider".to_string(),
+                model_id: "prompt-model".to_string(),
+            }
+        );
+
+        let selected = RunsOpenCodeService::resolve_prompt_selection(
+            Some("run-agent"),
+            Some("run-provider"),
+            Some("run-model"),
+            None,
+            Some("prompt-provider"),
+            None,
+        );
+        assert_eq!(
+            selected,
+            super::PromptSelection {
+                agent: "run-agent".to_string(),
+                provider_id: "run-provider".to_string(),
+                model_id: "run-model".to_string(),
+            }
+        );
+
+        let selected = RunsOpenCodeService::resolve_prompt_selection(
+            None,
+            Some("run-provider"),
+            None,
+            Some("  "),
+            None,
+            None,
+        );
+        assert_eq!(
+            selected,
+            super::PromptSelection {
+                agent: "build".to_string(),
+                provider_id: "kimi-for-coding".to_string(),
+                model_id: "k2p5".to_string(),
+            }
+        );
+    }
+
     #[tokio::test]
     async fn start_run_opencode_respects_unsupported_and_preserves_idempotency_key() {
         let (runs_service, opencode_service, pool, temp_dir) = setup_services().await;
@@ -1979,6 +2318,8 @@ mod tests {
                 "seed prompt",
                 Some("initial-run-message:run-1".to_string()),
                 None,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -2005,6 +2346,8 @@ mod tests {
                 "run-1",
                 "seed prompt",
                 Some("initial-run-message:run-1".to_string()),
+                None,
+                None,
                 None,
             )
             .await;
@@ -2038,6 +2381,8 @@ mod tests {
                 "seed prompt",
                 Some("initial-run-message:run-1".to_string()),
                 None,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -2067,6 +2412,8 @@ mod tests {
                 "run-1",
                 "manual prompt",
                 Some("manual-123".to_string()),
+                None,
+                None,
                 None,
             )
             .await;
@@ -2129,6 +2476,8 @@ mod tests {
                 "run-1",
                 "seed prompt",
                 Some("initial-run-message:run-1".to_string()),
+                None,
+                None,
                 None,
             )
             .await;
