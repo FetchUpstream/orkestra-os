@@ -1025,7 +1025,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                   <div class="run-chat-permission-card__actions">
                     <button
                       type="button"
-                      class="projects-button-muted"
+                      class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
                       disabled={props.model.agent.isReplyingPermission()}
                       onClick={() => {
                         void props.model.agent.replyPermission(
@@ -1038,7 +1038,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                     </button>
                     <button
                       type="button"
-                      class="projects-button-primary"
+                      class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                       disabled={props.model.agent.isReplyingPermission()}
                       onClick={() => {
                         void props.model.agent.replyPermission(
@@ -1163,7 +1163,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             <div class="run-chat-override-panel">
               <button
                 type="button"
-                class="projects-button-muted run-chat-override-toggle"
+                class="run-chat-override-toggle btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
                 onClick={() => setIsOverrideOpen((current) => !current)}
                 disabled={props.model.agent.isSubmittingPrompt()}
               >
@@ -1174,10 +1174,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               <Show when={isOverrideOpen()}>
                 <div class="run-chat-override-grid">
                   <label class="projects-field run-chat-override-field">
-                    <span class="field-label">
+                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                       <span class="field-label-text">Agent</span>
                     </span>
                     <select
+                      class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
                       value={overrideAgentId()}
                       onChange={(event) =>
                         setOverrideAgentId(event.currentTarget.value)
@@ -1193,10 +1194,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                     </select>
                   </label>
                   <label class="projects-field run-chat-override-field">
-                    <span class="field-label">
+                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                       <span class="field-label-text">Provider</span>
                     </span>
                     <select
+                      class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
                       value={overrideProviderId()}
                       onChange={(event) =>
                         setOverrideProviderId(event.currentTarget.value)
@@ -1212,10 +1214,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                     </select>
                   </label>
                   <label class="projects-field run-chat-override-field">
-                    <span class="field-label">
+                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                       <span class="field-label-text">Model</span>
                     </span>
                     <select
+                      class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
                       value={overrideModelId()}
                       onChange={(event) =>
                         setOverrideModelId(event.currentTarget.value)

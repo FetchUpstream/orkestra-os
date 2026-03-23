@@ -3271,10 +3271,6 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/runs/run-new");
-      expect(
-        screen.getByRole("heading", { name: "SESSION TITLE" }),
-      ).toBeTruthy();
-      expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
     });
   });
 

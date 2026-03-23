@@ -616,13 +616,23 @@ const NewRunDetailScreen: Component = () => {
             }
           >
             <>
-              <section class="run-chat-header" aria-label="Run navigation">
+              <section
+                class="run-chat-header border-base-content/15 bg-base-200/35 border px-4 py-3"
+                aria-label="Run navigation"
+              >
                 <BackIconLink
                   href={model.backHref()}
                   label={model.backLabel()}
-                  class="project-detail-back-link project-detail-back-link--icon task-detail-back-link"
+                  class="project-detail-back-link project-detail-back-link--icon task-detail-back-link btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
                 />
-                <h1 class="run-chat-header__title">{runHeaderTitle()}</h1>
+                <div class="min-w-0 flex-1">
+                  <h1 class="run-chat-header__title">{runHeaderTitle()}</h1>
+                  <p class="run-chat-header__subtitle">
+                    {model.task()?.targetRepositoryName ||
+                      model.task()?.targetRepositoryPath ||
+                      "Run workspace"}
+                  </p>
+                </div>
                 <span
                   class="run-chat-header__status"
                   aria-label={runHeaderStatusText()}
@@ -652,13 +662,13 @@ const NewRunDetailScreen: Component = () => {
                 hideTranscriptScrollbar={isDrawerOverlay()}
               />
               <div
-                class="run-chat-floating-toolbar"
+                class="run-chat-floating-toolbar border-base-content/15 bg-base-200/75 border"
                 role="toolbar"
                 aria-label="Run chat tools"
               >
                 <button
                   type="button"
-                  class="run-chat-floating-toolbar__button"
+                  class="run-chat-floating-toolbar__button rounded-none"
                   aria-label="Logs"
                   aria-pressed={overlayState() === "drawer-logs"}
                   title="Logs"
@@ -672,7 +682,7 @@ const NewRunDetailScreen: Component = () => {
                 </button>
                 <button
                   type="button"
-                  class="run-chat-floating-toolbar__button"
+                  class="run-chat-floating-toolbar__button rounded-none"
                   aria-label="Terminal"
                   aria-pressed={overlayState() === "sheet-terminal"}
                   title="Terminal"
@@ -686,7 +696,7 @@ const NewRunDetailScreen: Component = () => {
                 </button>
                 <button
                   type="button"
-                  class="run-chat-floating-toolbar__button"
+                  class="run-chat-floating-toolbar__button rounded-none"
                   aria-label="Review"
                   aria-pressed={overlayState() === "drawer-diff"}
                   title="Review"
@@ -700,7 +710,7 @@ const NewRunDetailScreen: Component = () => {
                 </button>
                 <button
                   type="button"
-                  class="run-chat-floating-toolbar__button"
+                  class="run-chat-floating-toolbar__button rounded-none"
                   aria-label="Git"
                   aria-pressed={overlayState() === "drawer-git"}
                   title="Git"
@@ -1083,23 +1093,29 @@ const NewRunDetailScreen: Component = () => {
                   onClick={() => closeCommitModal()}
                 >
                   <section
-                    class="projects-modal task-create-dependency-modal"
+                    class="projects-modal task-create-dependency-modal border-base-content/15 bg-base-200 rounded-none border"
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="run-commit-modal-title"
                     onClick={(event) => event.stopPropagation()}
                   >
-                    <h2
-                      id="run-commit-modal-title"
-                      class="task-delete-modal-title"
-                    >
-                      Ask agent to commit changes
-                    </h2>
+                    <div class="border-base-content/10 mb-4 border-b pb-3">
+                      <h2
+                        id="run-commit-modal-title"
+                        class="task-delete-modal-title"
+                      >
+                        Ask agent to commit changes
+                      </h2>
+                      <p class="text-base-content/55 mt-1 text-xs">
+                        Send a commit request to the active run with the current
+                        changed files.
+                      </p>
+                    </div>
                     <label
                       class="projects-field"
                       for="run-commit-modal-message"
                     >
-                      <span class="field-label">
+                      <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                         <span class="field-label-text">Message</span>
                       </span>
                       <textarea
@@ -1119,7 +1135,7 @@ const NewRunDetailScreen: Component = () => {
                     <div class="task-delete-modal-actions">
                       <button
                         type="button"
-                        class="projects-button-muted"
+                        class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
                         onClick={() => closeCommitModal()}
                         disabled={isCommitDisabled()}
                       >
@@ -1127,7 +1143,7 @@ const NewRunDetailScreen: Component = () => {
                       </button>
                       <button
                         type="button"
-                        class="projects-button-primary"
+                        class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                         onClick={() => {
                           void confirmCommitPrompt();
                         }}

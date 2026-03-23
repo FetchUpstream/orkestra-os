@@ -94,7 +94,7 @@ const ProjectsScreen: Component = () => {
           onClick={model.closeDeleteModal}
         >
           <div
-            class="projects-modal task-delete-modal"
+            class="projects-modal task-delete-modal border-base-content/15 bg-base-200 rounded-none border"
             role="dialog"
             aria-modal="true"
             aria-labelledby="project-delete-modal-title"
@@ -118,7 +118,7 @@ const ProjectsScreen: Component = () => {
             <div class="task-delete-modal-actions">
               <button
                 type="button"
-                class="projects-button-muted"
+                class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
                 onClick={model.closeDeleteModal}
                 disabled={model.isDeletingProject()}
               >
@@ -126,7 +126,7 @@ const ProjectsScreen: Component = () => {
               </button>
               <button
                 type="button"
-                class="projects-button-danger"
+                class="btn btn-sm border-error/25 bg-error/10 text-error hover:bg-error/15 rounded-none border px-4 text-xs font-medium"
                 onClick={model.onConfirmDeleteProject}
                 disabled={model.isDeletingProject()}
               >

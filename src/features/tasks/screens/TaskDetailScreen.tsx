@@ -1042,16 +1042,21 @@ const TaskDetailScreen: Component = () => {
             onClick={onCancelDeleteTask}
           >
             <section
-              class="projects-modal task-delete-modal"
+              class="projects-modal task-delete-modal border-base-content/15 bg-base-200 rounded-none border"
               role="dialog"
               aria-modal="true"
               aria-labelledby="task-delete-modal-title"
               aria-describedby="task-delete-modal-copy"
               onClick={(event) => event.stopPropagation()}
             >
-              <h2 id="task-delete-modal-title" class="task-delete-modal-title">
-                Delete task?
-              </h2>
+              <div class="border-base-content/10 border-b pb-3">
+                <h2
+                  id="task-delete-modal-title"
+                  class="task-delete-modal-title"
+                >
+                  Delete task?
+                </h2>
+              </div>
               <p
                 id="task-delete-modal-copy"
                 class="project-placeholder-text task-delete-modal-copy"
@@ -1062,7 +1067,7 @@ const TaskDetailScreen: Component = () => {
               <div class="task-delete-modal-actions">
                 <button
                   type="button"
-                  class="projects-button-muted"
+                  class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
                   onClick={onCancelDeleteTask}
                   disabled={isDeleting()}
                 >
@@ -1070,7 +1075,7 @@ const TaskDetailScreen: Component = () => {
                 </button>
                 <button
                   type="button"
-                  class="projects-button-danger"
+                  class="btn btn-sm border-error/25 bg-error/10 text-error hover:bg-error/15 rounded-none border px-4 text-xs font-medium"
                   onClick={onConfirmDeleteTask}
                   disabled={isDeleting()}
                 >
@@ -1088,22 +1093,27 @@ const TaskDetailScreen: Component = () => {
           onClick={onCancelCreateDependency}
         >
           <section
-            class="projects-modal task-create-dependency-modal"
+            class="projects-modal task-create-dependency-modal border-base-content/15 bg-base-200 rounded-none border"
             role="dialog"
             aria-modal="true"
             aria-labelledby="task-create-dependency-modal-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <h2
-              id="task-create-dependency-modal-title"
-              class="task-delete-modal-title"
-            >
-              {createDependencyDirection() === "parent"
-                ? "Create blocking prerequisite"
-                : "Create blocked task"}
-            </h2>
+            <div class="border-base-content/10 mb-4 border-b pb-3">
+              <h2
+                id="task-create-dependency-modal-title"
+                class="task-delete-modal-title"
+              >
+                {createDependencyDirection() === "parent"
+                  ? "Create blocking prerequisite"
+                  : "Create blocked task"}
+              </h2>
+              <p class="text-base-content/55 mt-1 text-xs">
+                Create a new task and attach the dependency immediately.
+              </p>
+            </div>
             <label class="projects-field">
-              <span class="field-label">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                 <span class="field-label-text">Title</span>
               </span>
               <input
@@ -1115,7 +1125,7 @@ const TaskDetailScreen: Component = () => {
               />
             </label>
             <label class="projects-field">
-              <span class="field-label">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                 <span class="field-label-text">Description</span>
                 <span class="field-optional">optional</span>
               </span>
@@ -1129,7 +1139,7 @@ const TaskDetailScreen: Component = () => {
               />
             </label>
             <label class="projects-field">
-              <span class="field-label">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                 <span class="field-label-text">Implementation guide</span>
                 <span class="field-optional">optional</span>
               </span>
@@ -1145,11 +1155,12 @@ const TaskDetailScreen: Component = () => {
               />
             </label>
             <label class="projects-field">
-              <span class="field-label">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                 <span class="field-label-text">Status</span>
                 <span class="field-optional">optional</span>
               </span>
               <select
+                class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
                 value={createDependencyStatus()}
                 onChange={(event) =>
                   setCreateDependencyStatus(
@@ -1167,7 +1178,7 @@ const TaskDetailScreen: Component = () => {
             <div class="task-delete-modal-actions">
               <button
                 type="button"
-                class="projects-button-muted"
+                class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
                 onClick={onCancelCreateDependency}
                 disabled={isCreatingDependency()}
               >
@@ -1192,22 +1203,27 @@ const TaskDetailScreen: Component = () => {
           onClick={onCancelLinkDependency}
         >
           <section
-            class="projects-modal task-create-dependency-modal"
+            class="projects-modal task-create-dependency-modal border-base-content/15 bg-base-200 rounded-none border"
             role="dialog"
             aria-modal="true"
             aria-labelledby="task-link-dependency-modal-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <h2
-              id="task-link-dependency-modal-title"
-              class="task-delete-modal-title"
-            >
-              {linkDependencyDirection() === "parent"
-                ? "Link blocking prerequisite"
-                : "Link blocked task"}
-            </h2>
+            <div class="border-base-content/10 mb-4 border-b pb-3">
+              <h2
+                id="task-link-dependency-modal-title"
+                class="task-delete-modal-title"
+              >
+                {linkDependencyDirection() === "parent"
+                  ? "Link blocking prerequisite"
+                  : "Link blocked task"}
+              </h2>
+              <p class="text-base-content/55 mt-1 text-xs">
+                Search existing tasks and attach them as dependencies.
+              </p>
+            </div>
             <label class="projects-field">
-              <span class="field-label">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                 <span class="field-label-text">Search tasks</span>
               </span>
               <input
@@ -1278,7 +1294,7 @@ const TaskDetailScreen: Component = () => {
                       </div>
                       <button
                         type="button"
-                        class="projects-button-primary"
+                        class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                         onClick={() => void onLinkDependency(candidateTask.id)}
                         disabled={isLinkingDependency()}
                         aria-label={`Link ${dependencyDisplayLabel({
@@ -1303,7 +1319,7 @@ const TaskDetailScreen: Component = () => {
             <div class="task-delete-modal-actions">
               <button
                 type="button"
-                class="projects-button-muted"
+                class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
                 onClick={onCancelLinkDependency}
                 disabled={isLinkingDependency()}
               >
@@ -1320,19 +1336,21 @@ const TaskDetailScreen: Component = () => {
           onClick={() => setIsBlockedRunWarningOpen(false)}
         >
           <section
-            class="projects-modal task-create-dependency-modal"
+            class="projects-modal task-create-dependency-modal border-base-content/15 bg-base-200 rounded-none border"
             role="dialog"
             aria-modal="true"
             aria-labelledby="task-blocked-run-modal-title"
             aria-describedby="task-blocked-run-modal-copy"
             onClick={(event) => event.stopPropagation()}
           >
-            <h2
-              id="task-blocked-run-modal-title"
-              class="task-delete-modal-title"
-            >
-              Run blocked
-            </h2>
+            <div class="border-base-content/10 border-b pb-3">
+              <h2
+                id="task-blocked-run-modal-title"
+                class="task-delete-modal-title"
+              >
+                Run blocked
+              </h2>
+            </div>
             <p
               id="task-blocked-run-modal-copy"
               class="project-placeholder-text task-delete-modal-copy"
@@ -1356,7 +1374,7 @@ const TaskDetailScreen: Component = () => {
             <div class="task-delete-modal-actions">
               <button
                 type="button"
-                class="projects-button-primary"
+                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                 onClick={() => setIsBlockedRunWarningOpen(false)}
               >
                 Got it

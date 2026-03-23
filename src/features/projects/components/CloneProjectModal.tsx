@@ -34,7 +34,7 @@ const CloneProjectModal: Component<Props> = (props) => {
         onClick={requestClose}
       >
         <div
-          class="projects-modal task-create-dependency-modal"
+          class="projects-modal task-create-dependency-modal border-base-content/15 bg-base-200 rounded-none border"
           role="dialog"
           aria-modal="true"
           aria-labelledby="clone-project-modal-title"
@@ -52,7 +52,7 @@ const CloneProjectModal: Component<Props> = (props) => {
           </p>
           <form class="projects-form" onSubmit={props.onSubmit}>
             <label class="projects-field">
-              <span class="field-label">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                 <span class="field-label-text">Project key</span>
               </span>
               <input
@@ -87,7 +87,7 @@ const CloneProjectModal: Component<Props> = (props) => {
             </label>
 
             <label class="projects-field">
-              <span class="field-label">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                 <span class="field-label-text">Repository destination</span>
               </span>
               <input
@@ -134,7 +134,7 @@ const CloneProjectModal: Component<Props> = (props) => {
             <div class="task-delete-modal-actions">
               <button
                 type="button"
-                class="projects-button-muted"
+                class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
                 onClick={requestClose}
                 disabled={props.isSubmitting()}
               >
@@ -142,7 +142,7 @@ const CloneProjectModal: Component<Props> = (props) => {
               </button>
               <button
                 type="submit"
-                class="projects-button-primary"
+                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                 disabled={props.isSubmitting()}
               >
                 {props.isSubmitting() ? "Cloning..." : "Clone project"}

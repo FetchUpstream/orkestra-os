@@ -102,7 +102,7 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                 <article class="run-diff-item">
                   <button
                     type="button"
-                    class="run-diff-item-header"
+                    class="run-diff-item-header rounded-none"
                     aria-expanded={expanded() ? "true" : "false"}
                     onClick={() => {
                       const previousExpanded =

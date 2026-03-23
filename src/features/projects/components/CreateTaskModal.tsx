@@ -30,18 +30,26 @@ const CreateTaskModal: Component<Props> = (props) => (
       onClick={() => props.setIsModalOpen(false)}
     >
       <div
-        class="projects-modal"
+        class="projects-modal border-base-content/15 bg-base-200 rounded-none border"
         role="dialog"
         aria-modal="true"
         aria-labelledby="create-task-title"
         onClick={(event) => event.stopPropagation()}
       >
-        <h2 id="create-task-title" class="form-section-title">
-          Create Task
-        </h2>
+        <div class="border-base-content/10 mb-4 border-b pb-3">
+          <h2 id="create-task-title" class="form-section-title m-0 text-sm">
+            Create Task
+          </h2>
+          <p class="text-base-content/55 mt-1 text-xs">
+            Add a task within the current project workspace.
+          </p>
+        </div>
         <form class="projects-form" onSubmit={props.onCreateTask}>
           <div class="projects-field">
-            <label for="task-title" class="field-label">
+            <label
+              for="task-title"
+              class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase"
+            >
               Title
             </label>
             <input
@@ -52,7 +60,10 @@ const CreateTaskModal: Component<Props> = (props) => (
             />
           </div>
           <div class="projects-field">
-            <label for="task-description" class="field-label">
+            <label
+              for="task-description"
+              class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase"
+            >
               Description <span class="field-optional">optional</span>
             </label>
             <textarea
@@ -64,7 +75,10 @@ const CreateTaskModal: Component<Props> = (props) => (
             />
           </div>
           <div class="projects-field">
-            <label for="task-implementation-guide" class="field-label">
+            <label
+              for="task-implementation-guide"
+              class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase"
+            >
               Implementation guide <span class="field-optional">optional</span>
             </label>
             <textarea
@@ -77,11 +91,15 @@ const CreateTaskModal: Component<Props> = (props) => (
             />
           </div>
           <div class="projects-field">
-            <label for="task-target-repository" class="field-label">
+            <label
+              for="task-target-repository"
+              class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase"
+            >
               Target repository
             </label>
             <select
               id="task-target-repository"
+              class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
               value={props.targetRepositoryId()}
               onChange={(event) =>
                 props.setTargetRepositoryId(event.currentTarget.value)
@@ -97,11 +115,15 @@ const CreateTaskModal: Component<Props> = (props) => (
             </select>
           </div>
           <div class="projects-field">
-            <label for="task-status" class="field-label">
+            <label
+              for="task-status"
+              class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase"
+            >
               Status
             </label>
             <select
               id="task-status"
+              class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
               value={props.taskStatus()}
               onChange={(event) =>
                 props.setTaskStatus(event.currentTarget.value as TaskStatus)
@@ -120,14 +142,14 @@ const CreateTaskModal: Component<Props> = (props) => (
           <div class="form-actions">
             <button
               type="button"
-              class="projects-button-muted"
+              class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
               onClick={() => props.setIsModalOpen(false)}
             >
               Cancel
             </button>
             <button
               type="submit"
-              class="projects-button-primary"
+              class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
               disabled={props.isSubmittingTask()}
             >
               {props.isSubmittingTask() ? "Creating..." : "Create task"}

@@ -18,7 +18,7 @@ const MainContent: Component<MainContentProps> = (props) => {
       }}
     >
       <div
-        class="mx-auto flex w-full max-w-[1600px] flex-col p-2 sm:p-3"
+        class="mx-auto flex w-full max-w-[1600px] flex-col p-2"
         classList={{
           "h-full min-h-0 max-w-none p-2": isRunDetailRoute(),
         }}
@@ -33,7 +33,7 @@ const MainContent: Component<MainContentProps> = (props) => {
           <div
             class="flex h-full min-h-0 flex-col"
             classList={{
-              "p-4 sm:p-5": !isRunDetailRoute(),
+              "p-3": !isRunDetailRoute(),
             }}
           >
             {props.children}

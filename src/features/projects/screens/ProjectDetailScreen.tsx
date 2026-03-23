@@ -40,7 +40,7 @@ const ProjectDetailScreen: Component = () => {
                 <nav class="project-detail-nav" aria-label="Project navigation">
                   <A
                     href="/projects"
-                    class="project-detail-back-link project-detail-back-link--icon"
+                    class="project-detail-back-link project-detail-back-link--icon btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
                     aria-label="Back to projects"
                     title="Back to projects"
                   >
@@ -63,40 +63,52 @@ const ProjectDetailScreen: Component = () => {
                 </nav>
 
                 <header
-                  class="project-detail-hero"
+                  class="project-detail-hero border-base-content/15 bg-base-200/35 mb-4 border px-5 py-5"
                   aria-labelledby="project-name"
                 >
-                  <div class="project-identity-card">
-                    <span
-                      class={`project-key-badge${projectValue().key?.trim() ? "" : "project-key-badge--fallback"}`}
-                      aria-label={`Project key: ${projectValue().key?.trim() || "not set"}`}
-                    >
-                      {projectValue().key?.trim() || "NO-KEY"}
-                    </span>
-                    <div class="project-identity-main">
-                      <h1
-                        id="project-name"
-                        class={`project-name${projectValue().name?.trim() ? "" : "project-name--fallback"}`}
+                  <div class="project-identity-card items-start justify-between gap-5">
+                    <div class="flex min-w-0 items-start gap-4">
+                      <span
+                        class={`project-key-badge mt-0 ${projectValue().key?.trim() ? "" : "project-key-badge--fallback"}`}
+                        aria-label={`Project key: ${projectValue().key?.trim() || "not set"}`}
                       >
-                        {projectValue().name?.trim() || "Untitled project"}
-                      </h1>
-                      <p class="project-meta-line">
-                        {projectValue().repositories.length} repositories ·
-                        Default:{" "}
-                        {defaultRepo()?.name || defaultRepo()?.path || "—"}
-                      </p>
-                      <Show when={projectValue().description?.trim()}>
-                        {(desc) => <p class="project-description">{desc()}</p>}
-                      </Show>
+                        {projectValue().key?.trim() || "NO-KEY"}
+                      </span>
+                      <div class="project-identity-main">
+                        <h1
+                          id="project-name"
+                          class={`project-name${projectValue().name?.trim() ? "" : "project-name--fallback"}`}
+                        >
+                          {projectValue().name?.trim() || "Untitled project"}
+                        </h1>
+                        <p class="project-meta-line">
+                          {projectValue().repositories.length} repositories ·
+                          Default:{" "}
+                          {defaultRepo()?.name || defaultRepo()?.path || "—"}
+                        </p>
+                        <Show when={projectValue().description?.trim()}>
+                          {(desc) => (
+                            <p class="project-description">{desc()}</p>
+                          )}
+                        </Show>
+                      </div>
+                    </div>
+                    <div class="hidden shrink-0 md:flex md:flex-col md:items-end md:gap-2">
+                      <span class="badge badge-outline border-primary/20 text-primary/80 rounded-none px-2 text-[10px] tracking-[0.2em] uppercase">
+                        Project workspace
+                      </span>
+                      <span class="badge badge-ghost border-base-content/10 text-base-content/55 rounded-none border px-2 text-[10px]">
+                        {model.tasks().length} tasks
+                      </span>
                     </div>
                   </div>
                 </header>
 
                 <section
-                  class="projects-panel projects-panel--repos"
+                  class="projects-panel projects-panel--repos border-base-content/15 bg-base-200/25 border"
                   aria-labelledby="repositories-heading"
                 >
-                  <div class="project-section-header">
+                  <div class="project-section-header border-base-content/10 border-b px-4 py-3">
                     <h2 id="repositories-heading" class="project-section-title">
                       Repositories ({projectValue().repositories.length})
                     </h2>
@@ -109,10 +121,10 @@ const ProjectDetailScreen: Component = () => {
                       </p>
                     }
                   >
-                    <ul class="projects-list" role="list">
+                    <ul class="projects-list px-4 pt-3 pb-4" role="list">
                       <Show when={defaultRepo()}>
                         {(repo) => (
-                          <li class="projects-list-item projects-list-item-default">
+                          <li class="projects-list-item projects-list-item-default border-primary/20 bg-base-100 rounded-none border">
                             <div>
                               <p class="projects-list-name">
                                 {repo().name || repo().path}
@@ -125,7 +137,7 @@ const ProjectDetailScreen: Component = () => {
                       </Show>
                       <For each={otherRepos()}>
                         {(repo) => (
-                          <li class="projects-list-item">
+                          <li class="projects-list-item border-base-content/15 bg-base-100 rounded-none border">
                             <div>
                               <p class="projects-list-name">
                                 {repo.name || repo.path}
@@ -139,14 +151,17 @@ const ProjectDetailScreen: Component = () => {
                   </Show>
                 </section>
 
-                <section class="projects-panel" aria-labelledby="tasks-heading">
-                  <div class="project-section-header">
+                <section
+                  class="projects-panel border-base-content/15 bg-base-200/30 border"
+                  aria-labelledby="tasks-heading"
+                >
+                  <div class="project-section-header border-base-content/10 border-b px-4 py-3">
                     <h2 id="tasks-heading" class="project-section-title">
                       Tasks ({model.tasks().length})
                     </h2>
                     <button
                       type="button"
-                      class="projects-button-primary"
+                      class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                       onClick={() => {
                         model.resetTaskForm();
                         model.setIsModalOpen(true);
@@ -158,24 +173,32 @@ const ProjectDetailScreen: Component = () => {
 
                   <Show
                     when={!model.taskError()}
-                    fallback={<p class="projects-error">{model.taskError()}</p>}
+                    fallback={
+                      <p class="projects-error mx-4 my-4 text-sm">
+                        {model.taskError()}
+                      </p>
+                    }
                   >
                     <Show
                       when={!model.isTasksLoading()}
                       fallback={
-                        <p class="project-placeholder-text">Loading...</p>
+                        <p class="project-placeholder-text px-4 py-4 text-sm">
+                          Loading...
+                        </p>
                       }
                     >
                       <Show
                         when={model.tasks().length > 0}
                         fallback={
-                          <p class="project-placeholder-text">No tasks yet.</p>
+                          <p class="project-placeholder-text px-4 py-4 text-sm">
+                            No tasks yet.
+                          </p>
                         }
                       >
                         <ul class="project-task-list" role="list">
                           <For each={model.tasks()}>
                             {(task) => (
-                              <li class="project-task-item">
+                              <li class="project-task-item border-base-content/15 bg-base-100 rounded-none border">
                                 <A
                                   href={`/projects/${model.params.projectId}/tasks/${task.id}`}
                                   class="project-task-link"
@@ -202,7 +225,7 @@ const ProjectDetailScreen: Component = () => {
                                         "No repository"}
                                     </p>
                                   </div>
-                                  <div class="project-task-meta">
+                                  <div class="project-task-meta min-w-[9rem]">
                                     <span
                                       class={`project-task-status project-task-status--${task.status}`}
                                     >
@@ -228,11 +251,11 @@ const ProjectDetailScreen: Component = () => {
                 </section>
 
                 <section class="project-placeholders" aria-label="Coming soon">
-                  <div class="project-placeholder-compact">
+                  <div class="project-placeholder-compact border-base-content/15 bg-base-200/25 rounded-none border">
                     <span class="project-placeholder-label">Runs</span>
                     <span class="project-placeholder-soon">Soon</span>
                   </div>
-                  <div class="project-placeholder-compact">
+                  <div class="project-placeholder-compact border-base-content/15 bg-base-200/25 rounded-none border">
                     <span class="project-placeholder-label">Settings</span>
                     <span class="project-placeholder-soon">Soon</span>
                   </div>

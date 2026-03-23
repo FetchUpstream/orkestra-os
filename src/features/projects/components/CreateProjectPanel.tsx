@@ -30,10 +30,20 @@ type Props = {
 };
 
 const CreateProjectPanel: Component<Props> = (props) => (
-  <section class="projects-panel" aria-labelledby="create-project-heading">
-    <h2 id="create-project-heading" class="projects-section-title">
-      {props.mode() === "edit" ? "Edit Project" : "Create Project"}
-    </h2>
+  <section
+    class="projects-panel border-base-content/15 bg-base-200/35 border"
+    aria-labelledby="create-project-heading"
+  >
+    <div class="project-section-header border-base-content/10 mb-4 border-b pb-3">
+      <div>
+        <h2 id="create-project-heading" class="projects-section-title m-0">
+          {props.mode() === "edit" ? "Edit Project" : "Create Project"}
+        </h2>
+        <p class="text-base-content/55 mt-1 text-xs">
+          Configure project identity and tracked repositories.
+        </p>
+      </div>
+    </div>
     <form class="projects-form" onSubmit={props.onSubmit}>
       <div class="form-section">
         <div>
@@ -43,7 +53,7 @@ const CreateProjectPanel: Component<Props> = (props) => (
           </p>
         </div>
         <label class="projects-field">
-          <span class="field-label">
+          <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
             <span class="field-label-text">Project name</span>
           </span>
           <input
@@ -56,7 +66,7 @@ const CreateProjectPanel: Component<Props> = (props) => (
           />
         </label>
         <label class="projects-field">
-          <span class="field-label">
+          <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
             <span class="field-label-text">Project key</span>
           </span>
           <input
@@ -88,7 +98,7 @@ const CreateProjectPanel: Component<Props> = (props) => (
           </Show>
         </label>
         <label class="projects-field">
-          <span class="field-label">
+          <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
             <span class="field-label-text">Description</span>
             <span class="field-optional">optional</span>
           </span>
@@ -101,7 +111,7 @@ const CreateProjectPanel: Component<Props> = (props) => (
         </label>
       </div>
       <div class="form-section">
-        <div class="projects-repos-block">
+        <div class="projects-repos-block border-base-content/15 bg-base-100 rounded-none border">
           <div class="projects-repos-head">
             <div>
               <h3 class="projects-repos-title">Repositories</h3>
@@ -111,7 +121,7 @@ const CreateProjectPanel: Component<Props> = (props) => (
             </div>
             <button
               type="button"
-              class="projects-button-muted"
+              class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
               onClick={props.addRepository}
             >
               Add repository
@@ -120,9 +130,12 @@ const CreateProjectPanel: Component<Props> = (props) => (
           <div class="projects-repo-list" role="list">
             <Index each={props.repositories()}>
               {(repo, index) => (
-                <div class="projects-repo-row" role="listitem">
+                <div
+                  class="projects-repo-row border-base-content/15 bg-base-200/35 rounded-none border"
+                  role="listitem"
+                >
                   <label class="projects-field">
-                    <span class="field-label">
+                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                       <span class="field-label-text">Repository path</span>
                     </span>
                     <input
@@ -141,7 +154,7 @@ const CreateProjectPanel: Component<Props> = (props) => (
                     />
                   </label>
                   <label class="projects-field">
-                    <span class="field-label">
+                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                       <span class="field-label-text">Display name</span>
                       <span class="field-optional">optional</span>
                     </span>
@@ -159,7 +172,7 @@ const CreateProjectPanel: Component<Props> = (props) => (
                     />
                   </label>
                   <label class="projects-field">
-                    <span class="field-label">
+                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                       <span class="field-label-text">Setup script</span>
                       <span class="field-optional">optional</span>
                     </span>
@@ -178,7 +191,7 @@ const CreateProjectPanel: Component<Props> = (props) => (
                     />
                   </label>
                   <label class="projects-field">
-                    <span class="field-label">
+                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                       <span class="field-label-text">Cleanup script</span>
                       <span class="field-optional">optional</span>
                     </span>
@@ -210,7 +223,7 @@ const CreateProjectPanel: Component<Props> = (props) => (
                     <div class="repo-actions">
                       <button
                         type="button"
-                        class="projects-button-danger"
+                        class="btn btn-sm border-error/25 bg-error/10 text-error hover:bg-error/15 rounded-none border px-4 text-xs font-medium"
                         onClick={() => props.removeRepository(index)}
                         disabled={props.repositories().length === 1}
                         title={
@@ -237,7 +250,7 @@ const CreateProjectPanel: Component<Props> = (props) => (
       <div class="form-actions">
         <button
           type="submit"
-          class="projects-button-primary"
+          class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
           disabled={props.isSubmitting()}
         >
           {props.isSubmitting()
@@ -251,7 +264,7 @@ const CreateProjectPanel: Component<Props> = (props) => (
         <Show when={props.mode() === "edit"}>
           <button
             type="button"
-            class="projects-button-muted"
+            class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
             onClick={props.resetToCreateMode}
             disabled={props.isSubmitting()}
           >

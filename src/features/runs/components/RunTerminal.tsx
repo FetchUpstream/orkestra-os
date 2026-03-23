@@ -114,7 +114,7 @@ const RunTerminal: Component<RunTerminalProps> = (props) => {
       terminal.writeln("\r\n[terminal closed]\r");
     });
 
-    if (containerRef) {
+    if (containerRef && typeof ResizeObserver !== "undefined") {
       resizeObserver = new ResizeObserver(() => {
         scheduleFitAndResize();
       });
