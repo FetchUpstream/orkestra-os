@@ -18,6 +18,58 @@ import { isRunCommitPending } from "../../runs/model/commitUiState";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "running"]);
 const FINISHED_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const BOARD_SELECTED_PROJECT_STORAGE_KEY = "board.selectedProjectId";
+
+const readRememberedBoardProjectId = (): string => {
+  if (typeof window === "undefined") return "";
+  try {
+    return (
+      window.localStorage.getItem(BOARD_SELECTED_PROJECT_STORAGE_KEY) ?? ""
+    );
+  } catch {
+    return "";
+  }
+};
+
+const persistBoardProjectId = (projectId: string) => {
+  if (typeof window === "undefined") return;
+  try {
+    if (projectId) {
+      window.localStorage.setItem(
+        BOARD_SELECTED_PROJECT_STORAGE_KEY,
+        projectId,
+      );
+      return;
+    }
+    window.localStorage.removeItem(BOARD_SELECTED_PROJECT_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures and keep board usable.
+  }
+};
+
+const readBoardProjectIdFromQuery = (): string => {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("projectId") ?? "";
+};
+
+const resolveInitialProjectSelection = (loadedProjects: Project[]): string => {
+  if (loadedProjects.length === 0) return "";
+  const availableProjectIds = new Set(
+    loadedProjects.map((project) => project.id),
+  );
+
+  const rememberedProjectId = readRememberedBoardProjectId();
+  if (rememberedProjectId && availableProjectIds.has(rememberedProjectId)) {
+    return rememberedProjectId;
+  }
+
+  const queryProjectId = readBoardProjectIdFromQuery();
+  if (queryProjectId && availableProjectIds.has(queryProjectId)) {
+    return queryProjectId;
+  }
+
+  return loadedProjects[0]?.id ?? "";
+};
 
 const optimisticDoingMiniCard = (taskId: string): BoardTaskRunMiniCard => ({
   runId: `pending-${taskId}`,
@@ -194,7 +246,13 @@ export const useBoardModel = () => {
     }
   };
 
-  const onProjectChange = async (projectId: string) => {
+  const onProjectChange = async (
+    projectId: string,
+    options?: { persistSelection?: boolean },
+  ) => {
+    if (options?.persistSelection !== false) {
+      persistBoardProjectId(projectId);
+    }
     setSelectedProjectId(projectId);
     if (!projectId) {
       activeProjectDetailRequestVersion += 1;
@@ -351,8 +409,8 @@ export const useBoardModel = () => {
       const loadedProjects = await listProjects();
       setProjects(loadedProjects);
 
-      const firstProjectId = loadedProjects[0]?.id;
-      if (!firstProjectId) {
+      const initialProjectId = resolveInitialProjectSelection(loadedProjects);
+      if (!initialProjectId) {
         setSelectedProjectId("");
         setSelectedProjectDetail(null);
         setTasks([]);
@@ -360,7 +418,7 @@ export const useBoardModel = () => {
         return;
       }
 
-      await onProjectChange(firstProjectId);
+      await onProjectChange(initialProjectId, { persistSelection: false });
     } catch {
       setError("Failed to load projects. Please refresh.");
       setProjects([]);

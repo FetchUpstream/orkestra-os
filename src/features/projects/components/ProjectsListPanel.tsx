@@ -6,8 +6,11 @@ type Props = {
   projects: () => Project[];
   activeEditProjectId: () => string | null;
   isLoadingProjectForEdit: () => boolean;
+  deletingProjectId: () => string | null;
+  isDeletingProject: () => boolean;
   onEditProject: (projectId: string) => void;
   onCloneProject: (project: Project) => void;
+  onDeleteProject: (project: Project) => void;
 };
 
 const EditIcon: Component = () => (
@@ -53,6 +56,18 @@ const ProjectsListPanel: Component<Props> = (props) => (
                     onClick={() => props.onCloneProject(project)}
                   >
                     Clone
+                  </button>
+                  <button
+                    type="button"
+                    class="projects-open-cue projects-open-cue-button projects-open-cue-danger"
+                    aria-label={`Delete project ${project.name} (${project.key})`}
+                    disabled={
+                      props.isDeletingProject() &&
+                      props.deletingProjectId() === project.id
+                    }
+                    onClick={() => props.onDeleteProject(project)}
+                  >
+                    Delete
                   </button>
                   <button
                     type="button"

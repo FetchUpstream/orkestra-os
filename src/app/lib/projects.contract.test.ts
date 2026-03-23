@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cloneProject,
   createProject,
+  deleteProject,
   getProject,
   type CreateProjectInput,
   type Project,
@@ -151,6 +152,16 @@ describe("projects contract", () => {
         key: "ORC",
         repository_destination: "/repo/copy",
       },
+    });
+  });
+
+  it("sends delete_project payload with project id", async () => {
+    invokeMock.mockResolvedValue(null);
+
+    await deleteProject("project-1");
+
+    expect(invokeMock).toHaveBeenCalledWith("delete_project", {
+      id: "project-1",
     });
   });
 });

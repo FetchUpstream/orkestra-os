@@ -47,3 +47,9 @@ pub async fn clone_project(
     let service = context::projects_service(&state);
     map_result(service.clone_project(&source_project_id, input).await)
 }
+
+#[tauri::command]
+pub async fn delete_project(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
+    let service = context::projects_service(&state);
+    map_result(service.delete_project(&id).await)
+}

@@ -95,6 +95,7 @@ export const useRunDetailModel = () => {
   const [postMergeCompletionMessage, setPostMergeCompletionMessage] =
     createSignal("");
   let activeRunRequestVersion = 0;
+  let activeRunRefreshVersion = 0;
   let activeDiffRefreshVersion = 0;
   let diffRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let activeTerminalRequestVersion = 0;
@@ -118,12 +119,20 @@ export const useRunDetailModel = () => {
   let terminalRouteInstanceId = crypto.randomUUID();
   let terminalFrameHandler: ((frame: RunTerminalFrame) => void) | null = null;
   let postMergeRedirectTimer: ReturnType<typeof setTimeout> | null = null;
+  let cleanupRefreshFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
   const sentGitConflictFingerprints = new Set<string>();
 
   const clearPostMergeRedirectTimer = (): void => {
     if (postMergeRedirectTimer) {
       clearTimeout(postMergeRedirectTimer);
       postMergeRedirectTimer = null;
+    }
+  };
+
+  const clearCleanupRefreshFollowUpTimer = (): void => {
+    if (cleanupRefreshFollowUpTimer) {
+      clearTimeout(cleanupRefreshFollowUpTimer);
+      cleanupRefreshFollowUpTimer = null;
     }
   };
 
@@ -504,6 +513,25 @@ export const useRunDetailModel = () => {
     return null;
   };
 
+  const extractSessionIdFromBusProperties = (value: unknown): string | null => {
+    if (!isRecord(value)) {
+      return null;
+    }
+
+    const part = isRecord(value.part) ? value.part : null;
+    const sessionId =
+      (typeof value.sessionID === "string" ? value.sessionID : null) ||
+      (typeof value.sessionId === "string" ? value.sessionId : null) ||
+      (part && typeof part.sessionID === "string" ? part.sessionID : null) ||
+      (part && typeof part.sessionId === "string" ? part.sessionId : null);
+
+    if (!sessionId || !sessionId.trim()) {
+      return null;
+    }
+
+    return sessionId.trim();
+  };
+
   const hydrateAgentSnapshot = async (
     runId: string,
     requestVersion: number,
@@ -816,19 +844,26 @@ export const useRunDetailModel = () => {
   });
 
   const refreshRunDetails = async (runId: string): Promise<void> => {
+    const refreshVersion = ++activeRunRefreshVersion;
     const loadedRun = await getRun(runId);
-    if (params.runId !== runId) {
+    if (params.runId !== runId || refreshVersion !== activeRunRefreshVersion) {
       return;
     }
     setRun(loadedRun);
     try {
       const loadedTask = await getTask(loadedRun.taskId);
-      if (params.runId !== runId) {
+      if (
+        params.runId !== runId ||
+        refreshVersion !== activeRunRefreshVersion
+      ) {
         return;
       }
       setTask(loadedTask);
     } catch {
-      if (params.runId !== runId) {
+      if (
+        params.runId !== runId ||
+        refreshVersion !== activeRunRefreshVersion
+      ) {
         return;
       }
       setTask(null);
@@ -1251,6 +1286,7 @@ export const useRunDetailModel = () => {
     pendingAgentEvents = [];
     let shouldHydrateSnapshot = false;
     let shouldResubscribe = false;
+    let shouldRefreshRunForSessionIdle = false;
 
     setAgentEvents((current) => appendCappedHistory(current, batch));
     setAgentStore((current) => {
@@ -1265,9 +1301,52 @@ export const useRunDetailModel = () => {
         if (busEvent.type === "stream.resync_needed") {
           shouldResubscribe = true;
         }
+        if (busEvent.type === "session.idle") {
+          const eventSessionId = extractSessionIdFromBusProperties(
+            busEvent.properties,
+          );
+          const activeSessionId = nextState.sessionId?.trim() || "";
+          if (
+            !eventSessionId ||
+            !activeSessionId ||
+            eventSessionId === activeSessionId
+          ) {
+            shouldRefreshRunForSessionIdle = true;
+          }
+        }
         return reduceOpenCodeEvent(nextState, busEvent);
       }, current);
     });
+
+    if (shouldRefreshRunForSessionIdle) {
+      void refreshRunDetails(runId);
+      clearCleanupRefreshFollowUpTimer();
+      let followUpAttempt = 0;
+      const maxFollowUpAttempts = 2;
+      const runFollowUpRefresh = (): void => {
+        if (
+          requestVersion !== activeAgentRequestVersion ||
+          subscriptionVersion !== activeAgentSubscriptionVersion ||
+          !isAgentUiSubscribed ||
+          params.runId !== runId
+        ) {
+          clearCleanupRefreshFollowUpTimer();
+          return;
+        }
+
+        followUpAttempt += 1;
+        void refreshRunDetails(runId);
+
+        if (followUpAttempt >= maxFollowUpAttempts) {
+          clearCleanupRefreshFollowUpTimer();
+          return;
+        }
+
+        cleanupRefreshFollowUpTimer = setTimeout(runFollowUpRefresh, 700);
+      };
+
+      cleanupRefreshFollowUpTimer = setTimeout(runFollowUpRefresh, 250);
+    }
 
     if (shouldHydrateSnapshot) {
       requestAgentSnapshotHydrate(
@@ -1310,6 +1389,7 @@ export const useRunDetailModel = () => {
     clearPendingAgentEventFlush();
     clearPendingAgentSnapshotHydrate();
     clearPendingAgentResubscribe();
+    clearCleanupRefreshFollowUpTimer();
     if (removeAgentEventForwarder) {
       removeAgentEventForwarder();
       removeAgentEventForwarder = null;
@@ -1794,6 +1874,7 @@ export const useRunDetailModel = () => {
 
   onCleanup(() => {
     clearPostMergeRedirectTimer();
+    clearCleanupRefreshFollowUpTimer();
   });
 
   const refreshDiffFiles = async (): Promise<void> => {

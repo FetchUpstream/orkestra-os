@@ -29,8 +29,8 @@ impl AppState {
         let repository = ProjectsRepository::new(db_pool.clone());
         let runs_repository = RunsRepository::new(db_pool.clone());
         let tasks_repository = TasksRepository::new(db_pool.clone());
-        let projects_service = ProjectsService::new(repository);
         let worktrees_service = WorktreesService::new(app_data_dir.clone());
+        let projects_service = ProjectsService::new(repository, worktrees_service.clone());
         let runs_service = RunsService::new(runs_repository, worktrees_service.clone());
         let runs_diff_service = RunsDiffService::new(runs_service.clone(), app_data_dir.clone());
         let runs_merge_service = RunsMergeService::new(runs_service.clone(), app_data_dir.clone());

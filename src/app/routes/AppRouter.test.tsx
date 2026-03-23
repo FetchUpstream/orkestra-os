@@ -118,9 +118,29 @@ const setViewportMobile = (isMobile: boolean) => {
   });
 };
 
+const resetLocalStorageMock = () => {
+  const storage = new Map<string, string>();
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        storage.set(key, String(value));
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
+      },
+      clear: () => {
+        storage.clear();
+      },
+    },
+  });
+};
+
 describe("app routing and shell", () => {
   beforeEach(() => {
     setViewportMobile(false);
+    resetLocalStorageMock();
     invokeMock.mockReset();
     listenMock.mockClear();
     invokeMock.mockImplementation((command: string) => {
@@ -512,6 +532,90 @@ describe("app routing and shell", () => {
           repository_id: "r-1",
         },
       });
+    });
+  });
+
+  it("restores board project selection from localStorage", async () => {
+    window.localStorage.removeItem("board.selectedProjectId");
+
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          { id: "p-1", name: "Alpha", key: "ALP" },
+          { id: "p-2", name: "Beta", key: "BET" },
+        ]);
+      }
+      if (command === "get_project") {
+        const projectId = (args as { id?: string } | undefined)?.id || "p-1";
+        return Promise.resolve({
+          id: projectId,
+          name: projectId === "p-2" ? "Beta" : "Alpha",
+          key: projectId === "p-2" ? "BET" : "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    const firstRender = renderAt("/board");
+
+    const projectSelect = (await screen.findByLabelText(
+      "Project",
+    )) as HTMLSelectElement;
+    await fireEvent.change(projectSelect, { target: { value: "p-2" } });
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem("board.selectedProjectId")).toBe(
+        "p-2",
+      );
+      expect(projectSelect.value).toBe("p-2");
+    });
+
+    firstRender.unmount();
+    renderAt("/board");
+
+    const restoredSelect = (await screen.findByLabelText(
+      "Project",
+    )) as HTMLSelectElement;
+    await waitFor(() => {
+      expect(restoredSelect.value).toBe("p-2");
+    });
+  });
+
+  it("falls back to first board project when remembered project is missing", async () => {
+    window.localStorage.setItem("board.selectedProjectId", "p-missing");
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          { id: "p-1", name: "Alpha", key: "ALP" },
+          { id: "p-2", name: "Beta", key: "BET" },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    const projectSelect = (await screen.findByLabelText(
+      "Project",
+    )) as HTMLSelectElement;
+    await waitFor(() => {
+      expect(projectSelect.value).toBe("p-1");
     });
   });
 
@@ -4332,6 +4436,172 @@ describe("app routing and shell", () => {
       ).toBeNull();
       expect(window.location.pathname).toBe("/projects/p-3");
     });
+  });
+
+  it("opens delete confirmation modal and cancels deletion", async () => {
+    renderAt("/projects");
+
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /Delete project Alpha/i }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: "Delete project permanently?" }),
+      ).toBeTruthy();
+      expect(screen.getByText(/This action cannot be undone/i)).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "Delete project permanently?" }),
+      ).toBeNull();
+    });
+
+    expect(invokeMock).not.toHaveBeenCalledWith("delete_project", {
+      id: "p-1",
+    });
+  });
+
+  it("deletes project after confirmation and refreshes list", async () => {
+    let projects = [
+      {
+        id: "p-1",
+        name: "Alpha",
+        key: "ALP",
+        repositories: [
+          { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+        ],
+      },
+      {
+        id: "p-2",
+        name: "Beta",
+        key: "BET",
+        repositories: [
+          { id: "r-2", name: "Main", path: "/repo/beta", is_default: true },
+        ],
+      },
+    ];
+
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve(projects);
+      }
+      if (command === "delete_project") {
+        const projectId = (args as { id?: string } | undefined)?.id;
+        projects = projects.filter((project) => project.id !== projectId);
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects");
+
+    await waitFor(() => {
+      expect(screen.getByText("Alpha")).toBeTruthy();
+      expect(screen.getByText("Beta")).toBeTruthy();
+    });
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: /Delete project Alpha/i }),
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Delete project" }),
+    );
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("delete_project", { id: "p-1" });
+      expect(screen.queryByText("Alpha")).toBeNull();
+      expect(screen.getByText("Beta")).toBeTruthy();
+    });
+  });
+
+  it("shows delete API failure in project delete modal", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "delete_project") {
+        return Promise.reject(new Error("backend delete blocked"));
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects");
+
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /Delete project Alpha/i }),
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Delete project" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to delete project\./i)).toBeTruthy();
+      expect(screen.getByText(/backend delete blocked/i)).toBeTruthy();
+      expect(
+        screen.getByRole("dialog", { name: "Delete project permanently?" }),
+      ).toBeTruthy();
+    });
+  });
+
+  it("shows refresh-specific error when delete succeeds but project reload fails", async () => {
+    let deleteCalled = false;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        if (!deleteCalled) {
+          return Promise.resolve([
+            {
+              id: "p-1",
+              name: "Alpha",
+              key: "ALP",
+              repositories: [
+                {
+                  id: "r-1",
+                  name: "Main",
+                  path: "/repo/main",
+                  is_default: true,
+                },
+              ],
+            },
+          ]);
+        }
+        return Promise.reject(new Error("refresh unavailable"));
+      }
+      if (command === "delete_project") {
+        deleteCalled = true;
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects");
+
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /Delete project Alpha/i }),
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Delete project" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Project deleted, but failed to refresh projects\./i),
+      ).toBeTruthy();
+      expect(screen.getByText(/refresh unavailable/i)).toBeTruthy();
+    });
+    expect(screen.queryByText(/Failed to delete project\./i)).toBeNull();
   });
 
   it("shows tasks section in project detail", async () => {

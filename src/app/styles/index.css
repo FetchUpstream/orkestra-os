@@ -448,6 +448,14 @@ textarea::placeholder {
   background: var(--accent-subtle);
 }
 
+.projects-open-cue-danger {
+  color: var(--danger);
+}
+
+.projects-list-item:hover .projects-open-cue-danger {
+  background: var(--danger-subtle);
+}
+
 .projects-open-cue:focus-visible,
 .projects-icon-action:focus-visible {
   outline: 2px solid var(--accent);

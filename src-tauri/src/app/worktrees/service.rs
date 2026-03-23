@@ -3,7 +3,8 @@ use crate::app::worktrees::dto::{
     CreateWorktreeRequest, CreateWorktreeResponse, RemoveWorktreeRequest,
 };
 use crate::app::worktrees::pathing::{
-    choose_unique_worktree_id, sanitize_branch_segment, validate_project_key_segment,
+    choose_unique_worktree_id, parse_worktree_id, sanitize_branch_segment,
+    validate_project_key_segment,
 };
 use git2::{BranchType, ErrorCode, Repository, WorktreeAddOptions, WorktreePruneOptions};
 use std::path::PathBuf;
@@ -131,6 +132,54 @@ impl WorktreesService {
             .map_err(|err| AppError::validation(format!("failed to prune worktree: {err}")))?;
 
         Ok(())
+    }
+
+    pub fn remove_project_artifacts(
+        &self,
+        project_key: &str,
+        worktree_ids: &[String],
+    ) -> Result<(), AppError> {
+        let project_key = project_key.trim();
+        validate_project_key_segment(project_key)?;
+
+        for worktree_id in worktree_ids {
+            let (parsed_project_key, _) = parse_worktree_id(worktree_id)?;
+
+            let worktree_path = self.base_root.join(worktree_id.trim());
+            if !worktree_path.exists() {
+                continue;
+            }
+            std::fs::remove_dir_all(&worktree_path).map_err(|err| {
+                AppError::validation(format!(
+                    "failed to remove worktree directory '{}': {err}",
+                    worktree_path.display()
+                ))
+            })?;
+
+            let legacy_project_root = self.base_root.join(parsed_project_key);
+            if legacy_project_root != self.base_root.join(project_key)
+                && legacy_project_root.exists()
+            {
+                let _ = std::fs::remove_dir(&legacy_project_root);
+            }
+        }
+
+        let project_root = self.base_root.join(project_key);
+        if project_root.exists() {
+            std::fs::remove_dir_all(&project_root).map_err(|err| {
+                AppError::validation(format!(
+                    "failed to remove project worktree root '{}': {err}",
+                    project_root.display()
+                ))
+            })?;
+        }
+
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn base_root_for_tests(&self) -> &PathBuf {
+        &self.base_root
     }
 }
 

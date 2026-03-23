@@ -5,16 +5,21 @@ use crate::app::projects::dto::{
     UpdateProjectRequest,
 };
 use crate::app::projects::models::{NewProject, NewProjectRepository, UpsertProjectRepository};
+use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
 
 #[derive(Clone, Debug)]
 pub struct ProjectsService {
     repository: ProjectsRepository,
+    worktrees_service: WorktreesService,
 }
 
 impl ProjectsService {
-    pub fn new(repository: ProjectsRepository) -> Self {
-        Self { repository }
+    pub fn new(repository: ProjectsRepository, worktrees_service: WorktreesService) -> Self {
+        Self {
+            repository,
+            worktrees_service,
+        }
     }
 
     pub async fn list_projects(&self) -> Result<Vec<ProjectDto>, AppError> {
@@ -294,6 +299,29 @@ impl ProjectsService {
         })
     }
 
+    pub async fn delete_project(&self, id: &str) -> Result<(), AppError> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err(AppError::validation("project id is required"));
+        }
+
+        let context = self
+            .repository
+            .get_project_deletion_context(id)
+            .await?
+            .ok_or_else(|| AppError::not_found("project not found"))?;
+
+        self.worktrees_service
+            .remove_project_artifacts(&context.project_key, &context.worktree_ids)?;
+
+        let deleted = self.repository.delete_project(id).await?;
+        if !deleted {
+            return Err(AppError::not_found("project not found"));
+        }
+
+        Ok(())
+    }
+
     fn validate_key(&self, key: &str) -> Result<(), AppError> {
         if key.is_empty() {
             return Err(AppError::validation("project key is required"));
@@ -345,9 +373,17 @@ mod tests {
     use sqlx::SqlitePool;
 
     async fn setup_service() -> ProjectsService {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "orkestra-projects-tests-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
-        ProjectsService::new(ProjectsRepository::new(pool))
+        ProjectsService::new(
+            ProjectsRepository::new(pool),
+            WorktreesService::new(temp_dir),
+        )
     }
 
     #[tokio::test]
@@ -521,5 +557,189 @@ mod tests {
             created.repositories[0].cleanup_script.as_deref(),
             Some("bun test")
         );
+    }
+
+    #[tokio::test]
+    async fn delete_project_removes_project_records_and_worktree_artifacts() {
+        let service = setup_service().await;
+
+        let created = service
+            .create_project(CreateProjectRequest {
+                name: "Delete Me".to_string(),
+                description: None,
+                key: "DEL".to_string(),
+                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
+                    id: None,
+                    name: "Main".to_string(),
+                    repo_path: "/repo/main".to_string(),
+                    is_default: true,
+                    setup_script: None,
+                    cleanup_script: None,
+                }],
+            })
+            .await
+            .unwrap();
+
+        let worktree_root = service
+            .worktrees_service
+            .base_root_for_tests()
+            .join("DEL")
+            .join("cleanup-me");
+        std::fs::create_dir_all(&worktree_root).unwrap();
+
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, implementation_guide, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("task-del-1")
+        .bind(&created.project.id)
+        .bind(&created.repositories[0].id)
+        .bind(1_i64)
+        .bind("Cleanup")
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind("todo")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(service.repository.pool())
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at, worktree_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-del-1")
+        .bind("task-del-1")
+        .bind(&created.project.id)
+        .bind(&created.repositories[0].id)
+        .bind("queued")
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("DEL/cleanup-me")
+        .execute(service.repository.pool())
+        .await
+        .unwrap();
+
+        service.delete_project(&created.project.id).await.unwrap();
+
+        let project_exists: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?")
+                .bind(&created.project.id)
+                .fetch_one(service.repository.pool())
+                .await
+                .unwrap();
+        let task_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE project_id = ?")
+                .bind(&created.project.id)
+                .fetch_one(service.repository.pool())
+                .await
+                .unwrap();
+        let run_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE project_id = ?")
+                .bind(&created.project.id)
+                .fetch_one(service.repository.pool())
+                .await
+                .unwrap();
+
+        assert_eq!(project_exists, 0);
+        assert_eq!(task_count, 0);
+        assert_eq!(run_count, 0);
+        assert!(!worktree_root.exists());
+    }
+
+    #[tokio::test]
+    async fn delete_project_allows_legacy_worktree_prefix_after_key_rename() {
+        let service = setup_service().await;
+
+        let created = service
+            .create_project(CreateProjectRequest {
+                name: "Rename Me".to_string(),
+                description: None,
+                key: "OLD".to_string(),
+                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
+                    id: None,
+                    name: "Main".to_string(),
+                    repo_path: "/repo/main".to_string(),
+                    is_default: true,
+                    setup_script: None,
+                    cleanup_script: None,
+                }],
+            })
+            .await
+            .unwrap();
+
+        service
+            .update_project(
+                &created.project.id,
+                UpdateProjectRequest {
+                    name: "Rename Me".to_string(),
+                    description: None,
+                    key: "NEW".to_string(),
+                    repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
+                        id: Some(created.repositories[0].id.clone()),
+                        name: "Main".to_string(),
+                        repo_path: "/repo/main".to_string(),
+                        is_default: true,
+                        setup_script: None,
+                        cleanup_script: None,
+                    }],
+                },
+            )
+            .await
+            .unwrap();
+
+        let legacy_worktree_root = service
+            .worktrees_service
+            .base_root_for_tests()
+            .join("OLD")
+            .join("legacy-branch");
+        std::fs::create_dir_all(&legacy_worktree_root).unwrap();
+
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, implementation_guide, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("task-legacy-1")
+        .bind(&created.project.id)
+        .bind(&created.repositories[0].id)
+        .bind(1_i64)
+        .bind("Cleanup")
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind("todo")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(service.repository.pool())
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at, worktree_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-legacy-1")
+        .bind("task-legacy-1")
+        .bind(&created.project.id)
+        .bind(&created.repositories[0].id)
+        .bind("queued")
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("OLD/legacy-branch")
+        .execute(service.repository.pool())
+        .await
+        .unwrap();
+
+        service.delete_project(&created.project.id).await.unwrap();
+
+        let project_exists: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?")
+                .bind(&created.project.id)
+                .fetch_one(service.repository.pool())
+                .await
+                .unwrap();
+
+        assert_eq!(project_exists, 0);
+        assert!(!legacy_worktree_root.exists());
     }
 }

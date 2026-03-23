@@ -197,3 +197,7 @@ export const cloneProject = async (
     })),
   };
 };
+
+export const deleteProject = async (id: string): Promise<void> => {
+  await invoke("delete_project", { id });
+};

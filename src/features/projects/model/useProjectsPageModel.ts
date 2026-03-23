@@ -3,6 +3,7 @@ import { createMemo, createSignal, onMount, type JSX } from "solid-js";
 import {
   cloneProject,
   createProject,
+  deleteProject,
   getProject,
   listProjects,
   updateProject,
@@ -52,6 +53,14 @@ export const useProjectsPageModel = () => {
   );
   const [cloneError, setCloneError] = createSignal("");
   const [isCloning, setIsCloning] = createSignal(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = createSignal(false);
+  const [deleteProjectId, setDeleteProjectId] = createSignal<string | null>(
+    null,
+  );
+  const [deleteProjectName, setDeleteProjectName] = createSignal("");
+  const [deleteProjectKey, setDeleteProjectKey] = createSignal("");
+  const [deleteError, setDeleteError] = createSignal("");
+  const [isDeletingProject, setIsDeletingProject] = createSignal(false);
 
   const loadProjects = async () => {
     const nextProjects = await listProjects();
@@ -326,6 +335,67 @@ export const useProjectsPageModel = () => {
     }
   };
 
+  const closeDeleteModal = () => {
+    if (isDeletingProject()) return;
+    setIsDeleteModalOpen(false);
+    setDeleteProjectId(null);
+    setDeleteProjectName("");
+    setDeleteProjectKey("");
+    setDeleteError("");
+  };
+
+  const onOpenDeleteModal = (project: Project) => {
+    setDeleteProjectId(project.id);
+    setDeleteProjectName(project.name);
+    setDeleteProjectKey(project.key);
+    setDeleteError("");
+    setIsDeleteModalOpen(true);
+  };
+
+  const onConfirmDeleteProject = async () => {
+    const projectId = deleteProjectId();
+    if (!projectId) return;
+
+    setDeleteError("");
+    setIsDeletingProject(true);
+    try {
+      try {
+        await deleteProject(projectId);
+      } catch (deleteProjectError) {
+        const backendMessage = getCreateProjectErrorMessage(deleteProjectError);
+        setDeleteError(
+          backendMessage
+            ? `Failed to delete project. ${backendMessage}`
+            : "Failed to delete project. Please try again.",
+        );
+        return;
+      }
+
+      try {
+        await loadProjects();
+      } catch (refreshError) {
+        const backendMessage = getCreateProjectErrorMessage(refreshError);
+        setDeleteError(
+          backendMessage
+            ? `Project deleted, but failed to refresh projects. ${backendMessage}`
+            : "Project deleted, but failed to refresh projects. Please refresh the page.",
+        );
+        return;
+      }
+
+      if (editingProjectId() === projectId) {
+        resetForm();
+      }
+      setIsDeleteModalOpen(false);
+      setDeleteProjectId(null);
+      setDeleteProjectName("");
+      setDeleteProjectKey("");
+      setDeleteError("");
+    } finally {
+      setIsDeletingProject(false);
+    }
+  };
+
   return {
     mode,
     editingProjectId,
@@ -347,6 +417,12 @@ export const useProjectsPageModel = () => {
     cloneRepositoryDestination,
     cloneError,
     isCloning,
+    isDeleteModalOpen,
+    deleteProjectId,
+    deleteProjectName,
+    deleteProjectKey,
+    deleteError,
+    isDeletingProject,
     projectKeyError,
     cloneProjectKeyError,
     cloneRepositoryDestinationError,
@@ -365,6 +441,9 @@ export const useProjectsPageModel = () => {
     onEditProject,
     onOpenCloneModal,
     closeCloneModal,
+    onOpenDeleteModal,
+    closeDeleteModal,
+    onConfirmDeleteProject,
     onSubmit,
     onSubmitClone,
   };

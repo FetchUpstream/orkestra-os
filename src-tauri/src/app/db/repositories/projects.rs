@@ -10,6 +10,12 @@ pub struct ProjectsRepository {
     pool: SqlitePool,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProjectDeletionContext {
+    pub project_key: String,
+    pub worktree_ids: Vec<String>,
+}
+
 impl ProjectsRepository {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -518,6 +524,51 @@ impl ProjectsRepository {
 
         tx.commit().await?;
         self.get_project(new_project_id).await
+    }
+
+    pub async fn get_project_deletion_context(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<ProjectDeletionContext>, AppError> {
+        let maybe_project = sqlx::query("SELECT key FROM projects WHERE id = ?")
+            .bind(project_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        let Some(project_row) = maybe_project else {
+            return Ok(None);
+        };
+
+        let worktree_rows = sqlx::query(
+            "SELECT DISTINCT worktree_id FROM runs WHERE project_id = ? AND worktree_id IS NOT NULL AND TRIM(worktree_id) != ''",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let worktree_ids = worktree_rows
+            .into_iter()
+            .map(|row| row.get::<String, _>("worktree_id"))
+            .collect();
+
+        Ok(Some(ProjectDeletionContext {
+            project_key: project_row.get("key"),
+            worktree_ids,
+        }))
+    }
+
+    pub async fn delete_project(&self, project_id: &str) -> Result<bool, AppError> {
+        let result = sqlx::query("DELETE FROM projects WHERE id = ?")
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    #[cfg(test)]
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
     }
 }
 

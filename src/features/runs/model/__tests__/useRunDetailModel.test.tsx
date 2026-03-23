@@ -516,6 +516,8 @@ describe("useRunDetailModel startup ownership", () => {
       | undefined;
     expect(subscribeCall?.onOutputChannel).toBeTypeOf("function");
 
+    const baselineGetRunCalls = getRunMock.mock.calls.length;
+
     subscribeCall?.onOutputChannel?.({
       runId: "run-1",
       ts: "2026-01-01T00:00:00.000Z",
@@ -527,6 +529,213 @@ describe("useRunDetailModel startup ownership", () => {
       const events = modelRef!.agent.events();
       expect(events).toHaveLength(1);
       expect(events[0]?.event).toBe("session.idle");
+    });
+
+    await waitFor(
+      () => {
+        const refreshCalls = getRunMock.mock.calls.length - baselineGetRunCalls;
+        expect(refreshCalls).toBeGreaterThanOrEqual(3);
+        expect(refreshCalls).toBeLessThanOrEqual(3);
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  it("suppresses idle refresh when same-batch session is mismatched", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    const baselineGetRunCalls = getRunMock.mock.calls.length;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "permission.asked",
+      data: {
+        requestID: "perm-1",
+        sessionID: "session-1",
+        kind: "write",
+      },
+    });
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:01.000Z",
+      event: "session.idle",
+      data: { sessionID: "session-other" },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.store().sessionId).toBe("session-1");
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    expect(getRunMock.mock.calls.length).toBe(baselineGetRunCalls);
+  });
+
+  it("ignores session.idle refresh for mismatched session id", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "permission.asked",
+      data: {
+        requestID: "perm-1",
+        sessionID: "session-1",
+        kind: "write",
+      },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.store().sessionId).toBe("session-1");
+    });
+
+    const baselineGetRunCalls = getRunMock.mock.calls.length;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:01.000Z",
+      event: "session.idle",
+      data: { sessionID: "session-other" },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    expect(getRunMock.mock.calls.length).toBe(baselineGetRunCalls);
+  });
+
+  it("keeps newest refresh result when refreshes complete out of order", async () => {
+    const staleRun = deferred<Awaited<ReturnType<typeof getRunMock>>>();
+    const newestRun = deferred<Awaited<ReturnType<typeof getRunMock>>>();
+
+    getRunMock
+      .mockReturnValueOnce(staleRun.promise)
+      .mockReturnValueOnce(newestRun.promise)
+      .mockResolvedValue({
+        id: "run-1",
+        taskId: "task-1",
+        projectId: "project-1",
+        status: "running",
+        triggeredBy: "user",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+    getTaskMock
+      .mockResolvedValueOnce({
+        id: "task-2",
+        title: "Newest Task",
+        description: "Description",
+        implementationGuide: "Guide",
+        status: "doing",
+        projectId: "project-1",
+      })
+      .mockResolvedValueOnce({
+        id: "task-1",
+        title: "Stale Task",
+        description: "Description",
+        implementationGuide: "Guide",
+        status: "doing",
+        projectId: "project-1",
+      });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:01.000Z",
+      event: "session.idle",
+      data: { sessionID: "session-1" },
+    });
+
+    await waitFor(() => {
+      expect(getRunMock).toHaveBeenCalledTimes(2);
+    });
+
+    newestRun.resolve({
+      id: "run-1",
+      taskId: "task-2",
+      projectId: "project-1",
+      status: "completed",
+      triggeredBy: "user",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.run()?.status).toBe("completed");
+      expect(modelRef!.task()?.id).toBe("task-2");
+    });
+
+    staleRun.resolve({
+      id: "run-1",
+      taskId: "task-1",
+      projectId: "project-1",
+      status: "running",
+      triggeredBy: "user",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.run()?.status).toBe("completed");
+      expect(modelRef!.task()?.id).toBe("task-2");
     });
   });
 
