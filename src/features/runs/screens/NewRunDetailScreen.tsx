@@ -372,6 +372,12 @@ const NewRunDetailScreen: Component = () => {
     }
     return "Agent connecting";
   });
+  const runHeaderStatusLabel = createMemo(() => {
+    const status = runHeaderStatus();
+    if (status === "red") return "Unavailable";
+    if (status === "green") return "Ready";
+    return "Connecting";
+  });
 
   const logsLines = createMemo(() => {
     if (model.agent.error().trim().length > 0) {
@@ -643,16 +649,7 @@ const NewRunDetailScreen: Component = () => {
                     data-testid="run-status-indicator"
                     aria-hidden="true"
                   >
-                    <span
-                      class="run-chat-header__status-glyph"
-                      aria-hidden="true"
-                    >
-                      {runHeaderStatus() === "red"
-                        ? "!"
-                        : runHeaderStatus() === "green"
-                          ? "\u2713"
-                          : "~"}
-                    </span>
+                    {runHeaderStatusLabel()}
                   </span>
                   <span class="sr-only">{runHeaderStatusText()}</span>
                 </span>
@@ -753,7 +750,7 @@ const NewRunDetailScreen: Component = () => {
                       <div class="run-chat-overlay-panel__header-action-row">
                         <button
                           type="button"
-                          class="run-chat-overlay-panel__control"
+                          class="run-chat-overlay-panel__control btn btn-xs btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
                           aria-label={overlaySizeLabel()}
                           title={overlaySizeLabel()}
                           onClick={() => toggleOverlaySize()}
@@ -774,7 +771,7 @@ const NewRunDetailScreen: Component = () => {
                         <button
                           ref={drawerOverlayCloseButtonRef}
                           type="button"
-                          class="run-chat-overlay-panel__close"
+                          class="run-chat-overlay-panel__close btn btn-xs btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
                           aria-label={overlayCloseLabel()}
                           title={overlayCloseLabel()}
                           onClick={() => closeOverlay()}
@@ -792,13 +789,13 @@ const NewRunDetailScreen: Component = () => {
                       </div>
                       <Show when={overlayState() === "drawer-diff"}>
                         <div
-                          class="run-chat-overlay-panel__layout-toggle"
+                          class="run-chat-overlay-panel__layout-toggle join"
                           role="group"
                           aria-label="Review layout"
                         >
                           <button
                             type="button"
-                            class="run-chat-overlay-panel__layout-button"
+                            class="run-chat-overlay-panel__layout-button join-item btn btn-xs btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
                             aria-label="Unified diff layout"
                             title="Unified diff layout"
                             aria-pressed={!isDiffSideBySide()}
@@ -810,7 +807,7 @@ const NewRunDetailScreen: Component = () => {
                           </button>
                           <button
                             type="button"
-                            class="run-chat-overlay-panel__layout-button"
+                            class="run-chat-overlay-panel__layout-button join-item btn btn-xs btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
                             aria-label="Side-by-side diff layout"
                             title="Side-by-side diff layout"
                             aria-pressed={isDiffSideBySide()}
@@ -1033,7 +1030,7 @@ const NewRunDetailScreen: Component = () => {
                   <div class="run-chat-overlay-panel__header-actions">
                     <button
                       type="button"
-                      class="run-chat-overlay-panel__control"
+                      class="run-chat-overlay-panel__control btn btn-xs btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
                       aria-label={overlaySizeLabel()}
                       title={overlaySizeLabel()}
                       onClick={() => toggleOverlaySize()}
@@ -1054,7 +1051,7 @@ const NewRunDetailScreen: Component = () => {
                     <button
                       ref={terminalOverlayCloseButtonRef}
                       type="button"
-                      class="run-chat-overlay-panel__close"
+                      class="run-chat-overlay-panel__close btn btn-xs btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
                       aria-label={overlayCloseLabel()}
                       title={overlayCloseLabel()}
                       onClick={() => closeOverlay()}

@@ -520,7 +520,7 @@ const TaskDetailScreen: Component = () => {
                           <div class="task-detail-quick-actions">
                             <Show when={canMoveTask()}>
                               <label class="projects-field">
-                                <span class="field-label">
+                                <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                                   <span class="field-label-text">
                                     Move task to repository
                                   </span>
@@ -547,7 +547,7 @@ const TaskDetailScreen: Component = () => {
                               </label>
                               <button
                                 type="button"
-                                class="projects-button-muted"
+                                class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
                                 onClick={onMoveTask}
                                 disabled={!moveRepositoryId() || isMoving()}
                               >
@@ -565,7 +565,7 @@ const TaskDetailScreen: Component = () => {
                             <h2 class="project-section-title">Runs</h2>
                             <button
                               type="button"
-                              class="projects-button-primary"
+                              class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                               onClick={onOpenRunSettingsModal}
                               disabled={isCreatingRun()}
                               aria-label={
@@ -638,7 +638,7 @@ const TaskDetailScreen: Component = () => {
                                             <Show when={canShowStartAction}>
                                               <button
                                                 type="button"
-                                                class="projects-button-muted task-runs-start-button"
+                                                class="task-runs-start-button btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
                                                 onClick={(event) => {
                                                   event.preventDefault();
                                                   event.stopPropagation();
@@ -763,7 +763,7 @@ const TaskDetailScreen: Component = () => {
                                 </p>
                                 <button
                                   type="button"
-                                  class="projects-button-muted"
+                                  class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
                                   onClick={() => {
                                     const currentTask = task();
                                     if (!currentTask) return;
@@ -792,7 +792,7 @@ const TaskDetailScreen: Component = () => {
                                       </h3>
                                       <button
                                         type="button"
-                                        class="projects-button-muted"
+                                        class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
                                         onClick={() =>
                                           onOpenCreateDependencyModal("parent")
                                         }
@@ -802,7 +802,7 @@ const TaskDetailScreen: Component = () => {
                                       </button>
                                       <button
                                         type="button"
-                                        class="projects-button-muted"
+                                        class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
                                         onClick={() =>
                                           onOpenLinkDependencyModal("parent")
                                         }
@@ -873,7 +873,7 @@ const TaskDetailScreen: Component = () => {
                                               </div>
                                               <button
                                                 type="button"
-                                                class="projects-button-muted task-dependency-action"
+                                                class="task-dependency-action btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
                                                 onClick={(event) => {
                                                   event.stopPropagation();
                                                   void onRemoveDependency(
@@ -910,7 +910,7 @@ const TaskDetailScreen: Component = () => {
                                       </h3>
                                       <button
                                         type="button"
-                                        class="projects-button-muted"
+                                        class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
                                         onClick={() =>
                                           onOpenCreateDependencyModal("child")
                                         }
@@ -920,7 +920,7 @@ const TaskDetailScreen: Component = () => {
                                       </button>
                                       <button
                                         type="button"
-                                        class="projects-button-muted"
+                                        class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
                                         onClick={() =>
                                           onOpenLinkDependencyModal("child")
                                         }
@@ -991,7 +991,7 @@ const TaskDetailScreen: Component = () => {
                                               </div>
                                               <button
                                                 type="button"
-                                                class="projects-button-muted task-dependency-action"
+                                                class="task-dependency-action btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
                                                 onClick={(event) => {
                                                   event.stopPropagation();
                                                   void onRemoveDependency(

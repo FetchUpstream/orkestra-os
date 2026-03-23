@@ -589,23 +589,25 @@ textarea::placeholder {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--text);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .field-label-text {
-  color: var(--text);
+  color: inherit;
 }
 
 .field-optional {
-  font-size: 0.75rem;
+  font-size: 0.66rem;
   color: var(--text-subtle);
   font-weight: 400;
 }
 
 .field-help {
-  font-size: 0.8rem;
+  font-size: 0.74rem;
   color: var(--text-muted);
   margin: 0;
   line-height: 1.4;
@@ -632,9 +634,11 @@ textarea::placeholder {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
+  min-height: 2.25rem;
   padding: 8px 10px;
   font-size: 0.82rem;
+  line-height: 1.4;
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
@@ -642,6 +646,7 @@ textarea::placeholder {
 
 .projects-field select {
   color-scheme: dark;
+  padding-right: 2rem;
 }
 
 .projects-field select option {
@@ -675,7 +680,7 @@ textarea::placeholder {
 
 .projects-field textarea {
   resize: vertical;
-  min-height: 80px;
+  min-height: 96px;
 }
 
 /* Repository Section */
@@ -1303,12 +1308,15 @@ textarea::placeholder {
 .project-task-status {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 4px 10px;
+  letter-spacing: 0.08em;
+  min-height: 1.35rem;
+  padding: 2px 8px;
   border-radius: 0;
+  line-height: 1;
 }
 
 .project-task-status--todo {
@@ -1375,30 +1383,36 @@ textarea::placeholder {
   display: inline-flex;
   align-self: flex-start;
   align-items: center;
+  justify-content: center;
   font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 4px 10px;
+  letter-spacing: 0.08em;
+  min-height: 1.35rem;
+  padding: 2px 8px;
   border-radius: 0;
   background: var(--danger-subtle);
   color: var(--danger);
   border: 1px solid rgba(255, 107, 107, 0.3);
+  line-height: 1;
 }
 
 .project-task-ready {
   display: inline-flex;
   align-self: flex-start;
   align-items: center;
+  justify-content: center;
   font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 4px 10px;
+  letter-spacing: 0.08em;
+  min-height: 1.35rem;
+  padding: 2px 8px;
   border-radius: 0;
   background: rgba(79, 209, 165, 0.12);
   color: #7ce0bb;
   border: 1px solid rgba(79, 209, 165, 0.25);
+  line-height: 1;
 }
 
 .project-task-updated {
@@ -2151,7 +2165,7 @@ textarea::placeholder {
 .task-link-candidate-item {
   border: 1px solid var(--border-subtle);
   background: var(--surface-alt);
-  border-radius: var(--radius-md);
+  border-radius: 0;
   padding: 10px 12px;
   display: flex;
   align-items: center;
@@ -2175,7 +2189,7 @@ textarea::placeholder {
 .task-dependency-row {
   border: 1px solid var(--border-subtle);
   background: var(--surface-alt);
-  border-radius: var(--radius-md);
+  border-radius: 0;
   padding: 10px 12px;
   display: flex;
   align-items: center;
@@ -2193,8 +2207,8 @@ textarea::placeholder {
 
 .task-dependency-row--clickable:hover {
   border-color: var(--accent);
-  background: var(--surface-hover);
-  box-shadow: 0 0 0 1px var(--accent-subtle);
+  background: color-mix(in srgb, var(--surface-alt) 84%, var(--accent) 16%);
+  box-shadow: none;
 }
 
 .task-dependency-row--clickable:focus-visible {
@@ -2221,7 +2235,8 @@ textarea::placeholder {
 
 .task-dependency-title {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 600;
   color: var(--text);
 }
 
@@ -2229,17 +2244,22 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .task-dependency-scope {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: var(--text-subtle);
   font-family: var(--font-mono);
 }
 
 .task-dependency-action {
   flex-shrink: 0;
+}
+
+.task-dependencies-heading-row {
+  align-items: center;
+  gap: 8px;
 }
 
 .task-dependencies-error-block {
@@ -3166,7 +3186,7 @@ textarea::placeholder {
 
 .run-detail-terminal-root {
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: var(--surface-alt);
   min-height: 280px;
   height: 100%;
@@ -3191,7 +3211,7 @@ textarea::placeholder {
 
 .run-diff-item {
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: var(--surface-alt);
 }
 
@@ -3206,6 +3226,11 @@ textarea::placeholder {
   gap: 12px;
   padding: 8px 10px;
   cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.run-diff-item-header:hover {
+  background: color-mix(in srgb, var(--surface-alt) 84%, var(--accent) 16%);
 }
 
 .run-diff-item-path {
@@ -3377,7 +3402,7 @@ textarea::placeholder {
   flex-direction: column;
   align-items: flex-end;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .run-chat-overlay-panel__header-action-row {
@@ -3424,7 +3449,7 @@ textarea::placeholder {
 .run-chat-overlay-panel__layout-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 0;
   font-size: 0;
 }
 
@@ -3474,10 +3499,12 @@ textarea::placeholder {
 
 .run-chat-overlay-panel__body--diff {
   overflow: auto;
+  padding-right: 2px;
 }
 
 .run-chat-overlay-panel__body--git {
   overflow: auto;
+  padding-right: 2px;
 }
 
 .run-chat-git-drawer {
@@ -3612,16 +3639,21 @@ textarea::placeholder {
 }
 
 .run-chat-header__status-indicator {
-  width: 10px;
-  height: 10px;
+  min-height: 1.35rem;
+  padding: 2px 8px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   position: relative;
-  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   background: var(--text-subtle);
   color: var(--text-subtle);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .run-chat-header__status-glyph {
@@ -3633,31 +3665,31 @@ textarea::placeholder {
 }
 
 .run-chat-header__status-indicator[data-status="red"] {
-  background: #e45858;
-  color: #e45858;
-  box-shadow: 0 0 0 2px color-mix(in srgb, #e45858 35%, transparent);
+  background: rgba(255, 107, 129, 0.12);
+  color: #ff8f9f;
+  box-shadow: none;
 }
 
 .run-chat-header__status-indicator[data-status="orange"] {
-  background: #d88825;
-  color: #d88825;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #101318 28%, transparent);
+  background: rgba(255, 180, 84, 0.12);
+  color: #ffbf69;
+  box-shadow: none;
   animation: run-chat-status-pulse 1.6s ease-in-out infinite;
 }
 
 .run-chat-header__status-indicator[data-status="green"] {
-  background: #2ea65a;
-  color: #2ea65a;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #101318 22%, transparent);
+  background: rgba(79, 209, 165, 0.12);
+  color: #7ce0bb;
+  box-shadow: none;
 }
 
 @keyframes run-chat-status-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, #d88825 0%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, #ffb454 0%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 3px color-mix(in srgb, #d88825 45%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, #ffb454 30%, transparent);
   }
 }
 

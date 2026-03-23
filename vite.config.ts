@@ -55,6 +55,24 @@ export default defineConfig({
       process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
     minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.indexOf("node_modules") === -1) return;
+          if (id.indexOf("monaco-editor") !== -1) return "vendor-monaco";
+          if (id.indexOf("@xterm") !== -1) return "vendor-terminal";
+          if (id.indexOf("@sentry") !== -1) return "vendor-sentry";
+          if (
+            id.indexOf("solid-js") !== -1 ||
+            id.indexOf("@solidjs/router") !== -1
+          ) {
+            return "vendor-solid";
+          }
+          if (id.indexOf("sortablejs") !== -1) return "vendor-sortable";
+          return "vendor";
+        },
+      },
+    },
   },
   test: {
     environment: "jsdom",
