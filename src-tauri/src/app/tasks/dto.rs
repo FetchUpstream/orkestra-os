@@ -22,6 +22,9 @@ pub struct UpdateTaskRequest {
 pub struct SetTaskStatusRequest {
     pub status: String,
     pub source_action: Option<String>,
+    pub agent_id: Option<String>,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

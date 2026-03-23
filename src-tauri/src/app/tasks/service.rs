@@ -151,6 +151,9 @@ impl TasksService {
         mut input: SetTaskStatusRequest,
     ) -> Result<TaskDto, AppError> {
         input.status = input.status.trim().to_string();
+        let selected_agent_id = input.agent_id.take();
+        let selected_provider_id = input.provider_id.take();
+        let selected_model_id = input.model_id.take();
         let source_action = Self::parse_source_action(input.source_action.take());
         Self::validate_status(&input.status)?;
 
@@ -184,7 +187,15 @@ impl TasksService {
             && !updated.is_blocked;
 
         if should_auto_start_run {
-            if let Err(err) = self.auto_start_task_run_for_board_move(&updated.id).await {
+            if let Err(err) = self
+                .auto_start_task_run_for_board_move(
+                    &updated.id,
+                    selected_agent_id.as_deref(),
+                    selected_provider_id.as_deref(),
+                    selected_model_id.as_deref(),
+                )
+                .await
+            {
                 warn!(
                     task_id = updated.id.as_str(),
                     error = %err,
@@ -196,7 +207,13 @@ impl TasksService {
         Ok(Self::to_dto(updated))
     }
 
-    async fn auto_start_task_run_for_board_move(&self, task_id: &str) -> Result<(), AppError> {
+    async fn auto_start_task_run_for_board_move(
+        &self,
+        task_id: &str,
+        agent_id: Option<&str>,
+        provider_id: Option<&str>,
+        model_id: Option<&str>,
+    ) -> Result<(), AppError> {
         let Some(runs_service) = self.runs_service.as_ref() else {
             return Ok(());
         };
@@ -204,7 +221,9 @@ impl TasksService {
             return Ok(());
         };
 
-        let run = runs_service.create_or_reuse_active_run(task_id).await?;
+        let run = runs_service
+            .create_or_reuse_active_run_with_defaults(task_id, agent_id, provider_id, model_id)
+            .await?;
         let _ = runs_opencode_service.start_run_opencode(&run.id).await?;
         Ok(())
     }
@@ -761,6 +780,9 @@ mod tests {
                 SetTaskStatusRequest {
                     status: "doing".to_string(),
                     source_action: None,
+                    agent_id: None,
+                    provider_id: None,
+                    model_id: None,
                 },
             )
             .await
@@ -783,6 +805,9 @@ mod tests {
                 SetTaskStatusRequest {
                     status: "todo".to_string(),
                     source_action: None,
+                    agent_id: None,
+                    provider_id: None,
+                    model_id: None,
                 },
             )
             .await
@@ -805,6 +830,9 @@ mod tests {
                 SetTaskStatusRequest {
                     status: "todo".to_string(),
                     source_action: None,
+                    agent_id: None,
+                    provider_id: None,
+                    model_id: None,
                 },
             )
             .await
@@ -827,6 +855,9 @@ mod tests {
                 SetTaskStatusRequest {
                     status: "review".to_string(),
                     source_action: None,
+                    agent_id: None,
+                    provider_id: None,
+                    model_id: None,
                 },
             )
             .await;
@@ -853,6 +884,9 @@ mod tests {
                 SetTaskStatusRequest {
                     status: "doing".to_string(),
                     source_action: Some("board_manual_move".to_string()),
+                    agent_id: None,
+                    provider_id: None,
+                    model_id: None,
                 },
             )
             .await
@@ -878,6 +912,9 @@ mod tests {
                 SetTaskStatusRequest {
                     status: "doing".to_string(),
                     source_action: Some("unknown_action".to_string()),
+                    agent_id: None,
+                    provider_id: None,
+                    model_id: None,
                 },
             )
             .await
@@ -949,6 +986,9 @@ mod tests {
                 SetTaskStatusRequest {
                     status: "doing".to_string(),
                     source_action: Some("board_manual_move".to_string()),
+                    agent_id: None,
+                    provider_id: None,
+                    model_id: None,
                 },
             )
             .await

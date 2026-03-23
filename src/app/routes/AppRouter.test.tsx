@@ -1151,7 +1151,7 @@ describe("app routing and shell", () => {
     ).toBeNull();
   });
 
-  it("optimistically moves board cards across columns and persists status", async () => {
+  it("applies selected run settings when confirming board move to in progress", async () => {
     let resolveStatusUpdate: ((value: unknown) => void) | undefined;
     const statusUpdatePromise = new Promise((resolve) => {
       resolveStatusUpdate = resolve;
@@ -1181,6 +1181,22 @@ describe("app routing and shell", () => {
         ]);
       }
       if (command === "set_task_status") return statusUpdatePromise;
+      if (command === "list_run_opencode_agents") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+        });
+      }
+      if (command === "list_run_opencode_providers") {
+        return Promise.resolve({
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
+      }
       if (command === "list_task_runs") {
         return Promise.resolve([
           {
@@ -1229,15 +1245,37 @@ describe("app routing and shell", () => {
     await fireEvent.dragOver(inProgressSection, { dataTransfer });
     await fireEvent.drop(inProgressSection, { dataTransfer });
 
-    expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
     expect(
-      screen.getByRole("heading", { name: "In Progress (1)" }),
+      screen.getByRole("dialog", { name: "New run settings" }),
     ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "In Progress (0)" }),
+    ).toBeTruthy();
+
+    await fireEvent.change(screen.getByLabelText("Default run agent"), {
+      target: { value: "agent-a" },
+    });
+    await fireEvent.change(screen.getByLabelText("Default run provider"), {
+      target: { value: "provider-a" },
+    });
+    await fireEvent.change(screen.getByLabelText("Default run model"), {
+      target: { value: "model-a" },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+
     expect(invokeMock).toHaveBeenCalledWith(
       "set_task_status",
       expect.objectContaining({
         id: "task-1",
-        input: expect.objectContaining({ status: "doing" }),
+        input: expect.objectContaining({
+          status: "doing",
+          source_action: "board_manual_move",
+          agent_id: "agent-a",
+          provider_id: "provider-a",
+          model_id: "model-a",
+        }),
       }),
     );
 
@@ -1257,7 +1295,7 @@ describe("app routing and shell", () => {
     });
   });
 
-  it("shows mini-card immediately for optimistic move to in progress", async () => {
+  it("shows mini-card immediately after confirming in-progress move", async () => {
     let resolveStatusUpdate: ((value: unknown) => void) | undefined;
     const statusUpdatePromise = new Promise((resolve) => {
       resolveStatusUpdate = resolve;
@@ -1331,6 +1369,14 @@ describe("app routing and shell", () => {
     await fireEvent.dragStart(taskCard, { dataTransfer });
     await fireEvent.dragOver(inProgressSection, { dataTransfer });
     await fireEvent.drop(inProgressSection, { dataTransfer });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: "New run settings" }),
+      ).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
 
     expect(
       screen.getByRole("heading", { name: "In Progress (1)" }),
@@ -1448,13 +1494,21 @@ describe("app routing and shell", () => {
     await fireEvent.drop(inProgressSection, { dataTransfer });
 
     await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: "New run settings" }),
+      ).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+
+    await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
       expect(
         screen.getByRole("heading", { name: "In Progress (1)" }),
       ).toBeTruthy();
       expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
         id: "task-1",
-        input: { status: "doing" },
+        input: { status: "doing", source_action: "board_manual_move" },
       });
     });
   });
@@ -1527,13 +1581,21 @@ describe("app routing and shell", () => {
     await fireEvent.drop(inProgressSection, { dataTransfer });
 
     await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: "New run settings" }),
+      ).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+
+    await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Review (0)" })).toBeTruthy();
       expect(
         screen.getByRole("heading", { name: "In Progress (1)" }),
       ).toBeTruthy();
       expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
         id: "task-review-doing",
-        input: { status: "doing" },
+        input: { status: "doing", source_action: "board_manual_move" },
       });
     });
   });
@@ -1835,6 +1897,14 @@ describe("app routing and shell", () => {
     await fireEvent.dragOver(inProgressSection, { dataTransfer });
     await fireEvent.drop(inProgressSection, { dataTransfer });
 
+    await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: "New run settings" }),
+      ).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+
     expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
     expect(
       screen.getByRole("heading", { name: "In Progress (1)" }),
@@ -1849,6 +1919,97 @@ describe("app routing and shell", () => {
         screen.getByText("Failed to update task status. Please try again."),
       ).toBeTruthy();
     });
+  });
+
+  it("keeps board task in place when in-progress run settings are canceled", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-cancel",
+            title: "Cancel move",
+            status: "todo",
+            display_key: "ALP-44",
+          },
+        ]);
+      }
+      if (command === "set_task_status") {
+        return Promise.resolve({
+          id: "task-cancel",
+          title: "Cancel move",
+          status: "doing",
+          display_key: "ALP-44",
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (0)" }),
+      ).toBeTruthy();
+    });
+
+    const inProgressSection = screen
+      .getByRole("heading", { name: "In Progress (0)" })
+      .closest("section") as HTMLElement;
+    const taskCard = screen
+      .getByRole("link", { name: /Cancel move/i })
+      .closest("li") as HTMLElement;
+
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData(format: string, value: string) {
+        this.data[format] = value;
+      },
+      getData(format: string) {
+        return this.data[format] ?? "";
+      },
+    };
+
+    await fireEvent.dragStart(taskCard, { dataTransfer });
+    await fireEvent.dragOver(inProgressSection, { dataTransfer });
+    await fireEvent.drop(inProgressSection, { dataTransfer });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: "New run settings" }),
+      ).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "New run settings" }),
+      ).toBeNull();
+      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (0)" }),
+      ).toBeTruthy();
+    });
+
+    const statusCalls = invokeMock.mock.calls.filter(
+      ([command]) => command === "set_task_status",
+    );
+    expect(statusCalls).toHaveLength(0);
   });
 
   it("restores previous mini-card when optimistic move to done fails", async () => {

@@ -3,6 +3,7 @@ import { A } from "@solidjs/router";
 import PageHeader from "../../../components/layout/PageHeader";
 import CreateTaskModal from "../../projects/components/CreateTaskModal";
 import { useCreateTaskModalModel } from "../../projects/model/useCreateTaskModalModel";
+import RunSettingsModal from "../../runs/components/RunSettingsModal";
 import BoardTaskCard from "../components/BoardTaskCard";
 import { useBoardModel } from "../model/useBoardModel";
 import { BOARD_COLUMNS } from "../utils/board";
@@ -77,6 +78,10 @@ const BoardScreen: Component = () => {
       return;
     }
     resetDragState();
+    if (status === "doing") {
+      model.onRequestMoveTaskToInProgress(droppedTaskId);
+      return;
+    }
     void model.moveTaskToStatus(droppedTaskId, status);
   };
 
@@ -245,6 +250,25 @@ const BoardScreen: Component = () => {
         setTaskStatus={taskCreateModel.setTaskStatus}
         setTargetRepositoryId={taskCreateModel.setTargetRepositoryId}
         onCreateTask={taskCreateModel.onCreateTask}
+      />
+
+      <RunSettingsModal
+        isOpen={model.isRunSettingsModalOpen}
+        isSubmitting={model.isConfirmingMoveTaskToInProgress}
+        hasRunSelectionOptions={model.hasRunSelectionOptions}
+        isLoadingRunSelectionOptions={model.isLoadingRunSelectionOptions}
+        runSelectionOptionsError={model.runSelectionOptionsError}
+        runAgentOptions={model.runAgentOptions}
+        runProviderOptions={model.runProviderOptions}
+        visibleRunModelOptions={model.visibleRunModelOptions}
+        selectedRunAgentId={model.selectedRunAgentId}
+        selectedRunProviderId={model.selectedRunProviderId}
+        selectedRunModelId={model.selectedRunModelId}
+        setSelectedRunAgentId={model.setSelectedRunAgentId}
+        setSelectedRunProviderId={model.setSelectedRunProviderId}
+        setSelectedRunModelId={model.setSelectedRunModelId}
+        onCancel={model.onCancelMoveTaskToInProgress}
+        onConfirm={model.onConfirmMoveTaskToInProgress}
       />
     </>
   );

@@ -12,6 +12,11 @@ import {
   type TaskStatus,
 } from "../../../app/lib/tasks";
 import { listTaskRuns } from "../../../app/lib/runs";
+import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
+import {
+  getRunSelectionOptionsWithCache,
+  readRunSelectionOptionsCache,
+} from "../../../app/lib/runSelectionOptionsCache";
 import { canTransitionStatus } from "../../tasks/utils/taskDetail";
 import { groupTasksByStatus } from "../utils/board";
 import { isRunCommitPending } from "../../runs/model/commitUiState";
@@ -143,9 +148,31 @@ export const useBoardModel = () => {
     Record<string, BoardTaskRunMiniCard>
   >({});
   const [error, setError] = createSignal("");
+  const [isRunSettingsModalOpen, setIsRunSettingsModalOpen] =
+    createSignal(false);
+  const [pendingInProgressTaskId, setPendingInProgressTaskId] =
+    createSignal("");
+  const [runAgentOptions, setRunAgentOptions] = createSignal<
+    RunSelectionOption[]
+  >([]);
+  const [runProviderOptions, setRunProviderOptions] = createSignal<
+    RunSelectionOption[]
+  >([]);
+  const [runModelOptions, setRunModelOptions] = createSignal<RunModelOption[]>(
+    [],
+  );
+  const [runSelectionOptionsError, setRunSelectionOptionsError] =
+    createSignal("");
+  const [isLoadingRunSelectionOptions, setIsLoadingRunSelectionOptions] =
+    createSignal(false);
+  const [selectedRunAgentId, setSelectedRunAgentId] = createSignal("");
+  const [selectedRunProviderId, setSelectedRunProviderIdSignal] =
+    createSignal("");
+  const [selectedRunModelId, setSelectedRunModelIdSignal] = createSignal("");
   let activeTasksRequestVersion = 0;
   let activeProjectDetailRequestVersion = 0;
   let activeTaskRunsRequestVersion = 0;
+  let runSelectionOptionsRequestVersion = 0;
   let boardEventSubscriptionDisposed = false;
   let removeBoardEventSubscription: (() => void) | null = null;
 
@@ -155,6 +182,100 @@ export const useBoardModel = () => {
   );
 
   const groupedTasks = createMemo(() => groupTasksByStatus(tasks()));
+  const visibleRunModelOptions = createMemo(() => {
+    const providerId = selectedRunProviderId().trim();
+    if (!providerId) {
+      return runModelOptions();
+    }
+    return runModelOptions().filter(
+      (option) => !option.providerId || option.providerId === providerId,
+    );
+  });
+  const hasRunSelectionOptions = createMemo(() => {
+    return (
+      runAgentOptions().length > 0 ||
+      runProviderOptions().length > 0 ||
+      runModelOptions().length > 0
+    );
+  });
+
+  const doesModelMatchProvider = (
+    modelId: string,
+    providerId: string,
+  ): boolean => {
+    if (!modelId || !providerId) {
+      return true;
+    }
+
+    const selectedModel = runModelOptions().find(
+      (option) => option.id === modelId,
+    );
+    if (!selectedModel || !selectedModel.providerId) {
+      return true;
+    }
+
+    return selectedModel.providerId === providerId;
+  };
+
+  const setSelectedRunProviderId = (providerId: string) => {
+    setSelectedRunProviderIdSignal(providerId);
+    const modelId = selectedRunModelId().trim();
+    if (modelId && !doesModelMatchProvider(modelId, providerId.trim())) {
+      setSelectedRunModelIdSignal("");
+    }
+  };
+
+  const setSelectedRunModelId = (modelId: string) => {
+    setSelectedRunModelIdSignal(modelId);
+    if (!modelId) {
+      return;
+    }
+
+    const selectedModel = runModelOptions().find(
+      (option) => option.id === modelId,
+    );
+    const providerId = selectedModel?.providerId?.trim() || "";
+    if (providerId && providerId !== selectedRunProviderId().trim()) {
+      setSelectedRunProviderIdSignal(providerId);
+    }
+  };
+
+  const refreshRunSelectionOptions = async () => {
+    const requestVersion = ++runSelectionOptionsRequestVersion;
+    const cachedOptions = readRunSelectionOptionsCache();
+    if (cachedOptions) {
+      setRunSelectionOptionsError("");
+      setIsLoadingRunSelectionOptions(false);
+      setRunAgentOptions(cachedOptions.agents);
+      setRunProviderOptions(cachedOptions.providers);
+      setRunModelOptions(cachedOptions.models);
+      return;
+    }
+
+    setIsLoadingRunSelectionOptions(true);
+    setRunSelectionOptionsError("");
+    try {
+      const options = await getRunSelectionOptionsWithCache();
+      if (requestVersion !== runSelectionOptionsRequestVersion) {
+        return;
+      }
+      setRunAgentOptions(options.agents);
+      setRunProviderOptions(options.providers);
+      setRunModelOptions(options.models);
+    } catch {
+      if (requestVersion !== runSelectionOptionsRequestVersion) {
+        return;
+      }
+      setRunSelectionOptionsError("Failed to load run options.");
+      setRunAgentOptions([]);
+      setRunProviderOptions([]);
+      setRunModelOptions([]);
+    } finally {
+      if (requestVersion === runSelectionOptionsRequestVersion) {
+        setIsLoadingRunSelectionOptions(false);
+      }
+    }
+  };
 
   const loadSelectedProjectDetail = async (projectId: string) => {
     const requestVersion = ++activeProjectDetailRequestVersion;
@@ -277,6 +398,11 @@ export const useBoardModel = () => {
   const isTaskStatusUpdating = (taskId: string): boolean =>
     updatingTaskIds().includes(taskId);
 
+  const isConfirmingMoveTaskToInProgress = createMemo(() => {
+    const taskId = pendingInProgressTaskId();
+    return Boolean(taskId && isTaskStatusUpdating(taskId));
+  });
+
   const canTaskTransitionToStatus = (
     taskId: string,
     targetStatus: TaskStatus,
@@ -289,6 +415,13 @@ export const useBoardModel = () => {
   const moveTaskToStatus = async (
     taskId: string,
     targetStatus: TaskStatus,
+    options?: {
+      runDefaults?: {
+        agentId?: string;
+        providerId?: string;
+        modelId?: string;
+      };
+    },
   ): Promise<void> => {
     if (isTaskStatusUpdating(taskId)) return;
 
@@ -323,6 +456,7 @@ export const useBoardModel = () => {
       const updatedTask = await setTaskStatus(taskId, {
         status: targetStatus,
         sourceAction: "board_manual_move",
+        runDefaults: options?.runDefaults,
       });
       setTasks((currentTasks) =>
         currentTasks.map((task) =>
@@ -371,6 +505,38 @@ export const useBoardModel = () => {
     } finally {
       setUpdatingTaskIds((current) => current.filter((id) => id !== taskId));
     }
+  };
+
+  const onRequestMoveTaskToInProgress = (taskId: string) => {
+    if (isTaskStatusUpdating(taskId)) return;
+    if (!canTaskTransitionToStatus(taskId, "doing")) return;
+    setPendingInProgressTaskId(taskId);
+    setRunSelectionOptionsError("");
+    setIsRunSettingsModalOpen(true);
+    void refreshRunSelectionOptions();
+  };
+
+  const onCancelMoveTaskToInProgress = () => {
+    const pendingTaskId = pendingInProgressTaskId();
+    if (pendingTaskId && isTaskStatusUpdating(pendingTaskId)) {
+      return;
+    }
+    setIsRunSettingsModalOpen(false);
+    setPendingInProgressTaskId("");
+  };
+
+  const onConfirmMoveTaskToInProgress = async () => {
+    const taskId = pendingInProgressTaskId();
+    if (!taskId || isTaskStatusUpdating(taskId)) return;
+    await moveTaskToStatus(taskId, "doing", {
+      runDefaults: {
+        agentId: selectedRunAgentId().trim() || undefined,
+        providerId: selectedRunProviderId().trim() || undefined,
+        modelId: selectedRunModelId().trim() || undefined,
+      },
+    });
+    setIsRunSettingsModalOpen(false);
+    setPendingInProgressTaskId("");
   };
 
   onMount(async () => {
@@ -449,10 +615,27 @@ export const useBoardModel = () => {
     isTasksLoading,
     taskRunMiniCards,
     error,
+    isRunSettingsModalOpen,
+    hasRunSelectionOptions,
+    isLoadingRunSelectionOptions,
+    runSelectionOptionsError,
+    runAgentOptions,
+    runProviderOptions,
+    visibleRunModelOptions,
+    isConfirmingMoveTaskToInProgress,
+    selectedRunAgentId,
+    selectedRunProviderId,
+    selectedRunModelId,
     onProjectChange,
     refreshSelectedProjectTasks,
     isTaskStatusUpdating,
     canTaskTransitionToStatus,
     moveTaskToStatus,
+    setSelectedRunAgentId,
+    setSelectedRunProviderId,
+    setSelectedRunModelId,
+    onRequestMoveTaskToInProgress,
+    onCancelMoveTaskToInProgress,
+    onConfirmMoveTaskToInProgress,
   };
 };

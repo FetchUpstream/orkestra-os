@@ -10,6 +10,7 @@ import BackIconLink from "../../../components/ui/BackIconLink";
 import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
 import RunChatMarkdown from "../../runs/components/chat/RunChatMarkdown";
+import RunSettingsModal from "../../runs/components/RunSettingsModal";
 import TaskMarkdownEditor from "../../../components/ui/TaskMarkdownEditor";
 import {
   TaskDetailErrorState,
@@ -1363,126 +1364,24 @@ const TaskDetailScreen: Component = () => {
           </section>
         </div>
       </Show>
-      <Show when={isRunSettingsModalOpen()}>
-        <div
-          class="projects-modal-backdrop"
-          role="presentation"
-          onClick={onCancelRunSettingsModal}
-        >
-          <section
-            class="projects-modal task-create-dependency-modal task-run-settings-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="task-run-settings-modal-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h2
-              id="task-run-settings-modal-title"
-              class="task-delete-modal-title"
-            >
-              New run settings
-            </h2>
-            <Show when={hasRunSelectionOptions()}>
-              <div class="task-runs-defaults-grid">
-                <label class="projects-field task-runs-default-field">
-                  <span class="field-label">
-                    <span class="field-label-text">Agent</span>
-                  </span>
-                  <select
-                    value={selectedRunAgentId()}
-                    onChange={(event) =>
-                      setSelectedRunAgentId(event.currentTarget.value)
-                    }
-                    disabled={isCreatingRun()}
-                    aria-label="Default run agent"
-                  >
-                    <option value="">Use run default</option>
-                    <For each={runAgentOptions()}>
-                      {(option) => (
-                        <option value={option.id}>{option.label}</option>
-                      )}
-                    </For>
-                  </select>
-                </label>
-                <label class="projects-field task-runs-default-field">
-                  <span class="field-label">
-                    <span class="field-label-text">Provider</span>
-                  </span>
-                  <select
-                    value={selectedRunProviderId()}
-                    onChange={(event) =>
-                      setSelectedRunProviderId(event.currentTarget.value)
-                    }
-                    disabled={isCreatingRun()}
-                    aria-label="Default run provider"
-                  >
-                    <option value="">Use run default</option>
-                    <For each={runProviderOptions()}>
-                      {(option) => (
-                        <option value={option.id}>{option.label}</option>
-                      )}
-                    </For>
-                  </select>
-                </label>
-                <label class="projects-field task-runs-default-field">
-                  <span class="field-label">
-                    <span class="field-label-text">Model</span>
-                  </span>
-                  <select
-                    value={selectedRunModelId()}
-                    onChange={(event) =>
-                      setSelectedRunModelId(event.currentTarget.value)
-                    }
-                    disabled={isCreatingRun()}
-                    aria-label="Default run model"
-                  >
-                    <option value="">Use run default</option>
-                    <For each={visibleRunModelOptions()}>
-                      {(option) => (
-                        <option value={option.id}>{option.label}</option>
-                      )}
-                    </For>
-                  </select>
-                </label>
-              </div>
-            </Show>
-            <Show
-              when={!hasRunSelectionOptions() && isLoadingRunSelectionOptions()}
-            >
-              <p class="project-placeholder-text">Loading run defaults...</p>
-            </Show>
-            <Show
-              when={
-                !hasRunSelectionOptions() &&
-                !isLoadingRunSelectionOptions() &&
-                !runSelectionOptionsError()
-              }
-            >
-              <p class="project-placeholder-text">
-                Run defaults are unavailable. A run will use system defaults.
-              </p>
-            </Show>
-            <div class="task-delete-modal-actions">
-              <button
-                type="button"
-                class="projects-button-muted"
-                onClick={onCancelRunSettingsModal}
-                disabled={isCreatingRun()}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                class="projects-button-primary"
-                onClick={() => void onConfirmCreateRun()}
-                disabled={isCreatingRun()}
-              >
-                {isCreatingRun() ? "Starting..." : "Create run"}
-              </button>
-            </div>
-          </section>
-        </div>
-      </Show>
+      <RunSettingsModal
+        isOpen={isRunSettingsModalOpen}
+        isSubmitting={isCreatingRun}
+        hasRunSelectionOptions={hasRunSelectionOptions}
+        isLoadingRunSelectionOptions={isLoadingRunSelectionOptions}
+        runSelectionOptionsError={runSelectionOptionsError}
+        runAgentOptions={runAgentOptions}
+        runProviderOptions={runProviderOptions}
+        visibleRunModelOptions={visibleRunModelOptions}
+        selectedRunAgentId={selectedRunAgentId}
+        selectedRunProviderId={selectedRunProviderId}
+        selectedRunModelId={selectedRunModelId}
+        setSelectedRunAgentId={setSelectedRunAgentId}
+        setSelectedRunProviderId={setSelectedRunProviderId}
+        setSelectedRunModelId={setSelectedRunModelId}
+        onCancel={onCancelRunSettingsModal}
+        onConfirm={onConfirmCreateRun}
+      />
     </>
   );
 };

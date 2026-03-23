@@ -53,6 +53,11 @@ export type UpdateTaskInput = {
 export type SetTaskStatusInput = {
   status: TaskStatus;
   sourceAction?: "board_manual_move";
+  runDefaults?: {
+    agentId?: string;
+    providerId?: string;
+    modelId?: string;
+  };
 };
 
 export type MoveTaskInput = {
@@ -197,11 +202,18 @@ export const setTaskStatus = async (
   taskId: string,
   input: SetTaskStatusInput,
 ): Promise<Task> => {
+  const normalizedAgentId = input.runDefaults?.agentId?.trim();
+  const normalizedProviderId = input.runDefaults?.providerId?.trim();
+  const normalizedModelId = input.runDefaults?.modelId?.trim();
+
   const response = await invoke<TaskResponse>("set_task_status", {
     id: taskId,
     input: {
       status: input.status,
       source_action: input.sourceAction,
+      ...(normalizedAgentId ? { agent_id: normalizedAgentId } : {}),
+      ...(normalizedProviderId ? { provider_id: normalizedProviderId } : {}),
+      ...(normalizedModelId ? { model_id: normalizedModelId } : {}),
     },
   });
   return toTask(response);

@@ -79,6 +79,17 @@ impl RunsService {
     }
 
     pub async fn create_or_reuse_active_run(&self, task_id: &str) -> Result<RunDto, AppError> {
+        self.create_or_reuse_active_run_with_defaults(task_id, None, None, None)
+            .await
+    }
+
+    pub async fn create_or_reuse_active_run_with_defaults(
+        &self,
+        task_id: &str,
+        agent_id: Option<&str>,
+        provider_id: Option<&str>,
+        model_id: Option<&str>,
+    ) -> Result<RunDto, AppError> {
         let task_id = task_id.trim();
         if task_id.is_empty() {
             return Err(AppError::validation("task_id is required"));
@@ -92,7 +103,10 @@ impl RunsService {
             return Ok(Self::to_dto(existing));
         }
 
-        match self.create_run(task_id).await {
+        match self
+            .create_run_with_defaults(task_id, agent_id, provider_id, model_id)
+            .await
+        {
             Ok(created) => Ok(created),
             Err(err) if Self::is_active_run_uniqueness_violation(&err) => {
                 if let Some(existing) = self

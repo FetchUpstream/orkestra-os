@@ -240,6 +240,35 @@ describe("tasks contract", () => {
     });
   });
 
+  it("sends board run defaults in set_task_status command when provided", async () => {
+    invokeMock.mockResolvedValue({
+      id: "task-123",
+      title: "Task",
+      status: "doing" satisfies TaskStatus,
+    });
+
+    await setTaskStatus("task-123", {
+      status: "doing",
+      sourceAction: "board_manual_move",
+      runDefaults: {
+        agentId: "agent-1",
+        providerId: "openai",
+        modelId: "gpt-5",
+      },
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
+      id: "task-123",
+      input: {
+        status: "doing",
+        source_action: "board_manual_move",
+        agent_id: "agent-1",
+        provider_id: "openai",
+        model_id: "gpt-5",
+      },
+    });
+  });
+
   it("sends implementation guide in update_task payload", async () => {
     invokeMock.mockResolvedValue({
       id: "task-123",
