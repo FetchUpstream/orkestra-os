@@ -97,7 +97,7 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
               <span class="text-base-content/45 text-[11px] font-medium tracking-[0.24em] uppercase">
                 Projects
               </span>
-              <span class="badge badge-ghost badge-xs border-base-content/10 text-base-content/55 text-[10px]">
+              <span class="badge badge-ghost badge-xs border-base-content/10 text-base-content/55 rounded-none text-[10px]">
                 {projectNavItems().length}
               </span>
             </div>

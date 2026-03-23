@@ -1,18 +1,21 @@
 import {
   For,
   Show,
+  Suspense,
   createEffect,
   createMemo,
   createSignal,
+  lazy,
   onCleanup,
   type Component,
 } from "solid-js";
 import BackIconLink from "../../../components/ui/BackIconLink";
 import NewRunChatWorkspace from "../components/NewRunChatWorkspace";
 import RunDiffDrawerPanel from "../components/RunDiffDrawerPanel";
-import RunTerminal from "../components/RunTerminal";
 import { formatGitStateLabel } from "./gitStateLabels";
 import { useRunDetailModel } from "../model/useRunDetailModel";
+
+const RunTerminal = lazy(() => import("../components/RunTerminal"));
 
 type OverlayState =
   | "none"
@@ -1069,18 +1072,24 @@ const NewRunDetailScreen: Component = () => {
                   </div>
                 </header>
                 <div class="run-chat-overlay-panel__body run-chat-overlay-panel__body--terminal">
-                  <RunTerminal
-                    isVisible={overlayState() === "sheet-terminal"}
-                    isStarting={model.terminal.isStarting()}
-                    isReady={model.terminal.isReady()}
-                    isInputEnabled={model.terminal.isInputEnabled()}
-                    error={model.terminal.error()}
-                    writeTerminal={model.terminal.writeTerminal}
-                    resizeTerminal={model.terminal.resizeTerminal}
-                    setTerminalFrameHandler={
-                      model.terminal.setTerminalFrameHandler
+                  <Suspense
+                    fallback={
+                      <p class="project-placeholder-text">Loading terminal.</p>
                     }
-                  />
+                  >
+                    <RunTerminal
+                      isVisible={overlayState() === "sheet-terminal"}
+                      isStarting={model.terminal.isStarting()}
+                      isReady={model.terminal.isReady()}
+                      isInputEnabled={model.terminal.isInputEnabled()}
+                      error={model.terminal.error()}
+                      writeTerminal={model.terminal.writeTerminal}
+                      resizeTerminal={model.terminal.resizeTerminal}
+                      setTerminalFrameHandler={
+                        model.terminal.setTerminalFrameHandler
+                      }
+                    />
+                  </Suspense>
                 </div>
               </section>
               <Show when={isCommitModalOpen()}>

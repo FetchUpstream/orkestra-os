@@ -255,10 +255,10 @@ const AppShell: Component<AppShellProps> = (props) => {
             }
             actions={
               <>
-                <span class="badge badge-outline border-primary/20 text-primary/80 hidden rounded-none px-2 text-[11px] tracking-[0.2em] uppercase md:inline-flex">
+                <span class="badge badge-outline border-base-content/15 text-base-content/65 bg-base-100 hidden rounded-none px-2 text-[11px] tracking-[0.2em] uppercase md:inline-flex">
                   Dark mode
                 </span>
-                <span class="badge badge-ghost border-base-content/15 text-base-content/60 rounded-none border px-2 text-[11px]">
+                <span class="badge badge-outline border-base-content/15 text-base-content/65 bg-base-100 rounded-none px-2 text-[11px]">
                   {projects().length} projects
                 </span>
               </>

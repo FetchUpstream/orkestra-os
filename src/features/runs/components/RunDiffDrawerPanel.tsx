@@ -1,12 +1,17 @@
 import {
   For,
+  Suspense,
   Show,
   createEffect,
   createSignal,
+  lazy,
   type Component,
 } from "solid-js";
-import MonacoDiffEditor from "../../../components/MonacoDiffEditor";
 import { useRunDetailModel } from "../model/useRunDetailModel";
+
+const MonacoDiffEditor = lazy(
+  () => import("../../../components/MonacoDiffEditor"),
+);
 
 type RunDiffDrawerPanelProps = {
   model: ReturnType<typeof useRunDetailModel>;
@@ -146,12 +151,20 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                             {payload()?.truncated ? ", truncated" : ""}
                           </p>
                           <div class="run-detail-monaco-panel">
-                            <MonacoDiffEditor
-                              original={payload()?.original ?? ""}
-                              modified={payload()?.modified ?? ""}
-                              language={payload()?.language}
-                              renderSideBySide={props.isSideBySide}
-                            />
+                            <Suspense
+                              fallback={
+                                <p class="project-placeholder-text">
+                                  Loading editor.
+                                </p>
+                              }
+                            >
+                              <MonacoDiffEditor
+                                original={payload()?.original ?? ""}
+                                modified={payload()?.modified ?? ""}
+                                language={payload()?.language}
+                                renderSideBySide={props.isSideBySide}
+                              />
+                            </Suspense>
                           </div>
                         </Show>
                       </Show>

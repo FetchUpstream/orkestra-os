@@ -4666,6 +4666,11 @@ textarea::placeholder {
     flex: 1;
   }
 
+  .task-detail-controls-actions .btn-square,
+  .task-detail-controls-actions .task-control-icon-button {
+    flex: 0 0 32px;
+  }
+
   .task-detail-definition-list div {
     grid-template-columns: 1fr;
     gap: 2px;
