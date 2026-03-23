@@ -20,11 +20,6 @@ impl RunsService {
         }
     }
 
-    pub async fn create_run(&self, task_id: &str) -> Result<RunDto, AppError> {
-        self.create_run_with_defaults(task_id, None, None, None)
-            .await
-    }
-
     pub async fn create_run_with_defaults(
         &self,
         task_id: &str,
@@ -76,11 +71,6 @@ impl RunsService {
             .await?;
 
         Ok(Self::to_dto(created))
-    }
-
-    pub async fn create_or_reuse_active_run(&self, task_id: &str) -> Result<RunDto, AppError> {
-        self.create_or_reuse_active_run_with_defaults(task_id, None, None, None)
-            .await
     }
 
     pub async fn create_or_reuse_active_run_with_defaults(
@@ -237,26 +227,6 @@ impl RunsService {
         self.get_run(run_id).await
     }
 
-    pub async fn update_run_opencode_session_id(
-        &self,
-        run_id: &str,
-        opencode_session_id: &str,
-    ) -> Result<bool, AppError> {
-        let run_id = run_id.trim();
-        if run_id.is_empty() {
-            return Err(AppError::validation("run_id is required"));
-        }
-
-        let opencode_session_id = opencode_session_id.trim();
-        if opencode_session_id.is_empty() {
-            return Err(AppError::validation("opencode_session_id is required"));
-        }
-
-        self.repository
-            .update_opencode_session_id(run_id, opencode_session_id)
-            .await
-    }
-
     pub async fn set_run_opencode_session_id_if_unset(
         &self,
         run_id: &str,
@@ -274,22 +244,6 @@ impl RunsService {
 
         self.repository
             .set_opencode_session_id_if_unset(run_id, opencode_session_id)
-            .await
-    }
-
-    pub async fn mark_initial_prompt_sent_if_unset(
-        &self,
-        run_id: &str,
-        client_request_id: Option<&str>,
-    ) -> Result<bool, AppError> {
-        let run_id = run_id.trim();
-        if run_id.is_empty() {
-            return Err(AppError::validation("run_id is required"));
-        }
-
-        let sent_at = Utc::now().to_rfc3339();
-        self.repository
-            .mark_initial_prompt_sent_if_unset(run_id, &sent_at, client_request_id)
             .await
     }
 
@@ -664,7 +618,10 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
 
-        let run = service.create_run("task-1").await.unwrap();
+        let run = service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
 
         assert_eq!(run.task_id, "task-1");
         assert_eq!(run.project_id, "project-1");
@@ -723,7 +680,9 @@ mod tests {
     async fn create_run_returns_not_found_for_missing_task() {
         let (service, _, _) = setup_service().await;
 
-        let result = service.create_run("missing-task").await;
+        let result = service
+            .create_run_with_defaults("missing-task", None, None, None)
+            .await;
 
         match result {
             Err(AppError::NotFound(message)) => assert_eq!(message, "task not found"),
@@ -735,7 +694,9 @@ mod tests {
     async fn create_run_returns_validation_error_for_empty_task_id() {
         let (service, _, _) = setup_service().await;
 
-        let result = service.create_run("   ").await;
+        let result = service
+            .create_run_with_defaults("   ", None, None, None)
+            .await;
 
         match result {
             Err(AppError::Validation(message)) => assert_eq!(message, "task_id is required"),
@@ -751,7 +712,10 @@ mod tests {
         seed_task(&pool, "task-1", &repo_path).await;
         seed_run_with_status(&pool, "run-active", "task-1", "running").await;
 
-        let run = service.create_or_reuse_active_run("task-1").await.unwrap();
+        let run = service
+            .create_or_reuse_active_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
 
         assert_eq!(run.id, "run-active");
         let run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE task_id = ?")
@@ -770,7 +734,10 @@ mod tests {
         seed_task(&pool, "task-1", &repo_path).await;
         seed_run_with_status(&pool, "run-old", "task-1", "completed").await;
 
-        let run = service.create_or_reuse_active_run("task-1").await.unwrap();
+        let run = service
+            .create_or_reuse_active_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
 
         assert_ne!(run.id, "run-old");
         assert_eq!(run.status, "queued");
@@ -796,7 +763,7 @@ mod tests {
             let service_clone = service.clone();
             tasks.push(tokio::spawn(async move {
                 service_clone
-                    .create_or_reuse_active_run("task-1")
+                    .create_or_reuse_active_run_with_defaults("task-1", None, None, None)
                     .await
                     .unwrap()
             }));
@@ -963,34 +930,6 @@ mod tests {
         .await;
 
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn mark_initial_prompt_sent_is_idempotent() {
-        let (service, pool, temp_dir) = setup_service().await;
-        let repo_path = temp_dir.path().join("repo");
-        init_git_repo(&repo_path);
-        seed_task(&pool, "task-1", &repo_path).await;
-        seed_run(&pool, "run-1", "task-1").await;
-
-        let first = service
-            .mark_initial_prompt_sent_if_unset("run-1", Some("initial-run-message:run-1"))
-            .await
-            .unwrap();
-        let second = service
-            .mark_initial_prompt_sent_if_unset("run-1", Some("initial-run-message:run-1"))
-            .await
-            .unwrap();
-
-        assert!(first);
-        assert!(!second);
-
-        let run = service.get_run_model("run-1").await.unwrap();
-        assert!(run.initial_prompt_sent_at.is_some());
-        assert_eq!(
-            run.initial_prompt_client_request_id.as_deref(),
-            Some("initial-run-message:run-1")
-        );
     }
 
     #[tokio::test]

@@ -23,6 +23,7 @@ pub struct TasksService {
 impl TasksService {
     const SOURCE_ACTION_BOARD_MANUAL_MOVE: &'static str = "board_manual_move";
 
+    #[cfg(test)]
     pub fn new(repository: TasksRepository) -> Self {
         Self {
             repository,

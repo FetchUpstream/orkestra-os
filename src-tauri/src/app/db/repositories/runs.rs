@@ -249,30 +249,6 @@ impl RunsRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn update_run_status(
-        &self,
-        run_id: &str,
-        from_status: &str,
-        to_status: &str,
-        started_at: Option<&str>,
-    ) -> Result<bool, AppError> {
-        let started_at_value = started_at.map(std::string::ToString::to_string);
-        let result = sqlx::query(
-            "UPDATE runs
-             SET status = ?,
-                 started_at = COALESCE(?, started_at)
-             WHERE id = ? AND status = ?",
-        )
-        .bind(to_status)
-        .bind(started_at_value)
-        .bind(run_id)
-        .bind(from_status)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
     pub async fn transition_queued_to_running_and_mark_task_doing(
         &self,
         run_id: &str,
@@ -313,24 +289,6 @@ impl RunsRepository {
         Ok(true)
     }
 
-    pub async fn update_opencode_session_id(
-        &self,
-        run_id: &str,
-        opencode_session_id: &str,
-    ) -> Result<bool, AppError> {
-        let result = sqlx::query(
-            "UPDATE runs
-             SET opencode_session_id = ?
-             WHERE id = ?",
-        )
-        .bind(opencode_session_id)
-        .bind(run_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
     pub async fn set_opencode_session_id_if_unset(
         &self,
         run_id: &str,
@@ -343,28 +301,6 @@ impl RunsRepository {
                AND (opencode_session_id IS NULL OR TRIM(opencode_session_id) = '')",
         )
         .bind(opencode_session_id)
-        .bind(run_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
-    pub async fn mark_initial_prompt_sent_if_unset(
-        &self,
-        run_id: &str,
-        sent_at: &str,
-        client_request_id: Option<&str>,
-    ) -> Result<bool, AppError> {
-        let result = sqlx::query(
-            "UPDATE runs
-             SET initial_prompt_sent_at = ?,
-                 initial_prompt_client_request_id = COALESCE(?, initial_prompt_client_request_id)
-             WHERE id = ?
-               AND initial_prompt_sent_at IS NULL",
-        )
-        .bind(sent_at)
-        .bind(client_request_id)
         .bind(run_id)
         .execute(&self.pool)
         .await?;
@@ -561,26 +497,6 @@ impl RunsRepository {
         .bind(run_id)
         .execute(&self.pool)
         .await?;
-        Ok(result.rows_affected() > 0)
-    }
-
-    pub async fn mark_run_completed(
-        &self,
-        run_id: &str,
-        finished_at: &str,
-    ) -> Result<bool, AppError> {
-        let result = sqlx::query(
-            "UPDATE runs
-             SET status = 'completed',
-                 finished_at = COALESCE(finished_at, ?)
-             WHERE id = ?
-               AND status != 'completed'",
-        )
-        .bind(finished_at)
-        .bind(run_id)
-        .execute(&self.pool)
-        .await?;
-
         Ok(result.rows_affected() > 0)
     }
 
