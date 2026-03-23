@@ -7,7 +7,7 @@ import {
   type Component,
   type JSX,
 } from "solid-js";
-import { listProjects } from "../lib/projects";
+import { listProjects, type Project } from "../lib/projects";
 import { primeRunSelectionOptionsCache } from "../lib/runSelectionOptionsCache";
 import MainContent from "../../components/layout/MainContent";
 import SidebarNav from "../../components/layout/SidebarNav";
@@ -25,6 +25,7 @@ const AppShell: Component<AppShellProps> = (props) => {
   const [isMobile, setIsMobile] = createSignal(false);
   const [desktopCollapsed, setDesktopCollapsed] = createSignal(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = createSignal(false);
+  const [projects, setProjects] = createSignal<Project[]>([]);
 
   const isSidebarVisible = () =>
     isMobile() ? mobileSidebarOpen() : !desktopCollapsed();
@@ -56,6 +57,7 @@ const AppShell: Component<AppShellProps> = (props) => {
 
     try {
       const projects = await listProjects();
+      setProjects(projects);
       if (projects.length === 0 && location.pathname !== "/projects") {
         navigate("/projects", { replace: true });
       }
@@ -164,10 +166,15 @@ const AppShell: Component<AppShellProps> = (props) => {
             aria-hidden={mobileSidebarOpen() ? "false" : "true"}
             onClick={onMobileClose}
           />
-          <SidebarNav isVisible={isSidebarVisible} onNavigate={onMobileClose} />
+          <SidebarNav
+            projects={projects}
+            isVisible={isSidebarVisible}
+            onNavigate={onMobileClose}
+          />
         </>
       ) : (
         <SidebarNav
+          projects={projects}
           isVisible={() => true}
           desktopCollapsed={desktopCollapsed}
           onCollapse={onDesktopCollapse}

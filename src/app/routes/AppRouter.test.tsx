@@ -364,23 +364,13 @@ describe("app routing and shell", () => {
     });
   });
 
-  it("renders expected sidebar links", () => {
-    renderAt("/board");
+  it("renders expected sidebar project item with key avatar", async () => {
+    renderAt("/board?projectId=p-1");
 
-    const links = [
-      "/board",
-      "/projects",
-      "/agents",
-      "/worktrees",
-      "/reviews",
-      "/settings",
-    ];
-    for (const href of links) {
-      const link = screen.getByRole("link", {
-        name: new RegExp(href.slice(1), "i"),
-      });
-      expect(link.getAttribute("href")).toBe(href);
-    }
+    const projectLink = await screen.findByRole("link", { name: /alpha/i });
+    expect(projectLink.getAttribute("href")).toBe("/board?projectId=p-1");
+    expect(projectLink.className).toContain("active");
+    expect(within(projectLink).getByText("ALP")).toBeTruthy();
   });
 
   it("toggles desktop sidebar state with shell collapse class", async () => {
@@ -391,7 +381,7 @@ describe("app routing and shell", () => {
     });
     expect(collapseButton.getAttribute("aria-controls")).toBe("app-sidebar");
     expect(collapseButton.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByRole("link", { name: "Board" })).toBeTruthy();
+    expect(await screen.findByRole("link", { name: /alpha/i })).toBeTruthy();
     const appShell = document.querySelector(".app-shell") as HTMLElement;
     expect(appShell.classList.contains("app-shell--desktop-collapsed")).toBe(
       false,
@@ -399,7 +389,7 @@ describe("app routing and shell", () => {
 
     await fireEvent.click(collapseButton);
 
-    expect(screen.queryByRole("link", { name: "Board" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /alpha/i })).toBeNull();
     expect(appShell.classList.contains("app-shell--desktop-collapsed")).toBe(
       true,
     );
@@ -413,7 +403,7 @@ describe("app routing and shell", () => {
     await fireEvent.click(expandButton);
 
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: "Board" })).toBeTruthy();
+      expect(screen.getByRole("link", { name: /alpha/i })).toBeTruthy();
       expect(
         screen.getByRole("button", { name: "Collapse sidebar" }),
       ).toBeTruthy();
@@ -427,7 +417,7 @@ describe("app routing and shell", () => {
     setViewportMobile(true);
     renderAt("/board");
 
-    expect(screen.queryByRole("link", { name: "Board" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /alpha/i })).toBeNull();
 
     const openButton = screen.getByRole("button", {
       name: "Open navigation menu",
@@ -438,7 +428,7 @@ describe("app routing and shell", () => {
     await fireEvent.click(openButton);
 
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: "Board" })).toBeTruthy();
+      expect(screen.getByRole("link", { name: /alpha/i })).toBeTruthy();
     });
 
     const backdrop = document.querySelector(
@@ -448,33 +438,45 @@ describe("app routing and shell", () => {
     await fireEvent.click(backdrop);
 
     await waitFor(() => {
-      expect(screen.queryByRole("link", { name: "Board" })).toBeNull();
+      expect(screen.queryByRole("link", { name: /alpha/i })).toBeNull();
     });
   });
 
   it("switches routes while keeping shell layout visible", async () => {
-    renderAt("/board");
+    renderAt("/projects");
 
-    expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("main")).toBeTruthy();
-    expect(screen.getAllByRole("heading", { name: "Board" })).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: "Projects" })).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getByLabelText("Project")).toBeTruthy();
-      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+      const sidebarNav = screen.getByRole("navigation", {
+        name: "Project navigation",
+      });
       expect(
-        screen.getByRole("heading", { name: "In Progress (0)" }),
+        within(sidebarNav).getByRole("link", { name: /alpha/i }),
       ).toBeTruthy();
-      expect(screen.getByRole("heading", { name: "Review (0)" })).toBeTruthy();
-      expect(screen.getByRole("heading", { name: "Done (0)" })).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByRole("link", { name: "Agents" }));
+    const sidebarNav = screen.getByRole("navigation", {
+      name: "Project navigation",
+    });
+    await fireEvent.click(
+      within(sidebarNav).getByRole("link", { name: /alpha/i }),
+    );
 
-    expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("main")).toBeTruthy();
-    expect(screen.getAllByRole("heading", { name: "Agents" })).toHaveLength(2);
-    expect(screen.getByText("Manage and configure agents.")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Board" })).toBeTruthy();
+      expect(screen.getByLabelText("Project")).toBeTruthy();
+    });
   });
+
+  it.each(["/agents", "/worktrees", "/reviews", "/settings"])(
+    "renders not found for removed route %s",
+    (route) => {
+      renderAt(route);
+      expect(screen.getByRole("heading", { name: "Not Found" })).toBeTruthy();
+    },
+  );
 
   it("loads board with project summaries and uses project detail for new task", async () => {
     invokeMock.mockImplementation((command: string) => {

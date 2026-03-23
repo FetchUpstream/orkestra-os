@@ -1,13 +1,31 @@
-export type NavItemConfig = {
+import type { Project } from "./projects";
+
+export type ProjectNavItemConfig = {
+  id: string;
   label: string;
+  keyAvatar: string;
   href: string;
 };
 
-export const navItems: NavItemConfig[] = [
-  { label: "Board", href: "/board" },
-  { label: "Projects", href: "/projects" },
-  { label: "Agents", href: "/agents" },
-  { label: "Worktrees", href: "/worktrees" },
-  { label: "Reviews", href: "/reviews" },
-  { label: "Settings", href: "/settings" },
-];
+const PROJECT_KEY_AVATAR_FALLBACK = "PRJ";
+
+const normalizeAvatarKey = (project: Pick<Project, "key" | "name">) => {
+  const fromKey = project.key?.trim().toUpperCase();
+  if (fromKey) return fromKey;
+
+  const fromName = project.name
+    .trim()
+    .replace(/[^A-Za-z0-9]/g, "")
+    .toUpperCase()
+    .slice(0, 3);
+  return fromName || PROJECT_KEY_AVATAR_FALLBACK;
+};
+
+export const buildProjectNavItem = (
+  project: Pick<Project, "id" | "name" | "key">,
+): ProjectNavItemConfig => ({
+  id: project.id,
+  label: project.name,
+  keyAvatar: normalizeAvatarKey(project),
+  href: `/board?projectId=${encodeURIComponent(project.id)}`,
+});

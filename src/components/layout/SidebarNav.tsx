@@ -1,8 +1,10 @@
-import type { Accessor, Component } from "solid-js";
-import { navItems } from "../../app/lib/nav";
-import NavItem from "../ui/NavItem";
+import { A, useLocation } from "@solidjs/router";
+import { createMemo, type Accessor, type Component } from "solid-js";
+import { buildProjectNavItem } from "../../app/lib/nav";
+import type { Project } from "../../app/lib/projects";
 
 type SidebarNavProps = {
+  projects?: Accessor<Project[]>;
   onCollapse?: () => void;
   onExpand?: () => void;
   onNavigate?: () => void;
@@ -11,6 +13,18 @@ type SidebarNavProps = {
 };
 
 const SidebarNav: Component<SidebarNavProps> = (props) => {
+  const location = useLocation();
+  const projectNavItems = createMemo(() =>
+    (props.projects?.() ?? []).map(buildProjectNavItem),
+  );
+
+  const isProjectActive = (projectId: string) => {
+    const params = new URLSearchParams(location.search);
+    return (
+      location.pathname === "/board" && params.get("projectId") === projectId
+    );
+  };
+
   return (
     <aside
       id="app-sidebar"
@@ -28,7 +42,7 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
           </div>
           <nav
             class="sidebar-nav"
-            aria-label="Main navigation"
+            aria-label="Project navigation"
             onClick={(event) => {
               const target = event.target as HTMLElement;
               if (target.closest("a")) {
@@ -36,8 +50,17 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
               }
             }}
           >
-            {navItems.map((item) => (
-              <NavItem href={item.href} label={item.label} />
+            {projectNavItems().map((item) => (
+              <A
+                href={item.href}
+                class="nav-item nav-item--project"
+                classList={{ active: isProjectActive(item.id) }}
+              >
+                <span class="nav-item-avatar" aria-hidden="true">
+                  {item.keyAvatar}
+                </span>
+                <span class="nav-item-label">{item.label}</span>
+              </A>
             ))}
           </nav>
         </div>
