@@ -2218,6 +2218,10 @@ textarea::placeholder {
   min-width: 0;
 }
 
+.task-run-settings-modal {
+  width: min(640px, 100%);
+}
+
 .task-runs-list {
   margin: 0;
   padding: 0;

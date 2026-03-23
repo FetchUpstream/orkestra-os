@@ -7,6 +7,7 @@ import {
 } from "@solidjs/testing-library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AppRouter from "../../router";
+import { resetRunSelectionOptionsCacheForTests } from "../lib/runSelectionOptionsCache";
 
 const { invokeMock, listenMock, emitTauriEvent } = vi.hoisted(() => {
   const listeners = new Map<
@@ -139,6 +140,7 @@ const resetLocalStorageMock = () => {
 
 describe("app routing and shell", () => {
   beforeEach(() => {
+    resetRunSelectionOptionsCacheForTests();
     setViewportMobile(false);
     resetLocalStorageMock();
     invokeMock.mockReset();
@@ -3065,13 +3067,27 @@ describe("app routing and shell", () => {
           "Execution completed successfully and outputs are ready.",
         ),
       ).toBeTruthy();
+      expect(screen.queryByLabelText("Default run agent")).toBeNull();
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "New run" }));
 
     await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: "New run settings" }),
+      ).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+
+    await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("create_run", {
-        taskId: "task-123",
+        request: {
+          taskId: "task-123",
+          agentId: undefined,
+          providerId: undefined,
+          modelId: undefined,
+        },
       });
       expect(listRunsCallCount).toBe(2);
       expect(screen.getByText("Run #13")).toBeTruthy();
@@ -3201,7 +3217,18 @@ describe("app routing and shell", () => {
     );
 
     await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: "New run settings" }),
+      ).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+
+    await waitFor(() => {
       expect(screen.getByRole("dialog", { name: "Run blocked" })).toBeTruthy();
+      expect(
+        screen.queryByRole("dialog", { name: "New run settings" }),
+      ).toBeNull();
       expect(
         screen.getByText(
           "This task is blocked. Wait for ALP-1 - Schema, ALP-2 - Migrations, ALP-3 - Fixtures +1 more to complete first.",
@@ -3302,8 +3329,21 @@ describe("app routing and shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "New run" }));
 
     await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: "New run settings" }),
+      ).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+
+    await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("create_run", {
-        taskId: "task-123",
+        request: {
+          taskId: "task-123",
+          agentId: undefined,
+          providerId: undefined,
+          modelId: undefined,
+        },
       });
       expect(screen.queryByRole("dialog", { name: "Run blocked" })).toBeNull();
     });

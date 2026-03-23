@@ -1,25 +1,28 @@
 import { render, waitFor } from "@solidjs/testing-library";
+import { createMutable } from "solid-js/store";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useTaskDetailModel } from "../useTaskDetailModel";
 
+const paramsState = createMutable({ projectId: "project-1", taskId: "task-1" });
+
 const {
-  paramsState,
   navigateMock,
   getTaskMock,
   listTaskRunsMock,
   startRunOpenCodeMock,
   createRunMock,
   listTaskDependenciesMock,
-  getRunSelectionOptionsMock,
+  getRunSelectionOptionsWithCacheMock,
+  readRunSelectionOptionsCacheMock,
 } = vi.hoisted(() => ({
-  paramsState: { projectId: "project-1", taskId: "task-1" },
   navigateMock: vi.fn(),
   getTaskMock: vi.fn(),
   listTaskRunsMock: vi.fn(),
   startRunOpenCodeMock: vi.fn(),
   createRunMock: vi.fn(),
   listTaskDependenciesMock: vi.fn(),
-  getRunSelectionOptionsMock: vi.fn(),
+  getRunSelectionOptionsWithCacheMock: vi.fn(),
+  readRunSelectionOptionsCacheMock: vi.fn(),
 }));
 
 vi.mock("@solidjs/router", () => ({
@@ -54,18 +57,25 @@ vi.mock("../../../../app/lib/runs", () => ({
   deleteRun: vi.fn(),
   listTaskRuns: listTaskRunsMock,
   startRunOpenCode: startRunOpenCodeMock,
-  getRunSelectionOptions: getRunSelectionOptionsMock,
+}));
+
+vi.mock("../../../../app/lib/runSelectionOptionsCache", () => ({
+  getRunSelectionOptionsWithCache: getRunSelectionOptionsWithCacheMock,
+  readRunSelectionOptionsCache: readRunSelectionOptionsCacheMock,
 }));
 
 describe("useTaskDetailModel start run", () => {
   beforeEach(() => {
+    paramsState.projectId = "project-1";
+    paramsState.taskId = "task-1";
     navigateMock.mockReset();
     getTaskMock.mockReset();
     listTaskRunsMock.mockReset();
     startRunOpenCodeMock.mockReset();
     createRunMock.mockReset();
     listTaskDependenciesMock.mockReset();
-    getRunSelectionOptionsMock.mockReset();
+    getRunSelectionOptionsWithCacheMock.mockReset();
+    readRunSelectionOptionsCacheMock.mockReset();
 
     getTaskMock.mockResolvedValue({
       id: "task-1",
@@ -102,7 +112,8 @@ describe("useTaskDetailModel start run", () => {
       clientRequestId: "initial-run-message:run-1",
       readyPhase: "warm_handle",
     });
-    getRunSelectionOptionsMock.mockResolvedValue({
+    readRunSelectionOptionsCacheMock.mockReturnValue(null);
+    getRunSelectionOptionsWithCacheMock.mockResolvedValue({
       agents: [],
       providers: [],
       models: [],
@@ -125,6 +136,159 @@ describe("useTaskDetailModel start run", () => {
     await ref.current?.onStartRun("run-1");
     expect(startRunOpenCodeMock).toHaveBeenCalledWith("run-1");
     expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("does not block task detail readiness on run option loading", async () => {
+    let resolveOptions: () => void = () => {};
+    getRunSelectionOptionsWithCacheMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveOptions = () =>
+            resolve({
+              agents: [{ id: "agent-1", label: "Planner" }],
+              providers: [{ id: "provider-1", label: "OpenAI" }],
+              models: [
+                { id: "model-1", label: "GPT-5", providerId: "provider-1" },
+              ],
+            });
+        }),
+    );
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+      expect(ref.current?.isLoading()).toBe(false);
+      expect(ref.current?.isLoadingRunSelectionOptions()).toBe(true);
+    });
+
+    resolveOptions();
+
+    await waitFor(() => {
+      expect(ref.current?.isLoadingRunSelectionOptions()).toBe(false);
+      expect(ref.current?.hasRunSelectionOptions()).toBe(true);
+    });
+  });
+
+  it("uses startup-cached run options when available", async () => {
+    readRunSelectionOptionsCacheMock.mockReturnValueOnce({
+      agents: [{ id: "agent-cached", label: "Cached Agent" }],
+      providers: [{ id: "provider-cached", label: "Cached Provider" }],
+      models: [
+        {
+          id: "model-cached",
+          label: "Cached Model",
+          providerId: "provider-cached",
+        },
+      ],
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.runProviderOptions()).toEqual([
+        { id: "provider-cached", label: "Cached Provider" },
+      ]);
+      expect(ref.current?.isLoadingRunSelectionOptions()).toBe(false);
+    });
+
+    expect(getRunSelectionOptionsWithCacheMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale run option responses across rapid task switches", async () => {
+    getTaskMock.mockImplementation(async (taskId: string) => ({
+      id: taskId,
+      projectId: "project-1",
+      title: `Task ${taskId}`,
+      description: "Desc",
+      implementationGuide: "Guide",
+      status: "todo",
+      isBlocked: false,
+      blockedByCount: 0,
+    }));
+
+    let resolveFirstOptions: () => void = () => {};
+    let resolveSecondOptions: () => void = () => {};
+    getRunSelectionOptionsWithCacheMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstOptions = () =>
+              resolve({
+                agents: [{ id: "agent-stale", label: "Stale" }],
+                providers: [{ id: "provider-stale", label: "Stale" }],
+                models: [
+                  {
+                    id: "model-stale",
+                    label: "Stale",
+                    providerId: "provider-stale",
+                  },
+                ],
+              });
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecondOptions = () =>
+              resolve({
+                agents: [{ id: "agent-current", label: "Current" }],
+                providers: [{ id: "provider-current", label: "Current" }],
+                models: [
+                  {
+                    id: "model-current",
+                    label: "Current",
+                    providerId: "provider-current",
+                  },
+                ],
+              });
+          }),
+      );
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()?.id).toBe("task-1");
+    });
+
+    paramsState.taskId = "task-2";
+
+    await waitFor(() => {
+      expect(ref.current?.task()?.id).toBe("task-2");
+    });
+
+    resolveSecondOptions();
+    await waitFor(() => {
+      expect(ref.current?.runProviderOptions()).toEqual([
+        { id: "provider-current", label: "Current" },
+      ]);
+      expect(ref.current?.isLoadingRunSelectionOptions()).toBe(false);
+    });
+
+    resolveFirstOptions();
+    await waitFor(() => {
+      expect(ref.current?.runProviderOptions()).toEqual([
+        { id: "provider-current", label: "Current" },
+      ]);
+    });
   });
 
   it("blocks concurrent start requests while one start is in flight", async () => {
@@ -329,7 +493,7 @@ describe("useTaskDetailModel start run", () => {
   });
 
   it("passes selected run defaults into createRun", async () => {
-    getRunSelectionOptionsMock.mockResolvedValue({
+    getRunSelectionOptionsWithCacheMock.mockResolvedValue({
       agents: [{ id: "agent-1", label: "Planner" }],
       providers: [{ id: "provider-1", label: "OpenAI" }],
       models: [{ id: "model-1", label: "GPT-5", providerId: "provider-1" }],
@@ -360,8 +524,34 @@ describe("useTaskDetailModel start run", () => {
     });
   });
 
+  it("auto-selects provider when selecting a model", async () => {
+    getRunSelectionOptionsWithCacheMock.mockResolvedValue({
+      agents: [],
+      providers: [{ id: "provider-1", label: "OpenAI" }],
+      models: [{ id: "model-1", label: "GPT-5", providerId: "provider-1" }],
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    ref.current?.setSelectedRunProviderId("");
+    ref.current?.setSelectedRunModelId("model-1");
+
+    expect(ref.current?.selectedRunProviderId()).toBe("provider-1");
+    expect(ref.current?.selectedRunModelId()).toBe("model-1");
+  });
+
   it("clears stale selected model when provider changes", async () => {
-    getRunSelectionOptionsMock.mockResolvedValue({
+    getRunSelectionOptionsWithCacheMock.mockResolvedValue({
       agents: [],
       providers: [
         { id: "provider-1", label: "OpenAI" },

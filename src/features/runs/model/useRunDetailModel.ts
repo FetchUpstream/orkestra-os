@@ -5,7 +5,6 @@ import {
   bootstrapRunOpenCode,
   appendCappedHistory,
   getRun,
-  getRunSelectionOptions,
   getRunGitMergeStatus,
   getRunDiffFile,
   killRunTerminal,
@@ -31,6 +30,10 @@ import {
   type RunTerminalFrame,
   writeRunTerminal,
 } from "../../../app/lib/runs";
+import {
+  getRunSelectionOptionsWithCache,
+  readRunSelectionOptionsCache,
+} from "../../../app/lib/runSelectionOptionsCache";
 import { getTask, type Task } from "../../../app/lib/tasks";
 import {
   createEmptyAgentStore,
@@ -897,9 +900,18 @@ export const useRunDetailModel = () => {
   };
 
   const refreshRunSelectionOptions = async (): Promise<void> => {
+    const cachedOptions = readRunSelectionOptionsCache();
+    if (cachedOptions) {
+      setRunSelectionOptionsError("");
+      setRunAgentOptions(cachedOptions.agents);
+      setRunProviderOptions(cachedOptions.providers);
+      setRunModelOptions(cachedOptions.models);
+      return;
+    }
+
     setRunSelectionOptionsError("");
     try {
-      const options = await getRunSelectionOptions();
+      const options = await getRunSelectionOptionsWithCache();
       setRunAgentOptions(options.agents);
       setRunProviderOptions(options.providers);
       setRunModelOptions(options.models);

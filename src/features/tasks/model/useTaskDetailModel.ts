@@ -19,13 +19,16 @@ import {
 import {
   createRun,
   deleteRun,
-  getRunSelectionOptions,
   listTaskRuns,
   startRunOpenCode,
   type RunSelectionOption,
   type RunModelOption,
   type Run,
 } from "../../../app/lib/runs";
+import {
+  getRunSelectionOptionsWithCache,
+  readRunSelectionOptionsCache,
+} from "../../../app/lib/runSelectionOptionsCache";
 import {
   filterDependencyCandidates,
   getActionErrorMessage,
@@ -99,6 +102,8 @@ export const useTaskDetailModel = () => {
   const [runsError, setRunsError] = createSignal("");
   const [isLoadingRuns, setIsLoadingRuns] = createSignal(false);
   const [isCreatingRun, setIsCreatingRun] = createSignal(false);
+  const [isRunSettingsModalOpen, setIsRunSettingsModalOpen] =
+    createSignal(false);
   const [isBlockedRunWarningOpen, setIsBlockedRunWarningOpen] =
     createSignal(false);
   const [deletingRunId, setDeletingRunId] = createSignal("");
@@ -114,15 +119,19 @@ export const useTaskDetailModel = () => {
   );
   const [runSelectionOptionsError, setRunSelectionOptionsError] =
     createSignal("");
+  const [isLoadingRunSelectionOptions, setIsLoadingRunSelectionOptions] =
+    createSignal(false);
   const [selectedRunAgentId, setSelectedRunAgentId] = createSignal("");
-  const [selectedRunProviderId, setSelectedRunProviderId] = createSignal("");
-  const [selectedRunModelId, setSelectedRunModelId] = createSignal("");
+  const [selectedRunProviderId, setSelectedRunProviderIdSignal] =
+    createSignal("");
+  const [selectedRunModelId, setSelectedRunModelIdSignal] = createSignal("");
   const [warmingRunIds, setWarmingRunIds] = createSignal<
     Record<string, boolean>
   >({});
   const [runStartErrors, setRunStartErrors] = createSignal<
     Record<string, string>
   >({});
+  let runSelectionOptionsRequestVersion = 0;
 
   const taskDetailOrigin = createMemo(() => {
     const searchParams = new URLSearchParams(location.search);
@@ -203,9 +212,28 @@ export const useTaskDetailModel = () => {
       return;
     }
     if (!doesModelMatchProvider(modelId, providerId)) {
-      setSelectedRunModelId("");
+      setSelectedRunModelIdSignal("");
     }
   });
+
+  const setSelectedRunProviderId = (providerId: string) => {
+    setSelectedRunProviderIdSignal(providerId);
+  };
+
+  const setSelectedRunModelId = (modelId: string) => {
+    setSelectedRunModelIdSignal(modelId);
+    if (!modelId) {
+      return;
+    }
+
+    const selectedModel = runModelOptions().find(
+      (option) => option.id === modelId,
+    );
+    const providerId = selectedModel?.providerId?.trim() || "";
+    if (providerId && providerId !== selectedRunProviderId().trim()) {
+      setSelectedRunProviderIdSignal(providerId);
+    }
+  };
 
   const hasRunSelectionOptions = createMemo(() => {
     return (
@@ -296,18 +324,49 @@ export const useTaskDetailModel = () => {
     }
   };
 
-  const refreshRunSelectionOptions = async () => {
+  const refreshRunSelectionOptions = async (activeTaskId: string) => {
+    const requestVersion = ++runSelectionOptionsRequestVersion;
+    const cachedOptions = readRunSelectionOptionsCache();
+    if (cachedOptions) {
+      setRunSelectionOptionsError("");
+      setIsLoadingRunSelectionOptions(false);
+      setRunAgentOptions(cachedOptions.agents);
+      setRunProviderOptions(cachedOptions.providers);
+      setRunModelOptions(cachedOptions.models);
+      return;
+    }
+
+    setIsLoadingRunSelectionOptions(true);
     setRunSelectionOptionsError("");
     try {
-      const options = await getRunSelectionOptions();
+      const options = await getRunSelectionOptionsWithCache();
+      if (
+        requestVersion !== runSelectionOptionsRequestVersion ||
+        params.taskId !== activeTaskId
+      ) {
+        return;
+      }
       setRunAgentOptions(options.agents);
       setRunProviderOptions(options.providers);
       setRunModelOptions(options.models);
     } catch {
+      if (
+        requestVersion !== runSelectionOptionsRequestVersion ||
+        params.taskId !== activeTaskId
+      ) {
+        return;
+      }
       setRunSelectionOptionsError("Failed to load run options.");
       setRunAgentOptions([]);
       setRunProviderOptions([]);
       setRunModelOptions([]);
+    } finally {
+      if (
+        requestVersion === runSelectionOptionsRequestVersion &&
+        params.taskId === activeTaskId
+      ) {
+        setIsLoadingRunSelectionOptions(false);
+      }
     }
   };
 
@@ -510,11 +569,11 @@ export const useTaskDetailModel = () => {
         setEditDescription(detail.description || "");
         setEditImplementationGuide(detail.implementationGuide || "");
         const resolvedProjectId = detail.projectId || params.projectId || null;
+        void refreshRunSelectionOptions(activeTaskId);
         await Promise.all([
           loadProjectContext(resolvedProjectId),
           refreshDependencies(detail.id),
           refreshRuns(detail.id),
-          refreshRunSelectionOptions(),
           loadDependencyCandidates(resolvedProjectId),
         ]);
       } catch {
@@ -648,10 +707,11 @@ export const useTaskDetailModel = () => {
 
   const onCreateRun = async () => {
     const taskValue = task();
-    if (!taskValue) return;
+    if (!taskValue) return false;
     if (isBlocked()) {
+      setIsRunSettingsModalOpen(false);
       setIsBlockedRunWarningOpen(true);
-      return;
+      return false;
     }
     setActionError("");
     setIsCreatingRun(true);
@@ -662,12 +722,32 @@ export const useTaskDetailModel = () => {
         modelId: selectedRunModelId().trim() || undefined,
       });
       await refreshRuns(taskValue.id);
+      return true;
     } catch (mutationError) {
       setActionError(
         getActionErrorMessage("Failed to create run.", mutationError),
       );
+      return false;
     } finally {
       setIsCreatingRun(false);
+    }
+  };
+
+  const onOpenRunSettingsModal = () => {
+    if (isCreatingRun()) return;
+    setActionError("");
+    setIsRunSettingsModalOpen(true);
+  };
+
+  const onCancelRunSettingsModal = () => {
+    if (isCreatingRun()) return;
+    setIsRunSettingsModalOpen(false);
+  };
+
+  const onConfirmCreateRun = async () => {
+    const created = await onCreateRun();
+    if (created) {
+      setIsRunSettingsModalOpen(false);
     }
   };
 
@@ -764,6 +844,7 @@ export const useTaskDetailModel = () => {
     runsError,
     isLoadingRuns,
     isCreatingRun,
+    isRunSettingsModalOpen,
     isBlockedRunWarningOpen,
     isBlocked,
     taskDependencyBadgeState,
@@ -778,6 +859,7 @@ export const useTaskDetailModel = () => {
     runModelOptions,
     visibleRunModelOptions,
     runSelectionOptionsError,
+    isLoadingRunSelectionOptions,
     hasRunSelectionOptions,
     selectedRunAgentId,
     selectedRunProviderId,
@@ -844,6 +926,9 @@ export const useTaskDetailModel = () => {
     onConfirmDeleteTask,
     onRemoveDependency,
     onCreateRun,
+    onOpenRunSettingsModal,
+    onCancelRunSettingsModal,
+    onConfirmCreateRun,
     onStartRun,
     onDeleteRun,
   };

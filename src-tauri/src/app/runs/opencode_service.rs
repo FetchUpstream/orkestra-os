@@ -1140,7 +1140,17 @@ impl RunsOpenCodeService {
     pub async fn list_run_opencode_agents(&self) -> Result<RunAgentsResponseDto, AppError> {
         self.with_ephemeral_client(|client| {
             Box::pin(async move {
-                let response = client
+                let app_agents_response = client
+                    .app()
+                    .agents(RequestOptions::default())
+                    .await
+                    .map_err(|err| {
+                        AppError::validation(format!(
+                            "failed to list OpenCode app agents: {err}"
+                        ))
+                    })?;
+
+                let config_response = client
                     .config()
                     .get(RequestOptions::default())
                     .await
@@ -1148,7 +1158,11 @@ impl RunsOpenCodeService {
                         AppError::validation(format!("failed to list OpenCode agents: {err}"))
                     })?;
 
-                let agents = dedupe_agents(parse_agents_from_config_payload(&response.data));
+                let agents = dedupe_agents([
+                    parse_agents_from_config_payload(&app_agents_response.data),
+                    parse_agents_from_config_payload(&config_response.data),
+                ]
+                .concat());
 
                 Ok(RunAgentsResponseDto { agents })
             })
@@ -2626,6 +2640,31 @@ mod tests {
         assert!(agents.iter().any(|agent| agent.id == "build"));
         assert!(agents.iter().any(|agent| agent.id == "plan"));
         assert!(agents.iter().any(|agent| agent.id == "review"));
+    }
+
+    #[test]
+    fn merge_agent_sources_includes_app_agents_and_config_agents_without_duplicates() {
+        let app_agents = serde_json::json!([
+            { "id": "build", "name": "Build" },
+            { "id": "review", "name": "Review" }
+        ]);
+        let config_get = serde_json::json!({
+            "agents": {
+                "build": { "name": "Build from config" },
+                "plan": { "name": "Plan" }
+            }
+        });
+
+        let agents = super::dedupe_agents([
+            super::parse_agents_from_config_payload(&app_agents),
+            super::parse_agents_from_config_payload(&config_get),
+        ]
+        .concat());
+
+        assert_eq!(agents.len(), 3);
+        assert_eq!(agents[0].id, "build");
+        assert_eq!(agents[1].id, "review");
+        assert_eq!(agents[2].id, "plan");
     }
 
     #[test]

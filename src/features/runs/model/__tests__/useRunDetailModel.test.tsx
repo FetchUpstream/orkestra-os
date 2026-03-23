@@ -19,7 +19,8 @@ const {
   subscribeRunOpenCodeEventsMock,
   unsubscribeRunOpenCodeEventsMock,
   submitRunOpenCodePromptMock,
-  getRunSelectionOptionsMock,
+  getRunSelectionOptionsWithCacheMock,
+  readRunSelectionOptionsCacheMock,
   replyRunOpenCodePermissionMock,
   getRunGitMergeStatusMock,
   rebaseRunWorktreeOntoSourceMock,
@@ -34,7 +35,8 @@ const {
   subscribeRunOpenCodeEventsMock: vi.fn(),
   unsubscribeRunOpenCodeEventsMock: vi.fn(),
   submitRunOpenCodePromptMock: vi.fn(),
-  getRunSelectionOptionsMock: vi.fn(),
+  getRunSelectionOptionsWithCacheMock: vi.fn(),
+  readRunSelectionOptionsCacheMock: vi.fn(),
   replyRunOpenCodePermissionMock: vi.fn(),
   getRunGitMergeStatusMock: vi.fn(),
   rebaseRunWorktreeOntoSourceMock: vi.fn(),
@@ -78,11 +80,15 @@ vi.mock("../../../../app/lib/runs", () => ({
   resizeRunTerminal: vi.fn(async () => undefined),
   setRunDiffWatch: vi.fn(async () => undefined),
   submitRunOpenCodePrompt: submitRunOpenCodePromptMock,
-  getRunSelectionOptions: getRunSelectionOptionsMock,
   replyRunOpenCodePermission: replyRunOpenCodePermissionMock,
   subscribeRunOpenCodeEvents: subscribeRunOpenCodeEventsMock,
   unsubscribeRunOpenCodeEvents: unsubscribeRunOpenCodeEventsMock,
   writeRunTerminal: writeRunTerminalMock,
+}));
+
+vi.mock("../../../../app/lib/runSelectionOptionsCache", () => ({
+  getRunSelectionOptionsWithCache: getRunSelectionOptionsWithCacheMock,
+  readRunSelectionOptionsCache: readRunSelectionOptionsCacheMock,
 }));
 
 vi.mock("../../../../app/lib/tasks", () => ({
@@ -98,7 +104,8 @@ describe("useRunDetailModel startup ownership", () => {
     subscribeRunOpenCodeEventsMock.mockReset();
     unsubscribeRunOpenCodeEventsMock.mockReset();
     submitRunOpenCodePromptMock.mockReset();
-    getRunSelectionOptionsMock.mockReset();
+    getRunSelectionOptionsWithCacheMock.mockReset();
+    readRunSelectionOptionsCacheMock.mockReset();
     replyRunOpenCodePermissionMock.mockReset();
     getRunGitMergeStatusMock.mockReset();
     rebaseRunWorktreeOntoSourceMock.mockReset();
@@ -157,7 +164,8 @@ describe("useRunDetailModel startup ownership", () => {
       status: "doing",
       projectId: "project-1",
     });
-    getRunSelectionOptionsMock.mockResolvedValue({
+    readRunSelectionOptionsCacheMock.mockReturnValue(null);
+    getRunSelectionOptionsWithCacheMock.mockResolvedValue({
       agents: [],
       providers: [],
       models: [],
@@ -176,6 +184,35 @@ describe("useRunDetailModel startup ownership", () => {
     });
 
     expect(submitRunOpenCodePromptMock).not.toHaveBeenCalled();
+  });
+
+  it("uses startup-cached run options when available", async () => {
+    readRunSelectionOptionsCacheMock.mockReturnValueOnce({
+      agents: [{ id: "agent-cached", label: "Cached Agent" }],
+      providers: [{ id: "provider-cached", label: "Cached Provider" }],
+      models: [
+        {
+          id: "model-cached",
+          label: "Cached Model",
+          providerId: "provider-cached",
+        },
+      ],
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(modelRef!.agent.runProviderOptions()).toEqual([
+        { id: "provider-cached", label: "Cached Provider" },
+      ]);
+    });
+
+    expect(getRunSelectionOptionsWithCacheMock).not.toHaveBeenCalled();
   });
 
   it("sends conflict summary into chat once per fingerprint", async () => {

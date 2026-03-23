@@ -8,6 +8,7 @@ import {
   type JSX,
 } from "solid-js";
 import { listProjects } from "../lib/projects";
+import { primeRunSelectionOptionsCache } from "../lib/runSelectionOptionsCache";
 import MainContent from "../../components/layout/MainContent";
 import SidebarNav from "../../components/layout/SidebarNav";
 
@@ -29,6 +30,8 @@ const AppShell: Component<AppShellProps> = (props) => {
     isMobile() ? mobileSidebarOpen() : !desktopCollapsed();
 
   onMount(async () => {
+    primeRunSelectionOptionsCache();
+
     const mediaQuery = window.matchMedia("(max-width: 900px)");
     const updateMobileMode = (matches: boolean) => {
       setIsMobile(matches);
