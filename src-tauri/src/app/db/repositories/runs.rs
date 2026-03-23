@@ -78,7 +78,7 @@ impl RunsRepository {
 
     pub async fn create_run(&self, input: NewRun) -> Result<Run, AppError> {
         sqlx::query(
-             "INSERT INTO runs (
+            "INSERT INTO runs (
                 id,
                 task_id,
                 project_id,
@@ -194,7 +194,10 @@ impl RunsRepository {
         Ok(row.map(Self::map_row_to_run))
     }
 
-    pub async fn get_latest_active_run_for_task(&self, task_id: &str) -> Result<Option<Run>, AppError> {
+    pub async fn get_latest_active_run_for_task(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<Run>, AppError> {
         let row = sqlx::query(
             "SELECT
                 id,

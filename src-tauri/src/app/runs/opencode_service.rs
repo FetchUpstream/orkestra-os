@@ -1,10 +1,9 @@
 use crate::app::errors::AppError;
 use crate::app::runs::dto::{
-    BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent, RunAgentDto,
-    RunAgentsResponseDto, RunDto, RunModelSelectionDto, RunProviderDto, RunProvidersResponseDto,
-    ReplyRunOpenCodePermissionResponse,
-    RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, StartRunOpenCodeResponse,
-    SubmitRunOpenCodePromptResponse,
+    BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent,
+    ReplyRunOpenCodePermissionResponse, RunAgentDto, RunAgentsResponseDto, RunDto,
+    RunModelSelectionDto, RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, RunProviderDto,
+    RunProvidersResponseDto, StartRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::service::RunsService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
@@ -19,8 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
-use tokio::sync::RwLock;
 use tokio::process::Command;
+use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration, Instant};
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
@@ -85,18 +84,292 @@ fn parse_string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String
     None
 }
 
-fn parse_array_payload(value: serde_json::Value) -> Vec<serde_json::Value> {
-    if let Some(array) = value.as_array() {
-        return array.clone();
-    }
+fn collect_named_child_values<'a>(
+    value: &'a serde_json::Value,
+    keys: &[&str],
+) -> Vec<&'a serde_json::Value> {
+    let mut collected = Vec::new();
     if let Some(object) = value.as_object() {
-        for key in ["items", "data", "providers", "agents"] {
-            if let Some(array) = object.get(key).and_then(|candidate| candidate.as_array()) {
-                return array.clone();
+        for key in keys {
+            if let Some(child) = object.get(*key) {
+                collected.push(child);
             }
         }
     }
-    vec![]
+    collected
+}
+
+fn parse_models_from_provider_value(
+    provider_id: &str,
+    provider_name: Option<&str>,
+    value: &serde_json::Value,
+) -> Vec<RunModelSelectionDto> {
+    let mut models = Vec::new();
+
+    let mut push_model = |model: &serde_json::Value, fallback_id: Option<&str>| {
+        let model_id = parse_string_field(model, &["id", "modelID", "modelId", "key", "value"])
+            .or_else(|| fallback_id.and_then(|v| to_nonempty_trimmed_string(Some(v))));
+        let Some(model_id) = model_id else {
+            return;
+        };
+
+        let model_name =
+            parse_string_field(model, &["name", "title", "displayName", "display_name"])
+                .or_else(|| fallback_id.and_then(|v| to_nonempty_trimmed_string(Some(v))));
+
+        models.push(RunModelSelectionDto {
+            provider_id: provider_id.to_string(),
+            provider_name: provider_name.map(|name| name.to_string()),
+            model_id,
+            model_name,
+        });
+    };
+
+    if let Some(array) = value.as_array() {
+        for model in array {
+            push_model(model, None);
+        }
+        return models;
+    }
+
+    if let Some(object) = value.as_object() {
+        if parse_string_field(value, &["id", "modelID", "modelId"]).is_some() {
+            push_model(value, None);
+            return models;
+        }
+
+        for (key, model_value) in object {
+            if model_value.is_object() || model_value.is_array() {
+                push_model(model_value, Some(key));
+            }
+        }
+    }
+
+    models
+}
+
+fn parse_providers_from_payload(value: &serde_json::Value) -> Vec<RunProviderDto> {
+    fn parse_provider_entry(
+        entry: &serde_json::Value,
+        fallback_id: Option<&str>,
+        allow_fallback_id: bool,
+    ) -> Option<RunProviderDto> {
+        let id = parse_string_field(entry, &["id", "providerID", "providerId", "key", "value"])
+            .or_else(|| {
+                if allow_fallback_id {
+                    fallback_id.and_then(|v| to_nonempty_trimmed_string(Some(v)))
+                } else {
+                    None
+                }
+            })?;
+        let name = parse_string_field(entry, &["name", "title", "displayName", "display_name"])
+            .or_else(|| fallback_id.and_then(|v| to_nonempty_trimmed_string(Some(v))));
+
+        let mut model_values: Vec<&serde_json::Value> = Vec::new();
+        if let Some(object) = entry.as_object() {
+            for key in ["models", "model", "availableModels", "available_models"] {
+                if let Some(models_value) = object.get(key) {
+                    model_values.push(models_value);
+                }
+            }
+        }
+
+        let mut models = Vec::new();
+        for models_value in model_values {
+            models.extend(parse_models_from_provider_value(
+                &id,
+                name.as_deref(),
+                models_value,
+            ));
+        }
+
+        Some(RunProviderDto { id, name, models })
+    }
+
+    let mut providers = Vec::new();
+
+    if let Some(array) = value.as_array() {
+        for entry in array {
+            if let Some(provider) = parse_provider_entry(entry, None, false) {
+                providers.push(provider);
+            }
+        }
+        return providers;
+    }
+
+    if value.as_object().is_some() {
+        if parse_string_field(value, &["id", "providerID", "providerId"]).is_some() {
+            if let Some(provider) = parse_provider_entry(value, None, false) {
+                providers.push(provider);
+            }
+            return providers;
+        }
+
+        for child in collect_named_child_values(value, &["providers", "provider"]) {
+            if let Some(array) = child.as_array() {
+                for entry in array {
+                    if let Some(provider) = parse_provider_entry(entry, None, false) {
+                        providers.push(provider);
+                    }
+                }
+                continue;
+            }
+
+            if let Some(child_object) = child.as_object() {
+                if parse_string_field(child, &["id", "providerID", "providerId"]).is_some() {
+                    if let Some(provider) = parse_provider_entry(child, None, false) {
+                        providers.push(provider);
+                    }
+                    continue;
+                }
+
+                for (key, entry) in child_object {
+                    if !entry.is_object() {
+                        continue;
+                    }
+                    if let Some(provider) = parse_provider_entry(entry, Some(key), true) {
+                        providers.push(provider);
+                    }
+                }
+            }
+        }
+
+    }
+
+    providers
+}
+
+fn merge_provider_options(sources: Vec<Vec<RunProviderDto>>) -> Vec<RunProviderDto> {
+    let mut provider_order: Vec<String> = Vec::new();
+    let mut provider_index: HashMap<String, usize> = HashMap::new();
+    let mut merged: Vec<RunProviderDto> = Vec::new();
+
+    for source in sources {
+        for provider in source {
+            let index = if let Some(existing) = provider_index.get(&provider.id) {
+                *existing
+            } else {
+                let idx = merged.len();
+                provider_index.insert(provider.id.clone(), idx);
+                provider_order.push(provider.id.clone());
+                merged.push(RunProviderDto {
+                    id: provider.id.clone(),
+                    name: provider.name.clone(),
+                    models: Vec::new(),
+                });
+                idx
+            };
+
+            if merged[index].name.is_none() {
+                merged[index].name = provider.name.clone();
+            }
+
+            let mut existing_models: HashSet<String> = merged[index]
+                .models
+                .iter()
+                .map(|model| format!("{}::{}", model.provider_id, model.model_id))
+                .collect();
+
+            for model in provider.models {
+                let key = format!("{}::{}", model.provider_id, model.model_id);
+                if existing_models.insert(key) {
+                    merged[index].models.push(model);
+                }
+            }
+        }
+    }
+
+    merged.sort_by_key(|provider| {
+        provider_order
+            .iter()
+            .position(|id| id == &provider.id)
+            .unwrap_or(usize::MAX)
+    });
+
+    merged
+}
+
+fn parse_agents_from_config_payload(value: &serde_json::Value) -> Vec<RunAgentDto> {
+    fn parse_agent_entry(
+        entry: &serde_json::Value,
+        fallback_id: Option<&str>,
+        allow_fallback_id: bool,
+    ) -> Option<RunAgentDto> {
+        let id = parse_string_field(entry, &["id", "agentID", "agentId", "key", "value"])
+            .or_else(|| {
+                if allow_fallback_id {
+                    fallback_id.and_then(|v| to_nonempty_trimmed_string(Some(v)))
+                } else {
+                    None
+                }
+            })?;
+        let name = parse_string_field(entry, &["name", "title", "displayName", "display_name"])
+            .or_else(|| fallback_id.and_then(|v| to_nonempty_trimmed_string(Some(v))));
+        Some(RunAgentDto { id, name })
+    }
+
+    let mut agents = Vec::new();
+
+    if let Some(array) = value.as_array() {
+        for entry in array {
+            if let Some(agent) = parse_agent_entry(entry, None, false) {
+                agents.push(agent);
+            }
+        }
+        return agents;
+    }
+
+    if value.as_object().is_some() {
+        if parse_string_field(value, &["id", "agentID", "agentId"]).is_some() {
+            if let Some(agent) = parse_agent_entry(value, None, false) {
+                agents.push(agent);
+            }
+            return agents;
+        }
+
+        for child in collect_named_child_values(value, &["agents", "agent"]) {
+            if let Some(array) = child.as_array() {
+                for entry in array {
+                    if let Some(agent) = parse_agent_entry(entry, None, false) {
+                        agents.push(agent);
+                    }
+                }
+                continue;
+            }
+
+            if let Some(child_object) = child.as_object() {
+                if parse_string_field(child, &["id", "agentID", "agentId"]).is_some() {
+                    if let Some(agent) = parse_agent_entry(child, None, false) {
+                        agents.push(agent);
+                    }
+                    continue;
+                }
+
+                for (key, entry) in child_object {
+                    if !entry.is_object() {
+                        continue;
+                    }
+                    if let Some(agent) = parse_agent_entry(entry, Some(key), true) {
+                        agents.push(agent);
+                    }
+                }
+            }
+        }
+
+    }
+
+    agents
+}
+
+fn dedupe_agents(agents: Vec<RunAgentDto>) -> Vec<RunAgentDto> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::new();
+    for agent in agents {
+        if seen.insert(agent.id.clone()) {
+            deduped.push(agent);
+        }
+    }
+    deduped
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -181,15 +454,14 @@ impl RunsOpenCodeService {
         let run_provider = to_nonempty_trimmed_string(run_defaults_provider_id);
         let run_model = to_nonempty_trimmed_string(run_defaults_model_id);
 
-        let (provider_id, model_id) = if let (Some(provider_id), Some(model_id)) =
-            (prompt_provider, prompt_model)
-        {
-            (provider_id, model_id)
-        } else if let (Some(provider_id), Some(model_id)) = (run_provider, run_model) {
-            (provider_id, model_id)
-        } else {
-            ("kimi-for-coding".to_string(), "k2p5".to_string())
-        };
+        let (provider_id, model_id) =
+            if let (Some(provider_id), Some(model_id)) = (prompt_provider, prompt_model) {
+                (provider_id, model_id)
+            } else if let (Some(provider_id), Some(model_id)) = (run_provider, run_model) {
+                (provider_id, model_id)
+            } else {
+                ("kimi-for-coding".to_string(), "k2p5".to_string())
+            };
 
         let agent = to_nonempty_trimmed_string(prompt_agent)
             .or_else(|| to_nonempty_trimmed_string(run_defaults_agent))
@@ -281,7 +553,8 @@ impl RunsOpenCodeService {
         session_runtime_state: &Arc<Mutex<SessionRuntimeState>>,
     ) -> Result<(), AppError> {
         let runtime_event_name = if event_name == "message" {
-            Self::parse_payload_property(payload, &["type"]).unwrap_or_else(|| event_name.to_string())
+            Self::parse_payload_property(payload, &["type"])
+                .unwrap_or_else(|| event_name.to_string())
         } else {
             event_name.to_string()
         };
@@ -305,8 +578,7 @@ impl RunsOpenCodeService {
                     return Ok(());
                 };
 
-                if status != "busy" && status != "idle" && status != "active" && status != "error"
-                {
+                if status != "busy" && status != "idle" && status != "active" && status != "error" {
                     return Ok(());
                 }
 
@@ -444,7 +716,10 @@ impl RunsOpenCodeService {
                     return Ok(());
                 }
 
-                let context = self.runs_service.get_run_initial_prompt_context(run_id).await?;
+                let context = self
+                    .runs_service
+                    .get_run_initial_prompt_context(run_id)
+                    .await?;
                 let _ = self.runs_service.mark_cleanup_running(run_id).await?;
                 let cleanup_result = self
                     .run_lifecycle_script_in_worktree(run_id, context.cleanup_script.as_deref())
@@ -459,7 +734,10 @@ impl RunsOpenCodeService {
                     }
                     Err(err) => {
                         let error_text = err.to_string();
-                        let _ = self.runs_service.mark_cleanup_failed(run_id, &error_text).await?;
+                        let _ = self
+                            .runs_service
+                            .mark_cleanup_failed(run_id, &error_text)
+                            .await?;
                         let _ = self
                             .submit_run_opencode_prompt(
                                 run_id,
@@ -823,7 +1101,15 @@ impl RunsOpenCodeService {
     pub async fn list_run_opencode_providers(&self) -> Result<RunProvidersResponseDto, AppError> {
         self.with_ephemeral_client(|client| {
             Box::pin(async move {
-                let response = client
+                let provider_list_response = client
+                    .provider()
+                    .list(RequestOptions::default())
+                    .await
+                    .map_err(|err| {
+                        AppError::validation(format!("failed to list OpenCode providers: {err}"))
+                    })?;
+
+                let config_providers_response = client
                     .config()
                     .providers(RequestOptions::default())
                     .await
@@ -831,33 +1117,19 @@ impl RunsOpenCodeService {
                         AppError::validation(format!("failed to list OpenCode providers: {err}"))
                     })?;
 
-                let providers = parse_array_payload(response.data)
-                    .into_iter()
-                    .filter_map(|provider| {
-                        let id = parse_string_field(&provider, &["id", "providerID", "providerId"])?;
-                        let name = parse_string_field(&provider, &["name", "title", "displayName"]);
-                        let models = provider
-                            .as_object()
-                            .and_then(|object| object.get("models").cloned())
-                            .map(parse_array_payload)
-                            .unwrap_or_default()
-                            .into_iter()
-                            .filter_map(|model| {
-                                let model_id =
-                                    parse_string_field(&model, &["id", "modelID", "modelId"])?;
-                                let model_name =
-                                    parse_string_field(&model, &["name", "title", "displayName"]);
-                                Some(RunModelSelectionDto {
-                                    provider_id: id.clone(),
-                                    provider_name: name.clone(),
-                                    model_id,
-                                    model_name,
-                                })
-                            })
-                            .collect();
-                        Some(RunProviderDto { id, name, models })
-                    })
-                    .collect();
+                let config_response = client
+                    .config()
+                    .get(RequestOptions::default())
+                    .await
+                    .map_err(|err| {
+                        AppError::validation(format!("failed to load OpenCode config: {err}"))
+                    })?;
+
+                let providers = merge_provider_options(vec![
+                    parse_providers_from_payload(&provider_list_response.data),
+                    parse_providers_from_payload(&config_providers_response.data),
+                    parse_providers_from_payload(&config_response.data),
+                ]);
 
                 Ok(RunProvidersResponseDto { providers })
             })
@@ -869,21 +1141,14 @@ impl RunsOpenCodeService {
         self.with_ephemeral_client(|client| {
             Box::pin(async move {
                 let response = client
-                    .app()
-                    .agents(RequestOptions::default())
+                    .config()
+                    .get(RequestOptions::default())
                     .await
                     .map_err(|err| {
                         AppError::validation(format!("failed to list OpenCode agents: {err}"))
                     })?;
 
-                let agents = parse_array_payload(response.data)
-                    .into_iter()
-                    .filter_map(|agent| {
-                        let id = parse_string_field(&agent, &["id", "agentID", "agentId"])?;
-                        let name = parse_string_field(&agent, &["name", "title", "displayName"]);
-                        Some(RunAgentDto { id, name })
-                    })
-                    .collect();
+                let agents = dedupe_agents(parse_agents_from_config_payload(&response.data));
 
                 Ok(RunAgentsResponseDto { agents })
             })
@@ -1454,10 +1719,16 @@ impl RunsOpenCodeService {
             .get_run_initial_prompt_context(run_id)
             .await?;
 
-        if context.setup_script.as_deref().is_some_and(|script| !script.trim().is_empty())
+        if context
+            .setup_script
+            .as_deref()
+            .is_some_and(|script| !script.trim().is_empty())
             && run_state.setup_state != "succeeded"
         {
-            let _ = self.runs_service.mark_setup_running_if_pending(run_id).await?;
+            let _ = self
+                .runs_service
+                .mark_setup_running_if_pending(run_id)
+                .await?;
             let setup_result = self
                 .run_lifecycle_script_in_worktree(run_id, context.setup_script.as_deref())
                 .await;
@@ -2283,6 +2554,146 @@ mod tests {
                 model_id: "k2p5".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn parse_and_merge_provider_sources_collects_models_from_sdk_discovery_surfaces() {
+        let provider_list = serde_json::json!([
+            { "id": "openai", "name": "OpenAI" },
+            { "id": "anthropic", "name": "Anthropic" }
+        ]);
+        let config_providers = serde_json::json!({
+            "providers": [
+                {
+                    "id": "openai",
+                    "models": [
+                        { "id": "gpt-4.1", "name": "GPT-4.1" },
+                        { "id": "gpt-4.1-mini", "name": "GPT-4.1 Mini" }
+                    ]
+                }
+            ]
+        });
+        let config_get = serde_json::json!({
+            "provider": {
+                "anthropic": {
+                    "name": "Anthropic",
+                    "models": {
+                        "claude-sonnet-4": { "name": "Claude Sonnet 4" }
+                    }
+                }
+            }
+        });
+
+        let merged = super::merge_provider_options(vec![
+            super::parse_providers_from_payload(&provider_list),
+            super::parse_providers_from_payload(&config_providers),
+            super::parse_providers_from_payload(&config_get),
+        ]);
+
+        assert_eq!(merged.len(), 2);
+
+        let openai = merged
+            .iter()
+            .find(|provider| provider.id == "openai")
+            .unwrap();
+        assert_eq!(openai.name.as_deref(), Some("OpenAI"));
+        assert_eq!(openai.models.len(), 2);
+
+        let anthropic = merged
+            .iter()
+            .find(|provider| provider.id == "anthropic")
+            .unwrap();
+        assert_eq!(anthropic.name.as_deref(), Some("Anthropic"));
+        assert_eq!(anthropic.models.len(), 1);
+        assert_eq!(anthropic.models[0].model_id, "claude-sonnet-4");
+    }
+
+    #[test]
+    fn parse_agents_from_config_get_supports_array_and_map_shapes() {
+        let config_get = serde_json::json!({
+            "agents": [
+                { "id": "build", "name": "Build" },
+                { "id": "plan", "name": "Plan" }
+            ],
+            "agent": {
+                "review": { "name": "Review" },
+                "build": { "name": "Build duplicate" }
+            }
+        });
+
+        let agents = super::dedupe_agents(super::parse_agents_from_config_payload(&config_get));
+        assert_eq!(agents.len(), 3);
+        assert!(agents.iter().any(|agent| agent.id == "build"));
+        assert!(agents.iter().any(|agent| agent.id == "plan"));
+        assert!(agents.iter().any(|agent| agent.id == "review"));
+    }
+
+    #[test]
+    fn parse_discovery_ignores_unrelated_sections_in_mixed_roots() {
+        let config_get = serde_json::json!({
+            "providers": {
+                "openai": {
+                    "models": {
+                        "gpt-4.1": { "name": "GPT-4.1" }
+                    }
+                }
+            },
+            "agents": {
+                "build": { "name": "Build" }
+            },
+            "featureFlags": {
+                "provider": {
+                    "name": "Not a provider"
+                },
+                "agent": {
+                    "name": "Not an agent"
+                }
+            },
+            "ui": {
+                "providers": {
+                    "theme": { "name": "Not a provider" }
+                },
+                "agents": {
+                    "mode": { "name": "Not an agent" }
+                }
+            }
+        });
+
+        let providers = super::parse_providers_from_payload(&config_get);
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "openai");
+
+        let agents = super::dedupe_agents(super::parse_agents_from_config_payload(&config_get));
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].id, "build");
+    }
+
+    #[test]
+    fn parse_providers_does_not_infer_from_unrelated_root_with_models() {
+        let config_get = serde_json::json!({
+            "workspace": {
+                "models": {
+                    "gpt-4.1": { "name": "GPT-4.1" }
+                }
+            }
+        });
+
+        let providers = super::parse_providers_from_payload(&config_get);
+        assert!(providers.is_empty());
+    }
+
+    #[test]
+    fn parse_agents_does_not_infer_from_unrelated_root_with_agent_like_fields() {
+        let config_get = serde_json::json!({
+            "workspace": {
+                "model": "gpt-4.1",
+                "tools": ["bash"],
+                "prompt": "build it"
+            }
+        });
+
+        let agents = super::dedupe_agents(super::parse_agents_from_config_payload(&config_get));
+        assert!(agents.is_empty());
     }
 
     #[tokio::test]

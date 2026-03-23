@@ -176,7 +176,8 @@ impl TasksService {
             .await?;
         let updated = updated_task.ok_or_else(|| AppError::not_found("task not found"))?;
 
-        let should_auto_start_run = source_action.as_deref() == Some(Self::SOURCE_ACTION_BOARD_MANUAL_MOVE)
+        let should_auto_start_run = source_action.as_deref()
+            == Some(Self::SOURCE_ACTION_BOARD_MANUAL_MOVE)
             && status_changed
             && existing_task.status != "doing"
             && updated.status == "doing"
@@ -512,7 +513,8 @@ mod tests {
 
     impl TempDir {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("orkestra-tasks-tests-{}", Uuid::new_v4()));
+            let path =
+                std::env::temp_dir().join(format!("orkestra-tasks-tests-{}", Uuid::new_v4()));
             fs::create_dir_all(&path).unwrap();
             Self { path }
         }

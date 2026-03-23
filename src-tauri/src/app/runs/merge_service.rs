@@ -180,13 +180,12 @@ impl RunsMergeService {
                         "failed to resolve source branch reference: {err}"
                     ))
                 })?;
-            let worktree_annotated =
-                context
-                    .source_repo
-                    .find_annotated_commit(worktree_oid)
-                    .map_err(|err| {
-                        AppError::validation(format!("failed to load worktree commit: {err}"))
-                    })?;
+            let worktree_annotated = context
+                .source_repo
+                .find_annotated_commit(worktree_oid)
+                .map_err(|err| {
+                    AppError::validation(format!("failed to load worktree commit: {err}"))
+                })?;
             let (analysis, _) = context
                 .source_repo
                 .merge_analysis_for_ref(&mut source_ref, &[&worktree_annotated])
@@ -309,13 +308,12 @@ impl RunsMergeService {
                         "failed to resolve source branch reference: {err}"
                     ))
                 })?;
-            let worktree_annotated =
-                context
-                    .source_repo
-                    .find_annotated_commit(worktree_oid)
-                    .map_err(|err| {
-                        AppError::validation(format!("failed to load worktree commit: {err}"))
-                    })?;
+            let worktree_annotated = context
+                .source_repo
+                .find_annotated_commit(worktree_oid)
+                .map_err(|err| {
+                    AppError::validation(format!("failed to load worktree commit: {err}"))
+                })?;
             let (analysis, _) = context
                 .source_repo
                 .merge_analysis_for_ref(&mut source_ref, &[&worktree_annotated])
@@ -491,7 +489,9 @@ impl RunsMergeService {
             return Ok(Some(format!("source branch worktree is dirty: {reason}")));
         }
 
-        if Self::ensure_head_on_worktree_branch(&context.source_repo, &context.source_branch).is_err() {
+        if Self::ensure_head_on_worktree_branch(&context.source_repo, &context.source_branch)
+            .is_err()
+        {
             return Ok(Some(format!(
                 "source repository HEAD must be on source branch '{}' before merge",
                 context.source_branch

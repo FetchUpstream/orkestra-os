@@ -21,7 +21,8 @@ impl RunsService {
     }
 
     pub async fn create_run(&self, task_id: &str) -> Result<RunDto, AppError> {
-        self.create_run_with_defaults(task_id, None, None, None).await
+        self.create_run_with_defaults(task_id, None, None, None)
+            .await
     }
 
     pub async fn create_run_with_defaults(
@@ -83,14 +84,22 @@ impl RunsService {
             return Err(AppError::validation("task_id is required"));
         }
 
-        if let Some(existing) = self.repository.get_latest_active_run_for_task(task_id).await? {
+        if let Some(existing) = self
+            .repository
+            .get_latest_active_run_for_task(task_id)
+            .await?
+        {
             return Ok(Self::to_dto(existing));
         }
 
         match self.create_run(task_id).await {
             Ok(created) => Ok(created),
             Err(err) if Self::is_active_run_uniqueness_violation(&err) => {
-                if let Some(existing) = self.repository.get_latest_active_run_for_task(task_id).await? {
+                if let Some(existing) = self
+                    .repository
+                    .get_latest_active_run_for_task(task_id)
+                    .await?
+                {
                     return Ok(Self::to_dto(existing));
                 }
 
@@ -361,7 +370,9 @@ impl RunsService {
             return Err(AppError::validation("run_id is required"));
         }
         let finished_at = Utc::now().to_rfc3339();
-        self.repository.mark_setup_succeeded(run_id, &finished_at).await
+        self.repository
+            .mark_setup_succeeded(run_id, &finished_at)
+            .await
     }
 
     pub async fn mark_setup_failed_if_unset(
@@ -385,7 +396,9 @@ impl RunsService {
             return Err(AppError::validation("run_id is required"));
         }
         let started_at = Utc::now().to_rfc3339();
-        self.repository.mark_cleanup_running(run_id, &started_at).await
+        self.repository
+            .mark_cleanup_running(run_id, &started_at)
+            .await
     }
 
     pub async fn mark_cleanup_succeeded(&self, run_id: &str) -> Result<bool, AppError> {
@@ -431,7 +444,11 @@ impl RunsService {
 
         let updated_at = Utc::now().to_rfc3339();
         self.repository
-            .transition_task_doing_to_review_on_session_idle(run_id, opencode_session_id, &updated_at)
+            .transition_task_doing_to_review_on_session_idle(
+                run_id,
+                opencode_session_id,
+                &updated_at,
+            )
             .await
     }
 
@@ -662,12 +679,7 @@ mod tests {
         seed_task(&pool, "task-1", &repo_path).await;
 
         let run = service
-            .create_run_with_defaults(
-                "task-1",
-                Some("build"),
-                Some("provider-a"),
-                Some("model-a"),
-            )
+            .create_run_with_defaults("task-1", Some("build"), Some("provider-a"), Some("model-a"))
             .await
             .unwrap();
 
@@ -1100,11 +1112,13 @@ mod tests {
         seed_task_with_status(&pool, "task-1", &repo_path, "doing").await;
         seed_run(&pool, "run-1", "task-1").await;
 
-        sqlx::query("UPDATE runs SET status = 'running', opencode_session_id = 'session-1' WHERE id = ?")
-            .bind("run-1")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "UPDATE runs SET status = 'running', opencode_session_id = 'session-1' WHERE id = ?",
+        )
+        .bind("run-1")
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let transitioned = service
             .transition_task_to_review_on_session_idle("run-1", "session-1")

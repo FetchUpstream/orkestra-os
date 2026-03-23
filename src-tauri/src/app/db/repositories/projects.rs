@@ -750,12 +750,13 @@ mod tests {
                 .get::<i64, _>("count");
         assert_eq!(source_run_count, 1);
 
-        let cloned_run_count = sqlx::query("SELECT COUNT(*) AS count FROM runs WHERE project_id = ?")
-            .bind("cloned-project")
-            .fetch_one(&repository.pool)
-            .await
-            .unwrap()
-            .get::<i64, _>("count");
+        let cloned_run_count =
+            sqlx::query("SELECT COUNT(*) AS count FROM runs WHERE project_id = ?")
+                .bind("cloned-project")
+                .fetch_one(&repository.pool)
+                .await
+                .unwrap()
+                .get::<i64, _>("count");
         assert_eq!(cloned_run_count, 0);
     }
 

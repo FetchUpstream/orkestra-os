@@ -373,10 +373,8 @@ mod tests {
     use sqlx::SqlitePool;
 
     async fn setup_service() -> ProjectsService {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "orkestra-projects-tests-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("orkestra-projects-tests-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
@@ -521,10 +519,7 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "project name is required"
-        );
+        assert_eq!(result.unwrap_err().to_string(), "project name is required");
     }
 
     #[tokio::test]
@@ -623,24 +618,21 @@ mod tests {
 
         service.delete_project(&created.project.id).await.unwrap();
 
-        let project_exists: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?")
-                .bind(&created.project.id)
-                .fetch_one(service.repository.pool())
-                .await
-                .unwrap();
-        let task_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE project_id = ?")
-                .bind(&created.project.id)
-                .fetch_one(service.repository.pool())
-                .await
-                .unwrap();
-        let run_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE project_id = ?")
-                .bind(&created.project.id)
-                .fetch_one(service.repository.pool())
-                .await
-                .unwrap();
+        let project_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?")
+            .bind(&created.project.id)
+            .fetch_one(service.repository.pool())
+            .await
+            .unwrap();
+        let task_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE project_id = ?")
+            .bind(&created.project.id)
+            .fetch_one(service.repository.pool())
+            .await
+            .unwrap();
+        let run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE project_id = ?")
+            .bind(&created.project.id)
+            .fetch_one(service.repository.pool())
+            .await
+            .unwrap();
 
         assert_eq!(project_exists, 0);
         assert_eq!(task_count, 0);
@@ -732,12 +724,11 @@ mod tests {
 
         service.delete_project(&created.project.id).await.unwrap();
 
-        let project_exists: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?")
-                .bind(&created.project.id)
-                .fetch_one(service.repository.pool())
-                .await
-                .unwrap();
+        let project_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?")
+            .bind(&created.project.id)
+            .fetch_one(service.repository.pool())
+            .await
+            .unwrap();
 
         assert_eq!(project_exists, 0);
         assert!(!legacy_worktree_root.exists());

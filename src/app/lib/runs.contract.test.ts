@@ -76,14 +76,16 @@ describe("runs contract", () => {
 
   it("normalizes run selection options payload", async () => {
     invokeMock.mockResolvedValueOnce({
-      agents: [{ id: "agent-1", display_name: "Planner" }],
+      data: {
+        agents: [{ agentId: "agent-1", display_name: "Planner" }],
+      },
     });
     invokeMock.mockResolvedValueOnce({
       providers: [
         {
           id: "provider-1",
           name: "OpenAI",
-          models: [{ id: "model-1", label: "GPT-5" }],
+          models: [{ modelId: "model-1", label: "GPT-5" }],
         },
       ],
     });
@@ -95,6 +97,33 @@ describe("runs contract", () => {
       providers: [{ id: "provider-1", label: "OpenAI" }],
       models: [{ id: "model-1", label: "GPT-5", providerId: "provider-1" }],
     });
+  });
+
+  it("normalizes model labels across backend name shapes", async () => {
+    invokeMock.mockResolvedValueOnce({ agents: [] });
+    invokeMock.mockResolvedValueOnce({
+      providers: [
+        {
+          id: "provider-1",
+          name: "OpenAI",
+          models: [
+            { modelId: "model-a", model_name: "GPT-4.1" },
+            { modelId: "model-b", modelName: "GPT-4o" },
+            { modelId: "model-c", name: "o3" },
+            { modelId: "model-d" },
+          ],
+        },
+      ],
+    });
+
+    const options = await getRunSelectionOptions();
+
+    expect(options.models).toEqual([
+      { id: "model-a", label: "GPT-4.1", providerId: "provider-1" },
+      { id: "model-b", label: "GPT-4o", providerId: "provider-1" },
+      { id: "model-c", label: "o3", providerId: "provider-1" },
+      { id: "model-d", label: "Model", providerId: "provider-1" },
+    ]);
   });
 
   it("passes optional message overrides to submit_run_opencode_prompt", async () => {

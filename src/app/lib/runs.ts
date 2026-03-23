@@ -465,6 +465,12 @@ type RunResponse = {
 
 type RunSelectionItemResponse = {
   id?: string;
+  agent_id?: string;
+  agentId?: string;
+  model_id?: string;
+  modelId?: string;
+  model_name?: string;
+  modelName?: string;
   value?: string;
   key?: string;
   name?: string;
@@ -770,8 +776,54 @@ const toSelectionLabel = (
   return fallbackLabel;
 };
 
+const toModelSelectionLabel = (value: RunSelectionItemResponse): string => {
+  const label = toOptionalTrimmedString(
+    value.display_name ??
+      value.displayName ??
+      value.label ??
+      value.name ??
+      value.model_name ??
+      value.modelName,
+  );
+  if (label) {
+    return label;
+  }
+  return "Model";
+};
+
 const toSelectionId = (value: RunSelectionItemResponse): string => {
-  return toOptionalTrimmedString(value.id ?? value.value ?? value.key) ?? "";
+  return (
+    toOptionalTrimmedString(
+      value.id ??
+        value.agent_id ??
+        value.agentId ??
+        value.model_id ??
+        value.modelId ??
+        value.value ??
+        value.key,
+    ) ?? ""
+  );
+};
+
+const toSelectionList = (
+  response: unknown,
+  key: "agents" | "providers" | "models",
+): unknown[] => {
+  if (Array.isArray(response)) {
+    return response;
+  }
+  if (!response || typeof response !== "object") {
+    return [];
+  }
+
+  const direct = (response as Record<string, unknown>)[key];
+  if (Array.isArray(direct)) {
+    return direct;
+  }
+
+  const payload = unwrapRunSelectionOptionsPayload(response);
+  const nested = payload[key];
+  return Array.isArray(nested) ? nested : [];
 };
 
 const toSelectionOptions = (
@@ -818,7 +870,7 @@ const toModelSelectionOptions = (source: unknown): RunModelOption[] => {
       );
       return {
         id,
-        label: toSelectionLabel(value, "Model"),
+        label: toModelSelectionLabel(value),
         ...(providerId ? { providerId } : {}),
       };
     })
@@ -1132,14 +1184,8 @@ export const getRunSelectionOptions =
       invoke<unknown>("list_run_opencode_providers"),
     ]);
 
-    const agentsPayload =
-      agentsResponse && typeof agentsResponse === "object"
-        ? (agentsResponse as { agents?: unknown }).agents
-        : undefined;
-    const providersPayload =
-      providersResponse && typeof providersResponse === "object"
-        ? (providersResponse as { providers?: unknown }).providers
-        : undefined;
+    const agentsPayload = toSelectionList(agentsResponse, "agents");
+    const providersPayload = toSelectionList(providersResponse, "providers");
 
     const providers = toSelectionOptions(providersPayload, "Provider");
     const models = toModelSelectionOptions(
