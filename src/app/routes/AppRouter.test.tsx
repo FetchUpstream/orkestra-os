@@ -1672,7 +1672,7 @@ describe("app routing and shell", () => {
       expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
       expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
         id: "task-review-todo",
-        input: { status: "todo" },
+        input: { status: "todo", source_action: "board_manual_move" },
       });
     });
   });
@@ -1751,7 +1751,7 @@ describe("app routing and shell", () => {
       expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
       expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
         id: "task-doing-todo",
-        input: { status: "todo" },
+        input: { status: "todo", source_action: "board_manual_move" },
       });
     });
   });

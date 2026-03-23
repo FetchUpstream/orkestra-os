@@ -89,41 +89,55 @@ const BoardScreen: Component = () => {
     <>
       <PageHeader title="Board" />
 
-      <section class="projects-panel" aria-label="Project selector">
-        <div class="project-section-header">
-          <div class="projects-field" style={{ "max-width": "320px" }}>
-            <label
-              for="board-project"
-              id="board-project-selector"
-              class="field-label"
-            >
-              Project
-            </label>
-            <select
-              id="board-project"
-              value={model.selectedProjectId()}
-              onChange={(event) =>
-                void model.onProjectChange(event.currentTarget.value)
-              }
-              disabled={
-                model.isProjectsLoading() || model.projects().length === 0
-              }
-            >
-              <For each={model.projects()}>
-                {(project) => (
-                  <option value={project.id}>
-                    {project.name} ({project.key})
-                  </option>
-                )}
-              </For>
-            </select>
+      <section
+        class="projects-panel border-base-content/15 bg-base-200/60 mb-3 border p-4"
+        aria-label="Project selector"
+      >
+        <div class="project-section-header gap-4">
+          <div class="flex min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div class="space-y-1">
+              <p class="text-base-content/55 m-0 text-[11px] font-semibold tracking-[0.24em] uppercase">
+                Active project
+              </p>
+              <p class="text-base-content/70 m-0 text-sm">
+                Select the workspace whose tasks should appear on the board.
+              </p>
+            </div>
+            <div class="projects-field w-full max-w-[22rem] gap-2">
+              <label
+                for="board-project"
+                id="board-project-selector"
+                class="field-label text-base-content/55 text-[11px] tracking-[0.22em] uppercase"
+              >
+                Project
+              </label>
+              <select
+                id="board-project"
+                class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 w-full rounded-none px-3 text-xs font-medium"
+                value={model.selectedProjectId()}
+                onChange={(event) =>
+                  void model.onProjectChange(event.currentTarget.value)
+                }
+                disabled={
+                  model.isProjectsLoading() || model.projects().length === 0
+                }
+              >
+                <For each={model.projects()}>
+                  {(project) => (
+                    <option value={project.id}>
+                      {project.name} ({project.key})
+                    </option>
+                  )}
+                </For>
+              </select>
+            </div>
           </div>
           <Show
             when={(model.selectedProjectDetail()?.repositories.length ?? 0) > 0}
           >
             <button
               type="button"
-              class="projects-button-primary"
+              class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 font-semibold"
               onClick={() => {
                 taskCreateModel.resetTaskForm();
                 taskCreateModel.setIsModalOpen(true);
@@ -136,23 +150,29 @@ const BoardScreen: Component = () => {
       </section>
 
       <Show when={model.error()}>
-        {(message) => <p class="projects-error">{message()}</p>}
+        {(message) => (
+          <p class="projects-error border-error/35 bg-error/10 text-sm">
+            {message()}
+          </p>
+        )}
       </Show>
 
       <Show
         when={!model.isProjectsLoading() && model.projects().length > 0}
         fallback={
-          <p class="page-placeholder">
-            No projects yet.{" "}
-            <A href="/projects">Create a project to get started.</A>
-          </p>
+          <section class="projects-panel border-base-content/15 bg-base-200/40 border border-dashed p-6">
+            <p class="page-placeholder m-0 text-sm">
+              No projects yet.{" "}
+              <A href="/projects">Create a project to get started.</A>
+            </p>
+          </section>
         }
       >
-        <div class="board-columns">
+        <div class="board-columns items-start">
           <For each={BOARD_COLUMNS}>
             {(column) => (
               <section
-                class="projects-panel board-column"
+                class="projects-panel board-column border-base-content/15 bg-base-200/55 flex min-h-[32rem] flex-col border p-0"
                 classList={{
                   "board-column--drop-active":
                     activeDropStatus() === column.status,
@@ -190,25 +210,38 @@ const BoardScreen: Component = () => {
                 }}
                 onDrop={(event) => onColumnDrop(column.status, event)}
               >
-                <div class="project-section-header">
+                <div class="project-section-header border-base-content/10 flex items-center justify-between border-b px-4 py-3">
                   <h3
                     id={`board-column-${column.status}`}
-                    class="projects-section-title"
+                    class="projects-section-title text-base-content/55 m-0 text-[11px] tracking-[0.24em] uppercase"
                   >
                     {column.label} ({model.groupedTasks()[column.status].length}
                     )
                   </h3>
+                  <span class="badge badge-ghost border-base-content/10 text-base-content/55 rounded-none border px-2 text-[10px]">
+                    {model.groupedTasks()[column.status].length}
+                  </span>
                 </div>
 
                 <Show
                   when={!model.isTasksLoading()}
-                  fallback={<p class="project-placeholder-text">Loading...</p>}
+                  fallback={
+                    <p class="project-placeholder-text px-4 py-4 text-sm">
+                      Loading...
+                    </p>
+                  }
                 >
                   <Show
                     when={model.groupedTasks()[column.status].length > 0}
-                    fallback={<p class="project-placeholder-text">No tasks.</p>}
+                    fallback={
+                      <div class="flex flex-1 items-start px-4 py-4">
+                        <p class="project-placeholder-text text-sm">
+                          No tasks.
+                        </p>
+                      </div>
+                    }
                   >
-                    <ul class="project-task-list" role="list">
+                    <ul class="project-task-list flex-1" role="list">
                       <For each={model.groupedTasks()[column.status]}>
                         {(task) => (
                           <BoardTaskCard

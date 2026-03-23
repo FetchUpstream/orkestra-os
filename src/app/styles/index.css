@@ -1,25 +1,25 @@
 :root {
-  --bg: #0b0c10;
-  --surface: #14161b;
-  --surface-alt: #1a1d24;
-  --surface-hover: #22262e;
-  --border: #2a2e38;
-  --border-subtle: #1f2329;
-  --text: #e8eaf0;
-  --text-muted: #8b93a7;
-  --text-subtle: #6b7280;
-  --accent: #5b8aff;
-  --accent-hover: #6a9aff;
-  --accent-subtle: rgba(91, 138, 255, 0.1);
+  --bg: #0a0f14;
+  --surface: #111823;
+  --surface-alt: #18212d;
+  --surface-hover: #212c3a;
+  --border: #2a3647;
+  --border-subtle: #1f2a37;
+  --text: #d7e0ea;
+  --text-muted: #93a3b8;
+  --text-subtle: #6d7c90;
+  --accent: #5ab0ff;
+  --accent-hover: #7ec1ff;
+  --accent-subtle: rgba(90, 176, 255, 0.12);
   --danger: #ff6b6b;
   --danger-subtle: rgba(255, 107, 107, 0.1);
   --warning: #fbbf24;
   --success: #6bcf7f;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 * {
@@ -62,7 +62,7 @@ input,
 textarea,
 select {
   font-family: var(--font-mono);
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   line-height: 1.5;
 }
 
@@ -359,10 +359,11 @@ textarea::placeholder {
 
 .page-title {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 0.78rem;
   font-weight: 600;
-  color: var(--text);
-  letter-spacing: -0.01em;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .page-placeholder {
@@ -384,6 +385,7 @@ textarea::placeholder {
   background: var(--surface);
   border-radius: var(--radius-lg);
   padding: 20px;
+  box-shadow: none;
 }
 
 .projects-section-title {
@@ -631,8 +633,8 @@ textarea::placeholder {
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  font-size: 0.9rem;
+  padding: 8px 10px;
+  font-size: 0.82rem;
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
@@ -803,7 +805,7 @@ textarea::placeholder {
 .projects-button-primary {
   background: var(--accent);
   color: #0a1120;
-  border-color: transparent;
+  border-color: color-mix(in srgb, var(--accent) 65%, #ffffff 8%);
   font-weight: 600;
 }
 
@@ -1030,6 +1032,7 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: 12px;
   min-height: 32px;
 }
@@ -1050,6 +1053,7 @@ textarea::placeholder {
   border-radius: var(--radius-lg);
   padding: 20px;
   margin-bottom: 16px;
+  box-shadow: none;
 }
 
 .projects-panel:last-child {
@@ -1067,25 +1071,28 @@ textarea::placeholder {
 /* Task List - v2 with stronger separation */
 .project-task-list {
   margin: 0;
-  padding: 0;
+  padding: 12px;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
+  gap: 10px;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  background: var(--surface);
 }
 
 .project-task-item {
   background: var(--surface-alt);
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--border);
 }
 
 .board-task-card {
   transition:
     opacity 0.16s ease,
-    transform 0.16s ease;
+    transform 0.16s ease,
+    border-color 0.16s ease,
+    background-color 0.16s ease;
 }
 
 .board-task-card--dragging {
@@ -1093,23 +1100,21 @@ textarea::placeholder {
   transform: scale(0.985);
 }
 
-.project-task-item:last-child {
-  border-bottom: none;
-}
-
 .project-task-link {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 16px;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 14px;
   color: inherit;
   text-decoration: none;
-  transition: background 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .project-task-link:hover {
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--surface-alt) 82%, var(--accent) 18%);
 }
 
 .project-task-link:focus-visible {
@@ -1130,7 +1135,7 @@ textarea::placeholder {
 
 .board-columns {
   display: grid;
-  gap: 12px;
+  gap: 14px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: stretch;
 }
@@ -1138,7 +1143,11 @@ textarea::placeholder {
 .board-column--drop-active {
   border-color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent-subtle);
-  background-color: var(--accent-subtle);
+  background-color: color-mix(
+    in srgb,
+    var(--surface-alt) 85%,
+    var(--accent) 15%
+  );
 }
 
 .project-task-main {
@@ -1167,12 +1176,12 @@ textarea::placeholder {
   font-size: 0.72rem;
   flex-shrink: 0;
   align-self: flex-end;
-  margin-top: 6px;
+  margin-top: 0;
 }
 
 .board-task-run-details {
-  margin: 4px 16px 14px;
-  padding: 6px 8px;
+  margin: 0 14px 14px;
+  padding: 8px 10px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--surface);
@@ -1235,8 +1244,8 @@ textarea::placeholder {
 .project-task-title {
   margin: 0;
   color: var(--text);
-  font-size: 0.82rem;
-  font-weight: 500;
+  font-size: 0.88rem;
+  font-weight: 600;
   line-height: 1.4;
   font-family:
     ui-sans-serif,
@@ -1260,7 +1269,7 @@ textarea::placeholder {
 
 .board-task-description {
   margin: 0;
-  color: var(--text);
+  color: var(--text-muted);
   font-size: 0.82rem;
   line-height: 1.4;
   font-family:
@@ -1387,9 +1396,9 @@ textarea::placeholder {
   letter-spacing: 0.05em;
   padding: 4px 10px;
   border-radius: var(--radius-sm);
-  background: rgba(107, 207, 127, 0.15);
-  color: var(--success);
-  border: 1px solid rgba(107, 207, 127, 0.3);
+  background: rgba(79, 209, 165, 0.12);
+  color: #7ce0bb;
+  border: 1px solid rgba(79, 209, 165, 0.25);
 }
 
 .project-task-updated {
@@ -1640,9 +1649,9 @@ textarea::placeholder {
 .task-detail-title {
   margin: 0;
   color: var(--text);
-  font-size: 1.75rem;
+  font-size: 1.1rem;
   line-height: 1.2;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .task-detail-title-input {
@@ -1651,9 +1660,9 @@ textarea::placeholder {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
-  font-size: 1.2rem;
+  font-size: 1rem;
   line-height: 1.3;
-  padding: 10px 12px;
+  padding: 9px 10px;
   font-weight: 600;
 }
 
@@ -1667,7 +1676,7 @@ textarea::placeholder {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .task-detail-header-actions {
@@ -1708,14 +1717,10 @@ textarea::placeholder {
 
 .task-detail-main-card {
   border-color: var(--border);
-  background: linear-gradient(
-    180deg,
-    var(--surface) 0%,
-    var(--surface-alt) 100%
-  );
+  background: var(--surface);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
 .task-detail-description-block {
@@ -1730,8 +1735,8 @@ textarea::placeholder {
 }
 
 .task-detail-description-text {
-  font-size: 0.9rem;
-  line-height: 1.55;
+  font-size: 0.84rem;
+  line-height: 1.5;
   color: var(--text);
 }
 
@@ -1907,7 +1912,7 @@ textarea::placeholder {
 .task-detail-columns {
   display: grid;
   grid-template-columns: minmax(0, 4fr) minmax(260px, 1fr);
-  gap: 18px;
+  gap: 14px;
   align-items: start;
 }
 
@@ -1915,7 +1920,7 @@ textarea::placeholder {
 .task-detail-inspector-column {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .task-detail-controls-panel {
@@ -1927,13 +1932,13 @@ textarea::placeholder {
 .task-detail-inspector-panel {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
 .task-detail-panel-section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .task-detail-panel-separator {
@@ -1953,14 +1958,14 @@ textarea::placeholder {
 }
 
 .task-control-icon-button {
-  width: 40px;
-  height: 40px;
-  flex: 0 0 40px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: var(--surface-alt);
   color: var(--text-muted);
   cursor: pointer;
@@ -2008,26 +2013,26 @@ textarea::placeholder {
   top: calc(100% + 6px);
   right: 48px;
   z-index: 20;
-  min-width: 160px;
+  min-width: 148px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 6px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   box-shadow: var(--shadow-md);
 }
 
 .task-status-transition-option {
   width: 100%;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: transparent;
   color: var(--text);
   text-align: left;
-  padding: 8px 10px;
-  font-size: 0.85rem;
+  padding: 7px 9px;
+  font-size: 0.78rem;
   cursor: pointer;
 }
 
@@ -2248,7 +2253,7 @@ textarea::placeholder {
 .task-runs-defaults-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 
 .task-runs-default-field {
@@ -2256,7 +2261,7 @@ textarea::placeholder {
 }
 
 .task-run-settings-modal {
-  width: min(640px, 100%);
+  width: min(720px, 100%);
 }
 
 .task-runs-list {

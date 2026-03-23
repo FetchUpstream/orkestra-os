@@ -255,7 +255,7 @@ const TaskDetailScreen: Component = () => {
                 <div class="task-detail-workspace">
                   <div class="task-detail-columns">
                     <div class="task-detail-main-column">
-                      <section class="projects-panel task-detail-main-card">
+                      <section class="projects-panel task-detail-main-card border-base-content/15 bg-base-200/35 border">
                         <BackIconLink
                           href={backHref()}
                           label={backLabel()}
@@ -406,7 +406,7 @@ const TaskDetailScreen: Component = () => {
                     </div>
 
                     <aside class="task-detail-inspector-column">
-                      <section class="projects-panel task-detail-inspector-panel">
+                      <section class="projects-panel task-detail-inspector-panel border-base-content/15 bg-base-200/30 border">
                         <div class="task-detail-panel-section">
                           <h2 class="project-section-title">Task controls</h2>
                           <div class="task-detail-header-actions task-detail-controls-actions">
@@ -415,7 +415,7 @@ const TaskDetailScreen: Component = () => {
                               fallback={
                                 <button
                                   type="button"
-                                  class="task-control-icon-button"
+                                  class="task-control-icon-button btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
                                   onClick={() => {
                                     setActionError("");
                                     setIsEditing(true);
@@ -429,7 +429,7 @@ const TaskDetailScreen: Component = () => {
                             >
                               <button
                                 type="button"
-                                class="projects-button-primary"
+                                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                                 onClick={onSaveEdit}
                                 disabled={isSavingEdit()}
                               >
@@ -437,7 +437,7 @@ const TaskDetailScreen: Component = () => {
                               </button>
                               <button
                                 type="button"
-                                class="projects-button-muted"
+                                class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
                                 onClick={onCancelEdit}
                                 disabled={isSavingEdit()}
                               >
@@ -446,7 +446,7 @@ const TaskDetailScreen: Component = () => {
                             </Show>
                             <button
                               type="button"
-                              class="task-control-icon-button"
+                              class="task-control-icon-button btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
                               onClick={() =>
                                 setIsTransitionMenuOpen((current) => !current)
                               }
@@ -488,7 +488,7 @@ const TaskDetailScreen: Component = () => {
                                     {(statusOption) => (
                                       <button
                                         type="button"
-                                        class="task-status-transition-option"
+                                        class="task-status-transition-option rounded-none text-xs"
                                         role="menuitem"
                                         onClick={() => {
                                           setIsTransitionMenuOpen(false);
@@ -504,7 +504,7 @@ const TaskDetailScreen: Component = () => {
                             </Show>
                             <button
                               type="button"
-                              class="task-control-icon-button task-control-icon-button-danger"
+                              class="task-control-icon-button task-control-icon-button-danger btn btn-sm btn-square border-error/35 bg-error/10 text-error hover:bg-error/10 rounded-none border"
                               onClick={onRequestDeleteTask}
                               disabled={isDeleting()}
                               aria-label={
@@ -526,6 +526,7 @@ const TaskDetailScreen: Component = () => {
                                   </span>
                                 </span>
                                 <select
+                                  class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
                                   value={moveRepositoryId()}
                                   onChange={(event) =>
                                     setMoveRepositoryId(
@@ -590,7 +591,7 @@ const TaskDetailScreen: Component = () => {
                                 </p>
                                 <button
                                   type="button"
-                                  class="projects-button-muted"
+                                  class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
                                   onClick={() => {
                                     const currentTask = task();
                                     if (!currentTask) return;
@@ -1174,7 +1175,7 @@ const TaskDetailScreen: Component = () => {
               </button>
               <button
                 type="button"
-                class="projects-button-primary"
+                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                 onClick={onSubmitCreateDependency}
                 disabled={isCreatingDependency()}
               >

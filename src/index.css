@@ -1,1 +1,48 @@
 @import "tailwindcss";
+
+@plugin "daisyui" {
+  themes: false;
+  logs: false;
+}
+
+@plugin "daisyui/theme" {
+  name: "orkestra-dark";
+  default: true;
+  color-scheme: dark;
+  --color-base-100: #18212d;
+  --color-base-200: #111823;
+  --color-base-300: #0a0f14;
+  --color-base-content: #d7e0ea;
+  --color-primary: #5ab0ff;
+  --color-primary-content: #07131d;
+  --color-secondary: #7d8cff;
+  --color-secondary-content: #10152c;
+  --color-accent: #2dd4bf;
+  --color-accent-content: #071514;
+  --color-neutral: #0a0f14;
+  --color-neutral-content: #d7e0ea;
+  --color-info: #67b7ff;
+  --color-info-content: #07131d;
+  --color-success: #4fd1a5;
+  --color-success-content: #07140f;
+  --color-warning: #ffb454;
+  --color-warning-content: #1c1204;
+  --color-error: #ff6b81;
+  --color-error-content: #19090d;
+  --radius-selector: 0.125rem;
+  --radius-field: 0.125rem;
+  --radius-box: 0.125rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+html {
+  background: var(--color-base-300);
+}
+
+body {
+  background: var(--color-base-300);
+}

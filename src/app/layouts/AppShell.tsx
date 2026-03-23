@@ -11,6 +11,7 @@ import { listProjects, type Project } from "../lib/projects";
 import { primeRunSelectionOptionsCache } from "../lib/runSelectionOptionsCache";
 import MainContent from "../../components/layout/MainContent";
 import SidebarNav from "../../components/layout/SidebarNav";
+import Topbar from "../../components/layout/Topbar";
 
 type AppShellProps = {
   children?: JSX.Element;
@@ -137,6 +138,39 @@ const AppShell: Component<AppShellProps> = (props) => {
     setMobileSidebarOpen(false);
   };
 
+  const shellTitle = () => {
+    if (location.pathname.startsWith("/runs/")) return "Run workspace";
+    if (location.pathname.startsWith("/tasks/")) return "Task detail";
+    if (
+      location.pathname.startsWith("/projects/") &&
+      location.pathname !== "/projects"
+    ) {
+      if (location.pathname.includes("/tasks/")) return "Task detail";
+      return "Project detail";
+    }
+    if (location.pathname === "/projects") return "Projects";
+    return "Board";
+  };
+
+  const shellSubtitle = () => {
+    if (location.pathname.startsWith("/runs/")) {
+      return "Review conversations, diffs, and terminal activity.";
+    }
+    if (location.pathname === "/projects") {
+      return "Manage repositories, tasks, and automation entry points.";
+    }
+    if (location.pathname.startsWith("/projects/")) {
+      return "Inspect project configuration and related work.";
+    }
+    if (
+      location.pathname.startsWith("/tasks/") ||
+      location.pathname.includes("/tasks/")
+    ) {
+      return "Follow task state and execution context.";
+    }
+    return "Track work across your active projects.";
+  };
+
   const handleShellKeyDown: JSX.EventHandler<HTMLDivElement, KeyboardEvent> = (
     event,
   ) => {
@@ -148,26 +182,38 @@ const AppShell: Component<AppShellProps> = (props) => {
 
   return (
     <div
-      class="app-shell"
+      class="app-shell bg-base-300 text-base-content min-h-screen"
       classList={{
         "app-shell--desktop-collapsed": !isMobile() && desktopCollapsed(),
       }}
       data-desktop-collapsed={
         !isMobile() && desktopCollapsed() ? "true" : "false"
       }
+      data-theme="orkestra-dark"
       ref={shellRootRef}
       onKeyDown={handleShellKeyDown}
+      style={{
+        "grid-template-columns": isMobile()
+          ? "1fr"
+          : desktopCollapsed()
+            ? "3.5rem minmax(0, 1fr)"
+            : "17rem minmax(0, 1fr)",
+      }}
     >
       {isMobile() ? (
         <>
           <div
-            class="sidebar-backdrop"
-            classList={{ "sidebar-backdrop-open": mobileSidebarOpen() }}
+            class="sidebar-backdrop bg-neutral/70 fixed inset-0 z-20 transition-opacity duration-200"
+            classList={{
+              "sidebar-backdrop-open opacity-100": mobileSidebarOpen(),
+              "pointer-events-none opacity-0": !mobileSidebarOpen(),
+            }}
             aria-hidden={mobileSidebarOpen() ? "false" : "true"}
             onClick={onMobileClose}
           />
           <SidebarNav
             projects={projects}
+            isMobile
             isVisible={isSidebarVisible}
             onNavigate={onMobileClose}
           />
@@ -175,32 +221,52 @@ const AppShell: Component<AppShellProps> = (props) => {
       ) : (
         <SidebarNav
           projects={projects}
+          isMobile={false}
           isVisible={() => true}
           desktopCollapsed={desktopCollapsed}
           onCollapse={onDesktopCollapse}
           onExpand={onDesktopExpand}
         />
       )}
-      <div class="shell-main">
-        <div class="shell-content-wrapper">
-          {isMobile() ? (
-            <button
-              ref={mobileMenuButtonRef}
-              type="button"
-              class="sidebar-toggle sidebar-toggle--floating"
-              aria-label="Open navigation menu"
-              aria-controls="app-sidebar"
-              aria-expanded={isSidebarVisible() ? "true" : "false"}
-              onClick={onMobileOpen}
-            >
-              Menu
-            </button>
-          ) : null}
-          <div class="shell-body">
+      <div
+        class="shell-main min-w-0 overflow-hidden p-2"
+        classList={{
+          "pl-0": !isMobile(),
+        }}
+      >
+        <div class="shell-content-wrapper flex h-full min-h-0 flex-col gap-2 sm:gap-3">
+          <Topbar
+            title={shellTitle()}
+            subtitle={shellSubtitle()}
+            leading={
+              isMobile() ? (
+                <button
+                  ref={mobileMenuButtonRef}
+                  type="button"
+                  class="btn btn-ghost btn-square btn-sm border-base-content/15 bg-base-100 rounded-none border"
+                  aria-label="Open navigation menu"
+                  aria-controls="app-sidebar"
+                  aria-expanded={isSidebarVisible() ? "true" : "false"}
+                  onClick={onMobileOpen}
+                >
+                  <span aria-hidden="true">☰</span>
+                </button>
+              ) : null
+            }
+            actions={
+              <>
+                <span class="badge badge-outline border-primary/20 text-primary/80 hidden rounded-none px-2 text-[11px] tracking-[0.2em] uppercase md:inline-flex">
+                  Dark mode
+                </span>
+                <span class="badge badge-ghost border-base-content/15 text-base-content/60 rounded-none border px-2 text-[11px]">
+                  {projects().length} projects
+                </span>
+              </>
+            }
+          />
+          <div class="shell-body grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden">
             <MainContent>{props.children}</MainContent>
-            <aside class="shell-right-panel" aria-hidden="true" />
           </div>
-          <section class="shell-bottom-panel" aria-hidden="true" />
         </div>
       </div>
     </div>

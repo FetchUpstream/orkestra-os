@@ -29,118 +29,137 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
         onClick={props.onCancel}
       >
         <section
-          class="projects-modal task-create-dependency-modal task-run-settings-modal"
+          class="projects-modal task-create-dependency-modal task-run-settings-modal border-base-content/15 bg-base-200 rounded-none border p-0 shadow-none"
           role="dialog"
           aria-modal="true"
           aria-labelledby="task-run-settings-modal-title"
           onClick={(event) => event.stopPropagation()}
         >
-          <h2
-            id="task-run-settings-modal-title"
-            class="task-delete-modal-title"
-          >
-            New run settings
-          </h2>
-          <Show when={props.hasRunSelectionOptions()}>
-            <div class="task-runs-defaults-grid">
-              <label class="projects-field task-runs-default-field">
-                <span class="field-label">
-                  <span class="field-label-text">Agent</span>
-                </span>
-                <select
-                  value={props.selectedRunAgentId()}
-                  onChange={(event) =>
-                    props.setSelectedRunAgentId(event.currentTarget.value)
-                  }
-                  disabled={props.isSubmitting()}
-                  aria-label="Default run agent"
-                >
-                  <option value="">Use run default</option>
-                  <For each={props.runAgentOptions()}>
-                    {(option) => (
-                      <option value={option.id}>{option.label}</option>
-                    )}
-                  </For>
-                </select>
-              </label>
-              <label class="projects-field task-runs-default-field">
-                <span class="field-label">
-                  <span class="field-label-text">Provider</span>
-                </span>
-                <select
-                  value={props.selectedRunProviderId()}
-                  onChange={(event) =>
-                    props.setSelectedRunProviderId(event.currentTarget.value)
-                  }
-                  disabled={props.isSubmitting()}
-                  aria-label="Default run provider"
-                >
-                  <option value="">Use run default</option>
-                  <For each={props.runProviderOptions()}>
-                    {(option) => (
-                      <option value={option.id}>{option.label}</option>
-                    )}
-                  </For>
-                </select>
-              </label>
-              <label class="projects-field task-runs-default-field">
-                <span class="field-label">
-                  <span class="field-label-text">Model</span>
-                </span>
-                <select
-                  value={props.selectedRunModelId()}
-                  onChange={(event) =>
-                    props.setSelectedRunModelId(event.currentTarget.value)
-                  }
-                  disabled={props.isSubmitting()}
-                  aria-label="Default run model"
-                >
-                  <option value="">Use run default</option>
-                  <For each={props.visibleRunModelOptions()}>
-                    {(option) => (
-                      <option value={option.id}>{option.label}</option>
-                    )}
-                  </For>
-                </select>
-              </label>
-            </div>
-          </Show>
-          <Show
-            when={
-              !props.hasRunSelectionOptions() &&
-              props.isLoadingRunSelectionOptions()
-            }
-          >
-            <p class="project-placeholder-text">Loading run defaults...</p>
-          </Show>
-          <Show
-            when={
-              !props.hasRunSelectionOptions() &&
-              !props.isLoadingRunSelectionOptions() &&
-              !props.runSelectionOptionsError()
-            }
-          >
-            <p class="project-placeholder-text">
-              Run defaults are unavailable. A run will use system defaults.
+          <div class="border-base-content/10 border-b px-5 py-4">
+            <h2
+              id="task-run-settings-modal-title"
+              class="task-delete-modal-title text-base-content m-0 text-base font-semibold"
+            >
+              New run settings
+            </h2>
+            <p class="text-base-content/60 mt-1 text-xs">
+              Override agent, provider, or model for this run.
             </p>
-          </Show>
-          <div class="task-delete-modal-actions">
-            <button
-              type="button"
-              class="projects-button-muted"
-              onClick={props.onCancel}
-              disabled={props.isSubmitting()}
+          </div>
+          <div class="flex flex-col gap-4 px-5 py-4">
+            <Show when={props.hasRunSelectionOptions()}>
+              <div class="task-runs-defaults-grid">
+                <label class="projects-field task-runs-default-field">
+                  <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                    <span class="field-label-text">Agent</span>
+                  </span>
+                  <select
+                    class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
+                    value={props.selectedRunAgentId()}
+                    onChange={(event) =>
+                      props.setSelectedRunAgentId(event.currentTarget.value)
+                    }
+                    disabled={props.isSubmitting()}
+                    aria-label="Default run agent"
+                  >
+                    <option value="">Use run default</option>
+                    <For each={props.runAgentOptions()}>
+                      {(option) => (
+                        <option value={option.id}>{option.label}</option>
+                      )}
+                    </For>
+                  </select>
+                </label>
+                <label class="projects-field task-runs-default-field">
+                  <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                    <span class="field-label-text">Provider</span>
+                  </span>
+                  <select
+                    class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
+                    value={props.selectedRunProviderId()}
+                    onChange={(event) =>
+                      props.setSelectedRunProviderId(event.currentTarget.value)
+                    }
+                    disabled={props.isSubmitting()}
+                    aria-label="Default run provider"
+                  >
+                    <option value="">Use run default</option>
+                    <For each={props.runProviderOptions()}>
+                      {(option) => (
+                        <option value={option.id}>{option.label}</option>
+                      )}
+                    </For>
+                  </select>
+                </label>
+                <label class="projects-field task-runs-default-field">
+                  <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                    <span class="field-label-text">Model</span>
+                  </span>
+                  <select
+                    class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
+                    value={props.selectedRunModelId()}
+                    onChange={(event) =>
+                      props.setSelectedRunModelId(event.currentTarget.value)
+                    }
+                    disabled={props.isSubmitting()}
+                    aria-label="Default run model"
+                  >
+                    <option value="">Use run default</option>
+                    <For each={props.visibleRunModelOptions()}>
+                      {(option) => (
+                        <option value={option.id}>{option.label}</option>
+                      )}
+                    </For>
+                  </select>
+                </label>
+              </div>
+            </Show>
+            <Show
+              when={
+                !props.hasRunSelectionOptions() &&
+                props.isLoadingRunSelectionOptions()
+              }
             >
-              Cancel
-            </button>
-            <button
-              type="button"
-              class="projects-button-primary"
-              onClick={() => void props.onConfirm()}
-              disabled={props.isSubmitting()}
+              <p class="project-placeholder-text text-sm">
+                Loading run defaults...
+              </p>
+            </Show>
+            <Show
+              when={
+                !props.hasRunSelectionOptions() &&
+                !props.isLoadingRunSelectionOptions() &&
+                !props.runSelectionOptionsError()
+              }
             >
-              {props.isSubmitting() ? "Starting..." : "Create run"}
-            </button>
+              <p class="project-placeholder-text text-sm">
+                Run defaults are unavailable. A run will use system defaults.
+              </p>
+            </Show>
+            <Show when={props.runSelectionOptionsError()}>
+              {(message) => (
+                <p class="projects-error border-error/35 bg-error/10 m-0 text-sm">
+                  {message()}
+                </p>
+              )}
+            </Show>
+            <div class="task-delete-modal-actions border-base-content/10 mt-1 justify-end gap-2 border-t pt-4">
+              <button
+                type="button"
+                class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+                onClick={props.onCancel}
+                disabled={props.isSubmitting()}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
+                onClick={() => void props.onConfirm()}
+                disabled={props.isSubmitting()}
+              >
+                {props.isSubmitting() ? "Starting..." : "Create run"}
+              </button>
+            </div>
           </div>
         </section>
       </div>
