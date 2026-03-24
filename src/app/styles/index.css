@@ -1676,9 +1676,10 @@ textarea::placeholder {
 .task-detail-title {
   margin: 0;
   color: var(--text);
-  font-size: 1.1rem;
-  line-height: 1.2;
-  letter-spacing: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
 }
 
 .task-detail-title-input {
@@ -1703,7 +1704,14 @@ textarea::placeholder {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.task-detail-display-key {
+  font-size: 0.74rem;
+  color: var(--text-subtle);
+  letter-spacing: 0.02em;
 }
 
 .task-detail-header-actions {
@@ -1716,62 +1724,96 @@ textarea::placeholder {
 .task-detail-summary-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px 12px;
   border-top: 1px solid var(--border-subtle);
   border-bottom: 1px solid var(--border-subtle);
-  padding: 10px 0;
+  padding: 9px 2px;
+  margin-top: 2px;
+  background: color-mix(in srgb, var(--surface-alt) 45%, transparent);
 }
 
 .task-detail-summary-item {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
   min-width: 0;
 }
 
 .task-detail-summary-label {
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.07em;
   color: var(--text-subtle);
 }
 
 .task-detail-summary-value {
-  font-size: 0.8rem;
-  color: var(--text-muted);
+  font-size: 0.77rem;
+  color: var(--text);
+  font-weight: 500;
   font-family: var(--font-mono);
 }
 
 .task-detail-main-card {
   border-color: var(--border);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
+  padding: 18px;
 }
 
 .task-detail-description-block {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.task-detail-description-block:first-of-type {
+  border-top: 0;
+  padding-top: 4px;
+}
+
+.task-detail-description-block:not(.task-detail-description-block--guide) {
+  max-width: 920px;
 }
 
 .task-detail-description-title {
   margin: 0;
-  color: var(--text);
+  color: var(--text-muted);
 }
 
 .task-detail-description-text {
   font-size: 0.84rem;
-  line-height: 1.5;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.task-detail-description-block--guide {
+  gap: 10px;
+  padding-top: 14px;
+}
+
+.task-detail-description-block--guide .task-detail-description-title {
   color: var(--text);
+  font-size: 0.8rem;
+}
+
+.task-detail-description-block--guide .task-detail-description-text {
+  color: var(--text);
+  font-size: 0.86rem;
 }
 
 .task-markdown-editor {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) 86%, var(--surface-alt) 14%);
   overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
 }
 
 .task-markdown-editor .cm-editor {
@@ -1785,7 +1827,8 @@ textarea::placeholder {
 
 .task-markdown-editor:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-subtle);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+  background: color-mix(in srgb, var(--bg) 90%, var(--surface-alt) 10%);
 }
 
 .task-markdown-editor .cm-editor .cm-scroller {
@@ -1794,7 +1837,15 @@ textarea::placeholder {
 }
 
 .task-markdown-editor .cm-editor .cm-content {
-  min-height: 180px;
+  min-height: 132px;
+  padding: 6px 2px;
+}
+
+.task-detail-description-block--guide
+  .task-markdown-editor
+  .cm-editor
+  .cm-content {
+  min-height: 260px;
 }
 
 .task-markdown-editor .cm-editor .cm-placeholder {
@@ -1938,8 +1989,8 @@ textarea::placeholder {
 
 .task-detail-columns {
   display: grid;
-  grid-template-columns: minmax(0, 4fr) minmax(260px, 1fr);
-  gap: 14px;
+  grid-template-columns: minmax(0, 4.8fr) minmax(250px, 0.92fr);
+  gap: 16px;
   align-items: start;
 }
 
@@ -1947,7 +1998,7 @@ textarea::placeholder {
 .task-detail-inspector-column {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .task-detail-controls-panel {
@@ -1959,25 +2010,46 @@ textarea::placeholder {
 .task-detail-inspector-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  padding: 16px;
 }
 
 .task-detail-panel-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+}
+
+.task-detail-panel-section .project-section-title {
+  color: var(--text);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
 }
 
 .task-detail-panel-separator {
   height: 1px;
   background: var(--border-subtle);
+  opacity: 0.75;
 }
 
 .task-detail-controls-actions {
-  justify-content: stretch;
+  justify-content: flex-start;
   flex-wrap: nowrap;
   align-items: center;
   position: relative;
+  gap: 6px;
+}
+
+.task-detail-action-save {
+  min-width: 88px;
+}
+
+.task-detail-action-cancel {
+  color: var(--text-muted);
+}
+
+.task-detail-transition-trigger--editing {
+  margin-left: auto;
 }
 
 .task-detail-controls-actions .projects-button-primary {
@@ -1992,7 +2064,7 @@ textarea::placeholder {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   background: var(--surface-alt);
   color: var(--text-muted);
   cursor: pointer;
@@ -2028,6 +2100,13 @@ textarea::placeholder {
   border-color: rgba(255, 107, 107, 0.3);
   background: var(--danger-subtle);
   color: var(--danger);
+}
+
+.task-detail-sidebar-empty-state {
+  color: var(--text-subtle);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  padding: 2px 0;
 }
 
 .task-control-icon-button-danger:hover:not(:disabled) {
@@ -2115,13 +2194,13 @@ textarea::placeholder {
 .task-dependencies-panel {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
 .task-dependencies-content {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .task-dependencies-section {
@@ -2132,10 +2211,10 @@ textarea::placeholder {
 
 .task-dependencies-heading {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.74rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-subtle);
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
 }
 
 .task-dependencies-heading-row {
@@ -2171,8 +2250,8 @@ textarea::placeholder {
 }
 
 .task-link-candidate-item {
-  border: 1px solid var(--border-subtle);
-  background: var(--surface-alt);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-alt) 72%, transparent);
   border-radius: 0;
   padding: 10px 12px;
   display: flex;
@@ -2195,8 +2274,8 @@ textarea::placeholder {
 }
 
 .task-dependency-row {
-  border: 1px solid var(--border-subtle);
-  background: var(--surface-alt);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-alt) 72%, transparent);
   border-radius: 0;
   padding: 10px 12px;
   display: flex;
@@ -2280,7 +2359,7 @@ textarea::placeholder {
 .task-runs-panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .task-runs-defaults-grid {
@@ -2308,9 +2387,9 @@ textarea::placeholder {
 
 .task-runs-item {
   position: relative;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
   border-radius: var(--radius-md);
-  background: var(--surface-alt);
+  background: color-mix(in srgb, var(--surface-alt) 74%, transparent);
 }
 
 .task-runs-delete-button {
@@ -2362,8 +2441,8 @@ textarea::placeholder {
 }
 
 .task-runs-link:hover {
-  background: var(--surface-hover);
-  box-shadow: 0 0 0 1px var(--accent-subtle);
+  background: color-mix(in srgb, var(--surface-hover) 80%, transparent);
+  box-shadow: none;
 }
 
 .task-runs-content {

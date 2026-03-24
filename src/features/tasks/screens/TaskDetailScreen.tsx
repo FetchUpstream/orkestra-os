@@ -255,7 +255,7 @@ const TaskDetailScreen: Component = () => {
                 <div class="task-detail-workspace">
                   <div class="task-detail-columns">
                     <div class="task-detail-main-column">
-                      <section class="projects-panel task-detail-main-card border-base-content/15 bg-base-200/35 border">
+                      <section class="projects-panel task-detail-main-card">
                         <BackIconLink
                           href={backHref()}
                           label={backLabel()}
@@ -288,7 +288,7 @@ const TaskDetailScreen: Component = () => {
                         <div class="task-detail-meta-row">
                           <Show when={taskValue().displayKey?.trim()}>
                             {(displayKey) => (
-                              <span class="projects-list-meta">
+                              <span class="projects-list-meta task-detail-display-key">
                                 {displayKey()}
                               </span>
                             )}
@@ -370,7 +370,7 @@ const TaskDetailScreen: Component = () => {
                             />
                           </Show>
                         </div>
-                        <div class="task-detail-description-block">
+                        <div class="task-detail-description-block task-detail-description-block--guide">
                           <h2 class="project-section-title task-detail-description-title">
                             Implementation guide
                           </h2>
@@ -406,7 +406,7 @@ const TaskDetailScreen: Component = () => {
                     </div>
 
                     <aside class="task-detail-inspector-column">
-                      <section class="projects-panel task-detail-inspector-panel border-base-content/15 bg-base-200/30 border">
+                      <section class="projects-panel task-detail-inspector-panel">
                         <div class="task-detail-panel-section">
                           <h2 class="project-section-title">Task controls</h2>
                           <div class="task-detail-header-actions task-detail-controls-actions">
@@ -429,7 +429,7 @@ const TaskDetailScreen: Component = () => {
                             >
                               <button
                                 type="button"
-                                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
+                                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary task-detail-action-save rounded-none border px-4 text-xs font-semibold"
                                 onClick={onSaveEdit}
                                 disabled={isSavingEdit()}
                               >
@@ -437,7 +437,7 @@ const TaskDetailScreen: Component = () => {
                               </button>
                               <button
                                 type="button"
-                                class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+                                class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 task-detail-action-cancel rounded-none border px-4 text-xs font-medium"
                                 onClick={onCancelEdit}
                                 disabled={isSavingEdit()}
                               >
@@ -446,7 +446,7 @@ const TaskDetailScreen: Component = () => {
                             </Show>
                             <button
                               type="button"
-                              class="task-control-icon-button btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
+                              class={`task-control-icon-button task-detail-transition-trigger btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border ${isEditing() ? "task-detail-transition-trigger--editing" : ""}`}
                               onClick={() =>
                                 setIsTransitionMenuOpen((current) => !current)
                               }
@@ -606,7 +606,7 @@ const TaskDetailScreen: Component = () => {
                             <Show
                               when={!isLoadingRuns()}
                               fallback={
-                                <p class="project-placeholder-text">
+                                <p class="project-placeholder-text task-detail-sidebar-empty-state">
                                   Loading runs.
                                 </p>
                               }
@@ -614,7 +614,7 @@ const TaskDetailScreen: Component = () => {
                               <Show
                                 when={runs().length > 0}
                                 fallback={
-                                  <p class="project-placeholder-text">
+                                  <p class="project-placeholder-text task-detail-sidebar-empty-state">
                                     No runs yet.
                                   </p>
                                 }
@@ -816,7 +816,7 @@ const TaskDetailScreen: Component = () => {
                                         dependencyState().parents.length > 0
                                       }
                                       fallback={
-                                        <p class="project-placeholder-text">
+                                        <p class="project-placeholder-text task-detail-sidebar-empty-state">
                                           No prerequisites yet.
                                         </p>
                                       }
@@ -934,7 +934,7 @@ const TaskDetailScreen: Component = () => {
                                         dependencyState().children.length > 0
                                       }
                                       fallback={
-                                        <p class="project-placeholder-text">
+                                        <p class="project-placeholder-text task-detail-sidebar-empty-state">
                                           No downstream tasks yet.
                                         </p>
                                       }
