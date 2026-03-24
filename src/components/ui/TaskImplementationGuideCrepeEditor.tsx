@@ -8,6 +8,7 @@ type TaskImplementationGuideCrepeEditorProps = {
   onBlur?: () => void;
   ariaLabel?: string;
   disabled?: boolean;
+  placeholder?: string;
 };
 
 const TaskImplementationGuideCrepeEditor: Component<
@@ -42,6 +43,13 @@ const TaskImplementationGuideCrepeEditor: Component<
     const crepeInstance = new Crepe({
       root: mountRef,
       defaultValue: props.value || "",
+      featureConfigs: props.placeholder
+        ? {
+            [Crepe.Feature.Placeholder]: {
+              text: props.placeholder,
+            },
+          }
+        : undefined,
     });
 
     crepeInstance.setReadonly(Boolean(props.disabled));

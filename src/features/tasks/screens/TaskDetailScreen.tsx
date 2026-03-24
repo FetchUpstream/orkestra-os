@@ -337,6 +337,7 @@ const TaskDetailScreen: Component = () => {
                           <TaskImplementationGuideCrepeEditor
                             value={editDescription()}
                             onChange={onEditDescriptionInput}
+                            placeholder="Describe the goal of this task in short .."
                             onBlur={() => {
                               void flushTaskDetailsAutosave("blur");
                             }}
@@ -350,6 +351,7 @@ const TaskDetailScreen: Component = () => {
                           <TaskImplementationGuideCrepeEditor
                             value={editImplementationGuide()}
                             onChange={onEditImplementationGuideInput}
+                            placeholder="Create a detailed specific implementation guide for the AI to follow ..."
                             onBlur={() => {
                               void flushTaskDetailsAutosave("blur");
                             }}
