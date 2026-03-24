@@ -6,6 +6,7 @@ import { createEffect, onCleanup, type Component } from "solid-js";
 type TaskMarkdownEditorProps = {
   value: string;
   onChange: (next: string) => void;
+  onBlur?: () => void;
   ariaLabel?: string;
   disabled?: boolean;
 };
@@ -48,6 +49,12 @@ const TaskMarkdownEditor: Component<TaskMarkdownEditorProps> = (props) => {
         EditorView.updateListener.of((update) => {
           if (!update.docChanged || isApplyingExternalValue) return;
           props.onChange(update.state.doc.toString());
+        }),
+        EditorView.domEventHandlers({
+          blur: () => {
+            props.onBlur?.();
+            return false;
+          },
         }),
         EditorView.contentAttributes.of({
           "aria-label": ariaLabel,

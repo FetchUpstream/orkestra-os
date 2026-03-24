@@ -66,12 +66,13 @@ export const useTaskDetailModel = () => {
   const [isLoadingDependencies, setIsLoadingDependencies] = createSignal(false);
   const [candidateTasks, setCandidateTasks] = createSignal<Task[]>([]);
   const [removingDependencyKey, setRemovingDependencyKey] = createSignal("");
-  const [isEditing, setIsEditing] = createSignal(false);
   const [editTitle, setEditTitle] = createSignal("");
   const [editDescription, setEditDescription] = createSignal("");
   const [editImplementationGuide, setEditImplementationGuide] =
     createSignal("");
-  const [isSavingEdit, setIsSavingEdit] = createSignal(false);
+  const [autosaveState, setAutosaveState] = createSignal<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
   const [isChangingStatus, setIsChangingStatus] = createSignal(false);
   const [isTransitionMenuOpen, setIsTransitionMenuOpen] = createSignal(false);
   const [moveRepositoryId, setMoveRepositoryId] = createSignal("");
@@ -137,114 +138,150 @@ export const useTaskDetailModel = () => {
   >({});
   let runSelectionOptionsRequestVersion = 0;
   let editMutationVersion = 0;
-  let implementationGuideAutosaveTimer: ReturnType<typeof setTimeout> | null =
-    null;
-  let implementationGuideAutosaveMaxWaitTimer: ReturnType<
-    typeof setTimeout
-  > | null = null;
-  let implementationGuideAutosaveInFlight = false;
-  let implementationGuideAutosaveFlight: Promise<void> | null = null;
-  let queuedImplementationGuideValue: string | null = null;
-  let lastPersistedImplementationGuide: string | undefined = undefined;
+  let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let autosaveMaxWaitTimer: ReturnType<typeof setTimeout> | null = null;
+  let autosaveInFlight = false;
+  let autosaveQueued = false;
+  let lastPersistedDraftSignature = "";
 
   const normalizeImplementationGuide = (value: string) =>
     value.trim() || undefined;
 
-  const clearImplementationGuideAutosaveTimers = () => {
-    if (implementationGuideAutosaveTimer) {
-      clearTimeout(implementationGuideAutosaveTimer);
-      implementationGuideAutosaveTimer = null;
+  const buildAutosavePayload = () => ({
+    title: editTitle().trim(),
+    description: editDescription().trim() || undefined,
+    implementationGuide: normalizeImplementationGuide(
+      editImplementationGuide(),
+    ),
+  });
+
+  const draftSignature = (payload: {
+    title: string;
+    description?: string;
+    implementationGuide?: string;
+  }) => JSON.stringify(payload);
+
+  const clearTaskDetailsAutosaveTimers = () => {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = null;
     }
-    if (implementationGuideAutosaveMaxWaitTimer) {
-      clearTimeout(implementationGuideAutosaveMaxWaitTimer);
-      implementationGuideAutosaveMaxWaitTimer = null;
+    if (autosaveMaxWaitTimer) {
+      clearTimeout(autosaveMaxWaitTimer);
+      autosaveMaxWaitTimer = null;
     }
   };
 
-  const clearImplementationGuideAutosaveState = () => {
-    clearImplementationGuideAutosaveTimers();
-    queuedImplementationGuideValue = null;
+  const clearTaskDetailsAutosaveState = () => {
+    clearTaskDetailsAutosaveTimers();
+    autosaveQueued = false;
+    setAutosaveState("idle");
   };
 
-  const flushImplementationGuideAutosave = async (
-    _reason: "debounced" | "max-wait" | "blur" | "explicit-save",
+  const flushTaskDetailsAutosave = async (
+    _reason: "debounced" | "max-wait" | "blur",
   ) => {
-    clearImplementationGuideAutosaveTimers();
+    clearTaskDetailsAutosaveTimers();
 
     const taskValue = task();
-    if (!taskValue || !isEditing()) return;
+    if (!taskValue) return;
 
-    const normalizedGuide = normalizeImplementationGuide(
-      editImplementationGuide(),
-    );
-    if (normalizedGuide === lastPersistedImplementationGuide) return;
+    const payload = buildAutosavePayload();
+    if (!payload.title) return;
 
-    if (implementationGuideAutosaveInFlight) {
-      queuedImplementationGuideValue = editImplementationGuide();
+    const nextSignature = draftSignature(payload);
+    if (nextSignature === lastPersistedDraftSignature) return;
+
+    if (autosaveInFlight) {
+      autosaveQueued = true;
       return;
     }
 
     const requestVersion = ++editMutationVersion;
     const activeTaskId = taskValue.id;
-    implementationGuideAutosaveInFlight = true;
+    autosaveInFlight = true;
+    setAutosaveState("saving");
 
     const requestPromise = (async () => {
       try {
-        const updated = await updateTask(activeTaskId, {
-          title: taskValue.title,
-          description: taskValue.description?.trim() || undefined,
-          implementationGuide: normalizedGuide,
-        });
+        const updated = await updateTask(activeTaskId, payload);
 
         if (requestVersion !== editMutationVersion) return;
         if (params.taskId !== activeTaskId) return;
         if (task()?.id !== activeTaskId) return;
 
-        setTask(updated);
-        lastPersistedImplementationGuide = normalizeImplementationGuide(
-          updated.implementationGuide || "",
-        );
+        setTask((currentTask) => {
+          if (!currentTask || currentTask.id !== activeTaskId)
+            return currentTask;
+          return {
+            ...currentTask,
+            title: updated.title,
+            description: updated.description,
+            implementationGuide: updated.implementationGuide,
+            updatedAt: updated.updatedAt,
+          };
+        });
+
+        const persistedPayload = {
+          title: updated.title.trim(),
+          description: updated.description?.trim() || undefined,
+          implementationGuide: normalizeImplementationGuide(
+            updated.implementationGuide || "",
+          ),
+        };
+        lastPersistedDraftSignature = draftSignature(persistedPayload);
+        setAutosaveState("saved");
+        setActionError("");
       } catch {
         if (requestVersion !== editMutationVersion) return;
         if (params.taskId !== activeTaskId) return;
-        setActionError("Failed to autosave implementation guide.");
+        setAutosaveState("error");
+        setActionError("Failed to autosave task details.");
       } finally {
         if (requestVersion === editMutationVersion) {
-          implementationGuideAutosaveInFlight = false;
+          autosaveInFlight = false;
         }
       }
     })();
 
-    implementationGuideAutosaveFlight = requestPromise;
     await requestPromise;
 
     if (requestVersion !== editMutationVersion) return;
 
-    if (queuedImplementationGuideValue !== null) {
-      queuedImplementationGuideValue = null;
-      void flushImplementationGuideAutosave("debounced");
+    if (autosaveQueued) {
+      autosaveQueued = false;
+      void flushTaskDetailsAutosave("debounced");
     }
   };
 
-  const scheduleImplementationGuideAutosave = () => {
-    if (implementationGuideAutosaveTimer) {
-      clearTimeout(implementationGuideAutosaveTimer);
+  const scheduleTaskDetailsAutosave = () => {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
     }
-    implementationGuideAutosaveTimer = setTimeout(() => {
-      void flushImplementationGuideAutosave("debounced");
+    autosaveTimer = setTimeout(() => {
+      void flushTaskDetailsAutosave("debounced");
     }, AUTOSAVE_DEBOUNCE_MS);
 
-    if (!implementationGuideAutosaveMaxWaitTimer) {
-      implementationGuideAutosaveMaxWaitTimer = setTimeout(() => {
-        void flushImplementationGuideAutosave("max-wait");
+    if (!autosaveMaxWaitTimer) {
+      autosaveMaxWaitTimer = setTimeout(() => {
+        void flushTaskDetailsAutosave("max-wait");
       }, AUTOSAVE_MAX_WAIT_MS);
     }
   };
 
+  const onEditTitleInput = (value: string) => {
+    setEditTitle(value);
+    scheduleTaskDetailsAutosave();
+  };
+
+  const onEditDescriptionInput = (value: string) => {
+    setEditDescription(value);
+    scheduleTaskDetailsAutosave();
+  };
+
   const onEditImplementationGuideInput = (markdown: string) => {
     setEditImplementationGuide(markdown);
-    if (!isEditing()) return;
-    scheduleImplementationGuideAutosave();
+    scheduleTaskDetailsAutosave();
   };
 
   const taskDetailOrigin = createMemo(() => {
@@ -682,10 +719,14 @@ export const useTaskDetailModel = () => {
         setEditTitle(detail.title);
         setEditDescription(detail.description || "");
         setEditImplementationGuide(detail.implementationGuide || "");
-        lastPersistedImplementationGuide = normalizeImplementationGuide(
-          detail.implementationGuide || "",
-        );
-        clearImplementationGuideAutosaveState();
+        lastPersistedDraftSignature = draftSignature({
+          title: detail.title.trim(),
+          description: detail.description?.trim() || undefined,
+          implementationGuide: normalizeImplementationGuide(
+            detail.implementationGuide || "",
+          ),
+        });
+        clearTaskDetailsAutosaveState();
         const resolvedProjectId = detail.projectId || params.projectId || null;
         void refreshRunSelectionOptions(activeTaskId);
         await Promise.all([
@@ -702,62 +743,8 @@ export const useTaskDetailModel = () => {
     })();
   });
 
-  const onSaveEdit = async () => {
-    const taskValue = task();
-    if (!taskValue) return;
-    const title = editTitle().trim();
-    if (!title) {
-      setActionError("Title is required.");
-      return;
-    }
-    setActionError("");
-    clearImplementationGuideAutosaveState();
-    queuedImplementationGuideValue = null;
-    editMutationVersion += 1;
-    if (implementationGuideAutosaveFlight) {
-      await implementationGuideAutosaveFlight.catch(() => undefined);
-    }
-    setIsSavingEdit(true);
-    try {
-      const updated = await updateTask(taskValue.id, {
-        title,
-        description: editDescription().trim() || undefined,
-        implementationGuide: editImplementationGuide().trim() || undefined,
-      });
-      setTask(updated);
-      setEditTitle(updated.title);
-      setEditDescription(updated.description || "");
-      setEditImplementationGuide(updated.implementationGuide || "");
-      lastPersistedImplementationGuide = normalizeImplementationGuide(
-        updated.implementationGuide || "",
-      );
-      setIsEditing(false);
-    } catch (mutationError) {
-      setActionError(
-        getActionErrorMessage("Failed to save task.", mutationError),
-      );
-    } finally {
-      setIsSavingEdit(false);
-    }
-  };
-
-  const onCancelEdit = () => {
-    const taskValue = task();
-    if (!taskValue) return;
-    clearImplementationGuideAutosaveState();
-    editMutationVersion += 1;
-    setEditTitle(taskValue.title);
-    setEditDescription(taskValue.description || "");
-    setEditImplementationGuide(taskValue.implementationGuide || "");
-    lastPersistedImplementationGuide = normalizeImplementationGuide(
-      taskValue.implementationGuide || "",
-    );
-    setActionError("");
-    setIsEditing(false);
-  };
-
   onCleanup(() => {
-    clearImplementationGuideAutosaveState();
+    clearTaskDetailsAutosaveState();
     editMutationVersion += 1;
   });
 
@@ -1003,11 +990,10 @@ export const useTaskDetailModel = () => {
     selectedRunProviderId,
     selectedRunModelId,
     removingDependencyKey,
-    isEditing,
     editTitle,
     editDescription,
     editImplementationGuide,
-    isSavingEdit,
+    autosaveState,
     isChangingStatus,
     isTransitionMenuOpen,
     moveRepositoryId,
@@ -1035,14 +1021,13 @@ export const useTaskDetailModel = () => {
     refreshDependencies,
     refreshRuns,
     setActionError,
-    setIsEditing,
     setIsTransitionMenuOpen,
     setSelectedRunAgentId,
     setSelectedRunProviderId,
     setSelectedRunModelId,
-    setEditTitle,
-    setEditDescription,
     setEditImplementationGuide,
+    onEditTitleInput,
+    onEditDescriptionInput,
     setMoveRepositoryId,
     setCreateDependencyTitle,
     setCreateDependencyDescription,
@@ -1057,10 +1042,8 @@ export const useTaskDetailModel = () => {
     onOpenLinkDependencyModal,
     onCancelLinkDependency,
     onLinkDependency,
-    onSaveEdit,
-    onCancelEdit,
     onEditImplementationGuideInput,
-    flushImplementationGuideAutosave,
+    flushTaskDetailsAutosave,
     onSetStatus,
     onMoveTask,
     onRequestDeleteTask,

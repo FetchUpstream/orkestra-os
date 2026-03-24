@@ -1688,19 +1688,31 @@ textarea::placeholder {
 
 .task-detail-title-input {
   width: min(680px, 100%);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
   color: var(--text);
-  font-size: 1rem;
-  line-height: 1.3;
-  padding: 9px 10px;
-  font-weight: 600;
+  font-size: 1.5rem;
+  line-height: 1.15;
+  padding: 6px 8px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: -6px -8px;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.task-detail-title-input:hover {
+  border-color: var(--border-subtle);
+  background: color-mix(in srgb, var(--bg) 92%, var(--surface-alt) 8%);
 }
 
 .task-detail-title-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-subtle);
+  background: color-mix(in srgb, var(--bg) 90%, var(--surface-alt) 10%);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
   outline: none;
 }
 
@@ -2194,6 +2206,11 @@ textarea::placeholder {
   border: 1px solid var(--border);
   border-radius: 0;
   box-shadow: var(--shadow-md);
+}
+
+.task-detail-autosave-indicator {
+  color: var(--text-subtle);
+  font-weight: 600;
 }
 
 .task-status-transition-option {

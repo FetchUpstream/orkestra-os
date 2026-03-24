@@ -1,7 +1,6 @@
 import { For, Show, createEffect, onCleanup, type Component } from "solid-js";
 import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
-import RunChatMarkdown from "../../runs/components/chat/RunChatMarkdown";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
 import TaskImplementationGuideCrepeEditor from "../../../components/ui/TaskImplementationGuideCrepeEditor";
 import TaskMarkdownEditor from "../../../components/ui/TaskMarkdownEditor";
@@ -133,11 +132,10 @@ const TaskDetailScreen: Component = () => {
     selectedRunProviderId,
     selectedRunModelId,
     removingDependencyKey,
-    isEditing,
+    autosaveState,
     editTitle,
     editDescription,
     editImplementationGuide,
-    isSavingEdit,
     isChangingStatus,
     isTransitionMenuOpen,
     moveRepositoryId,
@@ -164,14 +162,12 @@ const TaskDetailScreen: Component = () => {
     navigateToDependencyTask,
     refreshDependencies,
     refreshRuns,
-    setActionError,
-    setIsEditing,
     setIsTransitionMenuOpen,
     setSelectedRunAgentId,
     setSelectedRunProviderId,
     setSelectedRunModelId,
-    setEditTitle,
-    setEditDescription,
+    onEditTitleInput,
+    onEditDescriptionInput,
     setMoveRepositoryId,
     setCreateDependencyTitle,
     setCreateDependencyDescription,
@@ -183,10 +179,8 @@ const TaskDetailScreen: Component = () => {
     onOpenCreateDependencyModal,
     onCancelCreateDependency,
     onSubmitCreateDependency,
-    onSaveEdit,
-    onCancelEdit,
     onEditImplementationGuideInput,
-    flushImplementationGuideAutosave,
+    flushTaskDetailsAutosave,
     onSetStatus,
     onMoveTask,
     onRequestDeleteTask,
@@ -209,18 +203,11 @@ const TaskDetailScreen: Component = () => {
         detail: {
           backHref: backHref(),
           backLabel: backLabel(),
-          isEditing: isEditing(),
-          isSavingEdit: isSavingEdit(),
+          autosaveState: autosaveState(),
           isChangingStatus: isChangingStatus(),
           isTransitionMenuOpen: isTransitionMenuOpen(),
           isDeleting: isDeleting(),
           validTransitionOptions: validTransitionOptions(),
-          onStartEdit: () => {
-            setActionError("");
-            setIsEditing(true);
-          },
-          onSaveEdit,
-          onCancelEdit,
           onToggleTransitionMenu: () =>
             setIsTransitionMenuOpen((current) => !current),
           onCloseTransitionMenu: () => setIsTransitionMenuOpen(false),
@@ -280,21 +267,17 @@ const TaskDetailScreen: Component = () => {
                             {actionError()}
                           </div>
                         </Show>
-                        <Show
-                          when={!isEditing()}
-                          fallback={
-                            <input
-                              class="task-detail-title-input"
-                              value={editTitle()}
-                              onInput={(event) =>
-                                setEditTitle(event.currentTarget.value)
-                              }
-                              aria-label="Task title"
-                            />
+                        <input
+                          class="task-detail-title-input"
+                          value={editTitle()}
+                          onInput={(event) =>
+                            onEditTitleInput(event.currentTarget.value)
                           }
-                        >
-                          <h1 class="task-detail-title">{taskValue().title}</h1>
-                        </Show>
+                          onBlur={() => {
+                            void flushTaskDetailsAutosave("blur");
+                          }}
+                          aria-label="Task title"
+                        />
                         <div class="task-detail-meta-row">
                           <Show when={taskValue().displayKey?.trim()}>
                             {(displayKey) => (
@@ -352,68 +335,27 @@ const TaskDetailScreen: Component = () => {
                           <h2 class="project-section-title task-detail-description-title">
                             Description
                           </h2>
-                          <Show
-                            when={isEditing()}
-                            fallback={
-                              <Show
-                                when={taskValue().description?.trim()}
-                                fallback={
-                                  <p class="project-placeholder-text task-detail-description-text">
-                                    No description yet.
-                                  </p>
-                                }
-                              >
-                                {(description) => (
-                                  <RunChatMarkdown
-                                    content={description()}
-                                    class="task-detail-description-text"
-                                  />
-                                )}
-                              </Show>
-                            }
-                          >
-                            <TaskMarkdownEditor
-                              value={editDescription()}
-                              onChange={setEditDescription}
-                              ariaLabel="Task description"
-                              disabled={isSavingEdit()}
-                            />
-                          </Show>
+                          <TaskMarkdownEditor
+                            value={editDescription()}
+                            onChange={onEditDescriptionInput}
+                            onBlur={() => {
+                              void flushTaskDetailsAutosave("blur");
+                            }}
+                            ariaLabel="Task description"
+                          />
                         </div>
                         <div class="task-detail-description-block task-detail-description-block--guide">
                           <h2 class="project-section-title task-detail-description-title">
                             Implementation guide
                           </h2>
-                          <Show
-                            when={isEditing()}
-                            fallback={
-                              <Show
-                                when={taskValue().implementationGuide?.trim()}
-                                fallback={
-                                  <p class="project-placeholder-text task-detail-description-text">
-                                    No implementation guide yet.
-                                  </p>
-                                }
-                              >
-                                {(implementationGuide) => (
-                                  <RunChatMarkdown
-                                    content={implementationGuide()}
-                                    class="task-detail-description-text"
-                                  />
-                                )}
-                              </Show>
-                            }
-                          >
-                            <TaskImplementationGuideCrepeEditor
-                              value={editImplementationGuide()}
-                              onChange={onEditImplementationGuideInput}
-                              onBlur={() => {
-                                void flushImplementationGuideAutosave("blur");
-                              }}
-                              ariaLabel="Task implementation guide"
-                              disabled={isSavingEdit()}
-                            />
-                          </Show>
+                          <TaskImplementationGuideCrepeEditor
+                            value={editImplementationGuide()}
+                            onChange={onEditImplementationGuideInput}
+                            onBlur={() => {
+                              void flushTaskDetailsAutosave("blur");
+                            }}
+                            ariaLabel="Task implementation guide"
+                          />
                         </div>
                       </section>
                     </div>
