@@ -36,26 +36,38 @@ type TaskDetailTopbarConfig = {
 };
 
 const CloseIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
+  <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
     <path d="M18.3 5.71 12 12l6.3 6.29-1.42 1.42L10.59 13.4 4.29 19.7l-1.42-1.4L9.17 12 2.87 5.7l1.42-1.42 6.3 6.3 6.29-6.3z" />
   </svg>
 );
 
 const EditIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
+  <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
     <path d="M3 17.25V21h3.75L18.81 8.94l-3.75-3.75L3 17.25zm17.71-10.04a.996.996 0 0 0 0-1.41L18.2 3.29a.996.996 0 1 0-1.41 1.41l2.5 2.5c.39.39 1.03.39 1.42.01z" />
   </svg>
 );
 
 const StatusTransitionIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
+  <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
     <path d="M5 11h11.17l-3.58-3.59L14 6l6 6-6 6-1.41-1.41L16.17 13H5z" />
   </svg>
 );
 
 const DeleteIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
+  <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
     <path d="M6 7h12l-1 14H7L6 7zm3-4h6l1 2h4v2H4V5h4l1-2z" />
+  </svg>
+);
+
+const SaveIcon: Component = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
+    <path d="m9 16.17-3.88-3.88L3.71 13.7 9 19l12-12-1.41-1.41z" />
+  </svg>
+);
+
+const CancelIcon: Component = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
+    <path d="M18.3 5.71 12 12l6.3 6.29-1.42 1.42L10.59 13.4 4.29 19.7l-1.42-1.4L9.17 12 2.87 5.7l1.42-1.42 6.3 6.3 6.29-6.3z" />
   </svg>
 );
 
@@ -327,17 +339,7 @@ const AppShell: Component<AppShellProps> = (props) => {
             title={shellTitle()}
             subtitle={shellSubtitle()}
             leading={
-              location.pathname.includes("/tasks/") &&
-              taskDetailTopbarConfig() ? (
-                <a
-                  href={taskDetailTopbarConfig()!.backHref}
-                  class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
-                  aria-label={`Back to ${taskDetailTopbarConfig()!.backLabel}`}
-                  title={`Back to ${taskDetailTopbarConfig()!.backLabel}`}
-                >
-                  <CloseIcon />
-                </a>
-              ) : isMobile() ? (
+              isMobile() ? (
                 <button
                   ref={mobileMenuButtonRef}
                   type="button"
@@ -368,14 +370,14 @@ const AppShell: Component<AppShellProps> = (props) => {
             actions={
               location.pathname.includes("/tasks/") &&
               taskDetailTopbarConfig() ? (
-                <>
+                <div class="flex items-center gap-2">
                   <div class="relative flex items-center gap-2">
                     <Show
                       when={taskDetailTopbarConfig()!.isEditing}
                       fallback={
                         <button
                           type="button"
-                          class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
+                          class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border"
                           onClick={taskDetailTopbarConfig()!.onStartEdit}
                           aria-label="Edit task"
                           title="Edit task"
@@ -392,6 +394,7 @@ const AppShell: Component<AppShellProps> = (props) => {
                         }
                         disabled={taskDetailTopbarConfig()!.isSavingEdit}
                       >
+                        <SaveIcon />
                         {taskDetailTopbarConfig()!.isSavingEdit
                           ? "Saving..."
                           : "Save"}
@@ -402,12 +405,13 @@ const AppShell: Component<AppShellProps> = (props) => {
                         onClick={taskDetailTopbarConfig()!.onCancelEdit}
                         disabled={taskDetailTopbarConfig()!.isSavingEdit}
                       >
+                        <CancelIcon />
                         Cancel
                       </button>
                     </Show>
                     <button
                       type="button"
-                      class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
+                      class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border"
                       onClick={taskDetailTopbarConfig()!.onToggleTransitionMenu}
                       disabled={taskDetailTopbarConfig()!.isChangingStatus}
                       aria-label={
@@ -492,7 +496,15 @@ const AppShell: Component<AppShellProps> = (props) => {
                   >
                     <DeleteIcon />
                   </button>
-                </>
+                  <a
+                    href={taskDetailTopbarConfig()!.backHref}
+                    class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 ml-1 rounded-none border"
+                    aria-label={`Back to ${taskDetailTopbarConfig()!.backLabel}`}
+                    title={`Back to ${taskDetailTopbarConfig()!.backLabel}`}
+                  >
+                    <CloseIcon />
+                  </a>
+                </div>
               ) : location.pathname === "/board" ? (
                 <>
                   <button
