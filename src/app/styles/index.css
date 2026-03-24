@@ -606,6 +606,12 @@ textarea::placeholder {
   font-weight: 400;
 }
 
+.field-required {
+  font-size: 0.66rem;
+  color: var(--warning);
+  font-weight: 500;
+}
+
 .field-help {
   font-size: 0.74rem;
   color: var(--text-muted);
@@ -1643,6 +1649,21 @@ textarea::placeholder {
   min-height: 100%;
   gap: 8px;
   margin-top: 4px;
+}
+
+.task-detail-page--create .task-detail-main-card {
+  background: #0a0d12;
+  border-color: #1e2633;
+}
+
+.task-detail-page--create .task-detail-summary-strip {
+  background: rgba(8, 10, 14, 0.85);
+}
+
+.task-detail-page--create .task-guide-crepe-shell,
+.task-detail-page--create .task-guide-crepe .milkdown,
+.task-detail-page--create .task-guide-crepe .milkdown .ProseMirror {
+  background: #0d1218;
 }
 
 .task-detail-state-card {

@@ -6,8 +6,6 @@ import {
   type Component,
 } from "solid-js";
 import { A, useLocation } from "@solidjs/router";
-import CreateTaskModal from "../../projects/components/CreateTaskModal";
-import { useCreateTaskModalModel } from "../../projects/model/useCreateTaskModalModel";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
 import BoardTaskCard from "../components/BoardTaskCard";
 import { useBoardModel } from "../model/useBoardModel";
@@ -47,13 +45,6 @@ const resolveDroppedTaskId = (
 const BoardScreen: Component = () => {
   const location = useLocation();
   const model = useBoardModel();
-  const taskCreateModel = useCreateTaskModalModel({
-    project: model.selectedProjectDetail,
-    projectId: model.selectedProjectId,
-    onTaskCreated: async () => {
-      await model.refreshSelectedProjectTasks();
-    },
-  });
   const [draggingTaskId, setDraggingTaskId] = createSignal<string | null>(null);
   const [activeDropStatus, setActiveDropStatus] =
     createSignal<TaskStatus | null>(null);
@@ -96,18 +87,6 @@ const BoardScreen: Component = () => {
       new URLSearchParams(location.search).get("projectId") ?? "";
     if (!projectId || projectId === model.selectedProjectId()) return;
     void model.onProjectChange(projectId);
-  });
-
-  createEffect(() => {
-    const onCreateTask = () => {
-      if ((model.selectedProjectDetail()?.repositories.length ?? 0) <= 0)
-        return;
-      taskCreateModel.resetTaskForm();
-      taskCreateModel.setIsModalOpen(true);
-    };
-
-    window.addEventListener("board:create-task", onCreateTask);
-    return () => window.removeEventListener("board:create-task", onCreateTask);
   });
 
   createEffect(() => {
@@ -260,26 +239,6 @@ const BoardScreen: Component = () => {
           </For>
         </div>
       </Show>
-
-      <CreateTaskModal
-        isOpen={taskCreateModel.isModalOpen}
-        project={model.selectedProjectDetail}
-        taskTitle={taskCreateModel.taskTitle}
-        taskDescription={taskCreateModel.taskDescription}
-        taskImplementationGuide={taskCreateModel.taskImplementationGuide}
-        taskStatus={taskCreateModel.taskStatus}
-        targetRepositoryId={taskCreateModel.targetRepositoryId}
-        taskFormError={taskCreateModel.taskFormError}
-        isSubmittingTask={taskCreateModel.isSubmittingTask}
-        setIsModalOpen={taskCreateModel.setIsModalOpen}
-        setTaskTitle={taskCreateModel.setTaskTitle}
-        setTaskDescription={taskCreateModel.setTaskDescription}
-        setTaskImplementationGuide={taskCreateModel.setTaskImplementationGuide}
-        setTaskStatus={taskCreateModel.setTaskStatus}
-        setTargetRepositoryId={taskCreateModel.setTargetRepositoryId}
-        onCreateTask={taskCreateModel.onCreateTask}
-      />
-
       <RunSettingsModal
         isOpen={model.isRunSettingsModalOpen}
         isSubmitting={model.isConfirmingMoveTaskToInProgress}

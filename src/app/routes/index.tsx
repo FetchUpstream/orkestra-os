@@ -5,6 +5,7 @@ import BoardPage from "../../pages/BoardPage";
 import NotFoundPage from "../../pages/NotFoundPage";
 import ProjectsPage from "../../pages/ProjectsPage";
 import RunDetailPage from "../../pages/RunDetailPage";
+import TaskCreatePage from "../../pages/TaskCreatePage";
 import TaskDetailPage from "../../pages/TaskDetailPage";
 
 const AppRoutes: Component = () => {
@@ -14,6 +15,10 @@ const AppRoutes: Component = () => {
         <Route path="/" component={BoardPage} />
         <Route path="/board" component={BoardPage} />
         <Route path="/tasks/:taskId" component={TaskDetailPage} />
+        <Route
+          path="/projects/:projectId/tasks/new"
+          component={TaskCreatePage}
+        />
         <Route
           path="/projects/:projectId/tasks/:taskId"
           component={TaskDetailPage}

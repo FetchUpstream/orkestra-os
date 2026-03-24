@@ -2,7 +2,7 @@ import { For, Show, createEffect, onCleanup, type Component } from "solid-js";
 import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
-import TaskImplementationGuideCrepeEditor from "../../../components/ui/TaskImplementationGuideCrepeEditor";
+import TaskEditorPanel from "../components/TaskEditorPanel";
 import {
   TaskDetailErrorState,
   TaskDetailLoadingState,
@@ -15,7 +15,6 @@ import {
   formatDateTime,
   formatRunStatus,
   formatStatus,
-  projectLabel,
   repositoryLabel,
 } from "../utils/taskDetail";
 
@@ -200,6 +199,7 @@ const TaskDetailScreen: Component = () => {
     window.dispatchEvent(
       new CustomEvent("task-detail:topbar-config", {
         detail: {
+          mode: "detail",
           backHref: backHref(),
           backLabel: backLabel(),
           autosaveState: autosaveState(),
@@ -256,109 +256,41 @@ const TaskDetailScreen: Component = () => {
                 <div class="task-detail-workspace">
                   <div class="task-detail-columns">
                     <div class="task-detail-main-column">
-                      <section class="projects-panel task-detail-main-card">
-                        <Show when={actionError()}>
-                          <div
-                            class="projects-error"
-                            role="alert"
-                            aria-live="polite"
-                          >
-                            {actionError()}
-                          </div>
-                        </Show>
-                        <input
-                          class="task-detail-title-input"
-                          value={editTitle()}
-                          onInput={(event) =>
-                            onEditTitleInput(event.currentTarget.value)
-                          }
-                          onBlur={() => {
-                            void flushTaskDetailsAutosave("blur");
-                          }}
-                          aria-label="Task title"
-                        />
-                        <div class="task-detail-meta-row">
-                          <Show when={taskValue().displayKey?.trim()}>
-                            {(displayKey) => (
-                              <span class="projects-list-meta task-detail-display-key">
-                                {displayKey()}
-                              </span>
-                            )}
-                          </Show>
-                          <span
-                            class={`project-task-status project-task-status--${taskValue().status}`}
-                          >
-                            {formatStatus(taskValue().status)}
-                          </span>
-                          <Show when={taskDependencyBadgeState() !== "none"}>
-                            <span
-                              class={
-                                taskDependencyBadgeState() === "blocked"
-                                  ? "project-task-blocked"
-                                  : "project-task-ready"
-                              }
-                            >
-                              {taskDependencyBadgeState() === "blocked"
-                                ? "Blocked"
-                                : "Ready"}
-                            </span>
-                          </Show>
+                      <Show when={actionError()}>
+                        <div
+                          class="projects-error"
+                          role="alert"
+                          aria-live="polite"
+                        >
+                          {actionError()}
                         </div>
-                        <div class="task-detail-summary-strip">
-                          <div class="task-detail-summary-item">
-                            <span class="task-detail-summary-label">
-                              Project
-                            </span>
-                            <span class="task-detail-summary-value">
-                              {projectLabel(projectName())}
-                            </span>
-                          </div>
-                          <div class="task-detail-summary-item">
-                            <span class="task-detail-summary-label">
-                              Repository scope
-                            </span>
-                            <span class="task-detail-summary-value">
-                              {repositoryLabel(taskValue())}
-                            </span>
-                          </div>
-                          <div class="task-detail-summary-item">
-                            <span class="task-detail-summary-label">
-                              Updated
-                            </span>
-                            <span class="task-detail-summary-value">
-                              {formatDateTime(taskValue().updatedAt)}
-                            </span>
-                          </div>
-                        </div>
-                        <div class="task-detail-description-block task-detail-description-block--summary">
-                          <h2 class="project-section-title task-detail-description-title">
-                            Description
-                          </h2>
-                          <TaskImplementationGuideCrepeEditor
-                            value={editDescription()}
-                            onChange={onEditDescriptionInput}
-                            placeholder="Describe the goal of this task in short .."
-                            onBlur={() => {
-                              void flushTaskDetailsAutosave("blur");
-                            }}
-                            ariaLabel="Task description"
-                          />
-                        </div>
-                        <div class="task-detail-description-block task-detail-description-block--guide">
-                          <h2 class="project-section-title task-detail-description-title">
-                            Implementation guide
-                          </h2>
-                          <TaskImplementationGuideCrepeEditor
-                            value={editImplementationGuide()}
-                            onChange={onEditImplementationGuideInput}
-                            placeholder="Create a detailed specific implementation guide for the AI to follow ..."
-                            onBlur={() => {
-                              void flushTaskDetailsAutosave("blur");
-                            }}
-                            ariaLabel="Task implementation guide"
-                          />
-                        </div>
-                      </section>
+                      </Show>
+                      <TaskEditorPanel
+                        mode="detail"
+                        title={editTitle}
+                        description={editDescription}
+                        implementationGuide={editImplementationGuide}
+                        status={() => taskValue().status}
+                        displayKey={() => taskValue().displayKey || ""}
+                        projectName={projectName}
+                        repositoryScope={() => repositoryLabel(taskValue())}
+                        updatedAt={() => taskValue().updatedAt}
+                        dependencyBadgeState={taskDependencyBadgeState}
+                        onTitleInput={onEditTitleInput}
+                        onDescriptionInput={onEditDescriptionInput}
+                        onImplementationGuideInput={
+                          onEditImplementationGuideInput
+                        }
+                        onTitleBlur={() => {
+                          void flushTaskDetailsAutosave("blur");
+                        }}
+                        onDescriptionBlur={() => {
+                          void flushTaskDetailsAutosave("blur");
+                        }}
+                        onImplementationGuideBlur={() => {
+                          void flushTaskDetailsAutosave("blur");
+                        }}
+                      />
                     </div>
 
                     <aside class="task-detail-inspector-column">

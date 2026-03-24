@@ -17,19 +17,29 @@ import SidebarNav from "../../components/layout/SidebarNav";
 import Topbar from "../../components/layout/Topbar";
 import { formatStatus } from "../../features/tasks/utils/taskDetail";
 
-type TaskDetailTopbarConfig = {
-  backHref: string;
-  backLabel: string;
-  autosaveState: "idle" | "saving" | "saved" | "error";
-  isChangingStatus: boolean;
-  isTransitionMenuOpen: boolean;
-  isDeleting: boolean;
-  validTransitionOptions: TaskStatus[];
-  onToggleTransitionMenu: () => void;
-  onCloseTransitionMenu: () => void;
-  onSetStatus: (status: TaskStatus) => void | Promise<void>;
-  onRequestDeleteTask: () => void;
-};
+type TaskDetailTopbarConfig =
+  | {
+      mode: "detail";
+      backHref: string;
+      backLabel: string;
+      autosaveState: "idle" | "saving" | "saved" | "error";
+      isChangingStatus: boolean;
+      isTransitionMenuOpen: boolean;
+      isDeleting: boolean;
+      validTransitionOptions: TaskStatus[];
+      onToggleTransitionMenu: () => void;
+      onCloseTransitionMenu: () => void;
+      onSetStatus: (status: TaskStatus) => void | Promise<void>;
+      onRequestDeleteTask: () => void;
+    }
+  | {
+      mode: "create";
+      backHref: string;
+      backLabel: string;
+      isSubmitting: boolean;
+      onRequestCreateTask: () => void | Promise<void>;
+      onRequestClose: () => void;
+    };
 
 const CloseIcon: Component = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
@@ -187,6 +197,7 @@ const AppShell: Component<AppShellProps> = (props) => {
   };
 
   const shellTitle = () => {
+    if (location.pathname.endsWith("/tasks/new")) return "Create task";
     if (location.pathname === "/board") {
       const projectId = boardProjectId();
       const project = projectId
@@ -195,15 +206,9 @@ const AppShell: Component<AppShellProps> = (props) => {
       return project?.name ?? "Board";
     }
     if (location.pathname.startsWith("/runs/")) return "Run workspace";
+    if (location.pathname.includes("/tasks/")) return "Task detail";
     if (location.pathname.startsWith("/tasks/")) return "Task detail";
     if (location.pathname.startsWith("/projects/")) return "Project settings";
-    if (
-      location.pathname.startsWith("/projects/") &&
-      location.pathname !== "/projects"
-    ) {
-      if (location.pathname.includes("/tasks/")) return "Task detail";
-      return "Project detail";
-    }
     if (location.pathname === "/projects") return "Projects";
     return "Board";
   };
@@ -218,14 +223,17 @@ const AppShell: Component<AppShellProps> = (props) => {
     if (location.pathname === "/projects") {
       return "Create a new project workspace and configure repositories.";
     }
-    if (location.pathname.startsWith("/projects/")) {
-      return "Edit project identity and repository configuration.";
-    }
     if (
+      location.pathname.endsWith("/tasks/new") ||
       location.pathname.startsWith("/tasks/") ||
       location.pathname.includes("/tasks/")
     ) {
-      return "Follow task state and execution context.";
+      return location.pathname.endsWith("/tasks/new")
+        ? "Create a new task in project context."
+        : "Follow task state and execution context.";
+    }
+    if (location.pathname.startsWith("/projects/")) {
+      return "Edit project identity and repository configuration.";
     }
     return "Track work across your active projects.";
   };
@@ -348,125 +356,142 @@ const AppShell: Component<AppShellProps> = (props) => {
             actions={
               location.pathname.includes("/tasks/") &&
               taskDetailTopbarConfig() ? (
-                <div class="flex items-center gap-2">
-                  <Show
-                    when={taskDetailTopbarConfig()!.autosaveState !== "idle"}
-                  >
-                    <span class="task-detail-autosave-indicator text-[11px] tracking-[0.08em] uppercase">
-                      {taskDetailTopbarConfig()!.autosaveState === "saving"
-                        ? "Saving…"
-                        : taskDetailTopbarConfig()!.autosaveState === "saved"
-                          ? "Saved"
-                          : "Autosave failed"}
-                    </span>
-                  </Show>
-                  <div class="relative flex items-center gap-2">
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border"
-                      onClick={taskDetailTopbarConfig()!.onToggleTransitionMenu}
-                      disabled={taskDetailTopbarConfig()!.isChangingStatus}
-                      aria-label={
-                        taskDetailTopbarConfig()!.isChangingStatus
-                          ? "Updating task status"
-                          : "Open status transitions"
-                      }
-                      title={
-                        taskDetailTopbarConfig()!.isChangingStatus
-                          ? "Updating task status"
-                          : "Change task status"
-                      }
-                      aria-haspopup="menu"
-                      aria-expanded={
-                        taskDetailTopbarConfig()!.isTransitionMenuOpen
-                      }
-                    >
-                      <StatusTransitionIcon />
-                    </button>
-                    <Show
-                      when={
-                        taskDetailTopbarConfig()!.isTransitionMenuOpen &&
-                        !taskDetailTopbarConfig()!.isChangingStatus
-                      }
-                    >
-                      <div
-                        class="task-status-transition-menu"
-                        role="menu"
-                        aria-label="Valid status transitions"
-                      >
+                (() => {
+                  const config = taskDetailTopbarConfig()!;
+                  if (config.mode === "create") {
+                    return (
+                      <div class="flex items-center gap-2">
+                        <button
+                          type="button"
+                          class="btn btn-sm rounded-none border border-amber-500/35 bg-amber-500 px-4 text-xs font-semibold text-black hover:bg-amber-500"
+                          onClick={() => void config.onRequestCreateTask()}
+                          disabled={config.isSubmitting}
+                        >
+                          {config.isSubmitting ? "Creating..." : "Create"}
+                        </button>
+                        <a
+                          href={config.backHref}
+                          class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 ml-1 rounded-none border"
+                          aria-label={`Back to ${config.backLabel}`}
+                          title={`Back to ${config.backLabel}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            config.onRequestClose();
+                          }}
+                        >
+                          <CloseIcon />
+                        </a>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div class="flex items-center gap-2">
+                      <Show when={config.autosaveState !== "idle"}>
+                        <span class="task-detail-autosave-indicator text-[11px] tracking-[0.08em] uppercase">
+                          {config.autosaveState === "saving"
+                            ? "Saving…"
+                            : config.autosaveState === "saved"
+                              ? "Saved"
+                              : "Autosave failed"}
+                        </span>
+                      </Show>
+                      <div class="relative flex items-center gap-2">
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border"
+                          onClick={config.onToggleTransitionMenu}
+                          disabled={config.isChangingStatus}
+                          aria-label={
+                            config.isChangingStatus
+                              ? "Updating task status"
+                              : "Open status transitions"
+                          }
+                          title={
+                            config.isChangingStatus
+                              ? "Updating task status"
+                              : "Change task status"
+                          }
+                          aria-haspopup="menu"
+                          aria-expanded={config.isTransitionMenuOpen}
+                        >
+                          <StatusTransitionIcon />
+                        </button>
                         <Show
                           when={
-                            taskDetailTopbarConfig()!.validTransitionOptions
-                              .length > 0
-                          }
-                          fallback={
-                            <p class="task-status-transition-empty">
-                              No transitions available.
-                            </p>
+                            config.isTransitionMenuOpen &&
+                            !config.isChangingStatus
                           }
                         >
-                          <For
-                            each={
-                              taskDetailTopbarConfig()!.validTransitionOptions
-                            }
+                          <div
+                            class="task-status-transition-menu"
+                            role="menu"
+                            aria-label="Valid status transitions"
                           >
-                            {(statusOption) => (
-                              <button
-                                type="button"
-                                class="task-status-transition-option rounded-none text-xs"
-                                role="menuitem"
-                                onClick={() => {
-                                  taskDetailTopbarConfig()!.onCloseTransitionMenu();
-                                  void taskDetailTopbarConfig()!.onSetStatus(
-                                    statusOption,
-                                  );
-                                }}
-                              >
-                                {formatStatus(statusOption)}
-                              </button>
-                            )}
-                          </For>
+                            <Show
+                              when={config.validTransitionOptions.length > 0}
+                              fallback={
+                                <p class="task-status-transition-empty">
+                                  No transitions available.
+                                </p>
+                              }
+                            >
+                              <For each={config.validTransitionOptions}>
+                                {(statusOption) => (
+                                  <button
+                                    type="button"
+                                    class="task-status-transition-option rounded-none text-xs"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      config.onCloseTransitionMenu();
+                                      void config.onSetStatus(statusOption);
+                                    }}
+                                  >
+                                    {formatStatus(statusOption)}
+                                  </button>
+                                )}
+                              </For>
+                            </Show>
+                          </div>
                         </Show>
                       </div>
-                    </Show>
-                  </div>
-                  <button
-                    type="button"
-                    class="btn btn-sm btn-square border-error/35 bg-error/10 text-error hover:bg-error/10 rounded-none border"
-                    onClick={taskDetailTopbarConfig()!.onRequestDeleteTask}
-                    disabled={taskDetailTopbarConfig()!.isDeleting}
-                    aria-label={
-                      taskDetailTopbarConfig()!.isDeleting
-                        ? "Deleting task"
-                        : "Delete task"
-                    }
-                    title={
-                      taskDetailTopbarConfig()!.isDeleting
-                        ? "Deleting task"
-                        : "Delete task"
-                    }
-                  >
-                    <DeleteIcon />
-                  </button>
-                  <a
-                    href={taskDetailTopbarConfig()!.backHref}
-                    class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 ml-1 rounded-none border"
-                    aria-label={`Back to ${taskDetailTopbarConfig()!.backLabel}`}
-                    title={`Back to ${taskDetailTopbarConfig()!.backLabel}`}
-                  >
-                    <CloseIcon />
-                  </a>
-                </div>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-square border-error/35 bg-error/10 text-error hover:bg-error/10 rounded-none border"
+                        onClick={config.onRequestDeleteTask}
+                        disabled={config.isDeleting}
+                        aria-label={
+                          config.isDeleting ? "Deleting task" : "Delete task"
+                        }
+                        title={
+                          config.isDeleting ? "Deleting task" : "Delete task"
+                        }
+                      >
+                        <DeleteIcon />
+                      </button>
+                      <a
+                        href={config.backHref}
+                        class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 ml-1 rounded-none border"
+                        aria-label={`Back to ${config.backLabel}`}
+                        title={`Back to ${config.backLabel}`}
+                      >
+                        <CloseIcon />
+                      </a>
+                    </div>
+                  );
+                })()
               ) : location.pathname === "/board" ? (
                 <>
                   <button
                     type="button"
                     class="btn btn-sm rounded-none border border-amber-500/35 bg-amber-500 px-4 text-xs font-semibold text-black hover:bg-amber-500"
                     onClick={() => {
-                      window.dispatchEvent(
-                        new CustomEvent("board:create-task"),
-                      );
+                      if (boardProjectId()) {
+                        navigate(
+                          `/projects/${boardProjectId()}/tasks/new?origin=board`,
+                        );
+                      }
                     }}
+                    disabled={!boardProjectId()}
                   >
                     New task
                   </button>

@@ -1,6 +1,5 @@
-import { A } from "@solidjs/router";
+import { A, useNavigate } from "@solidjs/router";
 import { For, Show, type Component } from "solid-js";
-import CreateTaskModal from "../components/CreateTaskModal";
 import {
   ProjectDetailErrorState,
   ProjectDetailLoadingState,
@@ -16,6 +15,7 @@ import {
 
 const ProjectDetailScreen: Component = () => {
   const model = useProjectDetailModel();
+  const navigate = useNavigate();
   const defaultRepo = () =>
     model.project()?.repositories.find((r) => r.is_default);
   const otherRepos = () =>
@@ -163,8 +163,9 @@ const ProjectDetailScreen: Component = () => {
                       type="button"
                       class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                       onClick={() => {
-                        model.resetTaskForm();
-                        model.setIsModalOpen(true);
+                        navigate(
+                          `/projects/${model.params.projectId}/tasks/new`,
+                        );
                       }}
                     >
                       Add task
@@ -260,25 +261,6 @@ const ProjectDetailScreen: Component = () => {
                     <span class="project-placeholder-soon">Soon</span>
                   </div>
                 </section>
-
-                <CreateTaskModal
-                  isOpen={model.isModalOpen}
-                  project={model.project}
-                  taskTitle={model.taskTitle}
-                  taskDescription={model.taskDescription}
-                  taskImplementationGuide={model.taskImplementationGuide}
-                  taskStatus={model.taskStatus}
-                  targetRepositoryId={model.targetRepositoryId}
-                  taskFormError={model.taskFormError}
-                  isSubmittingTask={model.isSubmittingTask}
-                  setIsModalOpen={model.setIsModalOpen}
-                  setTaskTitle={model.setTaskTitle}
-                  setTaskDescription={model.setTaskDescription}
-                  setTaskImplementationGuide={model.setTaskImplementationGuide}
-                  setTaskStatus={model.setTaskStatus}
-                  setTargetRepositoryId={model.setTargetRepositoryId}
-                  onCreateTask={model.onCreateTask}
-                />
               </div>
             )}
           </Show>

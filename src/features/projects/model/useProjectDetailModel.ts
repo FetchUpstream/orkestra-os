@@ -2,7 +2,6 @@ import { useParams } from "@solidjs/router";
 import { createSignal, onMount } from "solid-js";
 import { getProject, type Project } from "../../../app/lib/projects";
 import { listProjectTasks, type Task } from "../../../app/lib/tasks";
-import { useCreateTaskModalModel } from "./useCreateTaskModalModel";
 
 export const useProjectDetailModel = () => {
   const params = useParams();
@@ -25,15 +24,6 @@ export const useProjectDetailModel = () => {
     }
   };
 
-  const taskCreateModel = useCreateTaskModalModel({
-    project,
-    projectId: () => params.projectId,
-    onTaskCreated: async (projectId) => {
-      setTaskError("");
-      await loadTasks(projectId);
-    },
-  });
-
   onMount(async () => {
     if (!params.projectId) {
       setError("Missing project ID.");
@@ -44,7 +34,6 @@ export const useProjectDetailModel = () => {
       const detail = await getProject(params.projectId);
       setProject(detail);
       setTaskError("");
-      taskCreateModel.resetTaskForm();
       await loadTasks(params.projectId);
     } catch {
       setError("Failed to load project. Please try again.");
@@ -61,6 +50,5 @@ export const useProjectDetailModel = () => {
     isLoading,
     isTasksLoading,
     taskError,
-    ...taskCreateModel,
   };
 };
