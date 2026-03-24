@@ -9,18 +9,22 @@ const MainContent: Component<MainContentProps> = (props) => {
   const location = useLocation();
   const isRunDetailRoute = () => location.pathname.startsWith("/runs/");
   const isBoardRoute = () => location.pathname === "/board";
+  const isTaskDetailRoute = () => location.pathname.includes("/tasks/");
 
   return (
     <main
       class="flex-1 overflow-auto"
       classList={{
         "min-h-0": true,
+        "bg-base-100": isTaskDetailRoute(),
         "overflow-hidden": isRunDetailRoute(),
       }}
     >
       <div
-        class="flex h-full w-full max-w-none flex-col p-0"
+        class="flex w-full max-w-none flex-col p-0"
         classList={{
+          "h-full": !isTaskDetailRoute(),
+          "min-h-full": isTaskDetailRoute(),
           "min-h-0": isRunDetailRoute(),
         }}
       >
@@ -33,8 +37,10 @@ const MainContent: Component<MainContentProps> = (props) => {
           }}
         >
           <div
-            class="flex h-full min-h-0 flex-col"
+            class="flex min-h-0 flex-col"
             classList={{
+              "h-full": !isTaskDetailRoute(),
+              "min-h-full": isTaskDetailRoute(),
               "p-0": true,
             }}
           >
