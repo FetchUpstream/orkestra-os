@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "@milkdown/crepe/theme/common/style.css";
+@import "./app/styles/milkdown/index.css";
 
 @plugin "daisyui" {
   themes: false;
