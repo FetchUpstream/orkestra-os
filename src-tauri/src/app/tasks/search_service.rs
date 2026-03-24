@@ -7,6 +7,7 @@ use nucleo_matcher::Utf32Str;
 use nucleo_matcher::{Config, Matcher};
 use once_cell::sync::Lazy;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 static TASK_QUERY_MATCHER: Lazy<Mutex<Matcher>> =
@@ -81,25 +82,37 @@ impl TaskSearchService {
         }
 
         let ranked = Self::rerank_candidates(&normalized_query, candidates, used_fallback)?;
-        let mut results = Vec::new();
-        for candidate in ranked.into_iter().take(MAX_RESULTS) {
-            if let Some(task) = self.tasks_repository.get_task(&candidate.task_id).await? {
+        let ranked_ids = ranked
+            .into_iter()
+            .take(MAX_RESULTS)
+            .map(|candidate| candidate.task_id)
+            .collect::<Vec<_>>();
+
+        let fetched_tasks = self.tasks_repository.list_tasks_by_ids(&ranked_ids).await?;
+        let tasks_by_id = fetched_tasks
+            .into_iter()
+            .map(|task| (task.id.clone(), task))
+            .collect::<HashMap<_, _>>();
+
+        let mut results = Vec::with_capacity(ranked_ids.len());
+        for task_id in ranked_ids {
+            if let Some(task) = tasks_by_id.get(&task_id) {
                 results.push(TaskDto {
-                    id: task.id,
-                    project_id: task.project_id,
-                    repository_id: task.repository_id,
+                    id: task.id.clone(),
+                    project_id: task.project_id.clone(),
+                    repository_id: task.repository_id.clone(),
                     task_number: task.task_number,
-                    display_key: task.display_key,
-                    title: task.title,
-                    description: task.description,
-                    implementation_guide: task.implementation_guide,
-                    status: task.status,
+                    display_key: task.display_key.clone(),
+                    title: task.title.clone(),
+                    description: task.description.clone(),
+                    implementation_guide: task.implementation_guide.clone(),
+                    status: task.status.clone(),
                     blocked_by_count: task.blocked_by_count,
                     is_blocked: task.is_blocked,
-                    target_repository_name: task.target_repository_name,
-                    target_repository_path: task.target_repository_path,
-                    created_at: task.created_at,
-                    updated_at: task.updated_at,
+                    target_repository_name: task.target_repository_name.clone(),
+                    target_repository_path: task.target_repository_path.clone(),
+                    created_at: task.created_at.clone(),
+                    updated_at: task.updated_at.clone(),
                 });
             }
         }

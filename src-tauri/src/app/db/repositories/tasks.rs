@@ -3,7 +3,8 @@ use crate::app::tasks::models::{
     MoveTaskRepository, NewTask, Task, TaskDependencies, TaskDependencyEdge, TaskDependencyTask,
     UpdateTaskDetails, UpdateTaskStatus,
 };
-use sqlx::{Row, SqlitePool};
+use sqlx::sqlite::SqliteRow;
+use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
 #[derive(Clone, Debug)]
 pub struct TasksRepository {
@@ -125,30 +126,61 @@ impl TasksRepository {
 
         Ok(rows
             .into_iter()
-            .map(|row| {
-                let project_key: String = row.get("project_key");
-                let task_number: i64 = row.get("task_number");
-                let blocked_by_count: i64 = row.get("blocked_by_count");
-                let is_blocked: bool = row.get("is_blocked");
-                Task {
-                    id: row.get("id"),
-                    project_id: row.get("project_id"),
-                    repository_id: row.get("repository_id"),
-                    task_number,
-                    display_key: format!("{}-{}", project_key, task_number),
-                    title: row.get("title"),
-                    description: row.get("description"),
-                    implementation_guide: row.get("implementation_guide"),
-                    status: row.get("status"),
-                    blocked_by_count,
-                    is_blocked,
-                    target_repository_name: row.get("target_repository_name"),
-                    target_repository_path: row.get("target_repository_path"),
-                    created_at: row.get("created_at"),
-                    updated_at: row.get("updated_at"),
-                }
-            })
+            .map(Self::map_task_row)
             .collect())
+    }
+
+    pub async fn list_tasks_by_ids(&self, task_ids: &[String]) -> Result<Vec<Task>, AppError> {
+        if task_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut query_builder = QueryBuilder::<Sqlite>::new(
+            "SELECT
+                t.id,
+                t.project_id,
+                t.repository_id,
+                t.task_number,
+                p.key AS project_key,
+                t.title,
+                t.description,
+                t.implementation_guide,
+                t.status,
+                (
+                    SELECT COUNT(*)
+                    FROM task_dependencies td
+                    WHERE td.project_id = t.project_id
+                      AND td.child_task_id = t.id
+                ) AS blocked_by_count,
+                EXISTS(
+                    SELECT 1
+                    FROM task_dependencies td
+                    JOIN tasks parent ON parent.id = td.parent_task_id AND parent.project_id = td.project_id
+                    WHERE td.child_task_id = t.id
+                      AND td.project_id = t.project_id
+                      AND parent.status != 'done'
+                ) AS is_blocked,
+                r.name AS target_repository_name,
+                r.repo_path AS target_repository_path,
+                t.created_at,
+                t.updated_at
+             FROM tasks t
+             JOIN projects p ON p.id = t.project_id
+             LEFT JOIN project_repositories r ON r.id = t.repository_id
+             WHERE t.id IN (",
+        );
+
+        {
+            let mut separated = query_builder.separated(", ");
+            for task_id in task_ids {
+                separated.push_bind(task_id);
+            }
+        }
+
+        query_builder.push(")");
+
+        let rows = query_builder.build().fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(Self::map_task_row).collect())
     }
 
     pub async fn get_task(&self, id: &str) -> Result<Option<Task>, AppError> {
@@ -190,29 +222,31 @@ impl TasksRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|row| {
-            let project_key: String = row.get("project_key");
-            let task_number: i64 = row.get("task_number");
-            let blocked_by_count: i64 = row.get("blocked_by_count");
-            let is_blocked: bool = row.get("is_blocked");
-            Task {
-                id: row.get("id"),
-                project_id: row.get("project_id"),
-                repository_id: row.get("repository_id"),
-                task_number,
-                display_key: format!("{}-{}", project_key, task_number),
-                title: row.get("title"),
-                description: row.get("description"),
-                implementation_guide: row.get("implementation_guide"),
-                status: row.get("status"),
-                blocked_by_count,
-                is_blocked,
-                target_repository_name: row.get("target_repository_name"),
-                target_repository_path: row.get("target_repository_path"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
-            }
-        }))
+        Ok(row.map(Self::map_task_row))
+    }
+
+    fn map_task_row(row: SqliteRow) -> Task {
+        let project_key: String = row.get("project_key");
+        let task_number: i64 = row.get("task_number");
+        let blocked_by_count: i64 = row.get("blocked_by_count");
+        let is_blocked: bool = row.get("is_blocked");
+        Task {
+            id: row.get("id"),
+            project_id: row.get("project_id"),
+            repository_id: row.get("repository_id"),
+            task_number,
+            display_key: format!("{}-{}", project_key, task_number),
+            title: row.get("title"),
+            description: row.get("description"),
+            implementation_guide: row.get("implementation_guide"),
+            status: row.get("status"),
+            blocked_by_count,
+            is_blocked,
+            target_repository_name: row.get("target_repository_name"),
+            target_repository_path: row.get("target_repository_path"),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        }
     }
 
     pub async fn update_task_details(
@@ -629,5 +663,23 @@ mod tests {
             .unwrap();
         assert!(!second_changed);
         assert_eq!(second_update.unwrap().status, "doing");
+    }
+
+    #[tokio::test]
+    async fn list_tasks_by_ids_fetches_requested_tasks() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_and_repository(&pool).await;
+        seed_task(&pool, "task-1", 1, "todo").await;
+        seed_task(&pool, "task-2", 2, "doing").await;
+
+        let tasks = repository
+            .list_tasks_by_ids(&["task-2".to_string(), "task-1".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(tasks.len(), 2);
+        assert!(tasks.iter().any(|task| task.id == "task-1"));
+        assert!(tasks.iter().any(|task| task.id == "task-2"));
     }
 }
