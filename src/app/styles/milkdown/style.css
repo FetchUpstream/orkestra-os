@@ -3,3 +3,6 @@
 @import "./reset.css";
 @import "./prosemirror.css";
 @import "./block-edit.css";
+@import "./code-mirro.css";
+@import "./cursor.css";
+@import "./image-block.css";
