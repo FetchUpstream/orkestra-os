@@ -1809,6 +1809,66 @@ textarea::placeholder {
   font-size: 0.86rem;
 }
 
+.task-detail-description-block--guide .task-guide-crepe-shell {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg) 88%, var(--surface-alt) 12%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
+  min-height: clamp(24rem, 52vh, 40rem);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.task-detail-description-block--guide .task-guide-crepe-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 2px var(--accent-subtle),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.task-detail-description-block--guide .task-guide-crepe {
+  min-height: clamp(24rem, 52vh, 40rem);
+}
+
+.task-detail-description-block--guide .task-guide-crepe-shell .milkdown {
+  --crepe-background: color-mix(in srgb, var(--bg) 92%, var(--surface-alt) 8%);
+  --crepe-color-background: color-mix(
+    in srgb,
+    var(--bg) 92%,
+    var(--surface-alt) 8%
+  );
+  --crepe-color-on-background: var(--text);
+  --crepe-color-surface: color-mix(in srgb, var(--surface) 70%, var(--bg) 30%);
+  --crepe-color-outline: var(--border-subtle);
+}
+
+.task-detail-description-block--guide .task-guide-crepe-shell .milkdown,
+.task-detail-description-block--guide .task-guide-crepe-shell .milkdown .editor,
+.task-detail-description-block--guide
+  .task-guide-crepe-shell
+  .milkdown
+  .ProseMirror {
+  background: transparent;
+  color: var(--text);
+}
+
+.task-detail-description-block--guide
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar {
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface) 60%, var(--bg) 40%);
+}
+
+.task-detail-description-block--guide
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  button {
+  min-height: 1.75rem;
+}
+
 .task-markdown-editor {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

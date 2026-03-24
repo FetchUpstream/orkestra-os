@@ -3,6 +3,7 @@ import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
 import RunChatMarkdown from "../../runs/components/chat/RunChatMarkdown";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
+import TaskImplementationGuideCrepeEditor from "../../../components/ui/TaskImplementationGuideCrepeEditor";
 import TaskMarkdownEditor from "../../../components/ui/TaskMarkdownEditor";
 import {
   TaskDetailErrorState,
@@ -402,7 +403,7 @@ const TaskDetailScreen: Component = () => {
                               </Show>
                             }
                           >
-                            <TaskMarkdownEditor
+                            <TaskImplementationGuideCrepeEditor
                               value={editImplementationGuide()}
                               onChange={setEditImplementationGuide}
                               ariaLabel="Task implementation guide"
