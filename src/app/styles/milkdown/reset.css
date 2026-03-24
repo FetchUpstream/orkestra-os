@@ -15,8 +15,14 @@
   --crepe-color-inline-area: var(--surface-alt);
   --crepe-color-inline-code: var(--text);
   --crepe-shadow-1: var(--shadow-sm);
-  --crepe-font-default: var(--font-mono);
-  --crepe-font-title: var(--font-mono);
+  --crepe-font-default: var(
+    --font-sans,
+    "Inter",
+    "Segoe UI",
+    Roboto,
+    sans-serif
+  );
+  --crepe-font-title: var(--font-sans, "Inter", "Segoe UI", Roboto, sans-serif);
   --crepe-font-code: var(--font-mono);
 
   * {
