@@ -1823,6 +1823,54 @@ textarea::placeholder {
   font-size: 0.86rem;
 }
 
+.task-guide-crepe-shell {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg) 86%, var(--surface-alt) 14%);
+  overflow: hidden;
+  min-height: 0;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+
+.task-guide-crepe-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+  background: color-mix(in srgb, var(--bg) 90%, var(--surface-alt) 10%);
+}
+
+.task-guide-crepe {
+  min-height: 0;
+}
+
+.task-detail-description-block--summary .task-guide-crepe-shell {
+  min-height: 132px;
+}
+
+.task-detail-description-block--guide .task-guide-crepe-shell {
+  min-height: 260px;
+}
+
+.task-detail-description-block--summary .task-guide-crepe .milkdown .toolbar {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.task-detail-description-block--summary:hover
+  .task-guide-crepe
+  .milkdown
+  .toolbar,
+.task-detail-description-block--summary:focus-within
+  .task-guide-crepe
+  .milkdown
+  .toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .task-markdown-editor {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
