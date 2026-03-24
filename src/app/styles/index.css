@@ -2012,6 +2012,123 @@ textarea::placeholder {
   min-height: 1.75rem;
 }
 
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar {
+  --crepe-color-outline: color-mix(in srgb, var(--text) 88%, transparent);
+  --crepe-color-primary: #ffffff;
+}
+
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  button,
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  .toolbar-item {
+  color: var(--crepe-color-outline);
+  border: 1px solid transparent;
+}
+
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  button:hover:not(:disabled),
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  button:focus-visible:not(:disabled),
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  .toolbar-item:hover:not(:disabled),
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  .toolbar-item:focus-visible:not(:disabled) {
+  color: #ffffff;
+  background: color-mix(in srgb, var(--surface-hover) 70%, var(--accent) 30%);
+}
+
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  button[aria-pressed="true"],
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  button.active,
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  .toolbar-item[aria-pressed="true"],
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  .toolbar-item.active {
+  color: #ffffff;
+  background: color-mix(in srgb, var(--accent) 20%, var(--surface) 80%);
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border-subtle) 42%);
+}
+
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  button:disabled,
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  .toolbar-item:disabled {
+  color: color-mix(in srgb, var(--text-muted) 82%, transparent);
+  opacity: 0.56;
+}
+
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  button
+  svg,
+.task-detail-page
+  .task-detail-description-block
+  .task-guide-crepe-shell
+  .milkdown
+  .toolbar
+  .toolbar-item
+  svg {
+  color: currentColor;
+  fill: currentColor;
+  stroke: currentColor;
+}
+
 .task-markdown-editor {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
