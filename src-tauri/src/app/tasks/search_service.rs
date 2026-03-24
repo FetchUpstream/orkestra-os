@@ -14,6 +14,8 @@ static TASK_QUERY_MATCHER: Lazy<Mutex<Matcher>> =
 
 const MAX_CANDIDATES: i64 = 160;
 const MAX_RESULTS: usize = 60;
+const FALLBACK_TOP_SCORE_RATIO_CUTOFF: f32 = 0.72;
+const FALLBACK_MIN_SCORE: u32 = 70;
 
 #[derive(Clone, Debug)]
 pub struct TaskSearchService {
@@ -55,22 +57,30 @@ impl TaskSearchService {
             return Ok(Vec::new());
         }
 
-        let candidates = self
+        let strict_candidates = self
             .repository
             .list_project_candidates(project_id, &fts_query, MAX_CANDIDATES)
             .await?;
-        let candidates = if candidates.is_empty() {
-            self.repository
-                .list_project_fallback_candidates(project_id, MAX_CANDIDATES)
-                .await?
+        let (candidates, used_fallback) = if strict_candidates.is_empty() {
+            let relaxed_fts_query = Self::build_relaxed_fts_query(&normalized_query);
+            if relaxed_fts_query.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            (
+                self.repository
+                    .list_project_candidates(project_id, &relaxed_fts_query, MAX_CANDIDATES)
+                    .await?,
+                true,
+            )
         } else {
-            candidates
+            (strict_candidates, false)
         };
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
 
-        let ranked = Self::rerank_candidates(&normalized_query, candidates)?;
+        let ranked = Self::rerank_candidates(&normalized_query, candidates, used_fallback)?;
         let mut results = Vec::new();
         for candidate in ranked.into_iter().take(MAX_RESULTS) {
             if let Some(task) = self.tasks_repository.get_task(&candidate.task_id).await? {
@@ -124,9 +134,29 @@ impl TaskSearchService {
             .join(" AND ")
     }
 
+    fn build_relaxed_fts_query(normalized_query: &str) -> String {
+        normalized_query
+            .split_whitespace()
+            .filter_map(|token| {
+                let escaped = token.replace('"', "\"\"");
+                if escaped.is_empty() {
+                    return None;
+                }
+
+                if escaped.chars().count() >= 3 {
+                    Some(format!("\"{}\"*", escaped))
+                } else {
+                    Some(format!("\"{}\"", escaped))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    }
+
     fn rerank_candidates(
         query: &str,
         candidates: Vec<TaskSearchCandidate>,
+        fallback_mode: bool,
     ) -> Result<Vec<RankedCandidate>, AppError> {
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
         let mut matcher = TASK_QUERY_MATCHER
@@ -136,30 +166,31 @@ impl TaskSearchService {
 
         let mut ranked = candidates
             .into_iter()
-            .map(|candidate| {
-                let title_score = pattern
-                    .score(
-                        Utf32Str::new(candidate.title.as_str(), &mut buf),
-                        &mut matcher,
-                    )
-                    .unwrap_or(0);
-                let display_key_score = pattern
-                    .score(
-                        Utf32Str::new(candidate.display_key.as_str(), &mut buf),
-                        &mut matcher,
-                    )
-                    .unwrap_or(0);
-                let description_score = pattern
-                    .score(
-                        Utf32Str::new(candidate.description.as_str(), &mut buf),
-                        &mut matcher,
-                    )
-                    .unwrap_or(0);
-                RankedCandidate {
-                    task_id: candidate.task_id,
-                    rank_score: (title_score * 3) + (display_key_score * 3) + description_score,
-                    fts_rank: candidate.fts_rank,
+            .filter_map(|candidate| {
+                let title_score = pattern.score(
+                    Utf32Str::new(candidate.title.as_str(), &mut buf),
+                    &mut matcher,
+                );
+                let display_key_score = pattern.score(
+                    Utf32Str::new(candidate.display_key.as_str(), &mut buf),
+                    &mut matcher,
+                );
+                let description_score = pattern.score(
+                    Utf32Str::new(candidate.description.as_str(), &mut buf),
+                    &mut matcher,
+                );
+
+                if title_score.is_none() && display_key_score.is_none() && description_score.is_none() {
+                    return None;
                 }
+
+                Some(RankedCandidate {
+                    task_id: candidate.task_id,
+                    rank_score: (title_score.unwrap_or(0) * 3)
+                        + (display_key_score.unwrap_or(0) * 3)
+                        + description_score.unwrap_or(0),
+                    fts_rank: candidate.fts_rank,
+                })
             })
             .collect::<Vec<_>>();
 
@@ -173,6 +204,16 @@ impl TaskSearchService {
                 })
                 .then_with(|| a.task_id.cmp(&b.task_id))
         });
+
+        if fallback_mode {
+            let Some(top_score) = ranked.first().map(|candidate| candidate.rank_score) else {
+                return Ok(Vec::new());
+            };
+
+            let relative_cutoff = ((top_score as f32) * FALLBACK_TOP_SCORE_RATIO_CUTOFF) as u32;
+            let min_cutoff = FALLBACK_MIN_SCORE.max(relative_cutoff);
+            ranked.retain(|candidate| candidate.rank_score >= min_cutoff);
+        }
 
         Ok(ranked)
     }
@@ -305,6 +346,26 @@ mod tests {
             .await
             .unwrap();
         assert!(!results.is_empty());
+        assert_eq!(results[0].title, "Run Details");
+    }
+
+    #[tokio::test]
+    async fn search_typo_fallback_stays_selective() {
+        let (service, pool) = setup_service().await;
+        seed_project(&pool, "project-1", "PRJ").await;
+        seed_task(&pool, "task-1", "project-1", 1, "Run Details", None).await;
+        seed_task(&pool, "task-2", "project-1", 2, "Roadmap Planning", None).await;
+        seed_task(&pool, "task-3", "project-1", 3, "Release Notes", None).await;
+        seed_task(&pool, "task-4", "project-1", 4, "Database Migration", None).await;
+        seed_task(&pool, "task-5", "project-1", 5, "Monitoring Setup", None).await;
+
+        let results = service
+            .search_project_tasks("project-1", "rund etails")
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "task-1");
         assert_eq!(results[0].title, "Run Details");
     }
 

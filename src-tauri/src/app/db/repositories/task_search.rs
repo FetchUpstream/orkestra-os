@@ -58,37 +58,4 @@ impl TaskSearchRepository {
             .collect())
     }
 
-    pub async fn list_project_fallback_candidates(
-        &self,
-        project_id: &str,
-        limit: i64,
-    ) -> Result<Vec<TaskSearchCandidate>, AppError> {
-        let rows = sqlx::query(
-            "SELECT
-                d.task_id,
-                d.display_key,
-                d.title,
-                d.description,
-                0.0 AS fts_rank
-             FROM task_search_docs d
-             WHERE d.project_id = ?
-             ORDER BY d.doc_id DESC
-             LIMIT ?",
-        )
-        .bind(project_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows
-            .into_iter()
-            .map(|row| TaskSearchCandidate {
-                task_id: row.get("task_id"),
-                display_key: row.get("display_key"),
-                title: row.get("title"),
-                description: row.get("description"),
-                fts_rank: row.get("fts_rank"),
-            })
-            .collect())
-    }
 }
