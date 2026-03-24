@@ -26,6 +26,7 @@ const AppShell: Component<AppShellProps> = (props) => {
   const [isMobile, setIsMobile] = createSignal(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = createSignal(false);
   const [projects, setProjects] = createSignal<Project[]>([]);
+  const [boardSearchQuery, setBoardSearchQuery] = createSignal("");
 
   const isSidebarVisible = () => (isMobile() ? mobileSidebarOpen() : true);
 
@@ -105,9 +106,25 @@ const AppShell: Component<AppShellProps> = (props) => {
     setMobileSidebarOpen(false);
   };
 
+  const dispatchBoardSearchQuery = (query: string) => {
+    window.dispatchEvent(
+      new CustomEvent("board:search-query", {
+        detail: { query },
+      }),
+    );
+  };
+
   const shellTitle = () => {
+    if (location.pathname === "/board") {
+      const projectId = boardProjectId();
+      const project = projectId
+        ? projects().find((item) => item.id === projectId)
+        : projects()[0];
+      return project?.name ?? "Board";
+    }
     if (location.pathname.startsWith("/runs/")) return "Run workspace";
     if (location.pathname.startsWith("/tasks/")) return "Task detail";
+    if (location.pathname.startsWith("/projects/")) return "Project settings";
     if (
       location.pathname.startsWith("/projects/") &&
       location.pathname !== "/projects"
@@ -116,11 +133,13 @@ const AppShell: Component<AppShellProps> = (props) => {
       return "Project detail";
     }
     if (location.pathname === "/projects") return "Projects";
-    if (location.pathname.startsWith("/projects/")) return "Project settings";
     return "Board";
   };
 
   const shellSubtitle = () => {
+    if (location.pathname === "/board") {
+      return undefined;
+    }
     if (location.pathname.startsWith("/runs/")) {
       return "Review conversations, diffs, and terminal activity.";
     }
@@ -152,6 +171,11 @@ const AppShell: Component<AppShellProps> = (props) => {
     }
   };
 
+  const settingsProjectId = () => {
+    const match = location.pathname.match(/^\/projects\/([^/]+)$/);
+    return match?.[1] ?? "";
+  };
+
   const handleShellKeyDown: JSX.EventHandler<HTMLDivElement, KeyboardEvent> = (
     event,
   ) => {
@@ -159,6 +183,25 @@ const AppShell: Component<AppShellProps> = (props) => {
       event.preventDefault();
       onMobileClose();
     }
+  };
+
+  const onBoardSearchInput: JSX.EventHandler<HTMLInputElement, InputEvent> = (
+    event,
+  ) => {
+    const query = event.currentTarget.value;
+    setBoardSearchQuery(query);
+    dispatchBoardSearchQuery(query);
+  };
+
+  const onBoardSearchKeyDown: JSX.EventHandler<
+    HTMLInputElement,
+    KeyboardEvent
+  > = (event) => {
+    if (event.key !== "Escape") return;
+    if (!boardSearchQuery()) return;
+    event.preventDefault();
+    setBoardSearchQuery("");
+    dispatchBoardSearchQuery("");
   };
 
   return (
@@ -216,6 +259,20 @@ const AppShell: Component<AppShellProps> = (props) => {
                 </button>
               ) : null
             }
+            center={
+              location.pathname === "/board" ? (
+                <div class="projects-field m-0 w-[min(32rem,38vw)] min-w-64">
+                  <input
+                    type="search"
+                    placeholder="Search tasks…"
+                    aria-label="Search tasks"
+                    value={boardSearchQuery()}
+                    onInput={onBoardSearchInput}
+                    onKeyDown={onBoardSearchKeyDown}
+                  />
+                </div>
+              ) : undefined
+            }
             actions={
               location.pathname === "/board" ? (
                 <>
@@ -241,6 +298,15 @@ const AppShell: Component<AppShellProps> = (props) => {
                     </a>
                   ) : null}
                 </>
+              ) : settingsProjectId() ? (
+                <a
+                  href={`/board?projectId=${settingsProjectId()}`}
+                  class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
+                  aria-label="Close project settings"
+                  title="Close project settings"
+                >
+                  <span aria-hidden="true">✕</span>
+                </a>
               ) : undefined
             }
           />

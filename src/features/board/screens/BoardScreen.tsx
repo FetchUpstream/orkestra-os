@@ -91,12 +91,6 @@ const BoardScreen: Component = () => {
     void model.moveTaskToStatus(droppedTaskId, status);
   };
 
-  const totalBoardTasks = () =>
-    Object.values(model.groupedTasks()).reduce(
-      (count, tasks) => count + tasks.length,
-      0,
-    );
-
   createEffect(() => {
     const projectId =
       new URLSearchParams(location.search).get("projectId") ?? "";
@@ -116,29 +110,45 @@ const BoardScreen: Component = () => {
     return () => window.removeEventListener("board:create-task", onCreateTask);
   });
 
-  return (
-    <>
-      <div class="border-base-content/10 mb-3 flex flex-col gap-3 border-b px-4 pt-3 pb-3">
-        <div class="flex min-w-0 items-start justify-between gap-4">
-          <div class="min-w-0">
-            <div class="text-base-content text-[15px] font-semibold tracking-[0.01em]">
-              {model.selectedProjectDetail()?.name ?? "Board"}
-            </div>
-          </div>
-        </div>
-        <section class="flex flex-wrap items-center gap-2">
-          <span class="badge badge-outline border-base-content/10 text-base-content/50 rounded-none border px-2 text-[10px]">
-            {totalBoardTasks()} total
-          </span>
-        </section>
-      </div>
+  createEffect(() => {
+    const onSearchQuery = (event: Event) => {
+      const customEvent = event as CustomEvent<{ query?: string }>;
+      model.setSearchQuery(customEvent.detail?.query ?? "");
+    };
 
+    window.addEventListener("board:search-query", onSearchQuery);
+    return () =>
+      window.removeEventListener("board:search-query", onSearchQuery);
+  });
+
+  return (
+    <div class="flex min-h-full flex-col">
       <Show when={model.error()}>
         {(message) => (
           <p class="projects-error border-error/35 bg-error/10 text-sm">
             {message()}
           </p>
         )}
+      </Show>
+
+      <Show when={model.isSearchActive()}>
+        <p
+          class="text-base-content/60 px-1 py-2 text-xs"
+          role="status"
+          aria-live="polite"
+        >
+          <Show
+            when={!model.isSearchLoading()}
+            fallback={<span>Searching…</span>}
+          >
+            <Show
+              when={model.searchMatchCount() > 0}
+              fallback={<span>No matches</span>}
+            >
+              <span>{model.searchMatchCount()} match(es)</span>
+            </Show>
+          </Show>
+        </p>
       </Show>
 
       <Show
@@ -152,7 +162,7 @@ const BoardScreen: Component = () => {
           </section>
         }
       >
-        <div class="board-columns items-start">
+        <div class="board-columns min-h-0 flex-1 items-start">
           <For each={BOARD_COLUMNS}>
             {(column) => (
               <section
@@ -239,6 +249,10 @@ const BoardScreen: Component = () => {
                             )}
                             onDragStart={onTaskDragStart}
                             onDragEnd={resetDragState}
+                            isSearchDimmed={
+                              model.isSearchActive() &&
+                              !model.isTaskSearchMatch(task.id)
+                            }
                           />
                         )}
                       </For>
@@ -288,7 +302,7 @@ const BoardScreen: Component = () => {
         onCancel={model.onCancelMoveTaskToInProgress}
         onConfirm={model.onConfirmMoveTaskToInProgress}
       />
-    </>
+    </div>
   );
 };
 

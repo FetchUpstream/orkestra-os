@@ -1,5 +1,11 @@
 import { listen } from "@tauri-apps/api/event";
-import { createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js";
 import {
   getProject,
   listProjects,
@@ -7,6 +13,7 @@ import {
 } from "../../../app/lib/projects";
 import {
   listProjectTasks,
+  searchProjectTasks,
   setTaskStatus,
   type Task,
   type TaskStatus,
@@ -139,6 +146,12 @@ export const useBoardModel = () => {
   const [projects, setProjects] = createSignal<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = createSignal("");
   const [tasks, setTasks] = createSignal<Task[]>([]);
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = createSignal("");
+  const [matchedTaskIds, setMatchedTaskIds] = createSignal<Set<string>>(
+    new Set(),
+  );
+  const [isSearchLoading, setIsSearchLoading] = createSignal(false);
   const [selectedProjectDetail, setSelectedProjectDetail] =
     createSignal<Project | null>(null);
   const [updatingTaskIds, setUpdatingTaskIds] = createSignal<string[]>([]);
@@ -172,6 +185,7 @@ export const useBoardModel = () => {
   let activeTasksRequestVersion = 0;
   let activeProjectDetailRequestVersion = 0;
   let activeTaskRunsRequestVersion = 0;
+  let activeTaskSearchRequestVersion = 0;
   let runSelectionOptionsRequestVersion = 0;
   let boardEventSubscriptionDisposed = false;
   let removeBoardEventSubscription: (() => void) | null = null;
@@ -182,6 +196,9 @@ export const useBoardModel = () => {
   );
 
   const groupedTasks = createMemo(() => groupTasksByStatus(tasks()));
+  const normalizedSearchQuery = createMemo(() => searchQuery().trim());
+  const isSearchActive = createMemo(() => normalizedSearchQuery().length > 0);
+  const searchMatchCount = createMemo(() => matchedTaskIds().size);
   const visibleRunModelOptions = createMemo(() => {
     const providerId = selectedRunProviderId().trim();
     if (!providerId) {
@@ -367,6 +384,53 @@ export const useBoardModel = () => {
     }
   };
 
+  createEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery().trim());
+    }, 150);
+    onCleanup(() => window.clearTimeout(timeoutId));
+  });
+
+  createEffect(() => {
+    const projectId = selectedProjectId();
+    const query = debouncedSearchQuery();
+    const requestVersion = ++activeTaskSearchRequestVersion;
+
+    if (!projectId || !query) {
+      setMatchedTaskIds(new Set<string>());
+      setIsSearchLoading(false);
+      return;
+    }
+
+    setIsSearchLoading(true);
+    void searchProjectTasks(projectId, query)
+      .then((results) => {
+        if (
+          requestVersion !== activeTaskSearchRequestVersion ||
+          selectedProjectId() !== projectId ||
+          debouncedSearchQuery() !== query
+        ) {
+          return;
+        }
+        setMatchedTaskIds(new Set(results.map((task) => task.id)));
+      })
+      .catch(() => {
+        if (
+          requestVersion !== activeTaskSearchRequestVersion ||
+          selectedProjectId() !== projectId ||
+          debouncedSearchQuery() !== query
+        ) {
+          return;
+        }
+        setMatchedTaskIds(new Set<string>());
+      })
+      .finally(() => {
+        if (requestVersion === activeTaskSearchRequestVersion) {
+          setIsSearchLoading(false);
+        }
+      });
+  });
+
   const onProjectChange = async (
     projectId: string,
     options?: { persistSelection?: boolean },
@@ -375,6 +439,9 @@ export const useBoardModel = () => {
       persistBoardProjectId(projectId);
     }
     setSelectedProjectId(projectId);
+    activeTaskSearchRequestVersion += 1;
+    setMatchedTaskIds(new Set<string>());
+    setIsSearchLoading(false);
     if (!projectId) {
       activeProjectDetailRequestVersion += 1;
       activeTaskRunsRequestVersion += 1;
@@ -615,6 +682,11 @@ export const useBoardModel = () => {
     isTasksLoading,
     taskRunMiniCards,
     error,
+    searchQuery,
+    isSearchActive,
+    isSearchLoading,
+    searchMatchCount,
+    isTaskSearchMatch: (taskId: string) => matchedTaskIds().has(taskId),
     isRunSettingsModalOpen,
     hasRunSelectionOptions,
     isLoadingRunSelectionOptions,
@@ -631,6 +703,7 @@ export const useBoardModel = () => {
     isTaskStatusUpdating,
     canTaskTransitionToStatus,
     moveTaskToStatus,
+    setSearchQuery,
     setSelectedRunAgentId,
     setSelectedRunProviderId,
     setSelectedRunModelId,

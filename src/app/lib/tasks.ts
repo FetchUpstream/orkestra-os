@@ -178,6 +178,21 @@ export const listProjectTasks = async (projectId: string): Promise<Task[]> => {
   return response.map(toTask);
 };
 
+export const searchProjectTasks = async (
+  projectId: string,
+  query: string,
+): Promise<Task[]> => {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) {
+    return [];
+  }
+  const response = await invoke<TaskResponse[]>("search_project_tasks", {
+    project_id: projectId,
+    query: normalizedQuery,
+  });
+  return response.map(toTask);
+};
+
 export const getTask = async (taskId: string): Promise<Task> => {
   const response = await invoke<TaskResponse>("get_task", { id: taskId });
   return toTask(response);
