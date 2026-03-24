@@ -1814,15 +1814,68 @@ textarea::placeholder {
   overflow: auto;
 }
 
+.task-detail-description-block .task-guide-crepe-shell .milkdown {
+  /* Scoped Crepe theme mapped to app tokens */
+  --crepe-background: color-mix(in srgb, var(--bg) 92%, var(--surface-alt) 8%);
+  --crepe-color-background: var(--crepe-background);
+  --crepe-color-on-background: var(--text);
+  --crepe-color-surface: color-mix(in srgb, var(--surface) 70%, var(--bg) 30%);
+  --crepe-color-surface-low: color-mix(
+    in srgb,
+    var(--surface-alt) 72%,
+    var(--bg) 28%
+  );
+  --crepe-color-on-surface: var(--text);
+  --crepe-color-on-surface-variant: var(--text-muted);
+  --crepe-color-outline: var(--border-subtle);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: var(--accent-subtle);
+  --crepe-color-on-secondary: var(--accent);
+  --crepe-color-inverse: var(--text);
+  --crepe-color-on-inverse: var(--bg);
+  --crepe-color-inline-code: color-mix(
+    in srgb,
+    var(--warning) 22%,
+    var(--surface-alt) 78%
+  );
+  --crepe-color-error: var(--danger);
+  --crepe-color-hover: var(--surface-hover);
+  --crepe-color-selected: var(--accent-subtle);
+  --crepe-color-inline-area: color-mix(
+    in srgb,
+    var(--surface-alt) 78%,
+    var(--bg) 22%
+  );
+  --crepe-font-title: var(
+    --font-sans,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif
+  );
+  --crepe-font-default: var(
+    --font-sans,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif
+  );
+  --crepe-font-code: var(--font-mono);
+  --crepe-shadow-1: var(--shadow-sm);
+  --crepe-shadow-2: var(--shadow-md);
+}
+
 .task-detail-description-block--summary .task-guide-crepe-shell .milkdown {
   --crepe-background: color-mix(in srgb, var(--bg) 95%, var(--surface-alt) 5%);
-  --crepe-color-background: color-mix(
-    in srgb,
-    var(--bg) 95%,
-    var(--surface-alt) 5%
-  );
   --crepe-color-on-background: color-mix(in srgb, var(--text) 88%, transparent);
   --crepe-color-surface: color-mix(in srgb, var(--surface) 52%, var(--bg) 48%);
+  --crepe-color-surface-low: color-mix(
+    in srgb,
+    var(--surface-alt) 58%,
+    var(--bg) 42%
+  );
   --crepe-color-outline: color-mix(
     in srgb,
     var(--border-subtle) 88%,
@@ -1916,14 +1969,21 @@ textarea::placeholder {
 
 .task-detail-description-block--guide .task-guide-crepe-shell .milkdown {
   --crepe-background: color-mix(in srgb, var(--bg) 92%, var(--surface-alt) 8%);
-  --crepe-color-background: color-mix(
-    in srgb,
-    var(--bg) 92%,
-    var(--surface-alt) 8%
-  );
   --crepe-color-on-background: var(--text);
   --crepe-color-surface: color-mix(in srgb, var(--surface) 70%, var(--bg) 30%);
+  --crepe-color-surface-low: color-mix(
+    in srgb,
+    var(--surface-alt) 78%,
+    var(--bg) 22%
+  );
   --crepe-color-outline: var(--border-subtle);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: color-mix(
+    in srgb,
+    var(--accent-subtle) 86%,
+    var(--surface-alt) 14%
+  );
+  --crepe-color-on-secondary: var(--accent);
 }
 
 .task-detail-description-block--guide .task-guide-crepe-shell .milkdown,
