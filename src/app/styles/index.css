@@ -1878,6 +1878,12 @@ textarea::placeholder {
   background: color-mix(in srgb, var(--surface-alt) 55%, var(--surface) 45%);
 }
 
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror code {
+  color: color-mix(in srgb, var(--text) 82%, var(--accent) 18%);
+  background: color-mix(in srgb, var(--surface-alt) 70%, var(--accent) 30%);
+  border: 1px solid color-mix(in srgb, var(--border) 78%, var(--accent) 22%);
+}
+
 .task-markdown-editor .cm-editor .cm-placeholder {
   color: var(--text-subtle);
 }
