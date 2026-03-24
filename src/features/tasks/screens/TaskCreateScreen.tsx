@@ -66,6 +66,7 @@ const TaskCreateScreen: Component = () => {
                   onTitleInput={model.setTitle}
                   onDescriptionInput={model.setDescription}
                   onImplementationGuideInput={model.setImplementationGuide}
+                  onStatusChange={model.setStatus}
                   onTargetRepositoryChange={model.setTargetRepositoryId}
                   onTargetRepositoryBlur={model.onTargetRepositoryBlur}
                   onTitleBlur={model.onTitleBlur}

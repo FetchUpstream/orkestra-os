@@ -18,6 +18,7 @@ type Props = {
   description: Accessor<string>;
   implementationGuide: Accessor<string>;
   status: Accessor<TaskStatus>;
+  onStatusChange?: (value: TaskStatus) => void;
   onTitleInput: (value: string) => void;
   onDescriptionInput: (value: string) => void;
   onImplementationGuideInput: (value: string) => void;
@@ -38,6 +39,7 @@ type Props = {
 
 const TaskEditorPanel: Component<Props> = (props) => {
   const fieldErrors = () => props.fieldErrors?.() ?? {};
+  const statusOptions: TaskStatus[] = ["todo", "doing", "review", "done"];
 
   return (
     <section class="projects-panel task-detail-main-card">
@@ -67,11 +69,37 @@ const TaskEditorPanel: Component<Props> = (props) => {
             </span>
           )}
         </Show>
-        <span
-          class={`project-task-status project-task-status--${props.status()}`}
+        <Show
+          when={props.mode === "create"}
+          fallback={
+            <span
+              class={`project-task-status project-task-status--${props.status()}`}
+            >
+              {formatStatus(props.status())}
+            </span>
+          }
         >
-          {formatStatus(props.status())}
-        </span>
+          <label class="projects-field task-create-status-field">
+            <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+              <span class="field-label-text">Status</span>
+              <span class="field-optional">optional</span>
+            </span>
+            <select
+              class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
+              value={props.status()}
+              onChange={(event) =>
+                props.onStatusChange?.(event.currentTarget.value as TaskStatus)
+              }
+              aria-label="Task status"
+            >
+              {statusOptions.map((statusOption) => (
+                <option value={statusOption}>
+                  {formatStatus(statusOption)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </Show>
         <Show
           when={
             props.mode === "detail" && props.dependencyBadgeState?.() !== "none"
