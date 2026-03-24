@@ -3,7 +3,6 @@ import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
 import TaskImplementationGuideCrepeEditor from "../../../components/ui/TaskImplementationGuideCrepeEditor";
-import TaskMarkdownEditor from "../../../components/ui/TaskMarkdownEditor";
 import {
   TaskDetailErrorState,
   TaskDetailLoadingState,
@@ -331,11 +330,11 @@ const TaskDetailScreen: Component = () => {
                             </span>
                           </div>
                         </div>
-                        <div class="task-detail-description-block">
+                        <div class="task-detail-description-block task-detail-description-block--summary">
                           <h2 class="project-section-title task-detail-description-title">
                             Description
                           </h2>
-                          <TaskMarkdownEditor
+                          <TaskImplementationGuideCrepeEditor
                             value={editDescription()}
                             onChange={onEditDescriptionInput}
                             onBlur={() => {
