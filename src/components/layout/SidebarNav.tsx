@@ -1,5 +1,11 @@
 import { A, useLocation } from "@solidjs/router";
-import { createMemo, type Accessor, type Component } from "solid-js";
+import { getVersion } from "@tauri-apps/api/app";
+import {
+  createMemo,
+  createResource,
+  type Accessor,
+  type Component,
+} from "solid-js";
 import { buildProjectNavItem } from "../../app/lib/nav";
 import type { Project } from "../../app/lib/projects";
 import appIcon from "../../assets/logo.svg";
@@ -13,9 +19,11 @@ type SidebarNavProps = {
 
 const SidebarNav: Component<SidebarNavProps> = (props) => {
   const location = useLocation();
+  const [version] = createResource(getVersion);
   const projectNavItems = createMemo(() =>
     (props.projects?.() ?? []).map(buildProjectNavItem),
   );
+  const versionLabel = createMemo(() => (version() ? `v${version()}` : "v--"));
 
   const isProjectActive = (projectId: string) => {
     const params = new URLSearchParams(location.search);
@@ -156,12 +164,29 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
                 +
               </A>
             </nav>
+            <div class="mt-auto flex w-full flex-col items-center gap-2 pb-1">
+              <div class="border-base-content/10 h-px w-8" />
+              <div
+                class="text-base-content/40 max-w-full truncate px-1 text-center text-[10px] font-medium tracking-[0.14em] tabular-nums"
+                title={versionLabel()}
+                aria-label="Application version"
+              >
+                {versionLabel()}
+              </div>
+            </div>
           </div>
         )}
         {props.isMobile ? (
           <div class="border-base-content/10 border-t p-3">
             <div class="badge badge-outline badge-sm border-primary/20 text-primary/80 w-full justify-center rounded-none py-3 text-[11px] tracking-[0.2em] uppercase">
               Dark workspace
+            </div>
+            <div
+              class="text-base-content/45 mt-2 text-center text-[11px] font-medium tracking-[0.12em] tabular-nums"
+              title={versionLabel()}
+              aria-label="Application version"
+            >
+              {versionLabel()}
             </div>
           </div>
         ) : null}

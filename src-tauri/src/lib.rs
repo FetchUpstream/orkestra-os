@@ -66,6 +66,7 @@ pub fn run() {
             app::commands::worktrees::create_worktree,
             app::commands::worktrees::remove_worktree,
             app::commands::tasks::list_project_tasks,
+            app::commands::tasks::search_project_tasks,
             app::commands::tasks::get_task,
             app::commands::tasks::update_task,
             app::commands::tasks::set_task_status,

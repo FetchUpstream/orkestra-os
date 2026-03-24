@@ -4,12 +4,13 @@ type TopbarProps = {
   title: string;
   subtitle?: string;
   leading?: JSX.Element;
+  center?: JSX.Element;
   actions?: JSX.Element;
 };
 
 const Topbar: Component<TopbarProps> = (props) => {
   return (
-    <header class="navbar border-base-content/15 bg-base-200 min-h-11 rounded-none border px-3 py-1.5">
+    <header class="navbar border-base-content/15 bg-base-200 relative min-h-11 rounded-none border px-3 py-1.5">
       <div class="flex min-w-0 flex-1 items-center gap-2.5">
         {props.leading ? <div class="shrink-0">{props.leading}</div> : null}
         <div class="min-w-0">
@@ -23,6 +24,11 @@ const Topbar: Component<TopbarProps> = (props) => {
           ) : null}
         </div>
       </div>
+      {props.center ? (
+        <div class="absolute inset-y-0 left-1/2 hidden -translate-x-1/2 items-center xl:flex">
+          {props.center}
+        </div>
+      ) : null}
       {props.actions ? (
         <div class="flex shrink-0 items-center gap-2">{props.actions}</div>
       ) : null}

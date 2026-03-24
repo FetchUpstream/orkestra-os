@@ -19,6 +19,7 @@ const MIGRATION_0011: &str =
     include_str!("../../../migrations/0011_add_runs_initial_prompt_claim_tracking.sql");
 const MIGRATION_0012: &str =
     include_str!("../../../migrations/0012_add_runs_active_task_unique_index.sql");
+const MIGRATION_0015: &str = include_str!("../../../migrations/0015_add_task_search_fts.sql");
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(MIGRATION_0001).execute(pool).await?;
@@ -249,6 +250,17 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
             .await?;
     }
 
+    let has_task_search_docs = sqlx::query(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'task_search_docs' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?
+    .is_some();
+
+    if !has_task_search_docs {
+        sqlx::query(MIGRATION_0015).execute(pool).await?;
+    }
+
     Ok(())
 }
 
@@ -414,5 +426,57 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(index_exists, Some(1));
+    }
+
+    #[tokio::test]
+    async fn run_migrations_backfills_task_search_docs_for_existing_rows() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+        sqlx::query(MIGRATION_0001).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0002).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0003).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0004).execute(&pool).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES ('proj-1', 'Project 1', 'ORK', NULL, 'repo-1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+             VALUES ('repo-1', 'proj-1', 'Repo 1', '/tmp/repo-1', 1, '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+             VALUES ('task-1', 'proj-1', 'repo-1', 1, 'Run Details', 'Task details', 'todo', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        run_migrations(&pool).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_search_docs WHERE task_id = 'task-1' AND display_key = 'ORK-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+
+        let fts_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_search_fts WHERE task_search_fts MATCH 'details'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(fts_count, 1);
     }
 }

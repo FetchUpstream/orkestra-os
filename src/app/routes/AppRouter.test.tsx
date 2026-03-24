@@ -4456,7 +4456,7 @@ describe("app routing and shell", () => {
       (screen.getByLabelText("Project name") as HTMLInputElement).value,
     ).toBe("");
     expect(
-      (screen.getByLabelText("Project key") as HTMLInputElement).value,
+      (screen.getByPlaceholderText("e.g., PROJ") as HTMLInputElement).value,
     ).toBe("");
   });
 
@@ -4478,11 +4478,10 @@ describe("app routing and shell", () => {
       (screen.getByLabelText("Project name") as HTMLInputElement).value,
     ).toBe("Alpha");
     expect(
-      (screen.getByLabelText("Project key") as HTMLInputElement).value,
+      (screen.getByPlaceholderText("e.g., PROJ") as HTMLInputElement).value,
     ).toBe("ALP");
     expect(
-      (screen.getByPlaceholderText("Repository path") as HTMLInputElement)
-        .value,
+      (screen.getByLabelText("Repository 1 path") as HTMLInputElement).value,
     ).toBe("/repo/main");
   });
 

@@ -1144,6 +1144,7 @@ textarea::placeholder {
   gap: 14px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: stretch;
+  min-height: calc(100vh - 8.5rem);
 }
 
 .board-column--drop-active {
@@ -1327,9 +1328,9 @@ textarea::placeholder {
 }
 
 .project-task-status--todo {
-  background: var(--surface);
-  color: var(--text-muted);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-alt) 78%, #ffffff 22%);
+  color: #d5dfeb;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, #ffffff 12%);
 }
 
 .project-task-status--doing {

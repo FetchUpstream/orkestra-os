@@ -106,3 +106,9 @@ pub struct RemoveTaskDependencyResponse {
     pub child_task_id: String,
     pub removed: bool,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SearchProjectTasksRequest {
+    pub project_id: String,
+    pub query: String,
+}

@@ -10,12 +10,14 @@ use crate::app::tasks::dto::{
 use crate::app::tasks::models::{
     MoveTaskRepository, NewTask, Task, TaskDependencyTask, UpdateTaskDetails, UpdateTaskStatus,
 };
+use crate::app::tasks::search_service::TaskSearchService;
 use chrono::Utc;
 use tracing::warn;
 
 #[derive(Clone, Debug)]
 pub struct TasksService {
     repository: TasksRepository,
+    search_service: TaskSearchService,
     runs_service: Option<RunsService>,
     runs_opencode_service: Option<RunsOpenCodeService>,
 }
@@ -24,9 +26,10 @@ impl TasksService {
     const SOURCE_ACTION_BOARD_MANUAL_MOVE: &'static str = "board_manual_move";
 
     #[cfg(test)]
-    pub fn new(repository: TasksRepository) -> Self {
+    pub fn new(repository: TasksRepository, search_service: TaskSearchService) -> Self {
         Self {
             repository,
+            search_service,
             runs_service: None,
             runs_opencode_service: None,
         }
@@ -34,11 +37,13 @@ impl TasksService {
 
     pub fn new_with_run_auto_start(
         repository: TasksRepository,
+        search_service: TaskSearchService,
         runs_service: RunsService,
         runs_opencode_service: RunsOpenCodeService,
     ) -> Self {
         Self {
             repository,
+            search_service,
             runs_service: Some(runs_service),
             runs_opencode_service: Some(runs_opencode_service),
         }
@@ -100,6 +105,16 @@ impl TasksService {
 
         let tasks = self.repository.list_project_tasks(project_id).await?;
         Ok(tasks.into_iter().map(Self::to_dto).collect())
+    }
+
+    pub async fn search_project_tasks(
+        &self,
+        project_id: &str,
+        query: &str,
+    ) -> Result<Vec<TaskDto>, AppError> {
+        self.search_service
+            .search_project_tasks(project_id, query)
+            .await
     }
 
     pub async fn get_task(&self, id: &str) -> Result<TaskDto, AppError> {
@@ -490,6 +505,7 @@ mod tests {
     use super::*;
     use crate::app::db::migrations::run_migrations;
     use crate::app::db::repositories::runs::RunsRepository;
+    use crate::app::db::repositories::task_search::TaskSearchRepository;
     use crate::app::runs::opencode_service::RunsOpenCodeService;
     use crate::app::worktrees::service::WorktreesService;
     use sqlx::SqlitePool;
@@ -501,13 +517,19 @@ mod tests {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
         let repository = TasksRepository::new(pool.clone());
-        (TasksService::new(repository), pool)
+        let search_service =
+            TaskSearchService::new(repository.clone(), TaskSearchRepository::new(pool.clone()));
+        (TasksService::new(repository, search_service), pool)
     }
 
     async fn setup_service_with_run_auto_start() -> (TasksService, SqlitePool, TempDir) {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
         let tasks_repository = TasksRepository::new(pool.clone());
+        let search_service = TaskSearchService::new(
+            tasks_repository.clone(),
+            TaskSearchRepository::new(pool.clone()),
+        );
         let runs_repository = RunsRepository::new(pool.clone());
         let temp_dir = TempDir::new();
         let worktrees_service = WorktreesService::new(temp_dir.path().join("app-data"));
@@ -518,6 +540,7 @@ mod tests {
         (
             TasksService::new_with_run_auto_start(
                 tasks_repository,
+                search_service,
                 runs_service,
                 runs_opencode_service,
             ),

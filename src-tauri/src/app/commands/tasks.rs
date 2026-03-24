@@ -1,8 +1,9 @@
 use crate::app::state::AppState;
 use crate::app::tasks::dto::{
     AddTaskDependencyRequest, CreateTaskRequest, DeleteTaskResponse, MoveTaskRequest,
-    RemoveTaskDependencyRequest, RemoveTaskDependencyResponse, SetTaskStatusRequest,
-    TaskDependenciesDto, TaskDependencyEdgeDto, TaskDto, TaskUpdatedEventDto, UpdateTaskRequest,
+    RemoveTaskDependencyRequest, RemoveTaskDependencyResponse, SearchProjectTasksRequest,
+    SetTaskStatusRequest, TaskDependenciesDto, TaskDependencyEdgeDto, TaskDto, TaskUpdatedEventDto,
+    UpdateTaskRequest,
 };
 use crate::app::{commands::context, commands::error_mapping::map_result};
 use tauri::Emitter;
@@ -23,6 +24,19 @@ pub async fn list_project_tasks(
 ) -> Result<Vec<TaskDto>, String> {
     let service = context::tasks_service(&state);
     map_result(service.list_project_tasks(&project_id).await)
+}
+
+#[tauri::command]
+pub async fn search_project_tasks(
+    state: tauri::State<'_, AppState>,
+    input: SearchProjectTasksRequest,
+) -> Result<Vec<TaskDto>, String> {
+    let service = context::tasks_service(&state);
+    map_result(
+        service
+            .search_project_tasks(&input.project_id, &input.query)
+            .await,
+    )
 }
 
 #[tauri::command]
