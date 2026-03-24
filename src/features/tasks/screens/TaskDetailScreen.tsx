@@ -1,12 +1,4 @@
-import {
-  For,
-  Show,
-  createEffect,
-  createSignal,
-  onCleanup,
-  type Component,
-} from "solid-js";
-import BackIconLink from "../../../components/ui/BackIconLink";
+import { For, Show, createEffect, onCleanup, type Component } from "solid-js";
 import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
 import RunChatMarkdown from "../../runs/components/chat/RunChatMarkdown";
@@ -98,18 +90,6 @@ const getRunPrimaryLabel = (runItem: {
   return "Run";
 };
 
-const EditIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M3 17.25V21h3.75L18.81 8.94l-3.75-3.75L3 17.25zm17.71-10.04a.996.996 0 0 0 0-1.41L18.2 3.29a.996.996 0 1 0-1.41 1.41l2.5 2.5c.39.39 1.03.39 1.42.01z" />
-  </svg>
-);
-
-const StatusTransitionIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M5 11h11.17l-3.58-3.59L14 6l6 6-6 6-1.41-1.41L16.17 13H5z" />
-  </svg>
-);
-
 const DeleteIcon: Component = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path d="M6 7h12l-1 14H7L6 7zm3-4h6l1 2h4v2H4V5h4l1-2z" />
@@ -158,6 +138,7 @@ const TaskDetailScreen: Component = () => {
     editImplementationGuide,
     isSavingEdit,
     isChangingStatus,
+    isTransitionMenuOpen,
     moveRepositoryId,
     isMoving,
     isDeleting,
@@ -184,6 +165,7 @@ const TaskDetailScreen: Component = () => {
     refreshRuns,
     setActionError,
     setIsEditing,
+    setIsTransitionMenuOpen,
     setSelectedRunAgentId,
     setSelectedRunProviderId,
     setSelectedRunModelId,
@@ -218,7 +200,38 @@ const TaskDetailScreen: Component = () => {
     onStartRun,
     onDeleteRun,
   } = useTaskDetailModel();
-  const [isTransitionMenuOpen, setIsTransitionMenuOpen] = createSignal(false);
+
+  createEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("task-detail:topbar-config", {
+        detail: {
+          backHref: backHref(),
+          backLabel: backLabel(),
+          isEditing: isEditing(),
+          isSavingEdit: isSavingEdit(),
+          isChangingStatus: isChangingStatus(),
+          isTransitionMenuOpen: isTransitionMenuOpen(),
+          isDeleting: isDeleting(),
+          validTransitionOptions: validTransitionOptions(),
+          onStartEdit: () => {
+            setActionError("");
+            setIsEditing(true);
+          },
+          onSaveEdit,
+          onCancelEdit,
+          onToggleTransitionMenu: () =>
+            setIsTransitionMenuOpen((current) => !current),
+          onCloseTransitionMenu: () => setIsTransitionMenuOpen(false),
+          onSetStatus,
+          onRequestDeleteTask,
+        },
+      }),
+    );
+  });
+
+  onCleanup(() => {
+    window.dispatchEvent(new CustomEvent("task-detail:topbar-clear"));
+  });
 
   createEffect(() => {
     if (!isLinkDependencyModalOpen()) return;
@@ -256,11 +269,6 @@ const TaskDetailScreen: Component = () => {
                   <div class="task-detail-columns">
                     <div class="task-detail-main-column">
                       <section class="projects-panel task-detail-main-card">
-                        <BackIconLink
-                          href={backHref()}
-                          label={backLabel()}
-                          class="project-detail-back-link project-detail-back-link--icon task-detail-back-link"
-                        />
                         <Show when={actionError()}>
                           <div
                             class="projects-error"
@@ -408,115 +416,6 @@ const TaskDetailScreen: Component = () => {
                     <aside class="task-detail-inspector-column">
                       <section class="projects-panel task-detail-inspector-panel">
                         <div class="task-detail-panel-section">
-                          <h2 class="project-section-title">Task controls</h2>
-                          <div class="task-detail-header-actions task-detail-controls-actions">
-                            <Show
-                              when={isEditing()}
-                              fallback={
-                                <button
-                                  type="button"
-                                  class="task-control-icon-button btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
-                                  onClick={() => {
-                                    setActionError("");
-                                    setIsEditing(true);
-                                  }}
-                                  aria-label="Edit task"
-                                  title="Edit task"
-                                >
-                                  <EditIcon />
-                                </button>
-                              }
-                            >
-                              <button
-                                type="button"
-                                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary task-detail-action-save rounded-none border px-4 text-xs font-semibold"
-                                onClick={onSaveEdit}
-                                disabled={isSavingEdit()}
-                              >
-                                {isSavingEdit() ? "Saving..." : "Save"}
-                              </button>
-                              <button
-                                type="button"
-                                class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 task-detail-action-cancel rounded-none border px-4 text-xs font-medium"
-                                onClick={onCancelEdit}
-                                disabled={isSavingEdit()}
-                              >
-                                Cancel
-                              </button>
-                            </Show>
-                            <button
-                              type="button"
-                              class={`task-control-icon-button task-detail-transition-trigger btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border ${isEditing() ? "task-detail-transition-trigger--editing" : ""}`}
-                              onClick={() =>
-                                setIsTransitionMenuOpen((current) => !current)
-                              }
-                              disabled={isChangingStatus()}
-                              aria-label={
-                                isChangingStatus()
-                                  ? "Updating task status"
-                                  : "Open status transitions"
-                              }
-                              title={
-                                isChangingStatus()
-                                  ? "Updating task status"
-                                  : "Change task status"
-                              }
-                              aria-haspopup="menu"
-                              aria-expanded={isTransitionMenuOpen()}
-                            >
-                              <StatusTransitionIcon />
-                            </button>
-                            <Show
-                              when={
-                                isTransitionMenuOpen() && !isChangingStatus()
-                              }
-                            >
-                              <div
-                                class="task-status-transition-menu"
-                                role="menu"
-                                aria-label="Valid status transitions"
-                              >
-                                <Show
-                                  when={validTransitionOptions().length > 0}
-                                  fallback={
-                                    <p class="task-status-transition-empty">
-                                      No transitions available.
-                                    </p>
-                                  }
-                                >
-                                  <For each={validTransitionOptions()}>
-                                    {(statusOption) => (
-                                      <button
-                                        type="button"
-                                        class="task-status-transition-option rounded-none text-xs"
-                                        role="menuitem"
-                                        onClick={() => {
-                                          setIsTransitionMenuOpen(false);
-                                          void onSetStatus(statusOption);
-                                        }}
-                                      >
-                                        {formatStatus(statusOption)}
-                                      </button>
-                                    )}
-                                  </For>
-                                </Show>
-                              </div>
-                            </Show>
-                            <button
-                              type="button"
-                              class="task-control-icon-button task-control-icon-button-danger btn btn-sm btn-square border-error/35 bg-error/10 text-error hover:bg-error/10 rounded-none border"
-                              onClick={onRequestDeleteTask}
-                              disabled={isDeleting()}
-                              aria-label={
-                                isDeleting() ? "Deleting task" : "Delete task"
-                              }
-                              title={
-                                isDeleting() ? "Deleting task" : "Delete task"
-                              }
-                            >
-                              <DeleteIcon />
-                            </button>
-                          </div>
                           <div class="task-detail-quick-actions">
                             <Show when={canMoveTask()}>
                               <label class="projects-field">

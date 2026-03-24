@@ -70,6 +70,7 @@ export const useTaskDetailModel = () => {
     createSignal("");
   const [isSavingEdit, setIsSavingEdit] = createSignal(false);
   const [isChangingStatus, setIsChangingStatus] = createSignal(false);
+  const [isTransitionMenuOpen, setIsTransitionMenuOpen] = createSignal(false);
   const [moveRepositoryId, setMoveRepositoryId] = createSignal("");
   const [isMoving, setIsMoving] = createSignal(false);
   const [isDeleting, setIsDeleting] = createSignal(false);
@@ -628,6 +629,7 @@ export const useTaskDetailModel = () => {
     const taskValue = task();
     if (!taskValue) return;
     setActionError("");
+    setIsTransitionMenuOpen(false);
     setIsChangingStatus(true);
     try {
       const updated = await setTaskStatus(taskValue.id, { status });
@@ -871,6 +873,7 @@ export const useTaskDetailModel = () => {
     editImplementationGuide,
     isSavingEdit,
     isChangingStatus,
+    isTransitionMenuOpen,
     moveRepositoryId,
     isMoving,
     isDeleting,
@@ -897,6 +900,7 @@ export const useTaskDetailModel = () => {
     refreshRuns,
     setActionError,
     setIsEditing,
+    setIsTransitionMenuOpen,
     setSelectedRunAgentId,
     setSelectedRunProviderId,
     setSelectedRunModelId,

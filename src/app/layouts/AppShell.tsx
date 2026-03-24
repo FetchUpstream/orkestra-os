@@ -1,5 +1,7 @@
 import { useLocation, useNavigate } from "@solidjs/router";
 import {
+  For,
+  Show,
   createEffect,
   createSignal,
   onCleanup,
@@ -9,9 +11,53 @@ import {
 } from "solid-js";
 import { listProjects, type Project } from "../lib/projects";
 import { primeRunSelectionOptionsCache } from "../lib/runSelectionOptionsCache";
+import type { TaskStatus } from "../lib/tasks";
 import MainContent from "../../components/layout/MainContent";
 import SidebarNav from "../../components/layout/SidebarNav";
 import Topbar from "../../components/layout/Topbar";
+import { formatStatus } from "../../features/tasks/utils/taskDetail";
+
+type TaskDetailTopbarConfig = {
+  backHref: string;
+  backLabel: string;
+  isEditing: boolean;
+  isSavingEdit: boolean;
+  isChangingStatus: boolean;
+  isTransitionMenuOpen: boolean;
+  isDeleting: boolean;
+  validTransitionOptions: TaskStatus[];
+  onStartEdit: () => void;
+  onSaveEdit: () => void | Promise<void>;
+  onCancelEdit: () => void;
+  onToggleTransitionMenu: () => void;
+  onCloseTransitionMenu: () => void;
+  onSetStatus: (status: TaskStatus) => void | Promise<void>;
+  onRequestDeleteTask: () => void;
+};
+
+const CloseIcon: Component = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M18.3 5.71 12 12l6.3 6.29-1.42 1.42L10.59 13.4 4.29 19.7l-1.42-1.4L9.17 12 2.87 5.7l1.42-1.42 6.3 6.3 6.29-6.3z" />
+  </svg>
+);
+
+const EditIcon: Component = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M3 17.25V21h3.75L18.81 8.94l-3.75-3.75L3 17.25zm17.71-10.04a.996.996 0 0 0 0-1.41L18.2 3.29a.996.996 0 1 0-1.41 1.41l2.5 2.5c.39.39 1.03.39 1.42.01z" />
+  </svg>
+);
+
+const StatusTransitionIcon: Component = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M5 11h11.17l-3.58-3.59L14 6l6 6-6 6-1.41-1.41L16.17 13H5z" />
+  </svg>
+);
+
+const DeleteIcon: Component = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M6 7h12l-1 14H7L6 7zm3-4h6l1 2h4v2H4V5h4l1-2z" />
+  </svg>
+);
 
 type AppShellProps = {
   children?: JSX.Element;
@@ -27,6 +73,8 @@ const AppShell: Component<AppShellProps> = (props) => {
   const [mobileSidebarOpen, setMobileSidebarOpen] = createSignal(false);
   const [projects, setProjects] = createSignal<Project[]>([]);
   const [boardSearchQuery, setBoardSearchQuery] = createSignal("");
+  const [taskDetailTopbarConfig, setTaskDetailTopbarConfig] =
+    createSignal<TaskDetailTopbarConfig | null>(null);
 
   const isSidebarVisible = () => (isMobile() ? mobileSidebarOpen() : true);
 
@@ -61,6 +109,40 @@ const AppShell: Component<AppShellProps> = (props) => {
       }
     } catch (error) {
       console.warn("Failed to load projects during startup", error);
+    }
+
+    const onTaskDetailTopbarConfig = (event: Event) => {
+      const customEvent = event as CustomEvent<TaskDetailTopbarConfig>;
+      setTaskDetailTopbarConfig(customEvent.detail);
+    };
+    const onTaskDetailTopbarClear = () => {
+      setTaskDetailTopbarConfig(null);
+    };
+
+    window.addEventListener(
+      "task-detail:topbar-config",
+      onTaskDetailTopbarConfig,
+    );
+    window.addEventListener(
+      "task-detail:topbar-clear",
+      onTaskDetailTopbarClear,
+    );
+
+    onCleanup(() => {
+      window.removeEventListener(
+        "task-detail:topbar-config",
+        onTaskDetailTopbarConfig,
+      );
+      window.removeEventListener(
+        "task-detail:topbar-clear",
+        onTaskDetailTopbarClear,
+      );
+    });
+  });
+
+  createEffect(() => {
+    if (!location.pathname.includes("/tasks/")) {
+      setTaskDetailTopbarConfig(null);
     }
   });
 
@@ -245,7 +327,17 @@ const AppShell: Component<AppShellProps> = (props) => {
             title={shellTitle()}
             subtitle={shellSubtitle()}
             leading={
-              isMobile() ? (
+              location.pathname.includes("/tasks/") &&
+              taskDetailTopbarConfig() ? (
+                <a
+                  href={taskDetailTopbarConfig()!.backHref}
+                  class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
+                  aria-label={`Back to ${taskDetailTopbarConfig()!.backLabel}`}
+                  title={`Back to ${taskDetailTopbarConfig()!.backLabel}`}
+                >
+                  <CloseIcon />
+                </a>
+              ) : isMobile() ? (
                 <button
                   ref={mobileMenuButtonRef}
                   type="button"
@@ -274,7 +366,134 @@ const AppShell: Component<AppShellProps> = (props) => {
               ) : undefined
             }
             actions={
-              location.pathname === "/board" ? (
+              location.pathname.includes("/tasks/") &&
+              taskDetailTopbarConfig() ? (
+                <>
+                  <div class="relative flex items-center gap-2">
+                    <Show
+                      when={taskDetailTopbarConfig()!.isEditing}
+                      fallback={
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
+                          onClick={taskDetailTopbarConfig()!.onStartEdit}
+                          aria-label="Edit task"
+                          title="Edit task"
+                        >
+                          <EditIcon />
+                        </button>
+                      }
+                    >
+                      <button
+                        type="button"
+                        class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
+                        onClick={() =>
+                          void taskDetailTopbarConfig()!.onSaveEdit()
+                        }
+                        disabled={taskDetailTopbarConfig()!.isSavingEdit}
+                      >
+                        {taskDetailTopbarConfig()!.isSavingEdit
+                          ? "Saving..."
+                          : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+                        onClick={taskDetailTopbarConfig()!.onCancelEdit}
+                        disabled={taskDetailTopbarConfig()!.isSavingEdit}
+                      >
+                        Cancel
+                      </button>
+                    </Show>
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
+                      onClick={taskDetailTopbarConfig()!.onToggleTransitionMenu}
+                      disabled={taskDetailTopbarConfig()!.isChangingStatus}
+                      aria-label={
+                        taskDetailTopbarConfig()!.isChangingStatus
+                          ? "Updating task status"
+                          : "Open status transitions"
+                      }
+                      title={
+                        taskDetailTopbarConfig()!.isChangingStatus
+                          ? "Updating task status"
+                          : "Change task status"
+                      }
+                      aria-haspopup="menu"
+                      aria-expanded={
+                        taskDetailTopbarConfig()!.isTransitionMenuOpen
+                      }
+                    >
+                      <StatusTransitionIcon />
+                    </button>
+                    <Show
+                      when={
+                        taskDetailTopbarConfig()!.isTransitionMenuOpen &&
+                        !taskDetailTopbarConfig()!.isChangingStatus
+                      }
+                    >
+                      <div
+                        class="task-status-transition-menu"
+                        role="menu"
+                        aria-label="Valid status transitions"
+                      >
+                        <Show
+                          when={
+                            taskDetailTopbarConfig()!.validTransitionOptions
+                              .length > 0
+                          }
+                          fallback={
+                            <p class="task-status-transition-empty">
+                              No transitions available.
+                            </p>
+                          }
+                        >
+                          <For
+                            each={
+                              taskDetailTopbarConfig()!.validTransitionOptions
+                            }
+                          >
+                            {(statusOption) => (
+                              <button
+                                type="button"
+                                class="task-status-transition-option rounded-none text-xs"
+                                role="menuitem"
+                                onClick={() => {
+                                  taskDetailTopbarConfig()!.onCloseTransitionMenu();
+                                  void taskDetailTopbarConfig()!.onSetStatus(
+                                    statusOption,
+                                  );
+                                }}
+                              >
+                                {formatStatus(statusOption)}
+                              </button>
+                            )}
+                          </For>
+                        </Show>
+                      </div>
+                    </Show>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-square border-error/35 bg-error/10 text-error hover:bg-error/10 rounded-none border"
+                    onClick={taskDetailTopbarConfig()!.onRequestDeleteTask}
+                    disabled={taskDetailTopbarConfig()!.isDeleting}
+                    aria-label={
+                      taskDetailTopbarConfig()!.isDeleting
+                        ? "Deleting task"
+                        : "Delete task"
+                    }
+                    title={
+                      taskDetailTopbarConfig()!.isDeleting
+                        ? "Deleting task"
+                        : "Delete task"
+                    }
+                  >
+                    <DeleteIcon />
+                  </button>
+                </>
+              ) : location.pathname === "/board" ? (
                 <>
                   <button
                     type="button"

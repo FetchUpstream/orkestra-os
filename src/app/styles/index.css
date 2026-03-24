@@ -1639,6 +1639,8 @@ textarea::placeholder {
 .task-detail-page {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 100%;
   gap: 8px;
   margin-top: 4px;
 }
@@ -1650,6 +1652,8 @@ textarea::placeholder {
 .task-detail-workspace {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
   gap: 10px;
 }
 
@@ -1992,6 +1996,8 @@ textarea::placeholder {
   grid-template-columns: minmax(0, 4.8fr) minmax(250px, 0.92fr);
   gap: 16px;
   align-items: start;
+  flex: 1;
+  min-height: 0;
 }
 
 .task-detail-main-column,
