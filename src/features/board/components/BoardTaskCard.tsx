@@ -14,7 +14,6 @@ type Props = {
   runMiniCard?: BoardTaskRunMiniCard;
   isDragging?: boolean;
   isStatusUpdating?: boolean;
-  isSearchDimmed?: boolean;
   onDragStart?: (taskId: string, event: DragEvent) => void;
   onDragEnd?: () => void;
 };
@@ -48,7 +47,6 @@ const BoardTaskCard: Component<Props> = (props) => {
       classList={{
         "board-task-card--dragging": Boolean(props.isDragging),
         "opacity-60": Boolean(props.isStatusUpdating),
-        "opacity-50": Boolean(props.isSearchDimmed),
       }}
       draggable={!props.isStatusUpdating}
       style={{

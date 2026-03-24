@@ -195,10 +195,17 @@ export const useBoardModel = () => {
       projects().find((project) => project.id === selectedProjectId()) ?? null,
   );
 
-  const groupedTasks = createMemo(() => groupTasksByStatus(tasks()));
   const normalizedSearchQuery = createMemo(() => searchQuery().trim());
   const isSearchActive = createMemo(() => normalizedSearchQuery().length > 0);
-  const searchMatchCount = createMemo(() => matchedTaskIds().size);
+  const visibleTasks = createMemo(() => {
+    if (!isSearchActive()) {
+      return tasks();
+    }
+    const matchedIds = matchedTaskIds();
+    return tasks().filter((task) => matchedIds.has(task.id));
+  });
+  const groupedTasks = createMemo(() => groupTasksByStatus(visibleTasks()));
+  const searchMatchCount = createMemo(() => visibleTasks().length);
   const visibleRunModelOptions = createMemo(() => {
     const providerId = selectedRunProviderId().trim();
     if (!providerId) {
@@ -385,8 +392,9 @@ export const useBoardModel = () => {
   };
 
   createEffect(() => {
+    const query = searchQuery().trim();
     const timeoutId = window.setTimeout(() => {
-      setDebouncedSearchQuery(searchQuery().trim());
+      setDebouncedSearchQuery(query);
     }, 150);
     onCleanup(() => window.clearTimeout(timeoutId));
   });
@@ -686,7 +694,6 @@ export const useBoardModel = () => {
     isSearchActive,
     isSearchLoading,
     searchMatchCount,
-    isTaskSearchMatch: (taskId: string) => matchedTaskIds().has(taskId),
     isRunSettingsModalOpen,
     hasRunSelectionOptions,
     isLoadingRunSelectionOptions,

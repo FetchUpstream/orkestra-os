@@ -187,8 +187,10 @@ export const searchProjectTasks = async (
     return [];
   }
   const response = await invoke<TaskResponse[]>("search_project_tasks", {
-    project_id: projectId,
-    query: normalizedQuery,
+    input: {
+      project_id: projectId,
+      query: normalizedQuery,
+    },
   });
   return response.map(toTask);
 };

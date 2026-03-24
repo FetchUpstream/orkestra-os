@@ -249,10 +249,6 @@ const BoardScreen: Component = () => {
                             )}
                             onDragStart={onTaskDragStart}
                             onDragEnd={resetDragState}
-                            isSearchDimmed={
-                              model.isSearchActive() &&
-                              !model.isTaskSearchMatch(task.id)
-                            }
                           />
                         )}
                       </For>
