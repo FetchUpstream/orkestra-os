@@ -1,0 +1,5 @@
+/* Milkdown isolated style entrypoint */
+@import "@milkdown/crepe/theme/common/style.css";
+@import "./reset.css";
+@import "./prosemirror.css";
+@import "./block-edit.css";
