@@ -1791,10 +1791,6 @@ textarea::placeholder {
   padding-top: 4px;
 }
 
-.task-detail-description-block:not(.task-detail-description-block--guide) {
-  max-width: 920px;
-}
-
 .task-detail-description-block--summary {
   gap: 7px;
 }
