@@ -1,6 +1,24 @@
 .milkdown {
   position: relative;
 
+  --crepe-color-background: transparent;
+  --crepe-color-surface: var(--surface);
+  --crepe-color-surface-low: var(--surface-alt);
+  --crepe-color-hover: var(--surface-hover);
+  --crepe-color-outline: var(--border);
+  --crepe-color-on-background: var(--text);
+  --crepe-color-on-surface: var(--text);
+  --crepe-color-on-surface-variant: var(--text-muted);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: var(--surface-alt);
+  --crepe-color-selected: var(--accent-subtle);
+  --crepe-color-inline-area: var(--surface-alt);
+  --crepe-color-inline-code: var(--text);
+  --crepe-shadow-1: var(--shadow-sm);
+  --crepe-font-default: var(--font-mono);
+  --crepe-font-title: var(--font-mono);
+  --crepe-font-code: var(--font-mono);
+
   * {
     margin: 0;
     padding: 0;
@@ -12,13 +30,6 @@
     border: none;
     background: none;
     box-shadow: none;
-    &:focus {
-      outline: none;
-    }
-  }
-
-  :focus-visible {
-    outline: none;
   }
 
   font-family: var(--crepe-font-default);
@@ -36,7 +47,9 @@
   }
 
   .ProseMirror {
-    padding: 60px 120px;
+    padding: 12px 16px;
+    font-size: 0.875rem;
+    line-height: 1.5;
 
     *::selection {
       background: var(--crepe-color-selected);
@@ -101,66 +114,63 @@
     h5,
     h6 {
       font-family: var(--crepe-font-title);
-      font-weight: 400;
+      font-weight: 600;
       padding: 2px 0;
     }
 
     h1 {
-      font-size: 42px;
-      line-height: 50px;
-      margin-top: 32px;
+      font-size: 1.25rem;
+      line-height: 1.35;
+      margin-top: 0.875rem;
     }
 
     h2 {
-      font-size: 36px;
-      line-height: 44px;
-      margin-top: 28px;
+      font-size: 1.15rem;
+      line-height: 1.35;
+      margin-top: 0.75rem;
     }
 
     h3 {
-      font-size: 32px;
-      line-height: 40px;
-      margin-top: 24px;
+      font-size: 1.05rem;
+      line-height: 1.35;
+      margin-top: 0.625rem;
     }
 
     h4 {
-      font-size: 28px;
-      line-height: 36px;
-      margin-top: 20px;
+      font-size: 1rem;
+      line-height: 1.35;
+      margin-top: 0.5rem;
     }
 
     h5 {
-      font-size: 24px;
-      line-height: 32px;
-      margin-top: 16px;
+      font-size: 0.925rem;
+      line-height: 1.35;
+      margin-top: 0.5rem;
     }
 
     h6 {
-      font-size: 18px;
+      font-size: 0.875rem;
       font-weight: 700;
-      line-height: 28px;
-      margin-top: 16px;
+      line-height: 1.35;
+      margin-top: 0.5rem;
     }
 
     p {
-      font-size: 16px;
-      line-height: 24px;
-      padding: 4px 0;
+      font-size: 0.875rem;
+      line-height: 1.5;
+      padding: 2px 0;
     }
 
     code {
       color: var(--crepe-color-inline-code);
-      background: color-mix(
-        in srgb,
-        var(--crepe-color-inline-area),
-        transparent 40%
-      );
+      background: var(--crepe-color-inline-area);
       font-family: var(--crepe-font-code);
-      padding: 0 2px;
-      border-radius: 4px;
-      font-size: 87.5%;
+      border: 1px solid var(--crepe-color-outline);
+      padding: 0 4px;
+      border-radius: var(--radius-sm);
+      font-size: 0.825em;
       display: inline-block;
-      line-height: 1.4286;
+      line-height: 1.4;
     }
 
     a {
@@ -169,36 +179,35 @@
     }
 
     pre {
-      background: color-mix(
-        in srgb,
-        var(--crepe-color-inline-area),
-        transparent 40%
-      );
-      padding: 10px;
-      border-radius: 4px;
+      background: var(--crepe-color-surface-low);
+      border: 1px solid var(--crepe-color-outline);
+      padding: 10px 12px;
+      border-radius: var(--radius-md);
       code {
         padding: 0;
+        border: none;
         background: transparent;
       }
     }
 
     blockquote {
       position: relative;
-      padding-left: 40px;
+      padding: 4px 0 4px 14px;
       padding-top: 0;
       padding-bottom: 0;
       box-sizing: content-box;
       margin: 4px 0;
+      color: var(--crepe-color-on-surface-variant);
 
       &::before {
         content: "";
-        width: 4px;
+        width: 2px;
         left: 0;
-        top: 4px;
-        bottom: 4px;
+        top: 2px;
+        bottom: 2px;
         position: absolute;
-        background: var(--crepe-color-selected);
-        border-radius: 100px;
+        background: var(--crepe-color-outline);
+        border-radius: var(--radius-sm);
       }
 
       hr {
@@ -208,23 +217,15 @@
 
     hr {
       border: none;
-      background-color: color-mix(
-        in srgb,
-        var(--crepe-color-outline),
-        transparent 80%
-      );
+      background-color: var(--crepe-color-outline);
       background-clip: content-box;
-      padding: 6px 0;
-      height: 13px;
+      padding: 4px 0;
+      height: 9px;
       position: relative;
 
       &.ProseMirror-selectednode {
         outline: none;
-        background-color: color-mix(
-          in srgb,
-          var(--crepe-color-outline),
-          transparent 20%
-        );
+        background-color: var(--crepe-color-primary);
         background-clip: content-box;
         &::before {
           content: "";
@@ -233,11 +234,7 @@
           top: 0;
           bottom: 0;
           right: 0;
-          background-color: color-mix(
-            in srgb,
-            var(--crepe-color-outline),
-            transparent 80%
-          );
+          background-color: var(--crepe-color-outline);
           pointer-events: none;
         }
       }

@@ -2,9 +2,16 @@
   .milkdown-code-block {
     display: block;
     position: relative;
-    padding: 8px 20px 20px;
+    padding: 8px 10px 10px;
     background: var(--crepe-color-surface);
+    border: 1px solid var(--crepe-color-outline);
+    border-radius: var(--radius-md);
+    box-shadow: var(--crepe-shadow-1);
     margin: 4px 0;
+    transition:
+      border-color 0.15s ease,
+      background-color 0.15s ease,
+      box-shadow 0.15s ease;
 
     .language-picker {
       padding-top: 10px;
@@ -18,17 +25,20 @@
     }
 
     &.selected {
-      outline: 1px solid var(--crepe-color-primary);
+      outline: none;
+      border-color: var(--crepe-color-primary);
+      box-shadow: 0 0 0 1px var(--crepe-color-selected);
     }
 
     .cm-editor {
       outline: none !important;
       background: var(--crepe-color-surface);
+      border-radius: var(--radius-sm);
     }
 
     .cm-gutters {
-      border-right: none;
-      background: var(--crepe-color-surface);
+      border-right: 1px solid var(--crepe-color-outline);
+      background: var(--crepe-color-surface-low);
     }
 
     .cm-panel {
@@ -37,8 +47,9 @@
       color: var(--crepe-color-on-surface);
       input {
         caret-color: var(--crepe-color-outline);
-        border-radius: 4px;
+        border-radius: var(--radius-sm);
         background: var(--crepe-color-surface-low);
+        border: 1px solid var(--crepe-color-outline);
       }
       & > button {
         text-transform: capitalize;
@@ -47,7 +58,11 @@
         border: 1px solid var(--crepe-color-outline);
         font-weight: 600;
         cursor: pointer;
-        border-radius: 4px;
+        border-radius: var(--radius-sm);
+        transition:
+          background-color 0.15s ease,
+          border-color 0.15s ease,
+          color 0.15s ease;
         &:hover {
           background: var(--crepe-color-hover);
         }
@@ -110,12 +125,15 @@
           padding: 4px 10px;
           opacity: 0;
           cursor: pointer;
-          border-radius: 4px;
+          border-radius: var(--radius-sm);
           font-size: 12px;
           line-height: 16px;
           font-weight: 600;
           font-family: var(--crepe-font-default);
-          transition: opacity 0.2s ease-in-out;
+          transition:
+            opacity 0.15s ease,
+            background-color 0.15s ease,
+            color 0.15s ease;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -128,14 +146,8 @@
           }
         }
 
-        button:first-child {
-          border-top-left-radius: 100px;
-          border-bottom-left-radius: 100px;
-        }
-
-        button:last-child {
-          border-top-right-radius: 100px;
-          border-bottom-right-radius: 100px;
+        button:hover {
+          background: var(--crepe-color-hover);
         }
       }
 
@@ -147,14 +159,18 @@
         padding: 2px 4px 2px 8px;
         background: var(--crepe-color-surface-low);
         color: var(--crepe-color-on-surface-variant);
-        border-radius: 4px;
+        border-radius: var(--radius-sm);
         font-size: 12px;
         font-weight: 600;
         line-height: 16px;
         margin-bottom: 8px;
         opacity: 0;
         cursor: pointer;
-        transition: opacity 0.2s ease-in-out;
+        border: 1px solid var(--crepe-color-outline);
+        transition:
+          opacity 0.15s ease,
+          background-color 0.15s ease,
+          border-color 0.15s ease;
 
         &:hover {
           background: var(--crepe-color-hover);
@@ -196,8 +212,9 @@
 
     .list-wrapper {
       background: var(--crepe-color-surface-low);
-      border-radius: 12px;
+      border-radius: var(--radius-md);
       box-shadow: var(--crepe-shadow-1);
+      border: 1px solid var(--crepe-color-outline);
       width: 240px;
       padding-top: 12px;
     }
@@ -250,8 +267,8 @@
       align-items: center;
       margin: 0 12px 8px;
       background: transparent;
-      border-radius: 4px;
-      outline: 1px solid var(--crepe-color-primary);
+      border-radius: var(--radius-sm);
+      outline: 1px solid var(--crepe-color-outline);
       gap: 8px;
       padding: 6px 10px;
       &:has(input:focus) {
