@@ -172,7 +172,6 @@ const TaskDetailScreen: Component = () => {
     setSelectedRunModelId,
     setEditTitle,
     setEditDescription,
-    setEditImplementationGuide,
     setMoveRepositoryId,
     setCreateDependencyTitle,
     setCreateDependencyDescription,
@@ -186,6 +185,8 @@ const TaskDetailScreen: Component = () => {
     onSubmitCreateDependency,
     onSaveEdit,
     onCancelEdit,
+    onEditImplementationGuideInput,
+    flushImplementationGuideAutosave,
     onSetStatus,
     onMoveTask,
     onRequestDeleteTask,
@@ -405,7 +406,10 @@ const TaskDetailScreen: Component = () => {
                           >
                             <TaskImplementationGuideCrepeEditor
                               value={editImplementationGuide()}
-                              onChange={setEditImplementationGuide}
+                              onChange={onEditImplementationGuideInput}
+                              onBlur={() => {
+                                void flushImplementationGuideAutosave("blur");
+                              }}
                               ariaLabel="Task implementation guide"
                               disabled={isSavingEdit()}
                             />

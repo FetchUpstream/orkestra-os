@@ -1,5 +1,5 @@
 import { useLocation, useNavigate, useParams } from "@solidjs/router";
-import { createEffect, createMemo, createSignal } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { getProject } from "../../../app/lib/projects";
 import {
   addTaskDependency,
@@ -44,6 +44,9 @@ import {
 export type DependencyCreateDirection = "parent" | "child";
 
 export const useTaskDetailModel = () => {
+  const AUTOSAVE_DEBOUNCE_MS = 900;
+  const AUTOSAVE_MAX_WAIT_MS = 5000;
+
   const navigate = useNavigate();
   const params = useParams();
   const location = useLocation();
@@ -133,6 +136,116 @@ export const useTaskDetailModel = () => {
     Record<string, string>
   >({});
   let runSelectionOptionsRequestVersion = 0;
+  let editMutationVersion = 0;
+  let implementationGuideAutosaveTimer: ReturnType<typeof setTimeout> | null =
+    null;
+  let implementationGuideAutosaveMaxWaitTimer: ReturnType<
+    typeof setTimeout
+  > | null = null;
+  let implementationGuideAutosaveInFlight = false;
+  let implementationGuideAutosaveFlight: Promise<void> | null = null;
+  let queuedImplementationGuideValue: string | null = null;
+  let lastPersistedImplementationGuide: string | undefined = undefined;
+
+  const normalizeImplementationGuide = (value: string) =>
+    value.trim() || undefined;
+
+  const clearImplementationGuideAutosaveTimers = () => {
+    if (implementationGuideAutosaveTimer) {
+      clearTimeout(implementationGuideAutosaveTimer);
+      implementationGuideAutosaveTimer = null;
+    }
+    if (implementationGuideAutosaveMaxWaitTimer) {
+      clearTimeout(implementationGuideAutosaveMaxWaitTimer);
+      implementationGuideAutosaveMaxWaitTimer = null;
+    }
+  };
+
+  const clearImplementationGuideAutosaveState = () => {
+    clearImplementationGuideAutosaveTimers();
+    queuedImplementationGuideValue = null;
+  };
+
+  const flushImplementationGuideAutosave = async (
+    _reason: "debounced" | "max-wait" | "blur" | "explicit-save",
+  ) => {
+    clearImplementationGuideAutosaveTimers();
+
+    const taskValue = task();
+    if (!taskValue || !isEditing()) return;
+
+    const normalizedGuide = normalizeImplementationGuide(
+      editImplementationGuide(),
+    );
+    if (normalizedGuide === lastPersistedImplementationGuide) return;
+
+    if (implementationGuideAutosaveInFlight) {
+      queuedImplementationGuideValue = editImplementationGuide();
+      return;
+    }
+
+    const requestVersion = ++editMutationVersion;
+    const activeTaskId = taskValue.id;
+    implementationGuideAutosaveInFlight = true;
+
+    const requestPromise = (async () => {
+      try {
+        const updated = await updateTask(activeTaskId, {
+          title: taskValue.title,
+          description: taskValue.description?.trim() || undefined,
+          implementationGuide: normalizedGuide,
+        });
+
+        if (requestVersion !== editMutationVersion) return;
+        if (params.taskId !== activeTaskId) return;
+        if (task()?.id !== activeTaskId) return;
+
+        setTask(updated);
+        lastPersistedImplementationGuide = normalizeImplementationGuide(
+          updated.implementationGuide || "",
+        );
+      } catch {
+        if (requestVersion !== editMutationVersion) return;
+        if (params.taskId !== activeTaskId) return;
+        setActionError("Failed to autosave implementation guide.");
+      } finally {
+        if (requestVersion === editMutationVersion) {
+          implementationGuideAutosaveInFlight = false;
+        }
+      }
+    })();
+
+    implementationGuideAutosaveFlight = requestPromise;
+    await requestPromise;
+
+    if (requestVersion !== editMutationVersion) return;
+
+    if (queuedImplementationGuideValue !== null) {
+      queuedImplementationGuideValue = null;
+      void flushImplementationGuideAutosave("debounced");
+    }
+  };
+
+  const scheduleImplementationGuideAutosave = () => {
+    if (implementationGuideAutosaveTimer) {
+      clearTimeout(implementationGuideAutosaveTimer);
+    }
+    implementationGuideAutosaveTimer = setTimeout(() => {
+      void flushImplementationGuideAutosave("debounced");
+    }, AUTOSAVE_DEBOUNCE_MS);
+
+    if (!implementationGuideAutosaveMaxWaitTimer) {
+      implementationGuideAutosaveMaxWaitTimer = setTimeout(() => {
+        void flushImplementationGuideAutosave("max-wait");
+      }, AUTOSAVE_MAX_WAIT_MS);
+    }
+  };
+
+  const onEditImplementationGuideInput = (markdown: string) => {
+    setEditImplementationGuide(markdown);
+    if (!isEditing()) return;
+    scheduleImplementationGuideAutosave();
+  };
 
   const taskDetailOrigin = createMemo(() => {
     const searchParams = new URLSearchParams(location.search);
@@ -569,6 +682,10 @@ export const useTaskDetailModel = () => {
         setEditTitle(detail.title);
         setEditDescription(detail.description || "");
         setEditImplementationGuide(detail.implementationGuide || "");
+        lastPersistedImplementationGuide = normalizeImplementationGuide(
+          detail.implementationGuide || "",
+        );
+        clearImplementationGuideAutosaveState();
         const resolvedProjectId = detail.projectId || params.projectId || null;
         void refreshRunSelectionOptions(activeTaskId);
         await Promise.all([
@@ -594,6 +711,12 @@ export const useTaskDetailModel = () => {
       return;
     }
     setActionError("");
+    clearImplementationGuideAutosaveState();
+    queuedImplementationGuideValue = null;
+    editMutationVersion += 1;
+    if (implementationGuideAutosaveFlight) {
+      await implementationGuideAutosaveFlight.catch(() => undefined);
+    }
     setIsSavingEdit(true);
     try {
       const updated = await updateTask(taskValue.id, {
@@ -605,6 +728,9 @@ export const useTaskDetailModel = () => {
       setEditTitle(updated.title);
       setEditDescription(updated.description || "");
       setEditImplementationGuide(updated.implementationGuide || "");
+      lastPersistedImplementationGuide = normalizeImplementationGuide(
+        updated.implementationGuide || "",
+      );
       setIsEditing(false);
     } catch (mutationError) {
       setActionError(
@@ -618,12 +744,22 @@ export const useTaskDetailModel = () => {
   const onCancelEdit = () => {
     const taskValue = task();
     if (!taskValue) return;
+    clearImplementationGuideAutosaveState();
+    editMutationVersion += 1;
     setEditTitle(taskValue.title);
     setEditDescription(taskValue.description || "");
     setEditImplementationGuide(taskValue.implementationGuide || "");
+    lastPersistedImplementationGuide = normalizeImplementationGuide(
+      taskValue.implementationGuide || "",
+    );
     setActionError("");
     setIsEditing(false);
   };
+
+  onCleanup(() => {
+    clearImplementationGuideAutosaveState();
+    editMutationVersion += 1;
+  });
 
   const onSetStatus = async (status: TaskStatus) => {
     const taskValue = task();
@@ -923,6 +1059,8 @@ export const useTaskDetailModel = () => {
     onLinkDependency,
     onSaveEdit,
     onCancelEdit,
+    onEditImplementationGuideInput,
+    flushImplementationGuideAutosave,
     onSetStatus,
     onMoveTask,
     onRequestDeleteTask,

@@ -5,6 +5,7 @@ import { createEffect, onCleanup, onMount, type Component } from "solid-js";
 type TaskImplementationGuideCrepeEditorProps = {
   value: string;
   onChange: (markdown: string) => void;
+  onBlur?: () => void;
   ariaLabel?: string;
   disabled?: boolean;
 };
@@ -71,7 +72,6 @@ const TaskImplementationGuideCrepeEditor: Component<
 
   onCleanup(() => {
     initToken += 1;
-    flushMarkdown();
     if (!crepe) return;
     const editorToDestroy = crepe;
     crepe = null;
@@ -93,6 +93,7 @@ const TaskImplementationGuideCrepeEditor: Component<
             if (!mountRef?.contains(document.activeElement)) {
               isEditorFocused = false;
               flushMarkdown();
+              props.onBlur?.();
             }
           });
         }}
