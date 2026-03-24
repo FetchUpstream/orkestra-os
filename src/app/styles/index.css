@@ -1864,6 +1864,20 @@ textarea::placeholder {
   min-height: 260px;
 }
 
+/* Task detail Crepe overrides (keep frame-dark theme global) */
+.task-detail-page .task-guide-crepe-shell {
+  background: var(--surface-alt);
+}
+
+.task-detail-page .task-guide-crepe .milkdown,
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror {
+  background: var(--surface-alt);
+}
+
+.task-detail-page .task-guide-crepe .milkdown-toolbar {
+  background: color-mix(in srgb, var(--surface-alt) 55%, var(--surface) 45%);
+}
+
 .task-markdown-editor .cm-editor .cm-placeholder {
   color: var(--text-subtle);
 }
