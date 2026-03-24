@@ -1,3 +1,21 @@
+.task-detail-page .task-guide-crepe .milkdown {
+  --crepe-color-inline-code: color-mix(
+    in srgb,
+    var(--text) 72%,
+    var(--accent) 28%
+  );
+  --crepe-color-inline-area: color-mix(
+    in srgb,
+    var(--surface-alt) 86%,
+    var(--accent) 14%
+  );
+  --crepe-color-outline: color-mix(
+    in srgb,
+    var(--border-subtle) 70%,
+    var(--accent) 30%
+  );
+}
+
 .milkdown {
   position: relative;
 
