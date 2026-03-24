@@ -43,7 +43,7 @@ const BoardTaskCard: Component<Props> = (props) => {
 
   return (
     <li
-      class="project-task-item board-task-card border-l-2 border-l-transparent"
+      class="project-task-item board-task-card border-l-2 border-l-transparent bg-transparent"
       classList={{
         "board-task-card--dragging": Boolean(props.isDragging),
         "opacity-60": Boolean(props.isStatusUpdating),
@@ -61,7 +61,7 @@ const BoardTaskCard: Component<Props> = (props) => {
     >
       <A
         href={`/tasks/${props.task.id}?origin=board`}
-        class="project-task-link flex flex-col gap-3"
+        class="project-task-link flex flex-col gap-2"
         draggable={false}
         onDragStart={(event) => {
           event.preventDefault();
@@ -76,7 +76,7 @@ const BoardTaskCard: Component<Props> = (props) => {
       >
         <div class="project-task-main gap-2">
           <div class="flex items-start justify-between gap-3">
-            <p class="project-task-title text-sm font-semibold">
+            <p class="project-task-title text-[13px] font-medium">
               {props.task.title}
             </p>
             <span class="project-key-badge board-task-key-tag border-base-content/10 bg-base-100 text-base-content/65 mt-0 shrink-0 self-start border px-2 py-1 text-[10px]">
@@ -96,7 +96,7 @@ const BoardTaskCard: Component<Props> = (props) => {
           </Show>
           <div class="board-task-title-separator" aria-hidden="true" />
           <Show when={props.task.description?.trim()}>
-            <p class="board-task-description text-base-content/80 text-sm">
+            <p class="board-task-description text-base-content/65 text-xs">
               {props.task.description}
             </p>
           </Show>
@@ -107,10 +107,7 @@ const BoardTaskCard: Component<Props> = (props) => {
           <Show
             when={miniCard().isNavigable}
             fallback={
-              <div
-                class="board-task-run-details border-base-content/10 bg-base-100/70 mx-3 mb-3 border"
-                aria-label="Run Details"
-              >
+              <div class="board-task-run-details" aria-label="Run Details">
                 <p class="board-task-run-details-title">Run Details</p>
                 <p class="run-inline-loading-row board-task-run-details-row">
                   <Show
@@ -130,7 +127,7 @@ const BoardTaskCard: Component<Props> = (props) => {
           >
             <A
               href={`/runs/${miniCard().runId}?origin=board`}
-              class="board-task-run-details board-task-run-details-link border-base-content/10 bg-base-100/70 mx-3 mb-3 border"
+              class="board-task-run-details board-task-run-details-link"
               aria-label="Run Details"
               onClick={(event) => {
                 event.stopPropagation();

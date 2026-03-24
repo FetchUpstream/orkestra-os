@@ -24,12 +24,10 @@ const AppShell: Component<AppShellProps> = (props) => {
   let shellRootRef: HTMLDivElement | undefined;
 
   const [isMobile, setIsMobile] = createSignal(false);
-  const [desktopCollapsed, setDesktopCollapsed] = createSignal(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = createSignal(false);
   const [projects, setProjects] = createSignal<Project[]>([]);
 
-  const isSidebarVisible = () =>
-    isMobile() ? mobileSidebarOpen() : !desktopCollapsed();
+  const isSidebarVisible = () => (isMobile() ? mobileSidebarOpen() : true);
 
   onMount(async () => {
     primeRunSelectionOptionsCache();
@@ -39,8 +37,6 @@ const AppShell: Component<AppShellProps> = (props) => {
       setIsMobile(matches);
       if (matches) {
         setMobileSidebarOpen(false);
-      } else {
-        setDesktopCollapsed(false);
       }
     };
 
@@ -75,24 +71,6 @@ const AppShell: Component<AppShellProps> = (props) => {
   });
 
   createEffect(() => {
-    if (!isMobile() && desktopCollapsed()) {
-      const activeElement = document.activeElement;
-      const sidebarElement = document.getElementById("app-sidebar");
-      if (
-        sidebarElement &&
-        activeElement &&
-        sidebarElement.contains(activeElement)
-      ) {
-        (
-          document.querySelector(
-            '#app-sidebar button[aria-label="Expand sidebar"]',
-          ) as HTMLButtonElement | null
-        )?.focus();
-      }
-    }
-  });
-
-  createEffect(() => {
     if (isMobile() && !mobileSidebarOpen()) {
       if (
         document.activeElement &&
@@ -111,24 +89,13 @@ const AppShell: Component<AppShellProps> = (props) => {
         ) as HTMLAnchorElement | null;
         if (firstNavLink && document.activeElement?.tagName === "BUTTON") {
           const active = document.activeElement as HTMLElement;
-          if (
-            active.getAttribute("aria-label") === "Expand sidebar" ||
-            active.getAttribute("aria-label") === "Open navigation menu"
-          ) {
+          if (active.getAttribute("aria-label") === "Open navigation menu") {
             firstNavLink.focus();
           }
         }
       });
     }
   });
-
-  const onDesktopCollapse = () => {
-    setDesktopCollapsed(true);
-  };
-
-  const onDesktopExpand = () => {
-    setDesktopCollapsed(false);
-  };
 
   const onMobileOpen = () => {
     setMobileSidebarOpen(true);
@@ -149,6 +116,7 @@ const AppShell: Component<AppShellProps> = (props) => {
       return "Project detail";
     }
     if (location.pathname === "/projects") return "Projects";
+    if (location.pathname.startsWith("/projects/")) return "Project settings";
     return "Board";
   };
 
@@ -157,10 +125,10 @@ const AppShell: Component<AppShellProps> = (props) => {
       return "Review conversations, diffs, and terminal activity.";
     }
     if (location.pathname === "/projects") {
-      return "Manage repositories, tasks, and automation entry points.";
+      return "Create a new project workspace and configure repositories.";
     }
     if (location.pathname.startsWith("/projects/")) {
-      return "Inspect project configuration and related work.";
+      return "Edit project identity and repository configuration.";
     }
     if (
       location.pathname.startsWith("/tasks/") ||
@@ -169,6 +137,19 @@ const AppShell: Component<AppShellProps> = (props) => {
       return "Follow task state and execution context.";
     }
     return "Track work across your active projects.";
+  };
+
+  const boardProjectId = () => {
+    if (location.pathname !== "/board") return "";
+    const queryProjectId = new URLSearchParams(location.search).get(
+      "projectId",
+    );
+    if (queryProjectId) return queryProjectId;
+    try {
+      return window.localStorage.getItem("board.selectedProjectId") ?? "";
+    } catch {
+      return "";
+    }
   };
 
   const handleShellKeyDown: JSX.EventHandler<HTMLDivElement, KeyboardEvent> = (
@@ -183,21 +164,11 @@ const AppShell: Component<AppShellProps> = (props) => {
   return (
     <div
       class="app-shell bg-base-300 text-base-content min-h-screen"
-      classList={{
-        "app-shell--desktop-collapsed": !isMobile() && desktopCollapsed(),
-      }}
-      data-desktop-collapsed={
-        !isMobile() && desktopCollapsed() ? "true" : "false"
-      }
       data-theme="orkestra-dark"
       ref={shellRootRef}
       onKeyDown={handleShellKeyDown}
       style={{
-        "grid-template-columns": isMobile()
-          ? "1fr"
-          : desktopCollapsed()
-            ? "3.5rem minmax(0, 1fr)"
-            : "17rem minmax(0, 1fr)",
+        "grid-template-columns": isMobile() ? "1fr" : "4.5rem minmax(0, 1fr)",
       }}
     >
       {isMobile() ? (
@@ -223,18 +194,10 @@ const AppShell: Component<AppShellProps> = (props) => {
           projects={projects}
           isMobile={false}
           isVisible={() => true}
-          desktopCollapsed={desktopCollapsed}
-          onCollapse={onDesktopCollapse}
-          onExpand={onDesktopExpand}
         />
       )}
-      <div
-        class="shell-main min-w-0 overflow-hidden p-2"
-        classList={{
-          "pl-0": !isMobile(),
-        }}
-      >
-        <div class="shell-content-wrapper flex h-full min-h-0 flex-col gap-2 sm:gap-3">
+      <div class="shell-main min-w-0 overflow-hidden">
+        <div class="shell-content-wrapper flex h-full min-h-0 flex-col gap-0">
           <Topbar
             title={shellTitle()}
             subtitle={shellSubtitle()}
@@ -254,14 +217,31 @@ const AppShell: Component<AppShellProps> = (props) => {
               ) : null
             }
             actions={
-              <>
-                <span class="badge badge-outline border-base-content/15 text-base-content/65 bg-base-100 hidden rounded-none px-2 text-[11px] tracking-[0.2em] uppercase md:inline-flex">
-                  Dark mode
-                </span>
-                <span class="badge badge-outline border-base-content/15 text-base-content/65 bg-base-100 rounded-none px-2 text-[11px]">
-                  {projects().length} projects
-                </span>
-              </>
+              location.pathname === "/board" ? (
+                <>
+                  <button
+                    type="button"
+                    class="btn btn-sm rounded-none border border-amber-500/35 bg-amber-500 px-4 text-xs font-semibold text-black hover:bg-amber-500"
+                    onClick={() => {
+                      window.dispatchEvent(
+                        new CustomEvent("board:create-task"),
+                      );
+                    }}
+                  >
+                    New task
+                  </button>
+                  {boardProjectId() ? (
+                    <a
+                      href={`/projects/${boardProjectId()}`}
+                      class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
+                      aria-label="Project settings"
+                      title="Project settings"
+                    >
+                      <span aria-hidden="true">⚙</span>
+                    </a>
+                  ) : null}
+                </>
+              ) : undefined
             }
           />
           <div class="shell-body grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden">

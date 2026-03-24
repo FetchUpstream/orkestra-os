@@ -2,14 +2,12 @@ import { A, useLocation } from "@solidjs/router";
 import { createMemo, type Accessor, type Component } from "solid-js";
 import { buildProjectNavItem } from "../../app/lib/nav";
 import type { Project } from "../../app/lib/projects";
+import appIcon from "../../assets/logo.svg";
 
 type SidebarNavProps = {
   projects?: Accessor<Project[]>;
   isMobile?: boolean;
-  onCollapse?: () => void;
-  onExpand?: () => void;
   onNavigate?: () => void;
-  desktopCollapsed?: Accessor<boolean>;
   isVisible?: Accessor<boolean>;
 };
 
@@ -21,12 +19,15 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
 
   const isProjectActive = (projectId: string) => {
     const params = new URLSearchParams(location.search);
+    const projectPathMatch = location.pathname.match(/^\/projects\/([^/]+)/);
     return (
-      location.pathname === "/board" && params.get("projectId") === projectId
+      (location.pathname === "/board" &&
+        params.get("projectId") === projectId) ||
+      projectPathMatch?.[1] === projectId
     );
   };
 
-  const isCollapsed = () => props.desktopCollapsed?.() ?? false;
+  const isCreateProjectRoute = () => location.pathname === "/projects";
 
   return (
     <aside
@@ -38,37 +39,17 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
         "translate-x-0 opacity-100": !props.isMobile || props.isVisible?.(),
         "fixed inset-y-0 left-0 w-[min(20rem,calc(100vw-2rem))] p-2 transition duration-200 ease-out":
           !!props.isMobile,
-        "sticky top-0 h-screen p-2": !props.isMobile,
+        "sticky top-0 h-screen p-0": !props.isMobile,
       }}
       aria-hidden={props.isVisible && !props.isVisible() ? "true" : undefined}
     >
       <div
         class="border-base-content/15 bg-base-200 flex h-full min-h-0 flex-col rounded-none border"
         classList={{
-          "w-[17rem]": !props.isMobile && !isCollapsed(),
-          "w-14": !props.isMobile && isCollapsed(),
+          "w-[4.5rem]": !props.isMobile,
         }}
       >
-        {isCollapsed() ? (
-          <div class="flex h-full flex-col items-center gap-3 p-2">
-            <div class="border-primary/25 bg-primary/10 text-primary flex h-10 w-10 items-center justify-center border font-semibold tracking-[0.2em]">
-              ORK
-            </div>
-            {props.onExpand ? (
-              <button
-                type="button"
-                class="btn btn-ghost btn-square btn-sm text-base-content/70 hover:bg-base-100 hover:text-base-content rounded-none"
-                aria-label="Expand sidebar"
-                title="Expand sidebar"
-                aria-controls="app-sidebar"
-                aria-expanded="false"
-                onClick={props.onExpand}
-              >
-                <span aria-hidden="true">›</span>
-              </button>
-            ) : null}
-          </div>
-        ) : (
+        {props.isMobile ? (
           <>
             <div class="border-base-content/10 flex items-center justify-between gap-3 border-b px-3 py-3">
               <div class="min-w-0">
@@ -79,19 +60,6 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
                   Desktop workflow orchestration
                 </div>
               </div>
-              {props.onCollapse ? (
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-square btn-sm text-base-content/70 hover:bg-base-100 hover:text-base-content rounded-none"
-                  aria-label="Collapse sidebar"
-                  title="Collapse sidebar"
-                  aria-controls="app-sidebar"
-                  aria-expanded="true"
-                  onClick={props.onCollapse}
-                >
-                  <span aria-hidden="true">‹</span>
-                </button>
-              ) : null}
             </div>
             <div class="flex items-center justify-between px-3 pt-3 pb-2">
               <span class="text-base-content/45 text-[11px] font-medium tracking-[0.24em] uppercase">
@@ -141,6 +109,54 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
               </nav>
             </div>
           </>
+        ) : (
+          <div class="flex h-full flex-col items-center gap-3 p-2">
+            <div class="flex h-10 w-10 items-center justify-center overflow-hidden">
+              <img
+                src={appIcon}
+                alt="OrkestraOS"
+                class="h-full w-full object-cover"
+              />
+            </div>
+            <div class="border-base-content/10 my-1 h-px w-8" />
+            <nav
+              class="sidebar-nav flex flex-col items-center gap-2"
+              aria-label="Project navigation"
+            >
+              {projectNavItems().map((item) => (
+                <A
+                  href={item.href}
+                  class="text-base-content/55 flex h-10 w-10 items-center justify-center border border-transparent text-[11px] font-semibold tracking-[0.2em] transition-colors"
+                  classList={{
+                    "border-primary/30 bg-primary/14 text-primary":
+                      isProjectActive(item.id),
+                    "hover:border-base-content/10 hover:bg-base-100 hover:text-base-content":
+                      !isProjectActive(item.id),
+                  }}
+                  aria-label={item.label}
+                  title={item.label}
+                  onClick={() => props.onNavigate?.()}
+                >
+                  {item.keyAvatar}
+                </A>
+              ))}
+              <A
+                href="/projects"
+                class="text-base-content/55 flex h-10 w-10 items-center justify-center border border-transparent text-lg font-semibold transition-colors"
+                classList={{
+                  "border-primary/30 bg-primary/14 text-primary":
+                    isCreateProjectRoute(),
+                  "hover:border-base-content/10 hover:bg-base-100 hover:text-base-content":
+                    !isCreateProjectRoute(),
+                }}
+                aria-label="Create project"
+                title="Create project"
+                onClick={() => props.onNavigate?.()}
+              >
+                +
+              </A>
+            </nav>
+          </div>
         )}
         {props.isMobile ? (
           <div class="border-base-content/10 border-t p-3">

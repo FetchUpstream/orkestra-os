@@ -197,7 +197,7 @@ export const useProjectsPageModel = () => {
       if (mode() === "edit" && activeEditProjectId) {
         await updateProject(activeEditProjectId, payload);
         await loadProjects();
-        resetForm();
+        await onEditProject(activeEditProjectId);
         return;
       }
 

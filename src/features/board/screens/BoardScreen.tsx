@@ -1,6 +1,11 @@
-import { For, Show, createSignal, type Component } from "solid-js";
-import { A } from "@solidjs/router";
-import PageHeader from "../../../components/layout/PageHeader";
+import {
+  For,
+  Show,
+  createEffect,
+  createSignal,
+  type Component,
+} from "solid-js";
+import { A, useLocation } from "@solidjs/router";
 import CreateTaskModal from "../../projects/components/CreateTaskModal";
 import { useCreateTaskModalModel } from "../../projects/model/useCreateTaskModalModel";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
@@ -40,6 +45,7 @@ const resolveDroppedTaskId = (
 };
 
 const BoardScreen: Component = () => {
+  const location = useLocation();
   const model = useBoardModel();
   const taskCreateModel = useCreateTaskModalModel({
     project: model.selectedProjectDetail,
@@ -85,69 +91,47 @@ const BoardScreen: Component = () => {
     void model.moveTaskToStatus(droppedTaskId, status);
   };
 
+  const totalBoardTasks = () =>
+    Object.values(model.groupedTasks()).reduce(
+      (count, tasks) => count + tasks.length,
+      0,
+    );
+
+  createEffect(() => {
+    const projectId =
+      new URLSearchParams(location.search).get("projectId") ?? "";
+    if (!projectId || projectId === model.selectedProjectId()) return;
+    void model.onProjectChange(projectId);
+  });
+
+  createEffect(() => {
+    const onCreateTask = () => {
+      if ((model.selectedProjectDetail()?.repositories.length ?? 0) <= 0)
+        return;
+      taskCreateModel.resetTaskForm();
+      taskCreateModel.setIsModalOpen(true);
+    };
+
+    window.addEventListener("board:create-task", onCreateTask);
+    return () => window.removeEventListener("board:create-task", onCreateTask);
+  });
+
   return (
     <>
-      <PageHeader title="Board" />
-
-      <section
-        class="projects-panel border-base-content/15 bg-base-200/60 mb-3 border p-4"
-        aria-label="Project selector"
-      >
-        <div class="project-section-header gap-4">
-          <div class="flex min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-            <div class="space-y-1">
-              <p class="text-base-content/55 m-0 text-[11px] font-semibold tracking-[0.24em] uppercase">
-                Active project
-              </p>
-              <p class="text-base-content/70 m-0 text-sm">
-                Select the workspace whose tasks should appear on the board.
-              </p>
-            </div>
-            <div class="projects-field w-full max-w-[22rem] gap-2">
-              <label
-                for="board-project"
-                id="board-project-selector"
-                class="field-label text-base-content/55 text-[11px] tracking-[0.22em] uppercase"
-              >
-                Project
-              </label>
-              <select
-                id="board-project"
-                class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 w-full rounded-none px-3 text-xs font-medium"
-                value={model.selectedProjectId()}
-                onChange={(event) =>
-                  void model.onProjectChange(event.currentTarget.value)
-                }
-                disabled={
-                  model.isProjectsLoading() || model.projects().length === 0
-                }
-              >
-                <For each={model.projects()}>
-                  {(project) => (
-                    <option value={project.id}>
-                      {project.name} ({project.key})
-                    </option>
-                  )}
-                </For>
-              </select>
+      <div class="border-base-content/10 mb-3 flex flex-col gap-3 border-b px-4 pt-3 pb-3">
+        <div class="flex min-w-0 items-start justify-between gap-4">
+          <div class="min-w-0">
+            <div class="text-base-content text-[15px] font-semibold tracking-[0.01em]">
+              {model.selectedProjectDetail()?.name ?? "Board"}
             </div>
           </div>
-          <Show
-            when={(model.selectedProjectDetail()?.repositories.length ?? 0) > 0}
-          >
-            <button
-              type="button"
-              class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 font-semibold"
-              onClick={() => {
-                taskCreateModel.resetTaskForm();
-                taskCreateModel.setIsModalOpen(true);
-              }}
-            >
-              New task
-            </button>
-          </Show>
         </div>
-      </section>
+        <section class="flex flex-wrap items-center gap-2">
+          <span class="badge badge-outline border-base-content/10 text-base-content/50 rounded-none border px-2 text-[10px]">
+            {totalBoardTasks()} total
+          </span>
+        </section>
+      </div>
 
       <Show when={model.error()}>
         {(message) => (
@@ -172,7 +156,7 @@ const BoardScreen: Component = () => {
           <For each={BOARD_COLUMNS}>
             {(column) => (
               <section
-                class="projects-panel board-column border-base-content/15 bg-base-200/55 flex min-h-[32rem] flex-col border p-0"
+                class="board-column border-base-content/10 flex min-h-[34rem] flex-col border-l bg-transparent p-0 first:border-l-0"
                 classList={{
                   "board-column--drop-active":
                     activeDropStatus() === column.status,
@@ -210,9 +194,10 @@ const BoardScreen: Component = () => {
                 }}
                 onDrop={(event) => onColumnDrop(column.status, event)}
               >
-                <div class="project-section-header border-base-content/10 flex items-center justify-between border-b px-4 py-3">
+                <div class="project-section-header border-base-content/10 flex items-center justify-between border-b px-3 py-3">
                   <h3
                     id={`board-column-${column.status}`}
+                    aria-label={`${column.label} (${model.groupedTasks()[column.status].length})`}
                     class="projects-section-title text-base-content/55 m-0 text-[11px] tracking-[0.24em] uppercase"
                   >
                     {column.label} ({model.groupedTasks()[column.status].length}
@@ -241,7 +226,7 @@ const BoardScreen: Component = () => {
                       </div>
                     }
                   >
-                    <ul class="project-task-list flex-1" role="list">
+                    <ul class="project-task-list flex-1 px-2 pt-2" role="list">
                       <For each={model.groupedTasks()[column.status]}>
                         {(task) => (
                           <BoardTaskCard

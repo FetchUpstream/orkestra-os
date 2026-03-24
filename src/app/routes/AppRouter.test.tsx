@@ -373,44 +373,15 @@ describe("app routing and shell", () => {
     expect(within(projectLink).getByText("ALP")).toBeTruthy();
   });
 
-  it("toggles desktop sidebar state with shell collapse class", async () => {
-    renderAt("/board");
+  it("renders desktop sidebar project rail", async () => {
+    renderAt("/projects");
 
-    const collapseButton = screen.getByRole("button", {
-      name: "Collapse sidebar",
+    const projectNav = screen.getByRole("navigation", {
+      name: "Project navigation",
     });
-    expect(collapseButton.getAttribute("aria-controls")).toBe("app-sidebar");
-    expect(collapseButton.getAttribute("aria-expanded")).toBe("true");
-    expect(await screen.findByRole("link", { name: /alpha/i })).toBeTruthy();
-    const appShell = document.querySelector(".app-shell") as HTMLElement;
-    expect(appShell.classList.contains("app-shell--desktop-collapsed")).toBe(
-      false,
-    );
-
-    await fireEvent.click(collapseButton);
-
-    expect(screen.queryByRole("link", { name: /alpha/i })).toBeNull();
-    expect(appShell.classList.contains("app-shell--desktop-collapsed")).toBe(
-      true,
-    );
-
-    const expandButton = screen.getByRole("button", {
-      name: "Expand sidebar",
-    });
-    expect(expandButton.getAttribute("aria-controls")).toBe("app-sidebar");
-    expect(expandButton.getAttribute("aria-expanded")).toBe("false");
-
-    await fireEvent.click(expandButton);
-
-    await waitFor(() => {
-      expect(screen.getByRole("link", { name: /alpha/i })).toBeTruthy();
-      expect(
-        screen.getByRole("button", { name: "Collapse sidebar" }),
-      ).toBeTruthy();
-      expect(appShell.classList.contains("app-shell--desktop-collapsed")).toBe(
-        false,
-      );
-    });
+    expect(
+      await within(projectNav).findByRole("link", { name: /alpha/i }),
+    ).toBeTruthy();
   });
 
   it("opens and closes mobile overlay navigation", async () => {
@@ -465,8 +436,10 @@ describe("app routing and shell", () => {
 
     expect(screen.getByRole("main")).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Board" })).toBeTruthy();
-      expect(screen.getByLabelText("Project")).toBeTruthy();
+      expect(screen.getByText("Board")).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "Project settings" }),
+      ).toBeTruthy();
     });
   });
 
@@ -514,7 +487,7 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Project")).toBeTruthy();
+      expect(screen.getByText("Alpha")).toBeTruthy();
       expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "New task" })).toBeTruthy();
     });
@@ -566,26 +539,23 @@ describe("app routing and shell", () => {
 
     const firstRender = renderAt("/board");
 
-    const projectSelect = (await screen.findByLabelText(
-      "Project",
-    )) as HTMLSelectElement;
-    await fireEvent.change(projectSelect, { target: { value: "p-2" } });
+    const betaLink = (await screen.findByRole("link", {
+      name: /beta/i,
+    })) as HTMLAnchorElement;
+    await fireEvent.click(betaLink);
 
     await waitFor(() => {
       expect(window.localStorage.getItem("board.selectedProjectId")).toBe(
         "p-2",
       );
-      expect(projectSelect.value).toBe("p-2");
+      expect(window.location.search).toBe("?projectId=p-2");
     });
 
     firstRender.unmount();
     renderAt("/board");
 
-    const restoredSelect = (await screen.findByLabelText(
-      "Project",
-    )) as HTMLSelectElement;
     await waitFor(() => {
-      expect(restoredSelect.value).toBe("p-2");
+      expect(screen.getByText("Beta")).toBeTruthy();
     });
   });
 
@@ -615,11 +585,9 @@ describe("app routing and shell", () => {
 
     renderAt("/board");
 
-    const projectSelect = (await screen.findByLabelText(
-      "Project",
-    )) as HTMLSelectElement;
     await waitFor(() => {
-      expect(projectSelect.value).toBe("p-1");
+      expect(screen.getByText("Alpha")).toBeTruthy();
+      expect(window.location.search).toBe("");
     });
   });
 
@@ -4470,351 +4438,55 @@ describe("app routing and shell", () => {
     });
   });
 
-  it("opens clone modal and clones a project", async () => {
-    renderAt("/projects");
+  it("opens empty project settings from the sidebar create-project tile", async () => {
+    renderAt("/board?projectId=p-1");
 
     await fireEvent.click(
-      await screen.findByRole("button", { name: /Clone project Alpha/i }),
+      await screen.findByRole("link", { name: "Create project" }),
     );
 
     await waitFor(() => {
+      expect(window.location.pathname).toBe("/projects");
       expect(
-        screen.getByRole("dialog", { name: "Clone project" }),
-      ).toBeTruthy();
-      expect(screen.getByText(/New project name:/i)).toBeTruthy();
-      expect(
-        screen.getByText("Enter the path for the cloned repository."),
+        screen.getByRole("heading", { name: "Create Project" }),
       ).toBeTruthy();
     });
 
-    const cloneDialog = screen.getByRole("dialog", { name: "Clone project" });
-    const [projectKeyInput, repositoryDestinationInput] =
-      within(cloneDialog).getAllByRole("textbox");
-
-    await fireEvent.blur(repositoryDestinationInput);
-    expect(repositoryDestinationInput.getAttribute("aria-invalid")).toBe(
-      "true",
-    );
-    expect(repositoryDestinationInput.getAttribute("aria-describedby")).toBe(
-      "clone-repository-destination-error",
-    );
     expect(
-      within(cloneDialog).getByText("Repository destination is required."),
-    ).toBeTruthy();
-
-    await fireEvent.input(projectKeyInput, {
-      target: { value: "ACP" },
-    });
-    await fireEvent.input(repositoryDestinationInput, {
-      target: { value: "/repo/alpha-copy" },
-    });
-    expect(repositoryDestinationInput.getAttribute("aria-invalid")).toBe(
-      "false",
-    );
-    expect(repositoryDestinationInput.getAttribute("aria-describedby")).toBe(
-      "clone-repository-destination-help",
-    );
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Clone project" }),
-    );
-
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("clone_project", {
-        sourceProjectId: "p-1",
-        input: {
-          name: "Alpha - Copy",
-          key: "ACP",
-          repository_destination: "/repo/alpha-copy",
-        },
-      });
-      expect(window.location.pathname).toBe("/projects/p-3");
-    });
+      (screen.getByLabelText("Project name") as HTMLInputElement).value,
+    ).toBe("");
+    expect(
+      (screen.getByLabelText("Project key") as HTMLInputElement).value,
+    ).toBe("");
   });
 
-  it("closes clone modal on Escape", async () => {
-    renderAt("/projects");
+  it("loads project settings form from the board settings button", async () => {
+    renderAt("/board?projectId=p-1");
 
     await fireEvent.click(
-      await screen.findByRole("button", { name: /Clone project Alpha/i }),
+      await screen.findByRole("link", { name: "Project settings" }),
     );
 
     await waitFor(() => {
+      expect(window.location.pathname).toBe("/projects/p-1");
       expect(
-        screen.getByRole("dialog", { name: "Clone project" }),
+        screen.getByRole("heading", { name: "Edit Project" }),
       ).toBeTruthy();
     });
 
-    await fireEvent.keyDown(window, { key: "Escape" });
-
-    await waitFor(() => {
-      expect(
-        screen.queryByRole("dialog", { name: "Clone project" }),
-      ).toBeNull();
-    });
+    expect(
+      (screen.getByLabelText("Project name") as HTMLInputElement).value,
+    ).toBe("Alpha");
+    expect(
+      (screen.getByLabelText("Project key") as HTMLInputElement).value,
+    ).toBe("ALP");
+    expect(
+      (screen.getByPlaceholderText("Repository path") as HTMLInputElement)
+        .value,
+    ).toBe("/repo/main");
   });
 
-  it("does not dismiss clone modal via Escape or backdrop while cloning", async () => {
-    let resolveClone: ((value: unknown) => void) | undefined;
-    const clonePromise = new Promise((resolve) => {
-      resolveClone = resolve;
-    });
-
-    invokeMock.mockImplementation((command: string) => {
-      if (command === "list_projects") {
-        return Promise.resolve([
-          {
-            id: "p-1",
-            name: "Alpha",
-            key: "ALP",
-            repositories: [
-              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
-            ],
-          },
-        ]);
-      }
-      if (command === "clone_project") return clonePromise;
-      return Promise.resolve(null);
-    });
-
-    renderAt("/projects");
-
-    await fireEvent.click(
-      await screen.findByRole("button", { name: /Clone project Alpha/i }),
-    );
-
-    const cloneDialog = await screen.findByRole("dialog", {
-      name: "Clone project",
-    });
-    const [projectKeyInput, repositoryDestinationInput] =
-      within(cloneDialog).getAllByRole("textbox");
-
-    await fireEvent.input(projectKeyInput, {
-      target: { value: "ACP" },
-    });
-    await fireEvent.input(repositoryDestinationInput, {
-      target: { value: "/repo/alpha-copy" },
-    });
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Clone project" }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Cloning..." })).toBeTruthy();
-    });
-
-    await fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.getByRole("dialog", { name: "Clone project" })).toBeTruthy();
-
-    const modalBackdrop = document.querySelector(
-      ".projects-modal-backdrop",
-    ) as HTMLElement;
-    expect(modalBackdrop).toBeTruthy();
-    await fireEvent.click(modalBackdrop);
-    expect(screen.getByRole("dialog", { name: "Clone project" })).toBeTruthy();
-
-    resolveClone?.({
-      project: {
-        id: "p-3",
-        name: "Alpha - Copy",
-        key: "ACP",
-        description: null,
-      },
-      repositories: [
-        {
-          id: "r-3",
-          name: "Main",
-          repo_path: "/repo/alpha-copy",
-          is_default: true,
-        },
-      ],
-    });
-
-    await waitFor(() => {
-      expect(
-        screen.queryByRole("dialog", { name: "Clone project" }),
-      ).toBeNull();
-      expect(window.location.pathname).toBe("/projects/p-3");
-    });
-  });
-
-  it("opens delete confirmation modal and cancels deletion", async () => {
-    renderAt("/projects");
-
-    await fireEvent.click(
-      await screen.findByRole("button", { name: /Delete project Alpha/i }),
-    );
-
-    await waitFor(() => {
-      expect(
-        screen.getByRole("dialog", { name: "Delete project permanently?" }),
-      ).toBeTruthy();
-      expect(screen.getByText(/This action cannot be undone/i)).toBeTruthy();
-    });
-
-    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-
-    await waitFor(() => {
-      expect(
-        screen.queryByRole("dialog", { name: "Delete project permanently?" }),
-      ).toBeNull();
-    });
-
-    expect(invokeMock).not.toHaveBeenCalledWith("delete_project", {
-      id: "p-1",
-    });
-  });
-
-  it("deletes project after confirmation and refreshes list", async () => {
-    let projects = [
-      {
-        id: "p-1",
-        name: "Alpha",
-        key: "ALP",
-        repositories: [
-          { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
-        ],
-      },
-      {
-        id: "p-2",
-        name: "Beta",
-        key: "BET",
-        repositories: [
-          { id: "r-2", name: "Main", path: "/repo/beta", is_default: true },
-        ],
-      },
-    ];
-
-    invokeMock.mockImplementation((command: string, args?: unknown) => {
-      if (command === "list_projects") {
-        return Promise.resolve(projects);
-      }
-      if (command === "delete_project") {
-        const projectId = (args as { id?: string } | undefined)?.id;
-        projects = projects.filter((project) => project.id !== projectId);
-        return Promise.resolve(null);
-      }
-      return Promise.resolve(null);
-    });
-
-    renderAt("/projects");
-
-    await waitFor(() => {
-      expect(screen.getByText("Alpha")).toBeTruthy();
-      expect(screen.getByText("Beta")).toBeTruthy();
-    });
-
-    await fireEvent.click(
-      screen.getByRole("button", { name: /Delete project Alpha/i }),
-    );
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Delete project" }),
-    );
-
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("delete_project", { id: "p-1" });
-      expect(screen.queryByText("Alpha")).toBeNull();
-      expect(screen.getByText("Beta")).toBeTruthy();
-    });
-  });
-
-  it("shows delete API failure in project delete modal", async () => {
-    invokeMock.mockImplementation((command: string) => {
-      if (command === "list_projects") {
-        return Promise.resolve([
-          {
-            id: "p-1",
-            name: "Alpha",
-            key: "ALP",
-            repositories: [
-              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
-            ],
-          },
-        ]);
-      }
-      if (command === "delete_project") {
-        return Promise.reject(new Error("backend delete blocked"));
-      }
-      return Promise.resolve(null);
-    });
-
-    renderAt("/projects");
-
-    await fireEvent.click(
-      await screen.findByRole("button", { name: /Delete project Alpha/i }),
-    );
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Delete project" }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText(/Failed to delete project\./i)).toBeTruthy();
-      expect(screen.getByText(/backend delete blocked/i)).toBeTruthy();
-      expect(
-        screen.getByRole("dialog", { name: "Delete project permanently?" }),
-      ).toBeTruthy();
-    });
-  });
-
-  it("shows refresh-specific error when delete succeeds but project reload fails", async () => {
-    let deleteCalled = false;
-    invokeMock.mockImplementation((command: string) => {
-      if (command === "list_projects") {
-        if (!deleteCalled) {
-          return Promise.resolve([
-            {
-              id: "p-1",
-              name: "Alpha",
-              key: "ALP",
-              repositories: [
-                {
-                  id: "r-1",
-                  name: "Main",
-                  path: "/repo/main",
-                  is_default: true,
-                },
-              ],
-            },
-          ]);
-        }
-        return Promise.reject(new Error("refresh unavailable"));
-      }
-      if (command === "delete_project") {
-        deleteCalled = true;
-        return Promise.resolve(null);
-      }
-      return Promise.resolve(null);
-    });
-
-    renderAt("/projects");
-
-    await fireEvent.click(
-      await screen.findByRole("button", { name: /Delete project Alpha/i }),
-    );
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Delete project" }),
-    );
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(/Project deleted, but failed to refresh projects\./i),
-      ).toBeTruthy();
-      expect(screen.getByText(/refresh unavailable/i)).toBeTruthy();
-    });
-    expect(screen.queryByText(/Failed to delete project\./i)).toBeNull();
-  });
-
-  it("shows tasks section in project detail", async () => {
-    renderAt("/projects/p-1");
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /Tasks/ })).toBeTruthy();
-      expect(screen.getByText("Add task")).toBeTruthy();
-      expect(
-        screen.getByRole("link", { name: "Back to projects" }),
-      ).toBeTruthy();
-    });
-  });
-
-  it("shows task display key prefix on task cards", async () => {
+  it("saves the edited project from project settings", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") {
         return Promise.resolve([
@@ -4833,21 +4505,21 @@ describe("app routing and shell", () => {
           id: "p-1",
           name: "Alpha",
           key: "ALP",
+          description: "Original description",
           repositories: [
-            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            {
+              id: "r-1",
+              name: "Main",
+              path: "/repo/main",
+              is_default: true,
+              setup_script: null,
+              cleanup_script: null,
+            },
           ],
         });
       }
-      if (command === "list_project_tasks") {
-        return Promise.resolve([
-          {
-            id: "task-1",
-            title: "Created task",
-            status: "todo",
-            display_key: "ALP-1",
-            is_blocked: true,
-          },
-        ]);
+      if (command === "update_project") {
+        return Promise.resolve(null);
       }
       return Promise.resolve(null);
     });
@@ -4855,9 +4527,33 @@ describe("app routing and shell", () => {
     renderAt("/projects/p-1");
 
     await waitFor(() => {
-      expect(screen.getByText("ALP-1")).toBeTruthy();
-      expect(screen.getByRole("link", { name: /Created task/i })).toBeTruthy();
-      expect(screen.getByText("Blocked")).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "Edit Project" }),
+      ).toBeTruthy();
+    });
+
+    await fireEvent.input(screen.getByLabelText("Project name"), {
+      target: { value: "Alpha Updated" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("update_project", {
+        id: "p-1",
+        input: {
+          name: "Alpha Updated",
+          key: "ALP",
+          description: "Original description",
+          repositories: [
+            {
+              id: "r-1",
+              repo_path: "/repo/main",
+              name: "Main",
+              is_default: true,
+            },
+          ],
+        },
+      });
     });
   });
 

@@ -8,6 +8,7 @@ type MainContentProps = {
 const MainContent: Component<MainContentProps> = (props) => {
   const location = useLocation();
   const isRunDetailRoute = () => location.pathname.startsWith("/runs/");
+  const isBoardRoute = () => location.pathname === "/board";
 
   return (
     <main
@@ -18,9 +19,9 @@ const MainContent: Component<MainContentProps> = (props) => {
       }}
     >
       <div
-        class="mx-auto flex w-full max-w-[1600px] flex-col p-2"
+        class="flex h-full w-full max-w-none flex-col p-0"
         classList={{
-          "h-full min-h-0 max-w-none p-2": isRunDetailRoute(),
+          "min-h-0": isRunDetailRoute(),
         }}
       >
         <div
@@ -28,12 +29,13 @@ const MainContent: Component<MainContentProps> = (props) => {
           classList={{
             "min-h-[calc(100vh-5rem)]": !isRunDetailRoute(),
             "h-full min-h-0 overflow-hidden": isRunDetailRoute(),
+            "border-0 bg-transparent": isBoardRoute(),
           }}
         >
           <div
             class="flex h-full min-h-0 flex-col"
             classList={{
-              "p-3": !isRunDetailRoute(),
+              "p-0": true,
             }}
           >
             {props.children}

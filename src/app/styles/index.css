@@ -1084,7 +1084,7 @@ textarea::placeholder {
   border: 0;
   border-radius: 0;
   overflow: visible;
-  background: var(--surface);
+  background: transparent;
 }
 
 .project-task-item {
@@ -1132,6 +1132,7 @@ textarea::placeholder {
   flex-direction: column;
   height: 100%;
   margin-bottom: 0;
+  background: var(--surface);
   transition:
     box-shadow 0.18s ease,
     border-color 0.18s ease,
@@ -1199,8 +1200,14 @@ textarea::placeholder {
 }
 
 .board-task-run-details-link:hover {
-  border-color: var(--accent);
-  background: var(--surface-hover);
+  border-color: var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-alt) 82%, var(--accent) 18%);
+}
+
+.board-task-card:hover .board-task-run-details,
+.board-task-card:focus-within .board-task-run-details {
+  border-color: var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-alt) 82%, var(--accent) 18%);
 }
 
 .board-task-run-details-link:focus-visible {
