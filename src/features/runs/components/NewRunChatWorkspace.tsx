@@ -1132,7 +1132,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 aria-live="polite"
               >
                 <p class="project-placeholder-text">
-                  {`Run Merged to ${mergedSourceBranchLabel()} Chat is read only`}
+                  {`Work completed and merged into ${mergedSourceBranchLabel()}. You can review the chat, but it can’t be edited.`}
                 </p>
               </section>
             }
