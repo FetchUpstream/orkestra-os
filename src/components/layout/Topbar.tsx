@@ -1,7 +1,7 @@
 import type { Component, JSX } from "solid-js";
 
 type TopbarProps = {
-  title: string;
+  title: JSX.Element;
   subtitle?: string;
   leading?: JSX.Element;
   center?: JSX.Element;

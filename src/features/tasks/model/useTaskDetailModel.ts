@@ -53,6 +53,7 @@ export const useTaskDetailModel = () => {
   const [task, setTask] = createSignal<Task | null>(null);
   const [projectId, setProjectId] = createSignal<string | null>(null);
   const [projectName, setProjectName] = createSignal<string | null>(null);
+  const [projectKey, setProjectKey] = createSignal<string | null>(null);
   const [projectRepositories, setProjectRepositories] = createSignal<
     Array<{ id: string; name: string }>
   >([]);
@@ -538,6 +539,7 @@ export const useTaskDetailModel = () => {
     setProjectId(resolvedProjectId);
     if (!resolvedProjectId) {
       setProjectName(null);
+      setProjectKey(null);
       setProjectRepositories([]);
       setMoveRepositoryId("");
       setDefaultProjectRepositoryId("");
@@ -547,7 +549,8 @@ export const useTaskDetailModel = () => {
       const project = await getProject(resolvedProjectId);
       const name = project.name.trim();
       const key = project.key.trim();
-      setProjectName(key ? `${name} (${key})` : name || null);
+      setProjectName(name || null);
+      setProjectKey(key || null);
       const repositories = project.repositories
         .filter(
           (
@@ -576,6 +579,7 @@ export const useTaskDetailModel = () => {
       );
     } catch {
       setProjectName(null);
+      setProjectKey(null);
       setProjectRepositories([]);
       setMoveRepositoryId("");
       setDefaultProjectRepositoryId("");
@@ -958,6 +962,7 @@ export const useTaskDetailModel = () => {
     task,
     projectId,
     projectName,
+    projectKey,
     projectRepositories,
     isLoading,
     error,

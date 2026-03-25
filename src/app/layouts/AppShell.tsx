@@ -21,6 +21,7 @@ type TaskDetailTopbarConfig =
   | {
       mode: "detail";
       title?: string;
+      projectKey?: string;
       subtitle?: string;
       backHref: string;
       backLabel: string;
@@ -245,6 +246,21 @@ const AppShell: Component<AppShellProps> = (props) => {
   const topbarTitle = () => {
     const config = taskDetailTopbarConfig();
     if (location.pathname.includes("/tasks/") && config?.title?.trim()) {
+      if (config.mode === "detail") {
+        const key = config.projectKey?.trim();
+        return (
+          <span class="inline-flex min-w-0 items-center gap-2">
+            <Show when={key}>
+              {(projectKey) => (
+                <span class="border-base-content/25 bg-base-100 text-base-content/70 inline-flex h-5 items-center rounded-sm border px-1.5 font-mono text-[10px] font-semibold tracking-[0.08em] uppercase shadow-[inset_0_1px_0_rgb(255_255_255_/_0.05)]">
+                  {projectKey()}
+                </span>
+              )}
+            </Show>
+            <span>{config.title}</span>
+          </span>
+        );
+      }
       return config.title;
     }
     return shellTitle();

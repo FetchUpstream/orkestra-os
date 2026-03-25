@@ -99,6 +99,7 @@ const TaskDetailScreen: Component = () => {
     params,
     task,
     projectName,
+    projectKey,
     projectRepositories,
     isLoading,
     error,
@@ -201,6 +202,7 @@ const TaskDetailScreen: Component = () => {
         detail: {
           mode: "detail",
           title: projectName()?.trim() || "Current project",
+          projectKey: projectKey()?.trim() || undefined,
           subtitle: task()?.title?.trim() || "Untitled task",
           backHref: backHref(),
           backLabel: backLabel(),
