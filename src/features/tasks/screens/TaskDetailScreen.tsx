@@ -667,7 +667,7 @@ const TaskDetailScreen: Component = () => {
                                                     </span>
                                                     <button
                                                       type="button"
-                                                      class="task-dependency-action"
+                                                      class="task-control-icon-button task-control-icon-button-danger task-dependency-remove-button"
                                                       onClick={(event) => {
                                                         event.preventDefault();
                                                         event.stopPropagation();
@@ -689,12 +689,24 @@ const TaskDetailScreen: Component = () => {
                                                         removingDependencyKey() ===
                                                         `${dependencyTask.id}:${taskValue().id}`
                                                       }
+                                                      aria-label={
+                                                        removingDependencyKey() ===
+                                                        `${dependencyTask.id}:${taskValue().id}`
+                                                          ? "Removing dependency"
+                                                          : "Remove dependency"
+                                                      }
+                                                      title={
+                                                        removingDependencyKey() ===
+                                                        `${dependencyTask.id}:${taskValue().id}`
+                                                          ? "Removing dependency"
+                                                          : "Remove dependency"
+                                                      }
                                                     >
-                                                      Remove
+                                                      <DeleteIcon />
                                                     </button>
                                                   </div>
                                                 </div>
-                                                <p class="task-dependency-title task-dependency-title--secondary">
+                                                <p class="task-dependency-title">
                                                   {dependencyTask.title?.trim() ||
                                                     "Untitled task"}
                                                 </p>
@@ -794,7 +806,7 @@ const TaskDetailScreen: Component = () => {
                                                     </span>
                                                     <button
                                                       type="button"
-                                                      class="task-dependency-action"
+                                                      class="task-control-icon-button task-control-icon-button-danger task-dependency-remove-button"
                                                       onClick={(event) => {
                                                         event.preventDefault();
                                                         event.stopPropagation();
@@ -816,12 +828,24 @@ const TaskDetailScreen: Component = () => {
                                                         removingDependencyKey() ===
                                                         `${taskValue().id}:${dependencyTask.id}`
                                                       }
+                                                      aria-label={
+                                                        removingDependencyKey() ===
+                                                        `${taskValue().id}:${dependencyTask.id}`
+                                                          ? "Removing dependency"
+                                                          : "Remove dependency"
+                                                      }
+                                                      title={
+                                                        removingDependencyKey() ===
+                                                        `${taskValue().id}:${dependencyTask.id}`
+                                                          ? "Removing dependency"
+                                                          : "Remove dependency"
+                                                      }
                                                     >
-                                                      Remove
+                                                      <DeleteIcon />
                                                     </button>
                                                   </div>
                                                 </div>
-                                                <p class="task-dependency-title task-dependency-title--secondary">
+                                                <p class="task-dependency-title">
                                                   {dependencyTask.title?.trim() ||
                                                     "Untitled task"}
                                                 </p>

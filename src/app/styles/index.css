@@ -2588,6 +2588,17 @@ textarea::placeholder {
   cursor: not-allowed;
 }
 
+.task-dependency-remove-button {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+}
+
+.task-dependency-remove-button svg {
+  width: 12px;
+  height: 12px;
+}
+
 .task-dependencies-heading-row {
   align-items: center;
   gap: 8px;
