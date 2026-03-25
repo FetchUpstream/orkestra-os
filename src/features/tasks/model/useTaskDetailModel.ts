@@ -840,29 +840,29 @@ export const useTaskDetailModel = () => {
     }
   };
 
-  const onCreateRun = async () => {
+  const onCreateRun = async (): Promise<Run | null> => {
     const taskValue = task();
-    if (!taskValue) return false;
+    if (!taskValue) return null;
     if (isBlocked()) {
       setIsRunSettingsModalOpen(false);
       setIsBlockedRunWarningOpen(true);
-      return false;
+      return null;
     }
     setActionError("");
     setIsCreatingRun(true);
     try {
-      await createRun(taskValue.id, {
+      const createdRun = await createRun(taskValue.id, {
         agentId: selectedRunAgentId().trim() || undefined,
         providerId: selectedRunProviderId().trim() || undefined,
         modelId: selectedRunModelId().trim() || undefined,
       });
       await refreshRuns(taskValue.id);
-      return true;
+      return createdRun;
     } catch (mutationError) {
       setActionError(
         getActionErrorMessage("Failed to create run.", mutationError),
       );
-      return false;
+      return null;
     } finally {
       setIsCreatingRun(false);
     }
@@ -880,9 +880,10 @@ export const useTaskDetailModel = () => {
   };
 
   const onConfirmCreateRun = async () => {
-    const created = await onCreateRun();
-    if (created) {
+    const createdRun = await onCreateRun();
+    if (createdRun) {
       setIsRunSettingsModalOpen(false);
+      await onStartRun(createdRun.id);
     }
   };
 

@@ -138,6 +138,168 @@ describe("useTaskDetailModel start run", () => {
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
+  it("creates and immediately starts run when confirming run settings", async () => {
+    createRunMock.mockResolvedValue({
+      id: "run-created",
+      taskId: "task-1",
+      projectId: "project-1",
+      status: "queued",
+      triggeredBy: "user",
+      createdAt: "2026-01-01T00:00:02.000Z",
+    });
+    listTaskRunsMock
+      .mockResolvedValueOnce([
+        {
+          id: "run-1",
+          taskId: "task-1",
+          projectId: "project-1",
+          status: "queued",
+          triggeredBy: "user",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "run-created",
+          taskId: "task-1",
+          projectId: "project-1",
+          status: "queued",
+          triggeredBy: "user",
+          createdAt: "2026-01-01T00:00:02.000Z",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "run-created",
+          taskId: "task-1",
+          projectId: "project-1",
+          status: "running",
+          triggeredBy: "user",
+          createdAt: "2026-01-01T00:00:02.000Z",
+        },
+      ]);
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    await ref.current?.onConfirmCreateRun();
+
+    expect(createRunMock).toHaveBeenCalledWith("task-1", {
+      agentId: undefined,
+      providerId: undefined,
+      modelId: undefined,
+    });
+    expect(startRunOpenCodeMock).toHaveBeenCalledWith("run-created");
+  });
+
+  it("does not attempt start when create fails on confirm", async () => {
+    createRunMock.mockRejectedValue(new Error("create failed"));
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    await ref.current?.onConfirmCreateRun();
+
+    expect(createRunMock).toHaveBeenCalledTimes(1);
+    expect(startRunOpenCodeMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps created run retryable when immediate start fails", async () => {
+    createRunMock.mockResolvedValue({
+      id: "run-created",
+      taskId: "task-1",
+      projectId: "project-1",
+      status: "queued",
+      triggeredBy: "user",
+      createdAt: "2026-01-01T00:00:02.000Z",
+    });
+    listTaskRunsMock
+      .mockResolvedValueOnce([
+        {
+          id: "run-1",
+          taskId: "task-1",
+          projectId: "project-1",
+          status: "queued",
+          triggeredBy: "user",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "run-created",
+          taskId: "task-1",
+          projectId: "project-1",
+          status: "queued",
+          triggeredBy: "user",
+          createdAt: "2026-01-01T00:00:02.000Z",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "run-created",
+          taskId: "task-1",
+          projectId: "project-1",
+          status: "running",
+          triggeredBy: "user",
+          createdAt: "2026-01-01T00:00:02.000Z",
+        },
+      ]);
+    startRunOpenCodeMock
+      .mockRejectedValueOnce(new Error("start failed"))
+      .mockResolvedValueOnce({
+        state: "running",
+        queuedAt: "2026-01-01T00:00:03.000Z",
+        clientRequestId: "initial-run-message:run-created",
+        readyPhase: "warm_handle",
+      });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    await ref.current?.onConfirmCreateRun();
+
+    await waitFor(() => {
+      expect(ref.current?.runs().some((run) => run.id === "run-created")).toBe(
+        true,
+      );
+      expect(ref.current?.runStartErrors()["run-created"]).toBe(
+        "Failed to start. Try again.",
+      );
+    });
+
+    await ref.current?.onStartRun("run-created");
+
+    expect(startRunOpenCodeMock).toHaveBeenCalledTimes(2);
+    expect(startRunOpenCodeMock).toHaveBeenLastCalledWith("run-created");
+  });
+
   it("does not block task detail readiness on run option loading", async () => {
     let resolveOptions: () => void = () => {};
     getRunSelectionOptionsWithCacheMock.mockImplementation(
