@@ -286,7 +286,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   );
   const [runChatComposerOffsetPx, setRunChatComposerOffsetPx] =
     createSignal("0px");
-  const [isOverrideOpen, setIsOverrideOpen] = createSignal(false);
   const [overrideAgentId, setOverrideAgentId] = createSignal("");
   const [overrideProviderId, setOverrideProviderId] = createSignal("");
   const [overrideModelId, setOverrideModelId] = createSignal("");
@@ -1143,7 +1142,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                   setOverrideAgentId("");
                   setOverrideProviderId("");
                   setOverrideModelId("");
-                  setIsOverrideOpen(false);
                 }
               })();
             }}
@@ -1160,91 +1158,72 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             submitLabel="Send"
           />
           <Show when={hasRunSelectionOptions()}>
-            <div class="run-chat-override-panel">
-              <button
-                type="button"
-                class="run-chat-override-toggle btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
-                onClick={() => setIsOverrideOpen((current) => !current)}
-                disabled={props.model.agent.isSubmittingPrompt()}
-              >
-                {isOverrideOpen()
-                  ? "Hide message override"
-                  : "Optional: override agent/provider/model"}
-              </button>
-              <Show when={isOverrideOpen()}>
-                <div class="run-chat-override-grid">
-                  <label class="projects-field run-chat-override-field">
-                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
-                      <span class="field-label-text">Agent</span>
-                    </span>
-                    <select
-                      class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
-                      value={overrideAgentId()}
-                      onChange={(event) =>
-                        setOverrideAgentId(event.currentTarget.value)
-                      }
-                      aria-label="Prompt override agent"
-                    >
-                      <option value="">Use run default</option>
-                      <For each={runAgentOptions()}>
-                        {(option: { id: string; label: string }) => (
-                          <option value={option.id}>{option.label}</option>
-                        )}
-                      </For>
-                    </select>
-                  </label>
-                  <label class="projects-field run-chat-override-field">
-                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
-                      <span class="field-label-text">Provider</span>
-                    </span>
-                    <select
-                      class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
-                      value={overrideProviderId()}
-                      onChange={(event) =>
-                        setOverrideProviderId(event.currentTarget.value)
-                      }
-                      aria-label="Prompt override provider"
-                    >
-                      <option value="">Use run default</option>
-                      <For each={runProviderOptions()}>
-                        {(option: { id: string; label: string }) => (
-                          <option value={option.id}>{option.label}</option>
-                        )}
-                      </For>
-                    </select>
-                  </label>
-                  <label class="projects-field run-chat-override-field">
-                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
-                      <span class="field-label-text">Model</span>
-                    </span>
-                    <select
-                      class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
-                      value={overrideModelId()}
-                      onChange={(event) =>
-                        setOverrideModelId(event.currentTarget.value)
-                      }
-                      aria-label="Prompt override model"
-                    >
-                      <option value="">Use run default</option>
-                      <For each={visibleRunModelOptions()}>
-                        {(option: { id: string; label: string }) => (
-                          <option value={option.id}>{option.label}</option>
-                        )}
-                      </For>
-                    </select>
-                  </label>
-                </div>
-              </Show>
+            <div class="run-chat-override-grid mt-2 gap-2">
+              <label class="projects-field run-chat-override-field">
+                <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                  <span class="field-label-text">Provider</span>
+                </span>
+                <select
+                  class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
+                  value={overrideProviderId()}
+                  onChange={(event) =>
+                    setOverrideProviderId(event.currentTarget.value)
+                  }
+                  aria-label="Prompt override provider"
+                >
+                  <option value="">Use run default</option>
+                  <For each={runProviderOptions()}>
+                    {(option: { id: string; label: string }) => (
+                      <option value={option.id}>{option.label}</option>
+                    )}
+                  </For>
+                </select>
+              </label>
+              <label class="projects-field run-chat-override-field">
+                <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                  <span class="field-label-text">Model</span>
+                </span>
+                <select
+                  class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
+                  value={overrideModelId()}
+                  onChange={(event) =>
+                    setOverrideModelId(event.currentTarget.value)
+                  }
+                  aria-label="Prompt override model"
+                >
+                  <option value="">Use run default</option>
+                  <For each={visibleRunModelOptions()}>
+                    {(option: { id: string; label: string }) => (
+                      <option value={option.id}>{option.label}</option>
+                    )}
+                  </For>
+                </select>
+              </label>
+              <label class="projects-field run-chat-override-field">
+                <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                  <span class="field-label-text">Agent</span>
+                </span>
+                <select
+                  class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
+                  value={overrideAgentId()}
+                  onChange={(event) =>
+                    setOverrideAgentId(event.currentTarget.value)
+                  }
+                  aria-label="Prompt override agent"
+                >
+                  <option value="">Use run default</option>
+                  <For each={runAgentOptions()}>
+                    {(option: { id: string; label: string }) => (
+                      <option value={option.id}>{option.label}</option>
+                    )}
+                  </For>
+                </select>
+              </label>
             </div>
           </Show>
           <Show when={runSelectionOptionsError().length > 0}>
             <p class="project-placeholder-text" aria-live="polite">
               {runSelectionOptionsError()}
-            </p>
-          </Show>
-          <Show when={agentReadinessCopy() !== null}>
-            <p class="project-placeholder-text" aria-live="polite">
-              {agentReadinessCopy()}
             </p>
           </Show>
           <Show when={isRunCompleted()}>
