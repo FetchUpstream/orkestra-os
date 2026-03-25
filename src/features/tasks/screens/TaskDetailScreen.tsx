@@ -94,6 +94,19 @@ const DeleteIcon: Component = () => (
   </svg>
 );
 
+const PlusIcon: Component = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M11 5h2v14h-2z" />
+    <path d="M5 11h14v2H5z" />
+  </svg>
+);
+
+const LinkIcon: Component = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M7.17 14.83a4 4 0 0 1 0-5.66l2-2a4 4 0 1 1 5.66 5.66l-.88.88-1.41-1.42.88-.88a2 2 0 1 0-2.83-2.83l-2 2a2 2 0 0 0 2.83 2.83l.88-.88 1.41 1.42-.88.88a4 4 0 0 1-5.66 0Zm9.66-5.66a4 4 0 0 1 0 5.66l-2 2a4 4 0 1 1-5.66-5.66l.88-.88 1.41 1.42-.88.88a2 2 0 1 0 2.83 2.83l2-2a2 2 0 0 0-2.83-2.83l-.88.88-1.41-1.42.88-.88a4 4 0 0 1 5.66 0Z" />
+  </svg>
+);
+
 const TaskDetailScreen: Component = () => {
   const {
     params,
@@ -573,7 +586,7 @@ const TaskDetailScreen: Component = () => {
                                       <div class="task-dependencies-heading-actions">
                                         <button
                                           type="button"
-                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
+                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 inline-flex items-center gap-1.5 rounded-none border px-3 text-[11px] font-medium"
                                           onClick={() =>
                                             onOpenCreateDependencyModal(
                                               "parent",
@@ -581,16 +594,18 @@ const TaskDetailScreen: Component = () => {
                                           }
                                           aria-label="Create parent dependency"
                                         >
+                                          <PlusIcon />
                                           Create
                                         </button>
                                         <button
                                           type="button"
-                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
+                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 inline-flex items-center gap-1.5 rounded-none border px-3 text-[11px] font-medium"
                                           onClick={() =>
                                             onOpenLinkDependencyModal("parent")
                                           }
                                           aria-label="Link parent dependency"
                                         >
+                                          <LinkIcon />
                                           Link
                                         </button>
                                       </div>
@@ -641,10 +656,6 @@ const TaskDetailScreen: Component = () => {
                                                       {dependencyTask.displayKey?.trim() ||
                                                         "Task"}
                                                     </span>
-                                                    <p class="task-dependency-title">
-                                                      {dependencyTask.title?.trim() ||
-                                                        "Untitled task"}
-                                                    </p>
                                                   </div>
                                                   <div class="task-dependency-meta">
                                                     <span
@@ -683,10 +694,9 @@ const TaskDetailScreen: Component = () => {
                                                     </button>
                                                   </div>
                                                 </div>
-                                                <p class="task-dependency-scope">
-                                                  {dependencyScopeLabel(
-                                                    dependencyTask,
-                                                  )}
+                                                <p class="task-dependency-title task-dependency-title--secondary">
+                                                  {dependencyTask.title?.trim() ||
+                                                    "Untitled task"}
                                                 </p>
                                               </div>
                                             </li>
@@ -705,22 +715,24 @@ const TaskDetailScreen: Component = () => {
                                       <div class="task-dependencies-heading-actions">
                                         <button
                                           type="button"
-                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
+                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 inline-flex items-center gap-1.5 rounded-none border px-3 text-[11px] font-medium"
                                           onClick={() =>
                                             onOpenCreateDependencyModal("child")
                                           }
                                           aria-label="Create blocked task"
                                         >
+                                          <PlusIcon />
                                           Create
                                         </button>
                                         <button
                                           type="button"
-                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
+                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 inline-flex items-center gap-1.5 rounded-none border px-3 text-[11px] font-medium"
                                           onClick={() =>
                                             onOpenLinkDependencyModal("child")
                                           }
                                           aria-label="Link blocked task"
                                         >
+                                          <LinkIcon />
                                           Link
                                         </button>
                                       </div>
@@ -771,10 +783,6 @@ const TaskDetailScreen: Component = () => {
                                                       {dependencyTask.displayKey?.trim() ||
                                                         "Task"}
                                                     </span>
-                                                    <p class="task-dependency-title">
-                                                      {dependencyTask.title?.trim() ||
-                                                        "Untitled task"}
-                                                    </p>
                                                   </div>
                                                   <div class="task-dependency-meta">
                                                     <span
@@ -813,10 +821,9 @@ const TaskDetailScreen: Component = () => {
                                                     </button>
                                                   </div>
                                                 </div>
-                                                <p class="task-dependency-scope">
-                                                  {dependencyScopeLabel(
-                                                    dependencyTask,
-                                                  )}
+                                                <p class="task-dependency-title task-dependency-title--secondary">
+                                                  {dependencyTask.title?.trim() ||
+                                                    "Untitled task"}
                                                 </p>
                                               </div>
                                             </li>

@@ -2522,6 +2522,12 @@ textarea::placeholder {
   text-overflow: ellipsis;
 }
 
+.task-dependency-title--secondary {
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
 .task-dependency-meta {
   display: inline-flex;
   align-items: center;
@@ -2585,6 +2591,13 @@ textarea::placeholder {
 .task-dependencies-heading-row {
   align-items: center;
   gap: 8px;
+}
+
+.task-dependencies-heading-actions .btn svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  fill: currentColor;
+  flex-shrink: 0;
 }
 
 .task-dependencies-error-block {
