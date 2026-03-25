@@ -18,6 +18,8 @@ const TaskCreateScreen: Component = () => {
       new CustomEvent("task-detail:topbar-config", {
         detail: {
           mode: "create",
+          title: "Create task",
+          subtitle: model.projectName()?.trim() || "Current project",
           backHref: model.backHref(),
           backLabel: model.backLabel(),
           isSubmitting: model.isSubmitting(),

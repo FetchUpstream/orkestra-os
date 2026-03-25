@@ -200,6 +200,8 @@ const TaskDetailScreen: Component = () => {
       new CustomEvent("task-detail:topbar-config", {
         detail: {
           mode: "detail",
+          title: task()?.title?.trim() || "Untitled task",
+          subtitle: projectName()?.trim() || "Current project",
           backHref: backHref(),
           backLabel: backLabel(),
           autosaveState: autosaveState(),

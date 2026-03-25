@@ -20,6 +20,8 @@ import { formatStatus } from "../../features/tasks/utils/taskDetail";
 type TaskDetailTopbarConfig =
   | {
       mode: "detail";
+      title?: string;
+      subtitle?: string;
       backHref: string;
       backLabel: string;
       autosaveState: "idle" | "saving" | "saved" | "error";
@@ -34,6 +36,8 @@ type TaskDetailTopbarConfig =
     }
   | {
       mode: "create";
+      title?: string;
+      subtitle?: string;
       backHref: string;
       backLabel: string;
       isSubmitting: boolean;
@@ -238,6 +242,22 @@ const AppShell: Component<AppShellProps> = (props) => {
     return "Track work across your active projects.";
   };
 
+  const topbarTitle = () => {
+    const config = taskDetailTopbarConfig();
+    if (location.pathname.includes("/tasks/") && config?.title?.trim()) {
+      return config.title;
+    }
+    return shellTitle();
+  };
+
+  const topbarSubtitle = () => {
+    const config = taskDetailTopbarConfig();
+    if (location.pathname.includes("/tasks/") && config?.subtitle?.trim()) {
+      return config.subtitle;
+    }
+    return shellSubtitle();
+  };
+
   const boardProjectId = () => {
     if (location.pathname !== "/board") return "";
     const queryProjectId = new URLSearchParams(location.search).get(
@@ -322,8 +342,8 @@ const AppShell: Component<AppShellProps> = (props) => {
       <div class="shell-main min-w-0 overflow-hidden">
         <div class="shell-content-wrapper flex h-full min-h-0 flex-col gap-0">
           <Topbar
-            title={shellTitle()}
-            subtitle={shellSubtitle()}
+            title={topbarTitle()}
+            subtitle={topbarSubtitle()}
             leading={
               isMobile() ? (
                 <button

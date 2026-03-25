@@ -1,11 +1,7 @@
 import { Show, type Accessor, type Component } from "solid-js";
 import type { TaskStatus } from "../../../app/lib/tasks";
 import TaskImplementationGuideCrepeEditor from "../../../components/ui/TaskImplementationGuideCrepeEditor";
-import {
-  formatDateTime,
-  formatStatus,
-  projectLabel,
-} from "../utils/taskDetail";
+import { formatDateTime, formatStatus } from "../utils/taskDetail";
 
 type FieldErrors = {
   title?: string;
@@ -120,12 +116,6 @@ const TaskEditorPanel: Component<Props> = (props) => {
       </div>
 
       <div class="task-detail-summary-strip">
-        <div class="task-detail-summary-item">
-          <span class="task-detail-summary-label">Project</span>
-          <span class="task-detail-summary-value">
-            {projectLabel(props.projectName?.() ?? null)}
-          </span>
-        </div>
         <div class="task-detail-summary-item">
           <span class="task-detail-summary-label">Repository scope</span>
           <span class="task-detail-summary-value">
