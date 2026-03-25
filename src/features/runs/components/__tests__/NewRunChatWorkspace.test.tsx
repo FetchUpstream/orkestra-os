@@ -154,11 +154,6 @@ describe("NewRunChatWorkspace", () => {
 
     render(() => <NewRunChatWorkspace model={model} />);
 
-    await fireEvent.click(
-      screen.getByRole("button", {
-        name: "Optional: override agent/provider/model",
-      }),
-    );
     await fireEvent.change(screen.getByLabelText("Prompt override agent"), {
       target: { value: "agent-1" },
     });
@@ -187,11 +182,6 @@ describe("NewRunChatWorkspace", () => {
 
     render(() => <NewRunChatWorkspace model={model} />);
 
-    await fireEvent.click(
-      screen.getByRole("button", {
-        name: "Optional: override agent/provider/model",
-      }),
-    );
     await fireEvent.change(screen.getByLabelText("Prompt override agent"), {
       target: { value: "agent-1" },
     });
@@ -206,13 +196,6 @@ describe("NewRunChatWorkspace", () => {
     });
     await fireEvent.submit(screen.getByLabelText("Chat composer"));
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", {
-          name: "Optional: override agent/provider/model",
-        }),
-      ).toBeTruthy();
-    });
     expect(
       (screen.getByLabelText("Message agent") as HTMLTextAreaElement).value,
     ).toBe("");
@@ -249,11 +232,6 @@ describe("NewRunChatWorkspace", () => {
 
     render(() => <NewRunChatWorkspace model={model} />);
 
-    await fireEvent.click(
-      screen.getByRole("button", {
-        name: "Optional: override agent/provider/model",
-      }),
-    );
     await fireEvent.change(screen.getByLabelText("Prompt override provider"), {
       target: { value: "provider-1" },
     });
@@ -281,5 +259,94 @@ describe("NewRunChatWorkspace", () => {
       providerId: "provider-2",
       modelId: undefined,
     });
+  });
+
+  it("renders assistant attribution subtitle only for assistant messages", () => {
+    const { model } = createModelStub("running");
+    model.agent.store = () => ({
+      sessionId: "session-1",
+      status: "idle",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["assistant-1", "user-1", "system-1", "assistant-2"],
+      messagesById: {
+        "assistant-1": {
+          id: "assistant-1",
+          sessionId: "session-1",
+          role: "assistant",
+          attribution: { agent: "explorer", model: "k2p5" },
+          partsById: {
+            "part-1": {
+              id: "part-1",
+              kind: "text",
+              type: "text",
+              text: "Hello",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-1"],
+        },
+        "user-1": {
+          id: "user-1",
+          sessionId: "session-1",
+          role: "user",
+          attribution: { agent: "should-not-show", model: "should-not-show" },
+          partsById: {
+            "part-2": {
+              id: "part-2",
+              kind: "text",
+              type: "text",
+              text: "User says hi",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-2"],
+        },
+        "system-1": {
+          id: "system-1",
+          sessionId: "session-1",
+          role: "system",
+          attribution: { model: "should-not-show" },
+          partsById: {
+            "part-3": {
+              id: "part-3",
+              kind: "text",
+              type: "text",
+              text: "System update",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-3"],
+        },
+        "assistant-2": {
+          id: "assistant-2",
+          sessionId: "session-1",
+          role: "assistant",
+          attribution: { agent: "planner" },
+          partsById: {
+            "part-4": {
+              id: "part-4",
+              kind: "text",
+              type: "text",
+              text: "Second assistant",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-4"],
+        },
+      },
+      pendingPermissionsById: {},
+      pendingQuestionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByText("explorer - k2p5")).toBeTruthy();
+    expect(screen.getByText("planner")).toBeTruthy();
+    expect(screen.queryByText("should-not-show - should-not-show")).toBeNull();
+    expect(screen.queryByText("should-not-show")).toBeNull();
   });
 });

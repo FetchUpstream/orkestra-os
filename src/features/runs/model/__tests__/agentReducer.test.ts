@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createEmptyAgentStore,
   hydrateAgentStore,
+  reduceOpenCodeEvent,
   upsertPart,
 } from "../agentReducer";
 
@@ -176,5 +177,104 @@ describe("agentReducer text/reasoning lifecycle", () => {
     expect(part.streamTail).toBeUndefined();
     expect(part.streamTextLength).toBe("Snapshot wins".length);
     expect(part.streamRevision).toBe(1);
+  });
+
+  it("merges per-message agent/model attribution from update and part events", () => {
+    const initial = createEmptyAgentStore(null);
+    const withMessage = reduceOpenCodeEvent(initial, {
+      type: "message.updated",
+      properties: {
+        sessionID: "session-1",
+        agent: "explorer",
+        info: {
+          id: "msg-1",
+          role: "assistant",
+          sessionID: "session-1",
+        },
+      },
+    });
+
+    const withPart = reduceOpenCodeEvent(withMessage, {
+      type: "message.part.updated",
+      properties: {
+        sessionID: "session-1",
+        model: "openai/k2p5",
+        part: {
+          id: "part-1",
+          messageID: "msg-1",
+          sessionID: "session-1",
+          type: "text",
+          text: "Hello",
+        },
+      },
+    });
+
+    const preservedOnEmpty = reduceOpenCodeEvent(withPart, {
+      type: "message.part.updated",
+      properties: {
+        sessionID: "session-1",
+        agent: "   ",
+        part: {
+          id: "part-1",
+          messageID: "msg-1",
+          sessionID: "session-1",
+          type: "text",
+          text: "Hello again",
+        },
+      },
+    });
+
+    expect(preservedOnEmpty.messagesById["msg-1"]?.attribution).toEqual({
+      agent: "explorer",
+      model: "k2p5",
+    });
+  });
+
+  it("suppresses uuid-like agent and model attribution values", () => {
+    const next = reduceOpenCodeEvent(createEmptyAgentStore(null), {
+      type: "message.updated",
+      properties: {
+        sessionID: "session-1",
+        agent: "550e8400-e29b-41d4-a716-446655440000",
+        model: "123e4567-e89b-12d3-a456-426614174000",
+        info: {
+          id: "msg-1",
+          role: "assistant",
+          sessionID: "session-1",
+        },
+      },
+    });
+
+    expect(next.messagesById["msg-1"]?.attribution).toBeUndefined();
+  });
+
+  it("hydrates attribution from message and part snapshots", () => {
+    const hydrated = hydrateAgentStore({
+      sessionId: "session-1",
+      messages: [
+        {
+          info: {
+            id: "msg-1",
+            role: "assistant",
+            sessionID: "session-1",
+            agent: "explorer",
+          },
+          parts: [
+            {
+              id: "part-1",
+              type: "text",
+              text: "Final answer",
+              model: "provider/k2p5",
+            },
+          ],
+        },
+      ],
+      todos: [],
+    });
+
+    expect(hydrated.messagesById["msg-1"]?.attribution).toEqual({
+      agent: "explorer",
+      model: "k2p5",
+    });
   });
 });

@@ -98,6 +98,10 @@ export type UiMessage = {
   role: AgentRole;
   createdAt?: number;
   updatedAt?: number;
+  attribution?: {
+    agent?: string;
+    model?: string;
+  };
   rawInfo?: unknown;
   partsById: Record<string, UiPart>;
   partOrder: string[];

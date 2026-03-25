@@ -60,6 +60,173 @@ const normalizeRole = (value: unknown): AgentRole => {
   return "unknown";
 };
 
+const UUID_LIKE_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HEX_INTERNAL_ID_PATTERN = /^[0-9a-f]{24,}$/i;
+
+const isLikelyInternalIdentifier = (value: string): boolean => {
+  return UUID_LIKE_PATTERN.test(value) || HEX_INTERNAL_ID_PATTERN.test(value);
+};
+
+const sanitizeAttributionLabel = (value: unknown): string | undefined => {
+  const normalized = asString(value)?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (isLikelyInternalIdentifier(normalized)) {
+    return undefined;
+  }
+  return normalized;
+};
+
+const sanitizeModelAttributionLabel = (value: unknown): string | undefined => {
+  const normalized = sanitizeAttributionLabel(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const slashParts = normalized.split("/").map((segment) => segment.trim());
+  const slashTail = slashParts[slashParts.length - 1];
+  if (slashParts.length > 1 && slashTail) {
+    return isLikelyInternalIdentifier(slashTail) ? undefined : slashTail;
+  }
+
+  const colonParts = normalized.split(":").map((segment) => segment.trim());
+  const colonTail = colonParts[colonParts.length - 1];
+  if (colonParts.length > 1 && colonTail) {
+    return isLikelyInternalIdentifier(colonTail) ? undefined : colonTail;
+  }
+
+  return normalized;
+};
+
+const extractAttributionFromSource = (
+  source: unknown,
+): { agent?: string; model?: string } => {
+  if (!isRecord(source)) {
+    return {};
+  }
+
+  const queue: Array<{ value: Record<string, unknown>; depth: number }> = [
+    { value: source, depth: 0 },
+  ];
+  const seen = new Set<Record<string, unknown>>();
+  const candidates: Record<string, unknown>[] = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+    if (seen.has(current.value)) {
+      continue;
+    }
+    seen.add(current.value);
+    candidates.push(current.value);
+
+    if (current.depth >= 3) {
+      continue;
+    }
+
+    const nestedRecords = [
+      pickRecordValue(current.value, "properties"),
+      pickRecordValue(current.value, "info"),
+      pickRecordValue(current.value, "part"),
+      pickRecordValue(current.value, "metadata", "meta"),
+    ].filter((item): item is Record<string, unknown> => isRecord(item));
+
+    for (const nested of nestedRecords) {
+      queue.push({ value: nested, depth: current.depth + 1 });
+    }
+  }
+
+  let agent: string | undefined;
+  let model: string | undefined;
+
+  for (const candidate of candidates) {
+    const nextAgent = sanitizeAttributionLabel(
+      pickRecordValue(candidate, "agent", "agentID", "agentId", "agent_id"),
+    );
+    if (nextAgent) {
+      agent = nextAgent;
+    }
+
+    const nextModel = sanitizeModelAttributionLabel(
+      pickRecordValue(
+        candidate,
+        "model",
+        "modelID",
+        "modelId",
+        "model_id",
+        "modelName",
+        "model_name",
+      ),
+    );
+    if (nextModel) {
+      model = nextModel;
+    }
+  }
+
+  return {
+    agent,
+    model,
+  };
+};
+
+const extractMessageAttribution = (
+  ...sources: unknown[]
+): { agent?: string; model?: string } => {
+  let agent: string | undefined;
+  let model: string | undefined;
+
+  for (const source of sources) {
+    const next = extractAttributionFromSource(source);
+    if (next.agent) {
+      agent = next.agent;
+    }
+    if (next.model) {
+      model = next.model;
+    }
+  }
+
+  return {
+    agent,
+    model,
+  };
+};
+
+const mergeMessageAttribution = (
+  message: UiMessage,
+  attribution: { agent?: string; model?: string },
+): UiMessage => {
+  const nextAgent = attribution.agent?.trim();
+  const nextModel = attribution.model?.trim();
+  const hasIncomingAgent =
+    typeof nextAgent === "string" && nextAgent.length > 0;
+  const hasIncomingModel =
+    typeof nextModel === "string" && nextModel.length > 0;
+
+  if (!hasIncomingAgent && !hasIncomingModel) {
+    return message;
+  }
+
+  const existingAttribution = message.attribution;
+  const mergedAgent = hasIncomingAgent ? nextAgent : existingAttribution?.agent;
+  const mergedModel = hasIncomingModel ? nextModel : existingAttribution?.model;
+
+  if (!mergedAgent && !mergedModel) {
+    return { ...message, attribution: undefined };
+  }
+
+  return {
+    ...message,
+    attribution: {
+      ...(mergedAgent ? { agent: mergedAgent } : {}),
+      ...(mergedModel ? { model: mergedModel } : {}),
+    },
+  };
+};
+
 const normalizeMessageInfo = (
   value: unknown,
   fallbackSessionId: string,
@@ -403,7 +570,11 @@ export const createEmptyAgentStore = (sessionId: string | null): AgentStore => {
   };
 };
 
-export const upsertMessage = (state: AgentStore, info: unknown): AgentStore => {
+export const upsertMessage = (
+  state: AgentStore,
+  info: unknown,
+  attributionSource?: unknown,
+): AgentStore => {
   const props = normalizeEventProperties(info);
   const messageId = asString(props.id ?? props.messageID ?? props.messageId);
   const candidateSessionId = asString(props.sessionID ?? props.sessionId);
@@ -433,12 +604,15 @@ export const upsertMessage = (state: AgentStore, info: unknown): AgentStore => {
     partOrder: existing?.partOrder ?? baseMessage.partOrder,
   };
 
+  const attribution = extractMessageAttribution(attributionSource, info);
+  const attributedMessage = mergeMessageAttribution(nextMessage, attribution);
+
   return {
     ...state,
     sessionId: sessionResult.sessionId,
     messagesById: {
       ...state.messagesById,
-      [messageId]: nextMessage,
+      [messageId]: attributedMessage,
     },
     messageOrder: state.messagesById[messageId]
       ? state.messageOrder
@@ -467,6 +641,7 @@ export const upsertPart = (
   state: AgentStore,
   rawPart: unknown,
   delta?: string,
+  attributionSource?: unknown,
 ): AgentStore => {
   if (!isRecord(rawPart)) {
     return state;
@@ -595,12 +770,15 @@ export const upsertPart = (
       : [...existingMessage.partOrder, partId],
   };
 
+  const attribution = extractMessageAttribution(attributionSource, rawPart);
+  const attributedMessage = mergeMessageAttribution(nextMessage, attribution);
+
   return {
     ...state,
     sessionId: sessionResult.sessionId,
     messagesById: {
       ...state.messagesById,
-      [messageId]: nextMessage,
+      [messageId]: attributedMessage,
     },
     messageOrder: state.messagesById[messageId]
       ? state.messageOrder
@@ -673,6 +851,12 @@ export const hydrateAgentStore = (input: HydrateInput): AgentStore => {
       continue;
     }
 
+    const hydratedAttribution = extractMessageAttribution(item, info);
+    const messageWithAttribution = mergeMessageAttribution(
+      normalizedMessage,
+      hydratedAttribution,
+    );
+
     if (!state.sessionId) {
       state.sessionId = normalizedMessage.sessionId;
     }
@@ -686,15 +870,24 @@ export const hydrateAgentStore = (input: HydrateInput): AgentStore => {
       if (!part) {
         continue;
       }
-      normalizedMessage.partsById[part.id] = part;
-      if (!normalizedMessage.partOrder.includes(part.id)) {
-        normalizedMessage.partOrder.push(part.id);
+      messageWithAttribution.partsById[part.id] = part;
+      if (!messageWithAttribution.partOrder.includes(part.id)) {
+        messageWithAttribution.partOrder.push(part.id);
+      }
+
+      const partAttribution = extractMessageAttribution(rawPart);
+      const mergedMessage = mergeMessageAttribution(
+        messageWithAttribution,
+        partAttribution,
+      );
+      if (mergedMessage !== messageWithAttribution) {
+        messageWithAttribution.attribution = mergedMessage.attribution;
       }
     }
 
-    nextMessagesById[normalizedMessage.id] = normalizedMessage;
-    if (!nextMessageOrder.includes(normalizedMessage.id)) {
-      nextMessageOrder.push(normalizedMessage.id);
+    nextMessagesById[messageWithAttribution.id] = messageWithAttribution;
+    if (!nextMessageOrder.includes(messageWithAttribution.id)) {
+      nextMessageOrder.push(messageWithAttribution.id);
     }
   }
 
@@ -752,6 +945,7 @@ export const reduceOpenCodeEvent = (
       return upsertMessage(
         nextState,
         pickRecordValue(properties, "info") ?? properties,
+        properties,
       );
 
     case "message.removed": {
@@ -769,7 +963,7 @@ export const reduceOpenCodeEvent = (
     case "message.part.updated": {
       const rawPart = pickRecordValue(properties, "part") ?? properties;
       const delta = asString(pickRecordValue(properties, "delta"));
-      return upsertPart(nextState, rawPart, delta);
+      return upsertPart(nextState, rawPart, delta, properties);
     }
 
     case "message.part.delta": {
@@ -803,6 +997,7 @@ export const reduceOpenCodeEvent = (
           text: "",
         },
         delta,
+        properties,
       );
     }
 

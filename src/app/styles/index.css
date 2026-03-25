@@ -4429,6 +4429,18 @@ textarea::placeholder {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.run-chat-assistant-message__details {
+  margin-top: 0.55rem;
+}
+
+.run-chat-assistant-message__attribution {
+  margin: 0;
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}
+
 .run-chat-markdown h1,
 .run-chat-markdown h2,
 .run-chat-markdown h3,

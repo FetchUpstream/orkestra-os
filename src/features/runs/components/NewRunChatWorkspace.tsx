@@ -41,6 +41,8 @@ const TRANSCRIPT_WINDOW_CHUNK = 60;
 const AUTO_SCROLL_NEAR_BOTTOM_PX = 96;
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+const INTERNAL_ATTRIBUTION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -108,6 +110,36 @@ const toStringArray = (value: unknown): string[] => {
     .filter(
       (item): item is string => typeof item === "string" && item.length > 0,
     );
+};
+
+const sanitizeAttributionValue = (value: unknown): string => {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const normalized = value.trim();
+  if (!normalized || INTERNAL_ATTRIBUTION_ID_PATTERN.test(normalized)) {
+    return "";
+  }
+  return normalized;
+};
+
+const formatMessageAttribution = (value: {
+  agent?: string;
+  model?: string;
+}): string => {
+  const agent = sanitizeAttributionValue(value.agent);
+  const model = sanitizeAttributionValue(value.model);
+
+  if (agent && model) {
+    return `${agent} - ${model}`;
+  }
+  if (agent) {
+    return agent;
+  }
+  if (model) {
+    return model;
+  }
+  return "";
 };
 
 const parsePermissionCardData = (
@@ -752,6 +784,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         reasoningContent,
         toolItems,
         timestamp,
+        attributionLabel: formatMessageAttribution(message.attribution ?? {}),
         hasRenderableContent:
           content.length > 0 ||
           reasoningContent.length > 0 ||
@@ -793,6 +826,12 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           row.toolItems.length > 0 ? (
             <RunChatToolRail items={row.toolItems} />
           ) : undefined;
+        const attributionNode =
+          row.attributionLabel.length > 0 ? (
+            <p class="run-chat-assistant-message__attribution">
+              {row.attributionLabel}
+            </p>
+          ) : undefined;
 
         if (row.role === "assistant") {
           return (
@@ -801,6 +840,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 content={row.content.length > 0 ? row.content : " "}
                 reasoning={reasoningNode}
                 toolRail={toolRailNode}
+                details={attributionNode}
               />
               <Show when={!row.hasRenderableContent}>{waitingRow}</Show>
             </RunChatMessage>
