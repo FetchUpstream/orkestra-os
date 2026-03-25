@@ -727,6 +727,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_or_reuse_active_run_reuses_existing_when_agent_selection_is_provided() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run_with_status(&pool, "run-active", "task-1", "running").await;
+        sqlx::query("UPDATE runs SET agent_id = ?, provider_id = ?, model_id = ? WHERE id = ?")
+            .bind("existing-agent")
+            .bind("existing-provider")
+            .bind("existing-model")
+            .bind("run-active")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let run = service
+            .create_or_reuse_active_run_with_defaults(
+                "task-1",
+                Some("new-agent"),
+                Some("new-provider"),
+                Some("new-model"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(run.id, "run-active");
+        assert_eq!(run.agent_id.as_deref(), Some("existing-agent"));
+        assert_eq!(run.provider_id.as_deref(), Some("existing-provider"));
+        assert_eq!(run.model_id.as_deref(), Some("existing-model"));
+
+        let run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE task_id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(run_count, 1);
+    }
+
+    #[tokio::test]
     async fn create_or_reuse_active_run_creates_new_when_no_active_run_exists() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");
