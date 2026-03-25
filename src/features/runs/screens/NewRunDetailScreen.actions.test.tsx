@@ -806,22 +806,114 @@ describe("NewRunDetailScreen git actions", () => {
     await topbar.invokeAction("Logs");
 
     await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Agent Logs" })).toBeTruthy();
       const idleLine = screen.getByText(/session\.idle/);
-      const completedMessageLine = screen.getByText(
-        /message\.updated.*completed/i,
-      );
       const regularMessageLine = screen.getAllByText(/message\.updated/)[1];
+      const completedRows = document.querySelectorAll(
+        ".run-chat-log-stream__line--completed",
+      );
 
-      expect(idleLine.className).toContain(
-        "run-chat-log-stream__line--completed",
-      );
-      expect(completedMessageLine.className).toContain(
-        "run-chat-log-stream__line--completed",
-      );
-      expect(regularMessageLine.className).not.toContain(
-        "run-chat-log-stream__line--completed",
-      );
+      expect(
+        idleLine.closest(".run-chat-log-stream__line")?.className,
+      ).toContain("run-chat-log-stream__line--completed");
+      expect(completedRows.length).toBe(2);
+      expect(
+        regularMessageLine.closest(".run-chat-log-stream__line")?.className,
+      ).not.toContain("run-chat-log-stream__line--completed");
     });
+    topbar.cleanup();
+  });
+
+  it("keeps all rows visible while highlighting search matches", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        agentEvents: [
+          {
+            ts: "2026-01-01T15:31:20.570Z",
+            event: "tool.started",
+            data: "Compile project",
+          },
+          {
+            ts: "2026-01-01T15:31:21.120Z",
+            event: "tool.output",
+            data: "Build failed due to lint error",
+          },
+        ],
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Logs");
+
+    const searchInput = await screen.findByPlaceholderText("Find in logs");
+    fireEvent.input(searchInput, { target: { value: "failed" } });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Compile project/i)).toBeTruthy();
+      const matchingText = screen.getByText(/Build failed due to lint error/i);
+      expect(matchingText).toBeTruthy();
+
+      const allRows = document.querySelectorAll(".run-chat-log-stream__line");
+      expect(allRows.length).toBe(2);
+      expect(
+        matchingText.closest(".run-chat-log-stream__line")?.className,
+      ).toContain("run-chat-log-stream__line--match");
+    });
+
+    topbar.cleanup();
+  });
+
+  it("shows jump to latest when user scrolls away from bottom", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        agentEvents: [
+          {
+            ts: "2026-01-01T15:31:20.570Z",
+            event: "tool.started",
+            data: "Compile project",
+          },
+          {
+            ts: "2026-01-01T15:31:21.120Z",
+            event: "tool.output",
+            data: "Line A",
+          },
+          {
+            ts: "2026-01-01T15:31:22.120Z",
+            event: "tool.output",
+            data: "Line B",
+          },
+        ],
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Logs");
+
+    const stream = await screen.findByRole("log");
+    Object.defineProperty(stream, "scrollHeight", {
+      value: 1000,
+      configurable: true,
+    });
+    Object.defineProperty(stream, "clientHeight", {
+      value: 300,
+      configurable: true,
+    });
+    Object.defineProperty(stream, "scrollTop", {
+      value: 50,
+      writable: true,
+      configurable: true,
+    });
+
+    fireEvent.scroll(stream);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Jump to latest" }),
+      ).toBeTruthy();
+    });
+
     topbar.cleanup();
   });
 });

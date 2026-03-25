@@ -25,6 +25,19 @@ type OverlayState =
 
 type OverlaySize = "normal" | "maximized";
 
+type LogLine = {
+  id: string;
+  timestamp: string;
+  event: string;
+  message: string;
+  text: string;
+  completed: boolean;
+  searchText: string;
+};
+
+const LOG_NEAR_BOTTOM_THRESHOLD = 32;
+const LOG_NEW_ROW_HIGHLIGHT_MS = 3_000;
+
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 
@@ -133,6 +146,30 @@ const formatLogTimestamp = (ts: string | number | null): string => {
   return ts;
 };
 
+const formatCompactLogTimestamp = (ts: string | number | null): string => {
+  const raw = formatLogTimestamp(ts);
+  if (!raw) {
+    return "--:--:--.---";
+  }
+
+  const asDate = new Date(raw);
+  if (!Number.isNaN(asDate.getTime())) {
+    const hour = String(asDate.getHours()).padStart(2, "0");
+    const minute = String(asDate.getMinutes()).padStart(2, "0");
+    const second = String(asDate.getSeconds()).padStart(2, "0");
+    const ms = String(asDate.getMilliseconds()).padStart(3, "0");
+    return `${hour}:${minute}:${second}.${ms}`;
+  }
+
+  const compactMatch = raw.match(/(\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)/);
+  if (compactMatch?.[1]) {
+    const [base, fraction = ""] = compactMatch[1].split(".");
+    return `${base}.${fraction.padEnd(3, "0").slice(0, 3)}`;
+  }
+
+  return raw;
+};
+
 const resolveTaskTitle = (
   taskTitleValue: string | undefined,
   runValue: ReturnType<typeof useRunDetailModel>["run"] extends () => infer T
@@ -167,9 +204,17 @@ const NewRunDetailScreen: Component = () => {
   const [commitPromptDraft, setCommitPromptDraft] = createSignal("");
   const [isCommitPrefillLoading, setIsCommitPrefillLoading] =
     createSignal(false);
+  const [logsSearchQuery, setLogsSearchQuery] = createSignal("");
+  const [isFollowingLogs, setIsFollowingLogs] = createSignal(true);
+  const [hasUnseenLogs, setHasUnseenLogs] = createSignal(false);
+  const [newlyArrivedLogIds, setNewlyArrivedLogIds] = createSignal<Set<string>>(
+    new Set(),
+  );
   let drawerOverlayCloseButtonRef: HTMLButtonElement | undefined;
   let terminalOverlayCloseButtonRef: HTMLButtonElement | undefined;
   let commitModalTextareaRef: HTMLTextAreaElement | undefined;
+  let logsScrollContainerRef: HTMLDivElement | undefined;
+  const newLogHighlightTimeouts = new Map<string, number>();
 
   const isOverlayOpen = createMemo(() => overlayState() !== "none");
   const isTerminalOverlayOpen = createMemo(
@@ -181,6 +226,7 @@ const NewRunDetailScreen: Component = () => {
       overlayState() === "drawer-diff" ||
       overlayState() === "drawer-git",
   );
+  const isLogsDrawerOpen = createMemo(() => overlayState() === "drawer-logs");
   const overlaySizeLabel = createMemo(() =>
     overlaySize() === "maximized" ? "Restore panel" : "Maximize panel",
   );
@@ -365,49 +411,95 @@ const NewRunDetailScreen: Component = () => {
       "Run workspace",
   );
 
-  const logsLines = createMemo(() => {
+  const logsLines = createMemo<LogLine[]>(() => {
     if (model.agent.error().trim().length > 0) {
       return [
         {
+          id: "agent-error",
+          timestamp: "--:--:--.---",
+          event: "error",
+          message: normalizeLogText(model.agent.error().trim()),
           text: `error ${normalizeLogText(model.agent.error().trim())}`,
           completed: false,
+          searchText: normalizeLogText(
+            model.agent.error().trim(),
+          ).toLowerCase(),
         },
       ];
     }
 
     if (model.agent.state() === "unsupported") {
-      return [{ text: "agent stream unsupported", completed: false }];
+      return [
+        {
+          id: "agent-stream-unsupported",
+          timestamp: "--:--:--.---",
+          event: "status",
+          message: "agent stream unsupported",
+          text: "agent stream unsupported",
+          completed: false,
+          searchText: "agent stream unsupported",
+        },
+      ];
     }
 
     const events = model.agent.events();
     if (events.length === 0) {
       return [
         {
+          id:
+            model.agent.state() === "starting"
+              ? "waiting-for-logs"
+              : "no-logs-yet",
+          timestamp: "--:--:--.---",
+          event: "status",
+          message:
+            model.agent.state() === "starting"
+              ? "waiting for logs..."
+              : "no logs yet",
           text:
             model.agent.state() === "starting"
               ? "waiting for logs..."
               : "no logs yet",
           completed: false,
+          searchText:
+            model.agent.state() === "starting"
+              ? "waiting for logs..."
+              : "no logs yet",
         },
       ];
     }
 
-    return events.map((event) => {
-      const ts = formatLogTimestamp(event.ts);
+    return events.map((event, index) => {
+      const compactTs = formatCompactLogTimestamp(event.ts);
       const name = event.event?.trim() || "event";
       const payload = summarizeEventPayload(event.data);
-      const parts = [ts, name, payload].filter((part) => part.length > 0);
+      const parts = [compactTs, name, payload].filter(
+        (part) => part.length > 0,
+      );
+      const text = parts.join(" ");
       return {
-        text: parts.join(" "),
+        id: `${index}:${compactTs}:${name}:${payload}`,
+        timestamp: compactTs,
+        event: name,
+        message: payload,
+        text,
         completed: isCompletedDebugEvent(name, event.data),
+        searchText: text.toLowerCase(),
       };
     });
+  });
+  const filteredLogRows = createMemo(() => {
+    const query = logsSearchQuery().trim().toLowerCase();
+    return logsLines().map((line) => ({
+      ...line,
+      isSearchMatch: query.length > 0 && line.searchText.includes(query),
+    }));
   });
 
   const overlayTitle = createMemo(() => {
     switch (overlayState()) {
       case "drawer-logs":
-        return "Logs";
+        return "Agent Logs";
       case "drawer-diff":
         return "Review";
       case "drawer-git":
@@ -459,6 +551,44 @@ const NewRunDetailScreen: Component = () => {
     setOverlaySize("normal");
   };
 
+  const isNearLogsBottom = (): boolean => {
+    const container = logsScrollContainerRef;
+    if (!container) {
+      return true;
+    }
+    const distanceFromBottom =
+      container.scrollHeight - container.clientHeight - container.scrollTop;
+    return distanceFromBottom <= LOG_NEAR_BOTTOM_THRESHOLD;
+  };
+
+  const scrollLogsToLatest = (behavior: ScrollBehavior = "auto") => {
+    const container = logsScrollContainerRef;
+    if (!container) {
+      return;
+    }
+
+    if (typeof container.scrollTo === "function") {
+      container.scrollTo({ top: container.scrollHeight, behavior });
+      return;
+    }
+
+    container.scrollTop = container.scrollHeight;
+  };
+
+  const onLogsScroll = () => {
+    const nearBottom = isNearLogsBottom();
+    setIsFollowingLogs(nearBottom);
+    if (nearBottom) {
+      setHasUnseenLogs(false);
+    }
+  };
+
+  const jumpToLatestLogs = () => {
+    setIsFollowingLogs(true);
+    setHasUnseenLogs(false);
+    scrollLogsToLatest("smooth");
+  };
+
   const openCommitModal = () => {
     const loadingPrefill =
       "There are still uncommited changes, please attomically commit the following changes\n- Loading changed files...";
@@ -500,6 +630,77 @@ const NewRunDetailScreen: Component = () => {
 
   createEffect(() => {
     model.setIsDiffTabActive(overlayState() === "drawer-diff");
+  });
+
+  createEffect(() => {
+    if (!isLogsDrawerOpen()) {
+      return;
+    }
+
+    setIsFollowingLogs(true);
+    setHasUnseenLogs(false);
+
+    const frame = requestAnimationFrame(() => {
+      scrollLogsToLatest("auto");
+    });
+
+    onCleanup(() => {
+      cancelAnimationFrame(frame);
+    });
+  });
+
+  createEffect((previousIds: string[] = []) => {
+    const currentIds = logsLines().map((line) => line.id);
+    if (!isLogsDrawerOpen()) {
+      return currentIds;
+    }
+
+    const hasAppendedRows =
+      previousIds.length > 0 && currentIds.length > previousIds.length;
+    if (hasAppendedRows) {
+      const appendedIds = currentIds.slice(previousIds.length);
+      if (appendedIds.length > 0) {
+        setNewlyArrivedLogIds((current) => {
+          const next = new Set(current);
+          for (const id of appendedIds) {
+            next.add(id);
+
+            const existingTimeout = newLogHighlightTimeouts.get(id);
+            if (existingTimeout !== undefined) {
+              clearTimeout(existingTimeout);
+            }
+
+            const timeoutId = window.setTimeout(() => {
+              setNewlyArrivedLogIds((active) => {
+                const updated = new Set(active);
+                updated.delete(id);
+                return updated;
+              });
+              newLogHighlightTimeouts.delete(id);
+            }, LOG_NEW_ROW_HIGHLIGHT_MS);
+            newLogHighlightTimeouts.set(id, timeoutId);
+          }
+          return next;
+        });
+      }
+
+      if (isFollowingLogs()) {
+        requestAnimationFrame(() => {
+          scrollLogsToLatest("auto");
+        });
+      } else {
+        setHasUnseenLogs(true);
+      }
+    }
+
+    return currentIds;
+  });
+
+  onCleanup(() => {
+    for (const timeoutId of newLogHighlightTimeouts.values()) {
+      clearTimeout(timeoutId);
+    }
+    newLogHighlightTimeouts.clear();
   });
 
   createEffect(() => {
@@ -780,25 +981,78 @@ const NewRunDetailScreen: Component = () => {
                     }}
                   >
                     <Show when={overlayState() === "drawer-logs"}>
-                      <div
-                        class="run-chat-log-stream"
-                        role="log"
-                        aria-live="polite"
-                        aria-atomic="false"
-                      >
-                        <For each={logsLines()}>
-                          {(line) => (
-                            <p
-                              classList={{
-                                "run-chat-log-stream__line": true,
-                                "run-chat-log-stream__line--completed":
-                                  line.completed,
-                              }}
+                      <div class="run-chat-log-viewer">
+                        <div class="run-chat-log-viewer__toolbar">
+                          <label
+                            class="run-chat-log-viewer__search"
+                            for="run-chat-log-search"
+                          >
+                            <span class="sr-only">Find in logs</span>
+                            <input
+                              id="run-chat-log-search"
+                              type="search"
+                              placeholder="Find in logs"
+                              value={logsSearchQuery()}
+                              onInput={(event) =>
+                                setLogsSearchQuery(event.currentTarget.value)
+                              }
+                            />
+                          </label>
+                          <Show when={isFollowingLogs()}>
+                            <span class="run-chat-log-viewer__live-indicator">
+                              Live
+                            </span>
+                          </Show>
+                        </div>
+                        <div
+                          ref={logsScrollContainerRef}
+                          class="run-chat-log-stream"
+                          role="log"
+                          aria-live="polite"
+                          aria-atomic="false"
+                          onScroll={() => onLogsScroll()}
+                        >
+                          <For each={filteredLogRows()}>
+                            {(line) => (
+                              <div
+                                classList={{
+                                  "run-chat-log-stream__line": true,
+                                  "run-chat-log-stream__line--completed":
+                                    line.completed,
+                                  "run-chat-log-stream__line--match":
+                                    line.isSearchMatch,
+                                  "run-chat-log-stream__line--new":
+                                    newlyArrivedLogIds().has(line.id),
+                                }}
+                              >
+                                <span class="run-chat-log-stream__time">
+                                  {line.timestamp}
+                                </span>
+                                <div class="run-chat-log-stream__content">
+                                  <span class="run-chat-log-stream__event">
+                                    {line.event}
+                                  </span>
+                                  <Show when={line.message.length > 0}>
+                                    <span class="run-chat-log-stream__message">
+                                      {line.message}
+                                    </span>
+                                  </Show>
+                                </div>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                        <Show when={!isFollowingLogs() || hasUnseenLogs()}>
+                          <div class="run-chat-log-viewer__jump-wrap">
+                            <button
+                              type="button"
+                              class="run-chat-log-viewer__jump"
+                              onClick={() => jumpToLatestLogs()}
                             >
-                              {line.text}
-                            </p>
-                          )}
-                        </For>
+                              Jump to latest
+                            </button>
+                          </div>
+                        </Show>
                       </div>
                     </Show>
                     <Show when={overlayState() === "drawer-diff"}>
