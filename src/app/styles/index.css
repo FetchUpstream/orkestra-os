@@ -2524,16 +2524,17 @@ textarea::placeholder {
 
 .task-dependency-title {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.76rem;
   font-weight: 600;
   color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.35;
 }
 
 .task-dependency-title--secondary {
-  font-size: 0.74rem;
+  font-size: 0.71rem;
   font-weight: 500;
   color: var(--text-muted);
 }
