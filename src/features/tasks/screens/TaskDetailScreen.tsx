@@ -567,28 +567,33 @@ const TaskDetailScreen: Component = () => {
                                   <div class="task-dependencies-section">
                                     <div class="task-dependencies-heading-row">
                                       <h3 class="task-dependencies-heading">
-                                        Blocked by
+                                        Blocked by ·{" "}
+                                        {dependencyState().parents.length}
                                       </h3>
-                                      <button
-                                        type="button"
-                                        class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
-                                        onClick={() =>
-                                          onOpenCreateDependencyModal("parent")
-                                        }
-                                        aria-label="Create parent dependency"
-                                      >
-                                        Create
-                                      </button>
-                                      <button
-                                        type="button"
-                                        class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
-                                        onClick={() =>
-                                          onOpenLinkDependencyModal("parent")
-                                        }
-                                        aria-label="Link parent dependency"
-                                      >
-                                        Link
-                                      </button>
+                                      <div class="task-dependencies-heading-actions">
+                                        <button
+                                          type="button"
+                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
+                                          onClick={() =>
+                                            onOpenCreateDependencyModal(
+                                              "parent",
+                                            )
+                                          }
+                                          aria-label="Create parent dependency"
+                                        >
+                                          Create
+                                        </button>
+                                        <button
+                                          type="button"
+                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
+                                          onClick={() =>
+                                            onOpenLinkDependencyModal("parent")
+                                          }
+                                          aria-label="Link parent dependency"
+                                        >
+                                          Link
+                                        </button>
+                                      </div>
                                     </div>
                                     <Show
                                       when={
@@ -630,51 +635,60 @@ const TaskDetailScreen: Component = () => {
                                               }}
                                             >
                                               <div class="task-dependency-main task-dependency-link">
-                                                <p class="task-dependency-title">
-                                                  {dependencyDisplayLabel(
+                                                <div class="task-dependency-row-primary">
+                                                  <div class="task-dependency-row-leading">
+                                                    <span class="task-dependency-key">
+                                                      {dependencyTask.displayKey?.trim() ||
+                                                        "Task"}
+                                                    </span>
+                                                    <p class="task-dependency-title">
+                                                      {dependencyTask.title?.trim() ||
+                                                        "Untitled task"}
+                                                    </p>
+                                                  </div>
+                                                  <div class="task-dependency-meta">
+                                                    <span
+                                                      class={`project-task-status project-task-status--${dependencyTask.status}`}
+                                                    >
+                                                      {formatStatus(
+                                                        dependencyTask.status,
+                                                      )}
+                                                    </span>
+                                                    <button
+                                                      type="button"
+                                                      class="task-dependency-action"
+                                                      onClick={(event) => {
+                                                        event.preventDefault();
+                                                        event.stopPropagation();
+                                                        void onRemoveDependency(
+                                                          dependencyTask.id,
+                                                          taskValue().id,
+                                                        );
+                                                      }}
+                                                      onKeyDown={(event) => {
+                                                        if (
+                                                          event.key ===
+                                                            "Enter" ||
+                                                          event.key === " "
+                                                        ) {
+                                                          event.stopPropagation();
+                                                        }
+                                                      }}
+                                                      disabled={
+                                                        removingDependencyKey() ===
+                                                        `${dependencyTask.id}:${taskValue().id}`
+                                                      }
+                                                    >
+                                                      Remove
+                                                    </button>
+                                                  </div>
+                                                </div>
+                                                <p class="task-dependency-scope">
+                                                  {dependencyScopeLabel(
                                                     dependencyTask,
                                                   )}
                                                 </p>
-                                                <div class="task-dependency-meta">
-                                                  <span
-                                                    class={`project-task-status project-task-status--${dependencyTask.status}`}
-                                                  >
-                                                    {formatStatus(
-                                                      dependencyTask.status,
-                                                    )}
-                                                  </span>
-                                                  <span class="task-dependency-scope">
-                                                    {dependencyScopeLabel(
-                                                      dependencyTask,
-                                                    )}
-                                                  </span>
-                                                </div>
                                               </div>
-                                              <button
-                                                type="button"
-                                                class="task-dependency-action btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
-                                                onClick={(event) => {
-                                                  event.stopPropagation();
-                                                  void onRemoveDependency(
-                                                    dependencyTask.id,
-                                                    taskValue().id,
-                                                  );
-                                                }}
-                                                onKeyDown={(event) => {
-                                                  if (
-                                                    event.key === "Enter" ||
-                                                    event.key === " "
-                                                  ) {
-                                                    event.stopPropagation();
-                                                  }
-                                                }}
-                                                disabled={
-                                                  removingDependencyKey() ===
-                                                  `${dependencyTask.id}:${taskValue().id}`
-                                                }
-                                              >
-                                                Remove
-                                              </button>
                                             </li>
                                           )}
                                         </For>
@@ -685,28 +699,31 @@ const TaskDetailScreen: Component = () => {
                                   <div class="task-dependencies-section">
                                     <div class="task-dependencies-heading-row">
                                       <h3 class="task-dependencies-heading">
-                                        Blocking
+                                        Blocking ·{" "}
+                                        {dependencyState().children.length}
                                       </h3>
-                                      <button
-                                        type="button"
-                                        class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
-                                        onClick={() =>
-                                          onOpenCreateDependencyModal("child")
-                                        }
-                                        aria-label="Create blocked task"
-                                      >
-                                        Create
-                                      </button>
-                                      <button
-                                        type="button"
-                                        class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
-                                        onClick={() =>
-                                          onOpenLinkDependencyModal("child")
-                                        }
-                                        aria-label="Link blocked task"
-                                      >
-                                        Link
-                                      </button>
+                                      <div class="task-dependencies-heading-actions">
+                                        <button
+                                          type="button"
+                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
+                                          onClick={() =>
+                                            onOpenCreateDependencyModal("child")
+                                          }
+                                          aria-label="Create blocked task"
+                                        >
+                                          Create
+                                        </button>
+                                        <button
+                                          type="button"
+                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
+                                          onClick={() =>
+                                            onOpenLinkDependencyModal("child")
+                                          }
+                                          aria-label="Link blocked task"
+                                        >
+                                          Link
+                                        </button>
+                                      </div>
                                     </div>
                                     <Show
                                       when={
@@ -748,51 +765,60 @@ const TaskDetailScreen: Component = () => {
                                               }}
                                             >
                                               <div class="task-dependency-main task-dependency-link">
-                                                <p class="task-dependency-title">
-                                                  {dependencyDisplayLabel(
+                                                <div class="task-dependency-row-primary">
+                                                  <div class="task-dependency-row-leading">
+                                                    <span class="task-dependency-key">
+                                                      {dependencyTask.displayKey?.trim() ||
+                                                        "Task"}
+                                                    </span>
+                                                    <p class="task-dependency-title">
+                                                      {dependencyTask.title?.trim() ||
+                                                        "Untitled task"}
+                                                    </p>
+                                                  </div>
+                                                  <div class="task-dependency-meta">
+                                                    <span
+                                                      class={`project-task-status project-task-status--${dependencyTask.status}`}
+                                                    >
+                                                      {formatStatus(
+                                                        dependencyTask.status,
+                                                      )}
+                                                    </span>
+                                                    <button
+                                                      type="button"
+                                                      class="task-dependency-action"
+                                                      onClick={(event) => {
+                                                        event.preventDefault();
+                                                        event.stopPropagation();
+                                                        void onRemoveDependency(
+                                                          taskValue().id,
+                                                          dependencyTask.id,
+                                                        );
+                                                      }}
+                                                      onKeyDown={(event) => {
+                                                        if (
+                                                          event.key ===
+                                                            "Enter" ||
+                                                          event.key === " "
+                                                        ) {
+                                                          event.stopPropagation();
+                                                        }
+                                                      }}
+                                                      disabled={
+                                                        removingDependencyKey() ===
+                                                        `${taskValue().id}:${dependencyTask.id}`
+                                                      }
+                                                    >
+                                                      Remove
+                                                    </button>
+                                                  </div>
+                                                </div>
+                                                <p class="task-dependency-scope">
+                                                  {dependencyScopeLabel(
                                                     dependencyTask,
                                                   )}
                                                 </p>
-                                                <div class="task-dependency-meta">
-                                                  <span
-                                                    class={`project-task-status project-task-status--${dependencyTask.status}`}
-                                                  >
-                                                    {formatStatus(
-                                                      dependencyTask.status,
-                                                    )}
-                                                  </span>
-                                                  <span class="task-dependency-scope">
-                                                    {dependencyScopeLabel(
-                                                      dependencyTask,
-                                                    )}
-                                                  </span>
-                                                </div>
                                               </div>
-                                              <button
-                                                type="button"
-                                                class="task-dependency-action btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
-                                                onClick={(event) => {
-                                                  event.stopPropagation();
-                                                  void onRemoveDependency(
-                                                    taskValue().id,
-                                                    dependencyTask.id,
-                                                  );
-                                                }}
-                                                onKeyDown={(event) => {
-                                                  if (
-                                                    event.key === "Enter" ||
-                                                    event.key === " "
-                                                  ) {
-                                                    event.stopPropagation();
-                                                  }
-                                                }}
-                                                disabled={
-                                                  removingDependencyKey() ===
-                                                  `${taskValue().id}:${dependencyTask.id}`
-                                                }
-                                              >
-                                                Remove
-                                              </button>
                                             </li>
                                           )}
                                         </For>

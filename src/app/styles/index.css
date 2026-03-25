@@ -2392,13 +2392,13 @@ textarea::placeholder {
 .task-dependencies-content {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .task-dependencies-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .task-dependencies-heading {
@@ -2414,6 +2414,12 @@ textarea::placeholder {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.task-dependencies-heading-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .task-create-dependency-modal {
@@ -2462,32 +2468,26 @@ textarea::placeholder {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
+  border-top: 1px solid
+    color-mix(in srgb, var(--border-subtle) 70%, transparent);
 }
 
 .task-dependency-row {
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
-  background: color-mix(in srgb, var(--surface-alt) 72%, transparent);
-  border-radius: 0;
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  padding: 8px 0;
 }
 
 .task-dependency-row--clickable {
   cursor: pointer;
   transition:
-    border-color 0.15s ease,
     background 0.15s ease,
-    box-shadow 0.15s ease;
+    color 0.15s ease;
 }
 
 .task-dependency-row--clickable:hover {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--surface-alt) 84%, var(--accent) 16%);
-  box-shadow: none;
+  background: color-mix(in srgb, var(--surface-alt) 82%, transparent);
 }
 
 .task-dependency-row--clickable:focus-visible {
@@ -2504,7 +2504,7 @@ textarea::placeholder {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .task-dependency-link {
@@ -2514,26 +2514,72 @@ textarea::placeholder {
 
 .task-dependency-title {
   margin: 0;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .task-dependency-meta {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.task-dependency-row-primary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.task-dependency-row-leading {
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.task-dependency-key {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
 }
 
 .task-dependency-scope {
-  font-size: 0.72rem;
+  margin: 0;
+  font-size: 0.71rem;
   color: var(--text-subtle);
   font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .task-dependency-action {
   flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-subtle);
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  padding: 0;
+  cursor: pointer;
+}
+
+.task-dependency-action:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+.task-dependency-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .task-dependencies-heading-row {
@@ -4959,8 +5005,18 @@ textarea::placeholder {
   }
 
   .task-dependency-row {
+    padding: 9px 0;
+  }
+
+  .task-dependency-row-primary {
     flex-direction: column;
     align-items: flex-start;
+    gap: 6px;
+  }
+
+  .task-dependency-meta {
+    align-self: stretch;
+    justify-content: space-between;
   }
 
   .task-runs-link {
