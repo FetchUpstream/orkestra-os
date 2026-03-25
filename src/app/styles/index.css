@@ -1913,6 +1913,14 @@ textarea::placeholder {
   color: var(--text);
 }
 
+.task-file-mention-row--error {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger-subtle) 80%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--danger) 70%, transparent);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .task-file-mention-option {
   border: none;
   background: transparent;

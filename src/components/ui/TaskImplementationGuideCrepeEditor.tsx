@@ -46,7 +46,29 @@ const TaskImplementationGuideCrepeEditor: Component<
   const [open, setOpen] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const [results, setResults] = createSignal<string[]>([]);
+  const [errorText, setErrorText] = createSignal<string | null>(null);
   const [highlightedIndex, setHighlightedIndex] = createSignal(0);
+
+  const getMentionSearchErrorMessage = (value: unknown): string => {
+    if (value instanceof Error && value.message?.trim()) {
+      return value.message;
+    }
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+    if (value && typeof value === "object") {
+      const objectValue = value as Record<string, unknown>;
+      const message = objectValue.message;
+      if (typeof message === "string" && message.trim()) {
+        return message;
+      }
+      const error = objectValue.error;
+      if (typeof error === "string" && error.trim()) {
+        return error;
+      }
+    }
+    return "File search failed. Check repository configuration.";
+  };
 
   const clearMentionUi = () => {
     requestVersion += 1;
@@ -57,6 +79,7 @@ const TaskImplementationGuideCrepeEditor: Component<
     setOpen(false);
     setLoading(false);
     setResults([]);
+    setErrorText(null);
     setHighlightedIndex(0);
   };
 
@@ -185,6 +208,7 @@ const TaskImplementationGuideCrepeEditor: Component<
 
     setOpen(true);
     setLoading(true);
+    setErrorText(null);
     setHighlightedIndex(0);
 
     const activeVersion = ++requestVersion;
@@ -211,13 +235,15 @@ const TaskImplementationGuideCrepeEditor: Component<
             (path) => !path.startsWith("/") && !/^[a-zA-Z]:[\\/]/.test(path),
           );
           setResults(relativePaths);
+          setErrorText(null);
           setHighlightedIndex(0);
           setLoading(false);
           setOpen(true);
         })
-        .catch(() => {
+        .catch((error) => {
           if (activeVersion !== requestVersion) return;
           setResults([]);
+          setErrorText(getMentionSearchErrorMessage(error));
           setHighlightedIndex(0);
           setLoading(false);
           setOpen(true);
@@ -268,6 +294,7 @@ const TaskImplementationGuideCrepeEditor: Component<
         open={open() && Boolean(mentionState().active)}
         loading={loading()}
         results={results()}
+        errorText={errorText()}
         highlightedIndex={highlightedIndex()}
         anchor={mentionState().anchor}
         onHover={setHighlightedIndex}
