@@ -4755,6 +4755,16 @@ textarea::placeholder {
   box-shadow: none;
 }
 
+.run-chat-composer--readonly {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  min-height: 58px;
+}
+
+.run-chat-composer--readonly .project-placeholder-text {
+  margin: 0;
+}
+
 .run-chat-composer__input,
 .run-chat-composer__textarea {
   width: 100%;

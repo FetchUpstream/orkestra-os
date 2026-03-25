@@ -346,6 +346,10 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const isRunCompleted = createMemo(
     () => props.model.run()?.status === "completed",
   );
+  const mergedSourceBranchLabel = createMemo(() => {
+    const branch = props.model.run()?.sourceBranch?.trim();
+    return branch && branch.length > 0 ? branch : "branch unavailable";
+  });
   const runAgentOptions = createMemo(
     () => props.model.agent.runAgentOptions?.() ?? [],
   );
@@ -1119,47 +1123,61 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           ref={runChatComposerRef}
           class="run-chat-composer-shell run-chat-composer-shell--pinned"
         >
-          <RunChatComposer
-            class="run-chat-composer"
-            value={composerValue()}
-            onInput={setComposerValue}
-            onSubmit={(value) => {
-              void (async () => {
-                const success = await props.model.agent.submitPrompt(value, {
-                  agentId: overrideAgentId().trim() || undefined,
-                  providerId: overrideProviderId().trim() || undefined,
-                  modelId: (() => {
-                    const modelId = overrideModelId().trim();
-                    if (!modelId) {
-                      return undefined;
-                    }
-                    const providerId = effectiveProviderForModel();
-                    return doesModelMatchProvider(modelId, providerId)
-                      ? modelId
-                      : undefined;
-                  })(),
-                });
-                if (success) {
-                  setComposerValue("");
-                  setOverrideAgentId("");
-                  setOverrideProviderId("");
-                  setOverrideModelId("");
-                }
-              })();
-            }}
-            disabled={
-              isRunCompleted() ||
-              hasPendingPermission() ||
-              isComposerBlockedByReadiness() ||
-              props.model.agent.state() === "unsupported" ||
-              props.model.agent.isReplyingPermission()
+          <Show
+            when={!isRunCompleted()}
+            fallback={
+              <section
+                class="run-chat-composer run-chat-composer--readonly"
+                role="status"
+                aria-live="polite"
+              >
+                <p class="project-placeholder-text">
+                  {`Run Merged to ${mergedSourceBranchLabel()} Chat is read only`}
+                </p>
+              </section>
             }
-            submitting={props.model.agent.isSubmittingPrompt()}
-            placeholder="What do you want to do?"
-            textareaLabel="Message agent"
-            submitLabel="Send"
-          />
-          <Show when={hasRunSelectionOptions()}>
+          >
+            <RunChatComposer
+              class="run-chat-composer"
+              value={composerValue()}
+              onInput={setComposerValue}
+              onSubmit={(value) => {
+                void (async () => {
+                  const success = await props.model.agent.submitPrompt(value, {
+                    agentId: overrideAgentId().trim() || undefined,
+                    providerId: overrideProviderId().trim() || undefined,
+                    modelId: (() => {
+                      const modelId = overrideModelId().trim();
+                      if (!modelId) {
+                        return undefined;
+                      }
+                      const providerId = effectiveProviderForModel();
+                      return doesModelMatchProvider(modelId, providerId)
+                        ? modelId
+                        : undefined;
+                    })(),
+                  });
+                  if (success) {
+                    setComposerValue("");
+                    setOverrideAgentId("");
+                    setOverrideProviderId("");
+                    setOverrideModelId("");
+                  }
+                })();
+              }}
+              disabled={
+                hasPendingPermission() ||
+                isComposerBlockedByReadiness() ||
+                props.model.agent.state() === "unsupported" ||
+                props.model.agent.isReplyingPermission()
+              }
+              submitting={props.model.agent.isSubmittingPrompt()}
+              placeholder="What do you want to do?"
+              textareaLabel="Message agent"
+              submitLabel="Send"
+            />
+          </Show>
+          <Show when={!isRunCompleted() && hasRunSelectionOptions()}>
             <div class="run-chat-override-grid mt-2 gap-2">
               <label class="projects-field run-chat-override-field">
                 <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
@@ -1223,14 +1241,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               </label>
             </div>
           </Show>
-          <Show when={runSelectionOptionsError().length > 0}>
+          <Show
+            when={!isRunCompleted() && runSelectionOptionsError().length > 0}
+          >
             <p class="project-placeholder-text" aria-live="polite">
               {runSelectionOptionsError()}
-            </p>
-          </Show>
-          <Show when={isRunCompleted()}>
-            <p class="project-placeholder-text" aria-live="polite">
-              Run completed. Read-only.
             </p>
           </Show>
           <Show when={hasPendingPermission()}>
