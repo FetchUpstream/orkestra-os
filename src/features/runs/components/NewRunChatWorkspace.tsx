@@ -1267,9 +1267,23 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 <select
                   class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
                   value={overrideModelId()}
-                  onChange={(event) =>
-                    setOverrideModelId(event.currentTarget.value)
-                  }
+                  onChange={(event) => {
+                    const selectedModelId = event.currentTarget.value;
+                    setOverrideModelId(selectedModelId);
+
+                    if (!selectedModelId) {
+                      return;
+                    }
+
+                    const selectedModel = runModelOptions().find(
+                      (option) => option.id === selectedModelId,
+                    );
+                    const selectedProviderId =
+                      selectedModel?.providerId?.trim();
+                    if (selectedProviderId) {
+                      setOverrideProviderId(selectedProviderId);
+                    }
+                  }}
                   aria-label="Prompt override model"
                 >
                   <option value="">Use run default</option>
@@ -1287,9 +1301,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 <select
                   class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
                   value={overrideAgentId()}
-                  onChange={(event) =>
-                    setOverrideAgentId(event.currentTarget.value)
-                  }
+                  onChange={(event) => {
+                    setOverrideAgentId(event.currentTarget.value);
+                    setOverrideProviderId("");
+                    setOverrideModelId("");
+                  }}
                   aria-label="Prompt override agent"
                 >
                   <option value="">Use run default</option>

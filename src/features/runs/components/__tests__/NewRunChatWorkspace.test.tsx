@@ -261,6 +261,97 @@ describe("NewRunChatWorkspace", () => {
     });
   });
 
+  it("auto-selects provider override when selecting a model", async () => {
+    const submitPromptMock = vi.fn(async () => true);
+    const { model } = createModelStub("running");
+    model.agent.submitPrompt = submitPromptMock;
+    model.agent.runProviderOptions = () => [
+      { id: "provider-1", label: "OpenAI" },
+      { id: "provider-2", label: "Anthropic" },
+    ];
+    model.agent.runModelOptions = () => [
+      { id: "model-1", label: "GPT-5", providerId: "provider-1" },
+      { id: "model-2", label: "Claude", providerId: "provider-2" },
+    ];
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.change(screen.getByLabelText("Prompt override model"), {
+      target: { value: "model-2" },
+    });
+
+    await waitFor(() => {
+      expect(
+        (screen.getByLabelText("Prompt override provider") as HTMLSelectElement)
+          .value,
+      ).toBe("provider-2");
+    });
+
+    await fireEvent.input(screen.getByLabelText("Message agent"), {
+      target: { value: "Hello" },
+    });
+    await fireEvent.submit(screen.getByLabelText("Chat composer"));
+
+    expect(submitPromptMock).toHaveBeenCalledWith("Hello", {
+      agentId: undefined,
+      providerId: "provider-2",
+      modelId: "model-2",
+    });
+  });
+
+  it("clears provider/model overrides when agent changes so submit still succeeds", async () => {
+    const submitPromptMock = vi.fn(async () => true);
+    const { model } = createModelStub("running");
+    model.agent.submitPrompt = submitPromptMock;
+    model.agent.runAgentOptions = () => [
+      { id: "agent-1", label: "Planner" },
+      { id: "agent-2", label: "Builder" },
+    ];
+    model.agent.runProviderOptions = () => [
+      { id: "provider-1", label: "OpenAI" },
+      { id: "provider-2", label: "Anthropic" },
+    ];
+    model.agent.runModelOptions = () => [
+      { id: "model-1", label: "GPT-5", providerId: "provider-1" },
+      { id: "model-2", label: "Claude", providerId: "provider-2" },
+    ];
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.change(screen.getByLabelText("Prompt override provider"), {
+      target: { value: "provider-1" },
+    });
+    await fireEvent.change(screen.getByLabelText("Prompt override model"), {
+      target: { value: "model-1" },
+    });
+    await fireEvent.change(screen.getByLabelText("Prompt override agent"), {
+      target: { value: "agent-2" },
+    });
+
+    expect(
+      (screen.getByLabelText("Prompt override provider") as HTMLSelectElement)
+        .value,
+    ).toBe("");
+    expect(
+      (screen.getByLabelText("Prompt override model") as HTMLSelectElement)
+        .value,
+    ).toBe("");
+
+    await fireEvent.input(screen.getByLabelText("Message agent"), {
+      target: { value: "Hello" },
+    });
+    await fireEvent.submit(screen.getByLabelText("Chat composer"));
+
+    expect(submitPromptMock).toHaveBeenCalledWith("Hello", {
+      agentId: "agent-2",
+      providerId: undefined,
+      modelId: undefined,
+    });
+    expect(
+      (screen.getByLabelText("Message agent") as HTMLTextAreaElement).value,
+    ).toBe("");
+  });
+
   it("renders assistant attribution subtitle only for assistant messages", () => {
     const { model } = createModelStub("running");
     model.agent.store = () => ({
