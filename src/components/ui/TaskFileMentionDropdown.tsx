@@ -21,40 +21,44 @@ const TaskFileMentionDropdown: Component<Props> = (props) => {
           top: `${props.anchor?.top ?? 0}px`,
         }}
       >
-        <Show
-          when={!props.loading}
-          fallback={<div class="task-file-mention-row">Searching files…</div>}
-        >
+        <Show when={Boolean(props.errorText)}>
+          <div class="task-file-mention-row task-file-mention-row--error">
+            {props.errorText}
+          </div>
+        </Show>
+
+        <Show when={!props.errorText}>
           <Show
-            when={Boolean(props.errorText)}
+            when={props.results.length > 0}
             fallback={
               <Show
-                when={props.results.length > 0}
+                when={props.loading}
                 fallback={
                   <div class="task-file-mention-row">No matching files</div>
                 }
               >
-                <For each={props.results}>
-                  {(path, index) => (
-                    <button
-                      type="button"
-                      class={`task-file-mention-row task-file-mention-option ${props.highlightedIndex === index() ? "is-highlighted" : ""}`}
-                      onMouseEnter={() => props.onHover(index())}
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        props.onSelect(path);
-                      }}
-                    >
-                      {path}
-                    </button>
-                  )}
-                </For>
+                <div class="task-file-mention-row">Searching files…</div>
               </Show>
             }
           >
-            <div class="task-file-mention-row task-file-mention-row--error">
-              {props.errorText}
-            </div>
+            <Show when={props.loading}>
+              <div class="task-file-mention-row">Searching files…</div>
+            </Show>
+            <For each={props.results}>
+              {(path, index) => (
+                <button
+                  type="button"
+                  class={`task-file-mention-row task-file-mention-option ${props.highlightedIndex === index() ? "is-highlighted" : ""}`}
+                  onMouseEnter={() => props.onHover(index())}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    props.onSelect(path);
+                  }}
+                >
+                  {path}
+                </button>
+              )}
+            </For>
           </Show>
         </Show>
       </div>
