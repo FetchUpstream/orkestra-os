@@ -467,6 +467,56 @@ describe("useTaskDetailModel start run", () => {
     });
   });
 
+  it("hides ready state once task is in review even when blockers are resolved", async () => {
+    getTaskMock.mockResolvedValue({
+      id: "task-1",
+      projectId: "project-1",
+      title: "Task",
+      description: "Desc",
+      implementationGuide: "Guide",
+      status: "review",
+      isBlocked: false,
+      blockedByCount: 2,
+    });
+    listTaskDependenciesMock.mockResolvedValue({
+      parents: [
+        {
+          id: "task-parent",
+          displayKey: "PRJ-1",
+          title: "Parent",
+          status: "done",
+          targetRepositoryName: "Main",
+          targetRepositoryPath: "/repo/main",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      children: [],
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    await ref.current?.onCreateRun();
+
+    expect(ref.current?.isBlocked()).toBe(false);
+    expect(ref.current?.taskDependencyBadgeState()).toBe("none");
+    expect(ref.current?.isBlockedRunWarningOpen()).toBe(false);
+    expect(createRunMock).toHaveBeenCalledWith("task-1", {
+      agentId: undefined,
+      providerId: undefined,
+      modelId: undefined,
+    });
+  });
+
   it("shows none state and allows creating run when there are no dependencies", async () => {
     const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
       current: null,
