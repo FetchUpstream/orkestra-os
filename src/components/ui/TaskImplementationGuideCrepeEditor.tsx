@@ -92,11 +92,15 @@ const TaskImplementationGuideCrepeEditor: Component<
     crepe.editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
       const { from, to } = range;
-      const transaction = view.state.tr.insertText(`${path} `, from, to);
-      const codeMark = view.state.schema.marks.code;
-      if (codeMark) {
-        transaction.addMark(from, from + path.length, codeMark.create());
-      }
+      const inlineCodeMark = view.state.schema.marks.inlineCode;
+      const filepathNode = inlineCodeMark
+        ? view.state.schema.text(path, [inlineCodeMark.create()])
+        : view.state.schema.text(path);
+      const trailingSpaceNode = view.state.schema.text(" ");
+      const transaction = view.state.tr.replaceWith(from, to, [
+        filepathNode,
+        trailingSpaceNode,
+      ]);
       view.dispatch(transaction);
       view.focus();
     });
