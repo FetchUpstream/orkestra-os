@@ -26,6 +26,7 @@ import {
   type RunDiffFilePayload,
   type RunGitMergeStatus,
   type RunOpenCodeAgentState,
+  type RunOpenCodeChatMode,
   type RunOpenCodeEvent,
   type RunTerminalFrame,
   writeRunTerminal,
@@ -72,6 +73,8 @@ export const useRunDetailModel = () => {
   const [terminalError, setTerminalError] = createSignal("");
   const [agentState, setAgentState] =
     createSignal<RunOpenCodeAgentState>("idle");
+  const [agentChatMode, setAgentChatMode] =
+    createSignal<RunOpenCodeChatMode>("unavailable");
   const [agentEvents, setAgentEvents] = createSignal<RunOpenCodeEvent[]>([]);
   const [agentStore, setAgentStore] = createSignal<AgentStore>(
     createEmptyAgentStore(null),
@@ -327,6 +330,19 @@ export const useRunDetailModel = () => {
     return "warming_backend";
   };
 
+  const resolveChatMode = (
+    result: BootstrapRunOpenCodeResult,
+  ): RunOpenCodeChatMode => {
+    if (
+      result.chatMode === "interactive" ||
+      result.chatMode === "read_only" ||
+      result.chatMode === "unavailable"
+    ) {
+      return result.chatMode;
+    }
+    return result.state === "unsupported" ? "unavailable" : "interactive";
+  };
+
   const isRecord = (value: unknown): value is Record<string, unknown> => {
     return value !== null && typeof value === "object" && !Array.isArray(value);
   };
@@ -556,6 +572,7 @@ export const useRunDetailModel = () => {
     baseEvents: RunOpenCodeEvent[] = [],
   ): Promise<void> => {
     const bootstrap = await bootstrapRunOpenCode(runId);
+    const chatMode = resolveChatMode(bootstrap);
 
     if (
       requestVersion !== activeAgentRequestVersion ||
@@ -566,7 +583,9 @@ export const useRunDetailModel = () => {
       return;
     }
 
-    if (bootstrap.state === "unsupported") {
+    setAgentChatMode(chatMode);
+
+    if (chatMode === "unavailable") {
       setAgentState("unsupported");
       setAgentError("");
       return;
@@ -1237,8 +1256,13 @@ export const useRunDetailModel = () => {
         return;
       }
 
-      const nextState = result.state;
+      const nextChatMode = resolveChatMode(result);
+      const nextState: RunOpenCodeAgentState =
+        nextChatMode !== "unavailable" && result.state === "unsupported"
+          ? "running"
+          : result.state;
       setAgentState(nextState);
+      setAgentChatMode(nextChatMode);
       setAgentReadinessPhase(normalizeReadinessPhase(result));
 
       if (nextState === "error") {
@@ -1248,8 +1272,9 @@ export const useRunDetailModel = () => {
         return;
       }
 
-      if (nextState === "unsupported") {
+      if (nextChatMode === "unavailable") {
         setAgentError("");
+        setAgentState("unsupported");
         return;
       }
 
@@ -1297,6 +1322,7 @@ export const useRunDetailModel = () => {
       }
 
       if (isAgentUnsupportedError(ensureError)) {
+        setAgentChatMode("unavailable");
         setAgentState("unsupported");
         setAgentReadinessPhase(null);
         setAgentError("");
@@ -1488,6 +1514,10 @@ export const useRunDetailModel = () => {
     }
 
     if (agentState() === "unsupported" || agentState() === "error") {
+      return;
+    }
+
+    if (agentChatMode() !== "interactive") {
       return;
     }
 
@@ -1751,6 +1781,7 @@ export const useRunDetailModel = () => {
     setAgentStore(createEmptyAgentStore(null));
     setAgentError("");
     setAgentReadinessPhase(null);
+    setAgentChatMode("unavailable");
     activePromptSubmitVersion += 1;
     setIsSubmittingPrompt(false);
     setSubmitError("");
@@ -1773,6 +1804,10 @@ export const useRunDetailModel = () => {
       }
 
       if (agentState() === "unsupported" || agentState() === "error") {
+        return;
+      }
+
+      if (agentChatMode() !== "interactive") {
         return;
       }
 
@@ -2181,6 +2216,7 @@ export const useRunDetailModel = () => {
     },
     agent: {
       state: agentState,
+      chatMode: agentChatMode,
       readinessPhase: agentReadinessPhase,
       events: agentEvents,
       store: agentStore,

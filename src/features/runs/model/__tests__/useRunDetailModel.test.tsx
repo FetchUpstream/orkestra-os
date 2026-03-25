@@ -116,6 +116,7 @@ describe("useRunDetailModel startup ownership", () => {
 
     bootstrapRunOpenCodeMock.mockResolvedValue({
       state: "running",
+      chatMode: "interactive",
       bufferedEvents: [],
       messages: [],
       todos: [],
@@ -184,6 +185,56 @@ describe("useRunDetailModel startup ownership", () => {
     });
 
     expect(submitRunOpenCodePromptMock).not.toHaveBeenCalled();
+  });
+
+  it("hydrates read-only history without subscribing to live events", async () => {
+    bootstrapRunOpenCodeMock.mockResolvedValueOnce({
+      state: "running",
+      chatMode: "read_only",
+      bufferedEvents: [
+        {
+          runId: "run-1",
+          ts: "2026-01-01T00:00:00.000Z",
+          event: "message.updated",
+          data: {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: "msg-1",
+                role: "assistant",
+                sessionID: "session-1",
+              },
+            },
+          },
+        },
+      ],
+      messages: [
+        {
+          payload: {
+            info: {
+              id: "msg-1",
+              role: "assistant",
+              sessionID: "session-1",
+            },
+          },
+        },
+      ],
+      todos: [],
+      streamConnected: false,
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(modelRef!.agent.chatMode()).toBe("read_only");
+      expect(subscribeRunOpenCodeEventsMock).not.toHaveBeenCalled();
+      expect(modelRef!.agent.events().length).toBe(1);
+    });
   });
 
   it("uses startup-cached run options when available", async () => {

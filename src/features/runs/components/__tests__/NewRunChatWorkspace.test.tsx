@@ -7,12 +7,14 @@ const createModelStub = (
   runStatus: "running" | "completed",
   withPendingPermission = false,
   runOverrides: Record<string, unknown> = {},
+  chatMode: "interactive" | "read_only" | "unavailable" = "interactive",
 ) => {
   const [run, setRun] = createSignal({ status: runStatus, ...runOverrides });
 
   const model = {
     run,
     agent: {
+      chatMode: () => chatMode,
       readinessPhase: () => "ready",
       state: () => "running",
       error: () => "",
@@ -56,9 +58,17 @@ describe("NewRunChatWorkspace", () => {
     const { model } = createModelStub("completed");
     render(() => <NewRunChatWorkspace model={model} />);
 
-    const textbox = screen.getByLabelText("Message agent");
-    expect(textbox.getAttribute("disabled")).not.toBeNull();
-    expect(screen.getByText("Run completed. Read-only.")).toBeTruthy();
+    expect(screen.queryByLabelText("Message agent")).toBeNull();
+    expect(screen.getByText(/Work completed and merged into/)).toBeTruthy();
+  });
+
+  it("shows read-only empty transcript message for read_only mode", () => {
+    const { model } = createModelStub("completed", false, {}, "read_only");
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(
+      screen.getByText("No chat history is available for this completed run."),
+    ).toBeTruthy();
   });
 
   it("renders blocking permission card and disables composer", () => {

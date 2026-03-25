@@ -346,6 +346,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const isRunCompleted = createMemo(
     () => props.model.run()?.status === "completed",
   );
+  const isReadOnlyChatMode = createMemo(
+    () => props.model.agent.chatMode?.() === "read_only",
+  );
   const mergedSourceBranchLabel = createMemo(() => {
     const branch = props.model.run()?.sourceBranch?.trim();
     return branch && branch.length > 0 ? branch : "branch unavailable";
@@ -448,6 +451,15 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       );
     }
     return "Cleanup script pending.";
+  });
+  const emptyTranscriptMessage = createMemo(() => {
+    if (isReadOnlyChatMode()) {
+      return "No chat history is available for this completed run.";
+    }
+    if (props.model.agent.state() === "unsupported") {
+      return "Agent stream is not available for this run.";
+    }
+    return agentReadinessCopy() ?? "No agent messages yet.";
   });
 
   const isNearBottom = (
@@ -1060,12 +1072,12 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 aria-label="Chat transcript"
               >
                 <Show
-                  when={isTranscriptWaitingForAgentOutput()}
+                  when={
+                    !isReadOnlyChatMode() && isTranscriptWaitingForAgentOutput()
+                  }
                   fallback={
                     <p class="project-placeholder-text">
-                      {props.model.agent.state() === "unsupported"
-                        ? "Agent stream is not available for this run."
-                        : (agentReadinessCopy() ?? "No agent messages yet.")}
+                      {emptyTranscriptMessage()}
                     </p>
                   }
                 >

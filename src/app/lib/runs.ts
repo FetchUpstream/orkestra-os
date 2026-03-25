@@ -95,6 +95,8 @@ export type RunOpenCodeAgentState =
   | "unsupported"
   | "error";
 
+export type RunOpenCodeChatMode = "interactive" | "read_only" | "unavailable";
+
 export type RunOpenCodeEvent = {
   runId: string;
   ts: string | number | null;
@@ -181,6 +183,7 @@ export type RunOpenCodeSessionTodosResult = {
 
 export type BootstrapRunOpenCodeResult = {
   state: RunOpenCodeAgentState;
+  chatMode: RunOpenCodeChatMode;
   reason?: string;
   bufferedEvents: RunOpenCodeEvent[];
   messages: unknown[];
@@ -379,6 +382,8 @@ type RunOpenCodeSnapshotResponse = {
 
 type BootstrapRunOpenCodeResponse = {
   state?: RunOpenCodeAgentState | string;
+  chat_mode?: RunOpenCodeChatMode | string | null;
+  chatMode?: RunOpenCodeChatMode | string | null;
   reason?: string | null;
   buffered_events?: unknown;
   bufferedEvents?: unknown;
@@ -725,6 +730,25 @@ const toRunOpenCodeAgentState = (state: unknown): RunOpenCodeAgentState => {
     return state;
   }
   return "idle";
+};
+
+const toRunOpenCodeChatMode = (
+  value: unknown,
+  fallbackState: RunOpenCodeAgentState,
+): RunOpenCodeChatMode => {
+  if (
+    value === "interactive" ||
+    value === "read_only" ||
+    value === "unavailable"
+  ) {
+    return value;
+  }
+
+  if (fallbackState === "unsupported") {
+    return "unavailable";
+  }
+
+  return "interactive";
 };
 
 const unwrapBootstrapRunOpenCodePayload = (
@@ -1142,9 +1166,14 @@ const toBootstrapRunOpenCodeResult = (
 ): BootstrapRunOpenCodeResult => {
   const record = unwrapBootstrapRunOpenCodePayload(response);
   const rawBufferedEvents = pick(record.buffered_events, record.bufferedEvents);
+  const state = toRunOpenCodeAgentState(record.state);
 
   return {
-    state: toRunOpenCodeAgentState(record.state),
+    state,
+    chatMode: toRunOpenCodeChatMode(
+      pick(record.chat_mode, record.chatMode),
+      state,
+    ),
     reason: record.reason ?? undefined,
     bufferedEvents: toUnknownArray(rawBufferedEvents).map((event) =>
       toRunOpenCodeEvent(event as RunOpenCodeEventResponse, runId),

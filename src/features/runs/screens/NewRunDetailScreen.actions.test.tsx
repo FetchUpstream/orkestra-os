@@ -86,6 +86,7 @@ const createModelStub = (options?: {
   refreshedDiffPaths?: string[];
   isSubmittingPrompt?: boolean;
   agent?: {
+    chatMode?: "interactive" | "read_only" | "unavailable";
     state?:
       | "idle"
       | "accepted"
@@ -188,6 +189,7 @@ const createModelStub = (options?: {
       setTerminalFrameHandler: vi.fn(),
     },
     agent: {
+      chatMode: () => options?.agent?.chatMode ?? "interactive",
       error: () => options?.agent?.error ?? "",
       state: () => options?.agent?.state ?? "running",
       readinessPhase: () => options?.agent?.readinessPhase ?? "ready",
@@ -626,6 +628,34 @@ describe("NewRunDetailScreen git actions", () => {
     render(() => <NewRunDetailScreen />);
 
     expect(screen.getByText("workspace")).toBeTruthy();
+  });
+
+  it("hides Logs topbar action in read-only chat mode", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        run: { status: "completed" },
+        agent: { chatMode: "read_only" },
+      }),
+    );
+
+    const topbarEvents: CustomEvent[] = [];
+    const onTopbarConfig = (event: Event) => {
+      topbarEvents.push(event as CustomEvent);
+    };
+    window.addEventListener("run-detail:topbar-config", onTopbarConfig);
+
+    render(() => <NewRunDetailScreen />);
+
+    await waitFor(() => {
+      const payload = topbarEvents[topbarEvents.length - 1]?.detail as {
+        actions: Array<{ label: string }>;
+      };
+      expect(payload.actions.some((action) => action.label === "Logs")).toBe(
+        false,
+      );
+    });
+
+    window.removeEventListener("run-detail:topbar-config", onTopbarConfig);
   });
 
   it("still renders run workspace content when agent store reports error", () => {

@@ -448,6 +448,7 @@ const NewRunDetailScreen: Component = () => {
     const isTerminalOpen = overlayState() === "sheet-terminal";
     const isReviewOpen = overlayState() === "drawer-diff";
     const isGitOpen = overlayState() === "drawer-git";
+    const isReadOnlyChatMode = model.agent.chatMode() === "read_only";
 
     window.dispatchEvent(
       new CustomEvent("run-detail:topbar-config", {
@@ -457,13 +458,17 @@ const NewRunDetailScreen: Component = () => {
           backHref,
           backLabel,
           actions: [
-            {
-              key: "logs",
-              label: "Logs",
-              icon: "run.logs",
-              pressed: isLogsOpen,
-              onClick: () => toggleOverlay("drawer-logs"),
-            },
+            ...(!isReadOnlyChatMode
+              ? [
+                  {
+                    key: "logs",
+                    label: "Logs",
+                    icon: "run.logs",
+                    pressed: isLogsOpen,
+                    onClick: () => toggleOverlay("drawer-logs"),
+                  },
+                ]
+              : []),
             {
               key: "terminal",
               label: "Terminal",
