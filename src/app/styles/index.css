@@ -4758,11 +4758,13 @@ textarea::placeholder {
 .run-chat-composer--readonly {
   grid-template-columns: minmax(0, 1fr);
   align-items: center;
+  justify-items: center;
   min-height: 58px;
 }
 
 .run-chat-composer--readonly .project-placeholder-text {
   margin: 0;
+  text-align: center;
 }
 
 .run-chat-composer__input,
