@@ -1,10 +1,8 @@
 use crate::app::errors::AppError;
-use crate::app::projects::dto::ProjectFileSearchResultDto;
 use crate::app::projects::models::ProjectRepository;
 use ignore::WalkBuilder;
-use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
-use nucleo_matcher::Utf32Str;
-use nucleo_matcher::{Config, Matcher};
+use nucleo::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo::{Config, Matcher, Utf32Str};
 use once_cell::sync::Lazy;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -20,7 +18,9 @@ pub struct ProjectFileSearchService;
 
 #[derive(Debug)]
 struct FileSearchCandidate {
-    result: ProjectFileSearchResultDto,
+    relative_path: String,
+    repository_id: String,
+    repository_name: String,
     score: u32,
     relative_path_depth: usize,
 }
@@ -35,7 +35,7 @@ impl ProjectFileSearchService {
         repositories: Vec<ProjectRepository>,
         query: &str,
         limit: Option<usize>,
-    ) -> Result<Vec<ProjectFileSearchResultDto>, AppError> {
+    ) -> Result<Vec<String>, AppError> {
         let normalized_query = Self::normalize_query(query);
         if normalized_query.is_empty() {
             return Ok(Vec::new());
@@ -53,7 +53,7 @@ impl ProjectFileSearchService {
         repositories: Vec<ProjectRepository>,
         query: String,
         limit: usize,
-    ) -> Result<Vec<ProjectFileSearchResultDto>, AppError> {
+    ) -> Result<Vec<String>, AppError> {
         let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
         let mut matcher = PROJECT_FILE_MATCHER
             .lock()
@@ -78,7 +78,11 @@ impl ProjectFileSearchService {
             }
 
             let walker = WalkBuilder::new(&repo_root)
-                .hidden(false)
+                .hidden(true)
+                .ignore(true)
+                .git_ignore(true)
+                .git_global(true)
+                .git_exclude(true)
                 .follow_links(false)
                 .build();
 
@@ -102,13 +106,15 @@ impl ProjectFileSearchService {
                     continue;
                 }
 
-                let file_name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default()
-                    .to_string();
-                let basename_score =
-                    pattern.score(Utf32Str::new(file_name.as_str(), &mut buf), &mut matcher);
+                let basename_score = pattern.score(
+                    Utf32Str::new(
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or_default(),
+                        &mut buf,
+                    ),
+                    &mut matcher,
+                );
                 let relpath_score = pattern.score(
                     Utf32Str::new(normalized_relative_path.as_str(), &mut buf),
                     &mut matcher,
@@ -129,12 +135,9 @@ impl ProjectFileSearchService {
 
                 let relative_path_depth = normalized_relative_path.matches('/').count();
                 candidates.push(FileSearchCandidate {
-                    result: ProjectFileSearchResultDto {
-                        repository_id: repository.id.clone(),
-                        repository_name: repository.name.clone(),
-                        relative_path: normalized_relative_path,
-                        file_name,
-                    },
+                    relative_path: normalized_relative_path,
+                    repository_id: repository.id.clone(),
+                    repository_name: repository.name.clone(),
                     score,
                     relative_path_depth,
                 });
@@ -145,21 +148,16 @@ impl ProjectFileSearchService {
             b.score
                 .cmp(&a.score)
                 .then_with(|| a.relative_path_depth.cmp(&b.relative_path_depth))
-                .then_with(|| {
-                    a.result
-                        .relative_path
-                        .len()
-                        .cmp(&b.result.relative_path.len())
-                })
-                .then_with(|| a.result.repository_name.cmp(&b.result.repository_name))
-                .then_with(|| a.result.relative_path.cmp(&b.result.relative_path))
-                .then_with(|| a.result.repository_id.cmp(&b.result.repository_id))
+                .then_with(|| a.relative_path.len().cmp(&b.relative_path.len()))
+                .then_with(|| a.repository_name.cmp(&b.repository_name))
+                .then_with(|| a.relative_path.cmp(&b.relative_path))
+                .then_with(|| a.repository_id.cmp(&b.repository_id))
         });
 
         Ok(candidates
             .into_iter()
             .take(limit)
-            .map(|candidate| candidate.result)
+            .map(|candidate| candidate.relative_path)
             .collect())
     }
 

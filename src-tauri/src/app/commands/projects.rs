@@ -1,6 +1,6 @@
 use crate::app::projects::dto::{
     CloneProjectRequest, CreateProjectRequest, ProjectDetailsDto, ProjectDto,
-    ProjectFileSearchResultDto, SearchProjectFilesRequest, UpdateProjectRequest,
+    SearchProjectFilesRequest, UpdateProjectRequest,
 };
 use crate::app::state::AppState;
 use crate::app::{commands::context, commands::error_mapping::map_result};
@@ -59,7 +59,7 @@ pub async fn delete_project(state: tauri::State<'_, AppState>, id: String) -> Re
 pub async fn search_project_files(
     state: tauri::State<'_, AppState>,
     input: SearchProjectFilesRequest,
-) -> Result<Vec<ProjectFileSearchResultDto>, String> {
+) -> Result<Vec<String>, String> {
     let service = context::projects_service(&state);
     map_result(
         service

@@ -1,8 +1,8 @@
 use crate::app::db::repositories::projects::ProjectsRepository;
 use crate::app::errors::AppError;
 use crate::app::projects::dto::{
-    CloneProjectRequest, CreateProjectRequest, ProjectDetailsDto, ProjectDto,
-    ProjectFileSearchResultDto, ProjectRepositoryDto, UpdateProjectRequest,
+    CloneProjectRequest, CreateProjectRequest, ProjectDetailsDto, ProjectDto, ProjectRepositoryDto,
+    UpdateProjectRequest,
 };
 use crate::app::projects::models::{NewProject, NewProjectRepository, UpsertProjectRepository};
 use crate::app::projects::search_service::ProjectFileSearchService;
@@ -34,7 +34,7 @@ impl ProjectsService {
         project_id: &str,
         query: &str,
         limit: Option<usize>,
-    ) -> Result<Vec<ProjectFileSearchResultDto>, AppError> {
+    ) -> Result<Vec<String>, AppError> {
         let details = self
             .repository
             .get_project(project_id)

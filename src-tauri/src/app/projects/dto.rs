@@ -68,11 +68,3 @@ pub struct SearchProjectFilesRequest {
     pub query: String,
     pub limit: Option<usize>,
 }
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ProjectFileSearchResultDto {
-    pub repository_id: String,
-    pub repository_name: String,
-    pub relative_path: String,
-    pub file_name: String,
-}

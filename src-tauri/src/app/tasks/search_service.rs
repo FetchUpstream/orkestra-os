@@ -2,9 +2,8 @@ use crate::app::db::repositories::task_search::{TaskSearchCandidate, TaskSearchR
 use crate::app::db::repositories::tasks::TasksRepository;
 use crate::app::errors::AppError;
 use crate::app::tasks::dto::TaskDto;
-use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
-use nucleo_matcher::Utf32Str;
-use nucleo_matcher::{Config, Matcher};
+use nucleo::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo::{Config, Matcher, Utf32Str};
 use once_cell::sync::Lazy;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -193,7 +192,10 @@ impl TaskSearchService {
                     &mut matcher,
                 );
 
-                if title_score.is_none() && display_key_score.is_none() && description_score.is_none() {
+                if title_score.is_none()
+                    && display_key_score.is_none()
+                    && description_score.is_none()
+                {
                     return None;
                 }
 
