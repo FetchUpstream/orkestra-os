@@ -22,6 +22,7 @@ import {
 import type { UiPart, UiPermissionRequest } from "../model/agentTypes";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime } from "../../tasks/utils/taskDetail";
+import { AppIcon } from "../../../components/ui/icons";
 
 type AgentReadinessPhase =
   | "warming_backend"
@@ -767,8 +768,12 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         aria-live="polite"
         aria-atomic="true"
       >
-        <span class="run-inline-spinner" aria-hidden="true" />
-        <span>Waiting for agent output...</span>
+        <AppIcon
+          name="status.loading"
+          class="run-inline-spinner"
+          aria-hidden="true"
+        />
+        <span class="sr-only">Waiting for agent output...</span>
       </p>
     );
 
@@ -1087,8 +1092,12 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                     aria-live="polite"
                     aria-atomic="true"
                   >
-                    <span class="run-inline-spinner" aria-hidden="true" />
-                    <span>Waiting for agent output...</span>
+                    <AppIcon
+                      name="status.loading"
+                      class="run-inline-spinner"
+                      aria-hidden="true"
+                    />
+                    <span class="sr-only">Waiting for agent output...</span>
                   </p>
                 </Show>
               </section>

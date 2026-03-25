@@ -1545,9 +1545,7 @@ textarea::placeholder {
 .run-inline-spinner {
   width: 0.8rem;
   height: 0.8rem;
-  border: 1.5px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 999px;
+  color: var(--accent);
   flex: 0 0 auto;
   animation: run-inline-spinner-rotate 0.8s linear infinite;
 }
