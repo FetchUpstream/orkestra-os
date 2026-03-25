@@ -2,6 +2,7 @@ use crate::app::db::repositories::projects::ProjectsRepository;
 use crate::app::db::repositories::runs::RunsRepository;
 use crate::app::db::repositories::task_search::TaskSearchRepository;
 use crate::app::db::repositories::tasks::TasksRepository;
+use crate::app::projects::search_service::ProjectFileSearchService;
 use crate::app::projects::service::ProjectsService;
 use crate::app::runs::diff_service::RunsDiffService;
 use crate::app::runs::merge_service::RunsMergeService;
@@ -35,7 +36,11 @@ impl AppState {
         let task_search_service =
             TaskSearchService::new(tasks_repository.clone(), task_search_repository);
         let worktrees_service = WorktreesService::new(app_data_dir.clone());
-        let projects_service = ProjectsService::new(repository, worktrees_service.clone());
+        let projects_service = ProjectsService::new(
+            repository,
+            ProjectFileSearchService::new(),
+            worktrees_service.clone(),
+        );
         let runs_service = RunsService::new(runs_repository, worktrees_service.clone());
         let runs_diff_service = RunsDiffService::new(runs_service.clone(), app_data_dir.clone());
         let runs_merge_service = RunsMergeService::new(runs_service.clone(), app_data_dir.clone());

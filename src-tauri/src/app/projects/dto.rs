@@ -61,3 +61,18 @@ pub struct ProjectDetailsDto {
     pub project: ProjectDto,
     pub repositories: Vec<ProjectRepositoryDto>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SearchProjectFilesRequest {
+    pub project_id: String,
+    pub query: String,
+    pub limit: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProjectFileSearchResultDto {
+    pub repository_id: String,
+    pub repository_name: String,
+    pub relative_path: String,
+    pub file_name: String,
+}

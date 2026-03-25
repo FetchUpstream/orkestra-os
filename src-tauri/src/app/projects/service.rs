@@ -1,25 +1,49 @@
 use crate::app::db::repositories::projects::ProjectsRepository;
 use crate::app::errors::AppError;
 use crate::app::projects::dto::{
-    CloneProjectRequest, CreateProjectRequest, ProjectDetailsDto, ProjectDto, ProjectRepositoryDto,
-    UpdateProjectRequest,
+    CloneProjectRequest, CreateProjectRequest, ProjectDetailsDto, ProjectDto,
+    ProjectFileSearchResultDto, ProjectRepositoryDto, UpdateProjectRequest,
 };
 use crate::app::projects::models::{NewProject, NewProjectRepository, UpsertProjectRepository};
+use crate::app::projects::search_service::ProjectFileSearchService;
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
 
 #[derive(Clone, Debug)]
 pub struct ProjectsService {
     repository: ProjectsRepository,
+    file_search_service: ProjectFileSearchService,
     worktrees_service: WorktreesService,
 }
 
 impl ProjectsService {
-    pub fn new(repository: ProjectsRepository, worktrees_service: WorktreesService) -> Self {
+    pub fn new(
+        repository: ProjectsRepository,
+        file_search_service: ProjectFileSearchService,
+        worktrees_service: WorktreesService,
+    ) -> Self {
         Self {
             repository,
+            file_search_service,
             worktrees_service,
         }
+    }
+
+    pub async fn search_project_files(
+        &self,
+        project_id: &str,
+        query: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<ProjectFileSearchResultDto>, AppError> {
+        let details = self
+            .repository
+            .get_project(project_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("project not found"))?;
+
+        self.file_search_service
+            .search_project_files(details.repositories, query, limit)
+            .await
     }
 
     pub async fn list_projects(&self) -> Result<Vec<ProjectDto>, AppError> {
@@ -380,6 +404,7 @@ mod tests {
         run_migrations(&pool).await.unwrap();
         ProjectsService::new(
             ProjectsRepository::new(pool),
+            ProjectFileSearchService::new(),
             WorktreesService::new(temp_dir),
         )
     }

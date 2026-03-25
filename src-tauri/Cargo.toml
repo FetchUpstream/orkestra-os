@@ -42,3 +42,4 @@ tokio-stream = { version = "0.1.17", features = ["sync"] }
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 sentry = "0.47.0"
 nucleo-matcher = "0.3"
+ignore = "0.4"
