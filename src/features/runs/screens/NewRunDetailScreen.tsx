@@ -134,7 +134,7 @@ const formatLogTimestamp = (ts: string | number | null): string => {
 };
 
 const formatBranchDirection = (ahead: number, behind: number): string => {
-  return `ahead ${ahead} / behind ${behind}`;
+  return `Ahead ${ahead} · Behind ${behind}`;
 };
 
 const resolveTaskTitle = (
@@ -189,6 +189,65 @@ const NewRunDetailScreen: Component = () => {
     overlaySize() === "maximized" ? "Restore panel" : "Maximize panel",
   );
   const gitStatus = createMemo(() => model.git.status());
+  const baseBranchName = createMemo(() => {
+    const status = gitStatus();
+    const name = status?.sourceBranch.name?.trim();
+    return name && name.length > 0 ? name : "main";
+  });
+  const isWorkflowCompleted = createMemo(() => {
+    const status = gitStatus();
+    if (!status) {
+      return false;
+    }
+    return (
+      status.state === "merged" ||
+      status.state === "completing" ||
+      status.state === "completed" ||
+      model.postMergeCompletionMessage().trim().length > 0
+    );
+  });
+  const summaryCopy = createMemo(() => {
+    const status = gitStatus();
+    if (!status) {
+      return {
+        headline: "Checking repository status",
+        support: "Fetching branch and working tree details.",
+      };
+    }
+
+    if (isWorkflowCompleted()) {
+      return {
+        headline: "Integration complete",
+        support: `Current branch has been integrated into ${baseBranchName()}.`,
+      };
+    }
+
+    if (status.isWorktreeClean === false) {
+      return {
+        headline: "Commit required",
+        support: "Commit local changes before moving on to rebase or merge.",
+      };
+    }
+
+    if (status.requiresRebase) {
+      return {
+        headline: "Rebase required",
+        support: `Rebase current branch onto ${baseBranchName()} before merge.`,
+      };
+    }
+
+    if (status.isMergeAllowed) {
+      return {
+        headline: "Ready to merge",
+        support: `Current branch is ready to merge into ${baseBranchName()}.`,
+      };
+    }
+
+    return {
+      headline: "Review required",
+      support: "Complete the next available sync step to continue.",
+    };
+  });
   const changedFilePaths = createMemo(() => {
     const files = model.diffFiles();
     const uniquePaths = new Set<string>();
@@ -212,27 +271,33 @@ const NewRunDetailScreen: Component = () => {
     return `There are still uncommited changes, please attomically commit the following changes\n${renderedFiles}`;
   });
   const isCommitDisabled = createMemo(() => model.agent.isSubmittingPrompt());
-  const isCommitActionVisible = createMemo(() => {
-    const status = gitStatus();
-    return status?.isWorktreeClean === false;
-  });
   const mergeRequiresRebase = createMemo(() => {
     const status = gitStatus();
     return status?.requiresRebase === true;
   });
-  const isRebaseActionVisible = createMemo(() => {
+  const primaryAction = createMemo<"commit" | "rebase" | "merge" | null>(() => {
     const status = gitStatus();
-    if (!status) {
-      return false;
+    if (!status || isWorkflowCompleted()) {
+      return null;
     }
-    return status.isRebaseAllowed || status.requiresRebase;
-  });
-  const isMergeActionVisible = createMemo(() => {
-    const status = gitStatus();
-    if (!status) {
-      return false;
+
+    if (status.isWorktreeClean === false) {
+      return "commit";
     }
-    return status.isMergeAllowed && !status.requiresRebase;
+
+    if (status.requiresRebase) {
+      return "rebase";
+    }
+
+    if (status.isMergeAllowed) {
+      return "merge";
+    }
+
+    if (status.isRebaseAllowed) {
+      return "rebase";
+    }
+
+    return null;
   });
   const isRebaseDisabled = createMemo(() => {
     const status = gitStatus();
@@ -350,7 +415,7 @@ const NewRunDetailScreen: Component = () => {
       case "drawer-diff":
         return "Review";
       case "drawer-git":
-        return "Git";
+        return "Source Control";
       case "sheet-terminal":
         return "Terminal";
       default:
@@ -364,7 +429,7 @@ const NewRunDetailScreen: Component = () => {
       case "drawer-diff":
         return "Close Review panel";
       case "drawer-git":
-        return "Close Git panel";
+        return "Close Source Control panel";
       case "sheet-terminal":
         return "Close Terminal panel";
       default:
@@ -750,7 +815,7 @@ const NewRunDetailScreen: Component = () => {
                     <Show when={overlayState() === "drawer-git"}>
                       <section
                         class="run-chat-git-drawer"
-                        aria-label="Git merge workflow"
+                        aria-label="Source control workflow"
                       >
                         <Show when={model.git.isLoading()}>
                           <p class="project-placeholder-text">
@@ -765,25 +830,37 @@ const NewRunDetailScreen: Component = () => {
                         <Show when={gitStatus()}>
                           {(status) => (
                             <>
+                              <section class="run-chat-git-drawer__summary">
+                                <p class="run-chat-git-drawer__summary-headline">
+                                  {summaryCopy().headline}
+                                </p>
+                                <p class="run-chat-git-drawer__summary-support">
+                                  {summaryCopy().support}
+                                </p>
+                              </section>
                               <div class="run-chat-git-drawer__branches">
-                                <article class="run-chat-git-drawer__branch-card">
-                                  <h3>
-                                    Source branch to{" "}
+                                <article class="run-chat-git-drawer__branch-row">
+                                  <p class="run-chat-git-drawer__branch-label">
+                                    Base branch
+                                  </p>
+                                  <p class="run-chat-git-drawer__branch-name">
                                     {status().sourceBranch.name}
-                                  </h3>
-                                  <p>
+                                  </p>
+                                  <p class="run-chat-git-drawer__branch-sync">
                                     {formatBranchDirection(
                                       status().sourceBranch.ahead,
                                       status().sourceBranch.behind,
                                     )}
                                   </p>
                                 </article>
-                                <article class="run-chat-git-drawer__branch-card">
-                                  <h3>
-                                    Worktree branch to{" "}
+                                <article class="run-chat-git-drawer__branch-row">
+                                  <p class="run-chat-git-drawer__branch-label">
+                                    Current branch
+                                  </p>
+                                  <p class="run-chat-git-drawer__branch-name">
                                     {status().worktreeBranch.name}
-                                  </h3>
-                                  <p>
+                                  </p>
+                                  <p class="run-chat-git-drawer__branch-sync">
                                     {formatBranchDirection(
                                       status().worktreeBranch.ahead,
                                       status().worktreeBranch.behind,
@@ -791,26 +868,32 @@ const NewRunDetailScreen: Component = () => {
                                   </p>
                                 </article>
                               </div>
-                              <p class="run-chat-git-drawer__state">
-                                Backend state:{" "}
-                                {formatGitStateLabel(
-                                  status().state,
-                                  status().rawState,
-                                )}
+                              <p class="run-chat-git-drawer__state-row">
+                                <span class="run-chat-git-drawer__state-label">
+                                  Repository status
+                                </span>
+                                <span class="run-chat-git-drawer__state-value">
+                                  {formatGitStateLabel(
+                                    status().state,
+                                    status().rawState,
+                                  )}
+                                </span>
                               </p>
-                              <p class="run-chat-git-drawer__state">
-                                Worktree:{" "}
-                                {status().isWorktreeClean === true
-                                  ? "Clean"
-                                  : status().isWorktreeClean === false
-                                    ? "Dirty"
-                                    : "Unknown"}
+                              <p class="run-chat-git-drawer__state-row">
+                                <span class="run-chat-git-drawer__state-label">
+                                  Working tree status
+                                </span>
+                                <span class="run-chat-git-drawer__state-value">
+                                  {status().isWorktreeClean === true
+                                    ? "Clean"
+                                    : status().isWorktreeClean === false
+                                      ? "Changes detected"
+                                      : "Unknown"}
+                                </span>
                               </p>
                               <p class="project-placeholder-text">
-                                Ahead/behind counts reflect committed branch
-                                divergence only. Worktree cleanliness is shown
-                                separately. Review diffs can still include
-                                uncommitted worktree changes.
+                                Ahead/behind counts show committed branch sync.
+                                Working tree status covers local edits.
                               </p>
                               <Show
                                 when={model.git.lastActionMessage().length > 0}
@@ -836,8 +919,16 @@ const NewRunDetailScreen: Component = () => {
                                   {model.git.actionError()}
                                 </p>
                               </Show>
-                              <div class="run-chat-git-drawer__actions">
-                                <Show when={isRebaseActionVisible()}>
+                              <div class="run-chat-git-drawer__footer">
+                                <Show when={isWorkflowCompleted()}>
+                                  <p
+                                    class="run-chat-git-drawer__completed"
+                                    aria-live="polite"
+                                  >
+                                    Workflow complete
+                                  </p>
+                                </Show>
+                                <Show when={primaryAction() === "rebase"}>
                                   <button
                                     type="button"
                                     class="run-chat-git-drawer__button"
@@ -847,7 +938,7 @@ const NewRunDetailScreen: Component = () => {
                                       void model.git.rebaseWorktreeOntoSource();
                                     }}
                                   >
-                                    Rebase Worktree onto Source
+                                    Rebase onto {baseBranchName()}
                                   </button>
                                   <Show
                                     when={rebaseDisabledReason().length > 0}
@@ -857,7 +948,7 @@ const NewRunDetailScreen: Component = () => {
                                     </p>
                                   </Show>
                                 </Show>
-                                <Show when={isMergeActionVisible()}>
+                                <Show when={primaryAction() === "merge"}>
                                   <button
                                     type="button"
                                     class="run-chat-git-drawer__button"
@@ -867,7 +958,7 @@ const NewRunDetailScreen: Component = () => {
                                       void model.git.mergeWorktreeIntoSource();
                                     }}
                                   >
-                                    Merge Worktree into Source
+                                    Merge into {baseBranchName()}
                                   </button>
                                   <Show when={mergeDisabledReason().length > 0}>
                                     <p class="project-placeholder-text">
@@ -875,13 +966,13 @@ const NewRunDetailScreen: Component = () => {
                                     </p>
                                   </Show>
                                 </Show>
-                                <Show when={isCommitActionVisible()}>
+                                <Show when={primaryAction() === "commit"}>
                                   <button
                                     type="button"
                                     class="run-chat-git-drawer__button"
                                     onClick={() => openCommitModal()}
                                   >
-                                    Commit Changes
+                                    Commit changes
                                   </button>
                                 </Show>
                               </div>

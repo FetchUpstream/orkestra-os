@@ -113,6 +113,8 @@ const createModelStub = (options?: {
   }>;
   gitActionError?: string;
   gitLastActionMessage?: string;
+  postMergeCompletionMessage?: string;
+  isRunCompleted?: boolean;
 }) => {
   const [diffPaths, setDiffPaths] = createSignal(options?.diffPaths ?? []);
   const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(
@@ -137,8 +139,8 @@ const createModelStub = (options?: {
     backHref: () => "/tasks/task-1",
     backLabel: () => "task",
     setIsDiffTabActive: vi.fn(),
-    postMergeCompletionMessage: () => "",
-    isRunCompleted: () => false,
+    postMergeCompletionMessage: () => options?.postMergeCompletionMessage ?? "",
+    isRunCompleted: () => options?.isRunCompleted ?? false,
     diffFiles: () =>
       diffPaths().map((path) => ({
         path,
@@ -242,9 +244,87 @@ describe("NewRunDetailScreen git actions", () => {
     await topbar.invokeAction("Git");
 
     await waitFor(() => {
-      expect(screen.queryByText("Rebase Worktree onto Source")).toBeNull();
-      expect(screen.queryByText("Merge Worktree into Source")).toBeNull();
-      expect(screen.getByText("Commit Changes")).toBeTruthy();
+      expect(screen.queryByText("Rebase onto main")).toBeNull();
+      expect(screen.queryByText("Merge into main")).toBeNull();
+      expect(screen.getByText("Commit changes")).toBeTruthy();
+    });
+    topbar.cleanup();
+  });
+
+  it("shows Source Control title and branch comparison labels", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        gitStatus: {
+          sourceBranch: { name: "main", ahead: 0, behind: 1 },
+          worktreeBranch: { name: "feature/redesign", ahead: 2, behind: 0 },
+        },
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Source Control" }),
+      ).toBeTruthy();
+      expect(screen.getByText("Base branch")).toBeTruthy();
+      expect(screen.getByText("Current branch")).toBeTruthy();
+      expect(screen.getByText("Repository status")).toBeTruthy();
+      expect(screen.getByText("Working tree status")).toBeTruthy();
+    });
+    topbar.cleanup();
+  });
+
+  it("shows rebase as the only primary action when required", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        gitStatus: {
+          sourceBranch: { name: "main", ahead: 0, behind: 0 },
+          isWorktreeClean: true,
+          requiresRebase: true,
+          isRebaseAllowed: true,
+          isMergeAllowed: false,
+        },
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    await waitFor(() => {
+      expect(screen.getByText("Rebase onto main")).toBeTruthy();
+      expect(screen.queryByText("Commit changes")).toBeNull();
+      expect(screen.queryByText("Merge into main")).toBeNull();
+    });
+    topbar.cleanup();
+  });
+
+  it("hides primary action and shows completion state after merge", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        gitStatus: {
+          state: "merged",
+          isWorktreeClean: false,
+          isRebaseAllowed: true,
+          isMergeAllowed: true,
+          requiresRebase: false,
+        },
+        postMergeCompletionMessage: "Merge completed. Returning to board...",
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    await waitFor(() => {
+      expect(screen.getByText("Workflow complete")).toBeTruthy();
+      expect(screen.queryByText("Commit changes")).toBeNull();
+      expect(screen.queryByText("Rebase onto main")).toBeNull();
+      expect(screen.queryByText("Merge into main")).toBeNull();
     });
     topbar.cleanup();
   });
@@ -267,7 +347,7 @@ describe("NewRunDetailScreen git actions", () => {
     render(() => <NewRunDetailScreen />);
 
     await topbar.invokeAction("Git");
-    fireEvent.click(await screen.findByText("Commit Changes"));
+    fireEvent.click(await screen.findByText("Commit changes"));
 
     const textarea = await screen.findByLabelText("Commit request message");
     await waitFor(() => {
@@ -286,7 +366,7 @@ describe("NewRunDetailScreen git actions", () => {
         markCommitPending: true,
       });
       expect(screen.queryByLabelText("Commit request message")).toBeNull();
-      expect(screen.queryByText("Commit Changes")).toBeNull();
+      expect(screen.queryByText("Commit changes")).toBeNull();
     });
     topbar.cleanup();
   });
@@ -314,7 +394,7 @@ describe("NewRunDetailScreen git actions", () => {
     render(() => <NewRunDetailScreen />);
 
     await topbar.invokeAction("Git");
-    fireEvent.click(await screen.findByText("Commit Changes"));
+    fireEvent.click(await screen.findByText("Commit changes"));
 
     const textarea = await screen.findByLabelText("Commit request message");
     fireEvent.input(textarea, { target: { value: "commit these files" } });
@@ -348,7 +428,7 @@ describe("NewRunDetailScreen git actions", () => {
     render(() => <NewRunDetailScreen />);
 
     await topbar.invokeAction("Git");
-    fireEvent.click(await screen.findByText("Commit Changes"));
+    fireEvent.click(await screen.findByText("Commit changes"));
 
     const textarea = await screen.findByLabelText("Commit request message");
     fireEvent.input(textarea, { target: { value: "commit these files" } });
@@ -359,7 +439,7 @@ describe("NewRunDetailScreen git actions", () => {
         markCommitPending: true,
       });
       expect(screen.getByLabelText("Commit request message")).toBeTruthy();
-      expect(screen.getByText("Commit Changes")).toBeTruthy();
+      expect(screen.getByText("Commit changes")).toBeTruthy();
     });
     topbar.cleanup();
   });
@@ -382,7 +462,7 @@ describe("NewRunDetailScreen git actions", () => {
     render(() => <NewRunDetailScreen />);
 
     await topbar.invokeAction("Git");
-    fireEvent.click(await screen.findByText("Commit Changes"));
+    fireEvent.click(await screen.findByText("Commit changes"));
 
     const textarea = await screen.findByLabelText("Commit request message");
     await waitFor(() => {
@@ -410,7 +490,7 @@ describe("NewRunDetailScreen git actions", () => {
     await topbar.invokeAction("Git");
 
     await waitFor(() => {
-      expect(screen.queryByText("Commit Changes")).toBeNull();
+      expect(screen.queryByText("Commit changes")).toBeNull();
     });
     topbar.cleanup();
   });
@@ -429,7 +509,7 @@ describe("NewRunDetailScreen git actions", () => {
     await topbar.invokeAction("Git");
 
     await waitFor(() => {
-      expect(screen.queryByText("Commit Changes")).toBeNull();
+      expect(screen.queryByText("Commit changes")).toBeNull();
     });
     topbar.cleanup();
   });
