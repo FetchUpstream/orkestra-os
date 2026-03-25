@@ -35,10 +35,6 @@ impl ProjectFileSearchService {
         limit: Option<usize>,
     ) -> Result<Vec<String>, AppError> {
         let normalized_query = Self::normalize_query(query);
-        if normalized_query.is_empty() {
-            return Ok(Vec::new());
-        }
-
         let max_results = Self::normalize_limit(limit);
         tokio::task::spawn_blocking(move || {
             Self::search_project_files_blocking(repository, normalized_query, max_results)
@@ -52,7 +48,9 @@ impl ProjectFileSearchService {
         query: String,
         limit: usize,
     ) -> Result<Vec<String>, AppError> {
-        let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
+        let has_query = !query.is_empty();
+        let pattern = has_query
+            .then(|| Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart));
         let mut matcher = PROJECT_FILE_MATCHER
             .lock()
             .map_err(|_| AppError::validation("project file matcher unavailable"))?;
@@ -103,25 +101,29 @@ impl ProjectFileSearchService {
                 continue;
             }
 
-            let basename_score = pattern.score(
-                Utf32Str::new(
-                    path.file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or_default(),
-                    &mut buf,
-                ),
-                &mut matcher,
-            );
-            let relpath_score = pattern.score(
-                Utf32Str::new(normalized_relative_path.as_str(), &mut buf),
-                &mut matcher,
-            );
+            let score = if let Some(pattern) = &pattern {
+                let basename_score = pattern.score(
+                    Utf32Str::new(
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or_default(),
+                        &mut buf,
+                    ),
+                    &mut matcher,
+                );
+                let relpath_score = pattern.score(
+                    Utf32Str::new(normalized_relative_path.as_str(), &mut buf),
+                    &mut matcher,
+                );
 
-            if basename_score.is_none() && relpath_score.is_none() {
-                continue;
-            }
+                if basename_score.is_none() && relpath_score.is_none() {
+                    continue;
+                }
 
-            let score = (basename_score.unwrap_or(0) * 5) + (relpath_score.unwrap_or(0) * 2);
+                (basename_score.unwrap_or(0) * 5) + (relpath_score.unwrap_or(0) * 2)
+            } else {
+                0
+            };
 
             let relative_path_depth = normalized_relative_path.matches('/').count();
             candidates.push(FileSearchCandidate {
@@ -131,13 +133,22 @@ impl ProjectFileSearchService {
             });
         }
 
-        candidates.sort_by(|a, b| {
-            b.score
-                .cmp(&a.score)
-                .then_with(|| a.relative_path_depth.cmp(&b.relative_path_depth))
-                .then_with(|| a.relative_path.len().cmp(&b.relative_path.len()))
-                .then_with(|| a.relative_path.cmp(&b.relative_path))
-        });
+        if has_query {
+            candidates.sort_by(|a, b| {
+                b.score
+                    .cmp(&a.score)
+                    .then_with(|| a.relative_path_depth.cmp(&b.relative_path_depth))
+                    .then_with(|| a.relative_path.len().cmp(&b.relative_path.len()))
+                    .then_with(|| a.relative_path.cmp(&b.relative_path))
+            });
+        } else {
+            candidates.sort_by(|a, b| {
+                a.relative_path_depth
+                    .cmp(&b.relative_path_depth)
+                    .then_with(|| a.relative_path.len().cmp(&b.relative_path.len()))
+                    .then_with(|| a.relative_path.cmp(&b.relative_path))
+            });
+        }
 
         Ok(candidates
             .into_iter()
@@ -185,10 +196,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_query_returns_no_results() {
+    async fn empty_query_returns_deterministic_initial_results() {
         let temp_root = std::env::temp_dir().join(format!("orkestra-search-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-        std::fs::write(temp_root.join("Cargo.toml"), "[package]").unwrap();
+        std::fs::create_dir_all(temp_root.join("src/bin")).unwrap();
+        std::fs::write(temp_root.join("README.md"), "# hi").unwrap();
+        std::fs::write(temp_root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(temp_root.join("src/bin/tool.rs"), "fn main() {}\n").unwrap();
 
         let service = ProjectFileSearchService::new();
         let results = service
@@ -196,7 +209,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(results.is_empty());
+        assert_eq!(
+            results,
+            vec![
+                "README.md".to_string(),
+                "src/main.rs".to_string(),
+                "src/bin/tool.rs".to_string(),
+            ]
+        );
     }
 
     #[tokio::test]

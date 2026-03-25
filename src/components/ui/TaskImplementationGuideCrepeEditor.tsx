@@ -185,7 +185,6 @@ const TaskImplementationGuideCrepeEditor: Component<
 
     setOpen(true);
     setLoading(true);
-    setResults([]);
     setHighlightedIndex(0);
 
     const activeVersion = ++requestVersion;
