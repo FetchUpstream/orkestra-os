@@ -2452,24 +2452,68 @@ textarea::placeholder {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
+  border-top: 1px solid
+    color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--border-subtle) 70%, transparent);
   max-height: min(300px, 48vh);
   overflow: auto;
 }
 
 .task-link-candidate-item {
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
-  background: color-mix(in srgb, var(--surface-alt) 72%, transparent);
-  border-radius: 0;
-  padding: 10px 12px;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  padding: 8px 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-.task-link-candidate-item .projects-button-primary {
-  min-width: 70px;
+.task-link-candidate-item:last-child {
+  border-bottom: 0;
+}
+
+.task-link-dependency-modal {
+  width: min(480px, 100%);
+}
+
+.task-link-candidate-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.task-link-candidate-primary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-link-candidate-title {
+  margin: 0;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.task-link-candidate-status {
+  font-size: 0.62rem;
+  min-height: 1.1rem;
+  padding: 1px 6px;
+}
+
+.task-link-candidate-repository {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
 }
 
 .task-dependencies-list {

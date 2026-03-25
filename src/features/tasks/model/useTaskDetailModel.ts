@@ -616,6 +616,12 @@ export const useTaskDetailModel = () => {
     setIsLinkDependencyModalOpen(false);
   };
 
+  const onSetLinkDependencyDirection = (
+    direction: DependencyCreateDirection,
+  ) => {
+    setLinkDependencyDirection(direction);
+  };
+
   const onLinkDependency = async (dependencyTaskId: string) => {
     const taskValue = task();
     if (!taskValue || !dependencyTaskId || isLinkingDependency()) return;
@@ -1040,6 +1046,7 @@ export const useTaskDetailModel = () => {
     setCreateDependencyStatus,
     setLinkDependencySearch,
     setShowDoneLinkCandidates,
+    onSetLinkDependencyDirection,
     setIsBlockedRunWarningOpen,
     onOpenCreateDependencyModal,
     onCancelCreateDependency,

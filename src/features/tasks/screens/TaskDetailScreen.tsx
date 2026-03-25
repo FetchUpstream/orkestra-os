@@ -187,6 +187,7 @@ const TaskDetailScreen: Component = () => {
     setCreateDependencyStatus,
     setLinkDependencySearch,
     setShowDoneLinkCandidates,
+    onSetLinkDependencyDirection,
     setIsBlockedRunWarningOpen,
     onOpenCreateDependencyModal,
     onCancelCreateDependency,
@@ -1039,7 +1040,7 @@ const TaskDetailScreen: Component = () => {
           onClick={onCancelLinkDependency}
         >
           <section
-            class="projects-modal task-create-dependency-modal border-base-content/15 bg-base-200 rounded-none border"
+            class="projects-modal task-create-dependency-modal task-link-dependency-modal border-base-content/15 bg-base-200 rounded-none border"
             role="dialog"
             aria-modal="true"
             aria-labelledby="task-link-dependency-modal-title"
@@ -1050,14 +1051,31 @@ const TaskDetailScreen: Component = () => {
                 id="task-link-dependency-modal-title"
                 class="task-delete-modal-title"
               >
-                {linkDependencyDirection() === "parent"
-                  ? "Link blocking prerequisite"
-                  : "Link blocked task"}
+                Link task
               </h2>
               <p class="text-base-content/55 mt-1 text-xs">
                 Search existing tasks and attach them as dependencies.
               </p>
             </div>
+            <label class="projects-field">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                <span class="field-label-text">Relationship</span>
+              </span>
+              <select
+                class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
+                value={linkDependencyDirection()}
+                onChange={(event) =>
+                  onSetLinkDependencyDirection(
+                    event.currentTarget.value as "parent" | "child",
+                  )
+                }
+                disabled={isLinkingDependency()}
+                aria-label="Dependency relationship"
+              >
+                <option value="parent">Blocked by</option>
+                <option value="child">Blocking</option>
+              </select>
+            </label>
             <label class="projects-field">
               <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                 <span class="field-label-text">Search tasks</span>
@@ -1093,9 +1111,22 @@ const TaskDetailScreen: Component = () => {
                 <For each={filteredLinkCandidates()}>
                   {(candidateTask) => (
                     <li class="task-link-candidate-item">
-                      <div class="task-dependency-main">
-                        <p class="task-dependency-title">
-                          {dependencyDisplayLabel({
+                      <div class="task-link-candidate-main">
+                        <div class="task-link-candidate-primary">
+                          <span class="task-dependency-key">
+                            {candidateTask.displayKey?.trim() || "Task"}
+                          </span>
+                          <p class="task-dependency-title task-link-candidate-title">
+                            {candidateTask.title?.trim() || "Untitled task"}
+                          </p>
+                          <span
+                            class={`project-task-status project-task-status--${candidateTask.status} task-link-candidate-status`}
+                          >
+                            {formatStatus(candidateTask.status)}
+                          </span>
+                        </div>
+                        <p class="task-link-candidate-repository">
+                          {dependencyScopeLabel({
                             id: candidateTask.id,
                             displayKey: candidateTask.displayKey || "",
                             title: candidateTask.title,
@@ -1107,30 +1138,10 @@ const TaskDetailScreen: Component = () => {
                             updatedAt: candidateTask.updatedAt,
                           })}
                         </p>
-                        <div class="task-dependency-meta">
-                          <span
-                            class={`project-task-status project-task-status--${candidateTask.status}`}
-                          >
-                            {formatStatus(candidateTask.status)}
-                          </span>
-                          <span class="task-dependency-scope">
-                            {dependencyScopeLabel({
-                              id: candidateTask.id,
-                              displayKey: candidateTask.displayKey || "",
-                              title: candidateTask.title,
-                              status: candidateTask.status,
-                              targetRepositoryName:
-                                candidateTask.targetRepositoryName,
-                              targetRepositoryPath:
-                                candidateTask.targetRepositoryPath,
-                              updatedAt: candidateTask.updatedAt,
-                            })}
-                          </span>
-                        </div>
                       </div>
                       <button
                         type="button"
-                        class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
+                        class="btn btn-xs border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-3 text-[11px] font-semibold"
                         onClick={() => void onLinkDependency(candidateTask.id)}
                         disabled={isLinkingDependency()}
                         aria-label={`Link ${dependencyDisplayLabel({
