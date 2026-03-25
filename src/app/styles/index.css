@@ -4339,7 +4339,8 @@ textarea::placeholder {
 }
 
 .run-chat-message--assistant .run-chat-message__body {
-  width: min(100%, var(--run-chat-prose-max));
+  width: 100%;
+  max-width: var(--run-chat-prose-max);
 }
 
 .run-chat-assistant-message,
