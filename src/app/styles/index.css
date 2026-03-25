@@ -4131,6 +4131,7 @@ textarea::placeholder {
   line-height: 1.45;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
   display: flex;
   flex-direction: column;
   gap: 2px;

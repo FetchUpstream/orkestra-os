@@ -37,6 +37,8 @@ type LogLine = {
 
 const LOG_NEAR_BOTTOM_THRESHOLD = 32;
 const LOG_NEW_ROW_HIGHLIGHT_MS = 3_000;
+const LOG_RENDER_CHUNK_SIZE = 100;
+const LOG_PREPEND_TRIGGER_THRESHOLD = 96;
 
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
@@ -210,11 +212,16 @@ const NewRunDetailScreen: Component = () => {
   const [newlyArrivedLogIds, setNewlyArrivedLogIds] = createSignal<Set<string>>(
     new Set(),
   );
+  const [renderedLogWindowStart, setRenderedLogWindowStart] = createSignal(0);
+  const [renderedLogWindowEnd, setRenderedLogWindowEnd] = createSignal(0);
+  const [isPrependingOlderLogs, setIsPrependingOlderLogs] = createSignal(false);
   let drawerOverlayCloseButtonRef: HTMLButtonElement | undefined;
   let terminalOverlayCloseButtonRef: HTMLButtonElement | undefined;
   let commitModalTextareaRef: HTMLTextAreaElement | undefined;
   let logsScrollContainerRef: HTMLDivElement | undefined;
   const newLogHighlightTimeouts = new Map<string, number>();
+  let pendingPrependScrollHeight: number | null = null;
+  let pendingPrependFrame: number | undefined;
 
   const isOverlayOpen = createMemo(() => overlayState() !== "none");
   const isTerminalOverlayOpen = createMemo(
@@ -495,6 +502,13 @@ const NewRunDetailScreen: Component = () => {
       isSearchMatch: query.length > 0 && line.searchText.includes(query),
     }));
   });
+  const mountedLogRows = createMemo(() => {
+    const rows = filteredLogRows();
+    const total = rows.length;
+    const end = Math.min(renderedLogWindowEnd(), total);
+    const start = Math.min(renderedLogWindowStart(), end);
+    return rows.slice(start, end);
+  });
 
   const overlayTitle = createMemo(() => {
     switch (overlayState()) {
@@ -575,18 +589,85 @@ const NewRunDetailScreen: Component = () => {
     container.scrollTop = container.scrollHeight;
   };
 
+  const resolveLatestLogWindow = (totalRows: number) => {
+    const end = totalRows;
+    const start = Math.max(0, end - LOG_RENDER_CHUNK_SIZE);
+    return { start, end };
+  };
+
+  const mountLatestLogWindow = () => {
+    const { start, end } = resolveLatestLogWindow(filteredLogRows().length);
+    setRenderedLogWindowStart(start);
+    setRenderedLogWindowEnd(end);
+  };
+
+  const prependOlderLogChunk = () => {
+    const container = logsScrollContainerRef;
+    if (!container || isPrependingOlderLogs()) {
+      return;
+    }
+
+    if (container.scrollTop > LOG_PREPEND_TRIGGER_THRESHOLD) {
+      return;
+    }
+
+    const currentStart = renderedLogWindowStart();
+    if (currentStart <= 0) {
+      return;
+    }
+
+    const nextStart = Math.max(0, currentStart - LOG_RENDER_CHUNK_SIZE);
+    if (nextStart === currentStart) {
+      return;
+    }
+
+    pendingPrependScrollHeight = container.scrollHeight;
+    setIsPrependingOlderLogs(true);
+    setRenderedLogWindowStart(nextStart);
+
+    if (pendingPrependFrame !== undefined) {
+      cancelAnimationFrame(pendingPrependFrame);
+    }
+
+    pendingPrependFrame = requestAnimationFrame(() => {
+      const activeContainer = logsScrollContainerRef;
+      const previousScrollHeight = pendingPrependScrollHeight;
+      pendingPrependScrollHeight = null;
+
+      if (activeContainer && previousScrollHeight !== null) {
+        const heightDelta = activeContainer.scrollHeight - previousScrollHeight;
+        if (heightDelta > 0) {
+          activeContainer.scrollTop += heightDelta;
+        }
+      }
+
+      setIsPrependingOlderLogs(false);
+      pendingPrependFrame = undefined;
+    });
+  };
+
   const onLogsScroll = () => {
     const nearBottom = isNearLogsBottom();
-    setIsFollowingLogs(nearBottom);
     if (nearBottom) {
+      if (!isFollowingLogs()) {
+        mountLatestLogWindow();
+      }
+      setIsFollowingLogs(true);
       setHasUnseenLogs(false);
+      return;
     }
+
+    setIsFollowingLogs(false);
+    prependOlderLogChunk();
   };
 
   const jumpToLatestLogs = () => {
+    mountLatestLogWindow();
     setIsFollowingLogs(true);
     setHasUnseenLogs(false);
-    scrollLogsToLatest("smooth");
+    requestAnimationFrame(() => {
+      scrollLogsToLatest("smooth");
+    });
   };
 
   const openCommitModal = () => {
@@ -637,6 +718,7 @@ const NewRunDetailScreen: Component = () => {
       return;
     }
 
+    mountLatestLogWindow();
     setIsFollowingLogs(true);
     setHasUnseenLogs(false);
 
@@ -696,7 +778,36 @@ const NewRunDetailScreen: Component = () => {
     return currentIds;
   });
 
+  createEffect(() => {
+    if (!isLogsDrawerOpen()) {
+      return;
+    }
+
+    const rows = filteredLogRows();
+    const totalRows = rows.length;
+
+    if (isFollowingLogs()) {
+      const { start, end } = resolveLatestLogWindow(totalRows);
+      setRenderedLogWindowStart(start);
+      setRenderedLogWindowEnd(end);
+      return;
+    }
+
+    if (renderedLogWindowEnd() > totalRows) {
+      setRenderedLogWindowEnd(totalRows);
+    }
+
+    const end = Math.min(renderedLogWindowEnd(), totalRows);
+    if (renderedLogWindowStart() >= end && end > 0) {
+      setRenderedLogWindowStart(Math.max(0, end - LOG_RENDER_CHUNK_SIZE));
+    }
+  });
+
   onCleanup(() => {
+    if (pendingPrependFrame !== undefined) {
+      cancelAnimationFrame(pendingPrependFrame);
+      pendingPrependFrame = undefined;
+    }
     for (const timeoutId of newLogHighlightTimeouts.values()) {
       clearTimeout(timeoutId);
     }
@@ -1012,7 +1123,7 @@ const NewRunDetailScreen: Component = () => {
                           aria-atomic="false"
                           onScroll={() => onLogsScroll()}
                         >
-                          <For each={filteredLogRows()}>
+                          <For each={mountedLogRows()}>
                             {(line) => (
                               <div
                                 classList={{

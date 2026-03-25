@@ -117,6 +117,9 @@ const createModelStub = (options?: {
   isRunCompleted?: boolean;
 }) => {
   const [diffPaths, setDiffPaths] = createSignal(options?.diffPaths ?? []);
+  const [agentEvents, setAgentEvents] = createSignal(
+    options?.agentEvents ?? [],
+  );
   const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(
     options?.isSubmittingPrompt ?? false,
   );
@@ -200,12 +203,12 @@ const createModelStub = (options?: {
         streamConnected: options?.agent?.streamConnected ?? true,
       }),
       events: () =>
-        options?.agentEvents?.map((event) => ({
+        agentEvents().map((event) => ({
           runId: event.runId ?? "run-1",
           ts: event.ts ?? null,
           event: event.event ?? "unknown",
           data: event.data ?? null,
-        })) ?? [],
+        })),
       submitError: () => "",
       isSubmittingPrompt,
       submitPrompt: async (value: string, options?: unknown) => {
@@ -215,9 +218,36 @@ const createModelStub = (options?: {
         return accepted;
       },
     },
+    __setAgentEvents: setAgentEvents,
   } as unknown as ReturnType<
     typeof import("../model/useRunDetailModel").useRunDetailModel
-  > & { git: { refreshStatus: ReturnType<typeof vi.fn> } };
+  > & {
+    git: { refreshStatus: ReturnType<typeof vi.fn> };
+    __setAgentEvents: (
+      next:
+        | Array<{
+            runId?: string;
+            ts?: string | number | null;
+            event?: string;
+            data?: unknown;
+          }>
+        | ((
+            previous: Array<{
+              runId?: string;
+              ts?: string | number | null;
+              event?: string;
+              data?: unknown;
+            }>,
+          ) =>
+            | Array<{
+                runId?: string;
+                ts?: string | number | null;
+                event?: string;
+                data?: unknown;
+              }>
+            | undefined),
+    ) => void;
+  };
 };
 
 describe("NewRunDetailScreen git actions", () => {
@@ -912,6 +942,121 @@ describe("NewRunDetailScreen git actions", () => {
       expect(
         screen.getByRole("button", { name: "Jump to latest" }),
       ).toBeTruthy();
+    });
+
+    topbar.cleanup();
+  });
+
+  it("mounts only the latest window by default and prepends older chunks on upward scroll", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        agentEvents: Array.from({ length: 250 }, (_, index) => ({
+          ts: `2026-01-01T15:31:${String(index % 60).padStart(2, "0")}.000Z`,
+          event: "tool.output",
+          data: `Line ${index}`,
+        })),
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Logs");
+
+    const stream = await screen.findByRole("log");
+    let scrollTopValue = 0;
+    Object.defineProperty(stream, "scrollHeight", {
+      configurable: true,
+      get: () =>
+        document.querySelectorAll(".run-chat-log-stream__line").length * 24,
+    });
+    Object.defineProperty(stream, "clientHeight", {
+      value: 300,
+      configurable: true,
+    });
+    Object.defineProperty(stream, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (next: number) => {
+        scrollTopValue = next;
+      },
+    });
+    Object.defineProperty(stream, "scrollTo", {
+      configurable: true,
+      value: ({ top }: { top: number }) => {
+        scrollTopValue = top;
+      },
+    });
+
+    await waitFor(() => {
+      expect(
+        document.querySelectorAll(".run-chat-log-stream__line").length,
+      ).toBe(100);
+      expect(screen.getByText("Line 249")).toBeTruthy();
+      expect(screen.getByText("Line 150")).toBeTruthy();
+      expect(screen.queryByText("Line 149")).toBeNull();
+    });
+
+    scrollTopValue = 0;
+    fireEvent.scroll(stream);
+
+    await waitFor(() => {
+      expect(
+        document.querySelectorAll(".run-chat-log-stream__line").length,
+      ).toBe(200);
+      expect(screen.getByText("Line 50")).toBeTruthy();
+      expect(screen.queryByText("Line 49")).toBeNull();
+      expect(scrollTopValue).toBeGreaterThan(0);
+      expect(
+        screen.getByRole("button", { name: "Jump to latest" }),
+      ).toBeTruthy();
+    });
+
+    topbar.cleanup();
+  });
+
+  it("keeps rendered rows bounded to the latest window while following live logs", async () => {
+    const model = createModelStub({
+      agentEvents: Array.from({ length: 120 }, (_, index) => ({
+        ts: `2026-01-01T15:32:${String(index % 60).padStart(2, "0")}.000Z`,
+        event: "tool.output",
+        data: `Stream line ${index}`,
+      })),
+    });
+    modelFactoryMock.mockReturnValue(model);
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Logs");
+
+    await waitFor(() => {
+      expect(
+        document.querySelectorAll(".run-chat-log-stream__line").length,
+      ).toBe(100);
+      expect(screen.queryByText("Stream line 19")).toBeNull();
+      expect(screen.getByText("Stream line 20")).toBeTruthy();
+      expect(screen.getByText("Stream line 119")).toBeTruthy();
+    });
+
+    model.__setAgentEvents([
+      ...Array.from({ length: 120 }, (_, index) => ({
+        ts: `2026-01-01T15:32:${String(index % 60).padStart(2, "0")}.000Z`,
+        event: "tool.output",
+        data: `Stream line ${index}`,
+      })),
+      {
+        ts: "2026-01-01T15:33:00.000Z",
+        event: "tool.output",
+        data: "Stream line 120",
+      },
+    ]);
+
+    await waitFor(() => {
+      expect(
+        document.querySelectorAll(".run-chat-log-stream__line").length,
+      ).toBe(100);
+      expect(screen.queryByText("Stream line 20")).toBeNull();
+      expect(screen.getByText("Stream line 21")).toBeTruthy();
+      expect(screen.getByText("Stream line 120")).toBeTruthy();
     });
 
     topbar.cleanup();
