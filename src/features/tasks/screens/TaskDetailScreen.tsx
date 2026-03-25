@@ -207,10 +207,13 @@ const TaskDetailScreen: Component = () => {
           backHref: backHref(),
           backLabel: backLabel(),
           autosaveState: autosaveState(),
+          isCreatingRun: isCreatingRun(),
+          isBlocked: isBlocked(),
           isChangingStatus: isChangingStatus(),
           isTransitionMenuOpen: isTransitionMenuOpen(),
           isDeleting: isDeleting(),
           validTransitionOptions: validTransitionOptions(),
+          onOpenRunSettingsModal,
           onToggleTransitionMenu: () =>
             setIsTransitionMenuOpen((current) => !current),
           onCloseTransitionMenu: () => setIsTransitionMenuOpen(false),
@@ -350,19 +353,6 @@ const TaskDetailScreen: Component = () => {
                         <div class="task-detail-panel-section task-runs-panel">
                           <div class="task-dependencies-heading-row">
                             <h2 class="project-section-title">Runs</h2>
-                            <button
-                              type="button"
-                              class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
-                              onClick={onOpenRunSettingsModal}
-                              disabled={isCreatingRun()}
-                              aria-label={
-                                isBlocked()
-                                  ? "New run blocked by dependencies"
-                                  : "New run"
-                              }
-                            >
-                              New Run
-                            </button>
                           </div>
                           <Show when={runSelectionOptionsError()}>
                             <p class="project-placeholder-text">

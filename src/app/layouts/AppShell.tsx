@@ -26,10 +26,13 @@ type TaskDetailTopbarConfig =
       backHref: string;
       backLabel: string;
       autosaveState: "idle" | "saving" | "saved" | "error";
+      isCreatingRun: boolean;
+      isBlocked: boolean;
       isChangingStatus: boolean;
       isTransitionMenuOpen: boolean;
       isDeleting: boolean;
       validTransitionOptions: TaskStatus[];
+      onOpenRunSettingsModal: () => void;
       onToggleTransitionMenu: () => void;
       onCloseTransitionMenu: () => void;
       onSetStatus: (status: TaskStatus) => void | Promise<void>;
@@ -431,6 +434,19 @@ const AppShell: Component<AppShellProps> = (props) => {
                               : "Autosave failed"}
                         </span>
                       </Show>
+                      <button
+                        type="button"
+                        class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+                        onClick={config.onOpenRunSettingsModal}
+                        disabled={config.isCreatingRun}
+                        aria-label={
+                          config.isBlocked
+                            ? "New run blocked by dependencies"
+                            : "New run"
+                        }
+                      >
+                        New Run
+                      </button>
                       <div class="relative flex items-center gap-2">
                         <button
                           type="button"

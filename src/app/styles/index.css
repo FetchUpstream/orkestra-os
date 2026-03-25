@@ -1745,10 +1745,32 @@ textarea::placeholder {
   margin-top: 2px;
 }
 
-.task-detail-display-key {
-  font-size: 0.74rem;
+.task-detail-secondary-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: -2px;
+}
+
+.task-detail-secondary-meta-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.task-detail-secondary-meta-label {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
   color: var(--text-subtle);
-  letter-spacing: 0.02em;
+}
+
+.task-detail-secondary-meta-value {
+  font-size: 0.77rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
 .task-detail-header-actions {

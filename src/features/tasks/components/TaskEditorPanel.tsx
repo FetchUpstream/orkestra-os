@@ -41,12 +41,12 @@ const TaskEditorPanel: Component<Props> = (props) => {
 
   return (
     <section class="projects-panel task-detail-main-card">
-      <label class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
-        <span class="field-label-text">Title</span>
-        <Show when={props.mode === "create"}>
+      <Show when={props.mode === "create"}>
+        <label class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+          <span class="field-label-text">Title</span>
           <span class="field-required">required</span>
-        </Show>
-      </label>
+        </label>
+      </Show>
       <input
         class="task-detail-title-input"
         value={props.title()}
@@ -62,7 +62,7 @@ const TaskEditorPanel: Component<Props> = (props) => {
       <div class="task-detail-meta-row">
         <Show when={props.mode === "detail" && props.displayKey?.().trim()}>
           {(displayKey) => (
-            <span class="projects-list-meta task-detail-display-key">
+            <span class="border-base-content/25 bg-base-100 text-base-content/70 inline-flex h-5 items-center rounded-sm border px-1.5 font-mono text-[10px] font-semibold tracking-[0.08em] uppercase shadow-[inset_0_1px_0_rgb(255_255_255_/_0.05)]">
               {displayKey()}
             </span>
           )}
@@ -115,22 +115,34 @@ const TaskEditorPanel: Component<Props> = (props) => {
         </Show>
       </div>
 
-      <div class="task-detail-summary-strip">
-        <div class="task-detail-summary-item">
-          <span class="task-detail-summary-label">Repository scope</span>
-          <span class="task-detail-summary-value">
-            {props.repositoryScope?.() || "No repository"}
+      <Show
+        when={props.mode === "detail"}
+        fallback={
+          <div class="task-detail-summary-strip">
+            <div class="task-detail-summary-item">
+              <span class="task-detail-summary-label">Repository scope</span>
+              <span class="task-detail-summary-value">
+                {props.repositoryScope?.() || "No repository"}
+              </span>
+            </div>
+          </div>
+        }
+      >
+        <div class="task-detail-secondary-meta-row">
+          <span class="task-detail-secondary-meta-item">
+            <span class="task-detail-secondary-meta-label">Repository</span>
+            <span class="task-detail-secondary-meta-value">
+              {props.repositoryScope?.() || "No repository"}
+            </span>
           </span>
-        </div>
-        <Show when={props.mode === "detail"}>
-          <div class="task-detail-summary-item">
-            <span class="task-detail-summary-label">Updated</span>
-            <span class="task-detail-summary-value">
+          <span class="task-detail-secondary-meta-item">
+            <span class="task-detail-secondary-meta-label">Updated</span>
+            <span class="task-detail-secondary-meta-value">
               {formatDateTime(props.updatedAt?.())}
             </span>
-          </div>
-        </Show>
-      </div>
+          </span>
+        </div>
+      </Show>
 
       <Show when={props.mode === "create"}>
         <label class="projects-field">
