@@ -330,7 +330,11 @@ describe("NewRunDetailScreen git actions", () => {
     await topbar.invokeAction("Git");
 
     await waitFor(() => {
-      expect(screen.getByText("Workflow complete")).toBeTruthy();
+      const completedIndicator = screen.getByText("MERGED");
+      expect(completedIndicator).toBeTruthy();
+      expect(completedIndicator.className).toContain(
+        "run-chat-git-drawer__button--success",
+      );
       expect(screen.queryByText("Commit changes")).toBeNull();
       expect(screen.queryByText("Rebase onto main")).toBeNull();
       expect(screen.queryByText("Merge into main")).toBeNull();

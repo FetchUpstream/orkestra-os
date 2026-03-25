@@ -924,10 +924,10 @@ const NewRunDetailScreen: Component = () => {
                               <div class="run-chat-git-drawer__footer">
                                 <Show when={isWorkflowCompleted()}>
                                   <p
-                                    class="run-chat-git-drawer__completed"
+                                    class="run-chat-git-drawer__button run-chat-git-drawer__button--success"
                                     aria-live="polite"
                                   >
-                                    Workflow complete
+                                    MERGED
                                   </p>
                                 </Show>
                                 <Show when={primaryAction() === "rebase"}>
