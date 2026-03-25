@@ -133,10 +133,6 @@ const formatLogTimestamp = (ts: string | number | null): string => {
   return ts;
 };
 
-const formatBranchDirection = (ahead: number, behind: number): string => {
-  return `Ahead ${ahead} · Behind ${behind}`;
-};
-
 const resolveTaskTitle = (
   taskTitleValue: string | undefined,
   runValue: ReturnType<typeof useRunDetailModel>["run"] extends () => infer T
@@ -847,10 +843,15 @@ const NewRunDetailScreen: Component = () => {
                                     {status().sourceBranch.name}
                                   </p>
                                   <p class="run-chat-git-drawer__branch-sync">
-                                    {formatBranchDirection(
-                                      status().sourceBranch.ahead,
-                                      status().sourceBranch.behind,
-                                    )}
+                                    <span class="run-chat-git-drawer__branch-sync-positive">
+                                      +{status().sourceBranch.ahead}
+                                    </span>
+                                    <span class="run-chat-git-drawer__branch-sync-separator">
+                                      /
+                                    </span>
+                                    <span class="run-chat-git-drawer__branch-sync-negative">
+                                      -{status().sourceBranch.behind}
+                                    </span>
                                   </p>
                                 </article>
                                 <article class="run-chat-git-drawer__branch-row">
@@ -861,10 +862,15 @@ const NewRunDetailScreen: Component = () => {
                                     {status().worktreeBranch.name}
                                   </p>
                                   <p class="run-chat-git-drawer__branch-sync">
-                                    {formatBranchDirection(
-                                      status().worktreeBranch.ahead,
-                                      status().worktreeBranch.behind,
-                                    )}
+                                    <span class="run-chat-git-drawer__branch-sync-positive">
+                                      +{status().worktreeBranch.ahead}
+                                    </span>
+                                    <span class="run-chat-git-drawer__branch-sync-separator">
+                                      /
+                                    </span>
+                                    <span class="run-chat-git-drawer__branch-sync-negative">
+                                      -{status().worktreeBranch.behind}
+                                    </span>
                                   </p>
                                 </article>
                               </div>
@@ -890,10 +896,6 @@ const NewRunDetailScreen: Component = () => {
                                       ? "Changes detected"
                                       : "Unknown"}
                                 </span>
-                              </p>
-                              <p class="project-placeholder-text">
-                                Ahead/behind counts show committed branch sync.
-                                Working tree status covers local edits.
                               </p>
                               <Show
                                 when={model.git.lastActionMessage().length > 0}

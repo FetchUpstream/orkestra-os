@@ -251,7 +251,7 @@ describe("NewRunDetailScreen git actions", () => {
     topbar.cleanup();
   });
 
-  it("shows Source Control title and branch comparison labels", async () => {
+  it("shows Source Control title and compact signed branch sync", async () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         gitStatus: {
@@ -273,6 +273,15 @@ describe("NewRunDetailScreen git actions", () => {
       expect(screen.getByText("Current branch")).toBeTruthy();
       expect(screen.getByText("Repository status")).toBeTruthy();
       expect(screen.getByText("Working tree status")).toBeTruthy();
+      expect(screen.getByText("+0")).toBeTruthy();
+      expect(screen.getByText("-1")).toBeTruthy();
+      expect(screen.getByText("+2")).toBeTruthy();
+      expect(screen.getByText("-0")).toBeTruthy();
+      expect(
+        screen.queryByText(
+          "Ahead/behind counts show committed branch sync. Working tree status covers local edits.",
+        ),
+      ).toBeNull();
     });
     topbar.cleanup();
   });

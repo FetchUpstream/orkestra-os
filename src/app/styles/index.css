@@ -3988,10 +3988,25 @@ textarea::placeholder {
 }
 
 .run-chat-git-drawer__branch-sync {
-  font-size: 0.76rem;
+  display: inline-flex;
+  align-items: center;
   justify-self: end;
+  gap: 0.35rem;
+  font-size: 0.76rem;
   text-align: right;
-  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-chat-git-drawer__branch-sync-positive {
+  color: var(--success);
+}
+
+.run-chat-git-drawer__branch-sync-separator {
+  color: var(--text-subtle);
+}
+
+.run-chat-git-drawer__branch-sync-negative {
+  color: var(--danger);
 }
 
 .run-chat-git-drawer__state-row {
