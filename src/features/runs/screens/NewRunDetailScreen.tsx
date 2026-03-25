@@ -469,20 +469,24 @@ const NewRunDetailScreen: Component = () => {
                   },
                 ]
               : []),
-            {
-              key: "terminal",
-              label: "Terminal",
-              icon: "run.terminal",
-              pressed: isTerminalOpen,
-              onClick: () => toggleOverlay("sheet-terminal"),
-            },
-            {
-              key: "review",
-              label: "Review",
-              icon: "run.review",
-              pressed: isReviewOpen,
-              onClick: () => toggleOverlay("drawer-diff"),
-            },
+            ...(!isReadOnlyChatMode
+              ? [
+                  {
+                    key: "terminal",
+                    label: "Terminal",
+                    icon: "run.terminal",
+                    pressed: isTerminalOpen,
+                    onClick: () => toggleOverlay("sheet-terminal"),
+                  },
+                  {
+                    key: "review",
+                    label: "Review",
+                    icon: "run.review",
+                    pressed: isReviewOpen,
+                    onClick: () => toggleOverlay("drawer-diff"),
+                  },
+                ]
+              : []),
             {
               key: "git",
               label: "Git",
