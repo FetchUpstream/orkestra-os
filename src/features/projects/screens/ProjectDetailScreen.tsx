@@ -1,5 +1,6 @@
 import { A, useNavigate } from "@solidjs/router";
 import { For, Show, type Component } from "solid-js";
+import BackIconLink from "../../../components/ui/BackIconLink";
 import {
   ProjectDetailErrorState,
   ProjectDetailLoadingState,
@@ -38,28 +39,7 @@ const ProjectDetailScreen: Component = () => {
             {(projectValue) => (
               <div class="project-detail-container">
                 <nav class="project-detail-nav" aria-label="Project navigation">
-                  <A
-                    href="/projects"
-                    class="project-detail-back-link project-detail-back-link--icon btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
-                    aria-label="Back to projects"
-                    title="Back to projects"
-                  >
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M10 12L6 8L10 4"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      />
-                    </svg>
-                  </A>
+                  <BackIconLink href="/projects" label="projects" />
                 </nav>
 
                 <header

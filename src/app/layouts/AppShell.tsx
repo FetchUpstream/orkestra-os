@@ -15,6 +15,7 @@ import type { TaskStatus } from "../lib/tasks";
 import MainContent from "../../components/layout/MainContent";
 import SidebarNav from "../../components/layout/SidebarNav";
 import Topbar from "../../components/layout/Topbar";
+import { AppIcon } from "../../components/ui/icons";
 import { formatStatus } from "../../features/tasks/utils/taskDetail";
 
 type TaskDetailTopbarConfig =
@@ -48,24 +49,6 @@ type TaskDetailTopbarConfig =
       onRequestCreateTask: () => void | Promise<void>;
       onRequestClose: () => void;
     };
-
-const CloseIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
-    <path d="M18.3 5.71 12 12l6.3 6.29-1.42 1.42L10.59 13.4 4.29 19.7l-1.42-1.4L9.17 12 2.87 5.7l1.42-1.42 6.3 6.3 6.29-6.3z" />
-  </svg>
-);
-
-const StatusTransitionIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
-    <path d="M5 11h11.17l-3.58-3.59L14 6l6 6-6 6-1.41-1.41L16.17 13H5z" />
-  </svg>
-);
-
-const DeleteIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
-    <path d="M6 7h12l-1 14H7L6 7zm3-4h6l1 2h4v2H4V5h4l1-2z" />
-  </svg>
-);
 
 type AppShellProps = {
   children?: JSX.Element;
@@ -374,7 +357,7 @@ const AppShell: Component<AppShellProps> = (props) => {
                   aria-expanded={isSidebarVisible() ? "true" : "false"}
                   onClick={onMobileOpen}
                 >
-                  <span aria-hidden="true">☰</span>
+                  <AppIcon name="nav.menu" size={18} stroke={1.75} />
                 </button>
               ) : null
             }
@@ -418,7 +401,7 @@ const AppShell: Component<AppShellProps> = (props) => {
                             config.onRequestClose();
                           }}
                         >
-                          <CloseIcon />
+                          <AppIcon name="panel.close" size={16} stroke={1.75} />
                         </a>
                       </div>
                     );
@@ -466,7 +449,11 @@ const AppShell: Component<AppShellProps> = (props) => {
                           aria-haspopup="menu"
                           aria-expanded={config.isTransitionMenuOpen}
                         >
-                          <StatusTransitionIcon />
+                          <AppIcon
+                            name="task.transition"
+                            size={16}
+                            stroke={1.75}
+                          />
                         </button>
                         <Show
                           when={
@@ -518,7 +505,7 @@ const AppShell: Component<AppShellProps> = (props) => {
                           config.isDeleting ? "Deleting task" : "Delete task"
                         }
                       >
-                        <DeleteIcon />
+                        <AppIcon name="action.delete" size={16} stroke={1.75} />
                       </button>
                       <a
                         href={config.backHref}
@@ -526,7 +513,7 @@ const AppShell: Component<AppShellProps> = (props) => {
                         aria-label={`Back to ${config.backLabel}`}
                         title={`Back to ${config.backLabel}`}
                       >
-                        <CloseIcon />
+                        <AppIcon name="panel.close" size={16} stroke={1.75} />
                       </a>
                     </div>
                   );
@@ -554,7 +541,11 @@ const AppShell: Component<AppShellProps> = (props) => {
                       aria-label="Project settings"
                       title="Project settings"
                     >
-                      <span aria-hidden="true">⚙</span>
+                      <AppIcon
+                        name="project.settings"
+                        size={16}
+                        stroke={1.75}
+                      />
                     </a>
                   ) : null}
                 </>
@@ -565,7 +556,7 @@ const AppShell: Component<AppShellProps> = (props) => {
                   aria-label="Close project settings"
                   title="Close project settings"
                 >
-                  <span aria-hidden="true">✕</span>
+                  <AppIcon name="panel.close" size={16} stroke={1.75} />
                 </a>
               ) : undefined
             }

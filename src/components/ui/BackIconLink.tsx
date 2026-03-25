@@ -1,5 +1,6 @@
 import { A } from "@solidjs/router";
 import type { Component } from "solid-js";
+import { AppIcon } from "./icons";
 
 type BackIconLinkProps = {
   href: string;
@@ -18,21 +19,7 @@ const BackIconLink: Component<BackIconLinkProps> = (props) => {
 
   return (
     <A href={props.href} class={classes()} aria-label={title()} title={title()}>
-      <svg
-        width="16"
-        height="16"
-        viewBox="0 0 16 16"
-        fill="none"
-        aria-hidden="true"
-      >
-        <path
-          d="M10 12L6 8L10 4"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
-      </svg>
+      <AppIcon name="nav.back" size={16} stroke={1.75} />
     </A>
   );
 };

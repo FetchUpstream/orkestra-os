@@ -1,6 +1,7 @@
 import { A } from "@solidjs/router";
 import { For, Show, type Component } from "solid-js";
 import type { Project } from "../../../app/lib/projects";
+import { AppIcon } from "../../../components/ui/icons";
 
 type Props = {
   projects: () => Project[];
@@ -12,12 +13,6 @@ type Props = {
   onCloneProject: (project: Project) => void;
   onDeleteProject: (project: Project) => void;
 };
-
-const EditIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M3 17.25V21h3.75L18.81 8.94l-3.75-3.75L3 17.25zm17.71-10.04a.996.996 0 0 0 0-1.41L18.2 3.29a.996.996 0 1 0-1.41 1.41l2.5 2.5c.39.39 1.03.39 1.42.01z" />
-  </svg>
-);
 
 const ProjectsListPanel: Component<Props> = (props) => (
   <section
@@ -88,7 +83,7 @@ const ProjectsListPanel: Component<Props> = (props) => (
                     }
                     onClick={() => props.onEditProject(project.id)}
                   >
-                    <EditIcon />
+                    <AppIcon name="action.edit" size={14} stroke={1.5} />
                   </button>
                 </span>
               </span>

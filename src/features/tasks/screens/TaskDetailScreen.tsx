@@ -1,6 +1,7 @@
 import { For, Show, createEffect, onCleanup, type Component } from "solid-js";
 import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
+import { AppIcon } from "../../../components/ui/icons";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
 import TaskEditorPanel from "../components/TaskEditorPanel";
 import {
@@ -87,25 +88,6 @@ const getRunPrimaryLabel = (runItem: {
   if (displayKey) return displayKey;
   return "Run";
 };
-
-const DeleteIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M6 7h12l-1 14H7L6 7zm3-4h6l1 2h4v2H4V5h4l1-2z" />
-  </svg>
-);
-
-const PlusIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M11 5h2v14h-2z" />
-    <path d="M5 11h14v2H5z" />
-  </svg>
-);
-
-const LinkIcon: Component = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M10.59 13.41a1.996 1.996 0 0 0 2.82 0l2.83-2.83a1.995 1.995 0 1 0-2.82-2.82l-1.42 1.41-1.41-1.41 1.41-1.42a3.995 3.995 0 1 1 5.65 5.65l-2.82 2.83a3.995 3.995 0 0 1-5.66 0l1.42-1.41Zm2.82-2.82 1.41 1.41-1.41 1.42a3.995 3.995 0 0 1-5.65-5.66l2.82-2.82a3.995 3.995 0 0 1 5.66 5.65l-1.42 1.41-1.41-1.41 1.41-1.41a1.995 1.995 0 1 0-2.82-2.82l-2.83 2.82a1.996 1.996 0 0 0 2.82 2.83Z" />
-  </svg>
-);
 
 const TaskDetailScreen: Component = () => {
   const {
@@ -463,7 +445,11 @@ const TaskDetailScreen: Component = () => {
                                               : "Delete run"
                                           }
                                         >
-                                          <DeleteIcon />
+                                          <AppIcon
+                                            name="action.delete"
+                                            size={14}
+                                            stroke={1.5}
+                                          />
                                         </button>
                                         <A
                                           href={`/runs/${runItem.id}`}
@@ -596,7 +582,11 @@ const TaskDetailScreen: Component = () => {
                                           aria-label="Create parent dependency"
                                           title="Create parent dependency"
                                         >
-                                          <PlusIcon />
+                                          <AppIcon
+                                            name="action.add"
+                                            size={14}
+                                            stroke={1.5}
+                                          />
                                         </button>
                                         <button
                                           type="button"
@@ -607,7 +597,11 @@ const TaskDetailScreen: Component = () => {
                                           aria-label="Link parent dependency"
                                           title="Link parent dependency"
                                         >
-                                          <LinkIcon />
+                                          <AppIcon
+                                            name="action.link"
+                                            size={14}
+                                            stroke={1.5}
+                                          />
                                         </button>
                                       </div>
                                     </div>
@@ -703,7 +697,11 @@ const TaskDetailScreen: Component = () => {
                                                           : "Remove dependency"
                                                       }
                                                     >
-                                                      <DeleteIcon />
+                                                      <AppIcon
+                                                        name="action.delete"
+                                                        size={14}
+                                                        stroke={1.5}
+                                                      />
                                                     </button>
                                                   </div>
                                                 </div>
@@ -735,7 +733,11 @@ const TaskDetailScreen: Component = () => {
                                           aria-label="Create blocked task"
                                           title="Create blocked task"
                                         >
-                                          <PlusIcon />
+                                          <AppIcon
+                                            name="action.add"
+                                            size={14}
+                                            stroke={1.5}
+                                          />
                                         </button>
                                         <button
                                           type="button"
@@ -746,7 +748,11 @@ const TaskDetailScreen: Component = () => {
                                           aria-label="Link blocked task"
                                           title="Link blocked task"
                                         >
-                                          <LinkIcon />
+                                          <AppIcon
+                                            name="action.link"
+                                            size={14}
+                                            stroke={1.5}
+                                          />
                                         </button>
                                       </div>
                                     </div>
@@ -842,7 +848,11 @@ const TaskDetailScreen: Component = () => {
                                                           : "Remove dependency"
                                                       }
                                                     >
-                                                      <DeleteIcon />
+                                                      <AppIcon
+                                                        name="action.delete"
+                                                        size={14}
+                                                        stroke={1.5}
+                                                      />
                                                     </button>
                                                   </div>
                                                 </div>
