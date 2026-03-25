@@ -60,6 +60,8 @@ const TaskCreateScreen: Component = () => {
                       .find((r) => r.id === model.targetRepositoryId())?.name ||
                     "No repository"
                   }
+                  projectId={() => model.params.projectId}
+                  repositoryId={model.targetRepositoryId}
                   targetRepositoryId={model.targetRepositoryId}
                   targetRepositories={model.repositories}
                   fieldErrors={model.fieldErrors}

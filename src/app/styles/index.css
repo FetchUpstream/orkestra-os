@@ -1888,6 +1888,38 @@ textarea::placeholder {
 /* Task detail Crepe overrides (keep frame-dark theme global) */
 .task-detail-page .task-guide-crepe-shell {
   background: var(--surface-alt);
+  position: relative;
+}
+
+.task-file-mention-dropdown {
+  position: fixed;
+  z-index: 70;
+  min-width: 320px;
+  max-width: min(560px, 92vw);
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 85%, #000 15%);
+  box-shadow: 0 10px 22px rgb(0 0 0 / 36%);
+}
+
+.task-file-mention-row {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.task-file-mention-option {
+  border: none;
+  background: transparent;
+}
+
+.task-file-mention-option.is-highlighted {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .task-detail-page .task-guide-crepe .milkdown,

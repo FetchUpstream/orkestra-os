@@ -201,3 +201,17 @@ export const cloneProject = async (
 export const deleteProject = async (id: string): Promise<void> => {
   await invoke("delete_project", { id });
 };
+
+export const searchProjectFiles = async (input: {
+  projectId: string;
+  repositoryId: string;
+  query: string;
+  limit?: number;
+}): Promise<string[]> => {
+  return invoke<string[]>("search_project_files", {
+    project_id: input.projectId,
+    repository_id: input.repositoryId,
+    query: input.query,
+    limit: input.limit,
+  });
+};

@@ -274,6 +274,10 @@ const TaskDetailScreen: Component = () => {
                         displayKey={() => taskValue().displayKey || ""}
                         projectName={projectName}
                         repositoryScope={() => repositoryLabel(taskValue())}
+                        projectId={() => taskValue().projectId ?? undefined}
+                        repositoryId={() =>
+                          taskValue().targetRepositoryId ?? undefined
+                        }
                         updatedAt={() => taskValue().updatedAt}
                         dependencyBadgeState={taskDependencyBadgeState}
                         onTitleInput={onEditTitleInput}

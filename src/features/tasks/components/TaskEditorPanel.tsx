@@ -28,6 +28,8 @@ type Props = {
   displayKey?: Accessor<string>;
   projectName?: Accessor<string | null>;
   repositoryScope?: Accessor<string>;
+  projectId?: Accessor<string | undefined>;
+  repositoryId?: Accessor<string | undefined>;
   updatedAt?: Accessor<string | null | undefined>;
   dependencyBadgeState?: Accessor<"blocked" | "ready" | "none">;
   targetRepositoryId?: Accessor<string>;
@@ -183,6 +185,8 @@ const TaskEditorPanel: Component<Props> = (props) => {
           placeholder="Describe the goal of this task in short .."
           onBlur={props.onDescriptionBlur}
           ariaLabel="Task description"
+          projectId={props.projectId?.()}
+          repositoryId={props.repositoryId?.()}
         />
       </div>
       <div class="task-detail-description-block task-detail-description-block--guide">
@@ -195,6 +199,8 @@ const TaskEditorPanel: Component<Props> = (props) => {
           placeholder="Create a detailed specific implementation guide for the AI to follow ..."
           onBlur={props.onImplementationGuideBlur}
           ariaLabel="Task implementation guide"
+          projectId={props.projectId?.()}
+          repositoryId={props.repositoryId?.()}
         />
       </div>
     </section>
