@@ -63,15 +63,19 @@ const TaskImplementationGuideCrepeEditor: Component<
   const insertMentionSelection = (path: string) => {
     if (!crepe) return;
     const state = mentionState();
-    if (!state.active || !state.range) return;
+    const range = state.range;
+    if (!state.active || !range) return;
 
     crepe.editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
-      const transaction = view.state.tr.insertText(
-        `\`${path}\` `,
-        state.range!.from,
-        state.range!.to,
-      );
+      const { from, to } = range;
+      const codeMark = view.state.schema.marks.code?.create();
+      let transaction = view.state.tr.insertText(`${path} `, from, to);
+
+      if (codeMark) {
+        transaction = transaction.addMark(from, from + path.length, codeMark);
+      }
+
       view.dispatch(transaction);
       view.focus();
     });
