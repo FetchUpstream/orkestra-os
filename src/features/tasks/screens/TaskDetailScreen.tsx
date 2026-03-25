@@ -1113,31 +1113,33 @@ const TaskDetailScreen: Component = () => {
                     <li class="task-link-candidate-item">
                       <div class="task-link-candidate-main">
                         <div class="task-link-candidate-primary">
-                          <span class="task-dependency-key">
-                            {candidateTask.displayKey?.trim() || "Task"}
-                          </span>
                           <p class="task-dependency-title task-link-candidate-title">
                             {candidateTask.title?.trim() || "Untitled task"}
                           </p>
+                        </div>
+                        <div class="task-link-candidate-subtitle">
+                          <span class="task-dependency-key">
+                            {candidateTask.displayKey?.trim() || "Task"}
+                          </span>
                           <span
                             class={`project-task-status project-task-status--${candidateTask.status} task-link-candidate-status`}
                           >
                             {formatStatus(candidateTask.status)}
                           </span>
+                          <p class="task-link-candidate-repository">
+                            {dependencyScopeLabel({
+                              id: candidateTask.id,
+                              displayKey: candidateTask.displayKey || "",
+                              title: candidateTask.title,
+                              status: candidateTask.status,
+                              targetRepositoryName:
+                                candidateTask.targetRepositoryName,
+                              targetRepositoryPath:
+                                candidateTask.targetRepositoryPath,
+                              updatedAt: candidateTask.updatedAt,
+                            })}
+                          </p>
                         </div>
-                        <p class="task-link-candidate-repository">
-                          {dependencyScopeLabel({
-                            id: candidateTask.id,
-                            displayKey: candidateTask.displayKey || "",
-                            title: candidateTask.title,
-                            status: candidateTask.status,
-                            targetRepositoryName:
-                              candidateTask.targetRepositoryName,
-                            targetRepositoryPath:
-                              candidateTask.targetRepositoryPath,
-                            updatedAt: candidateTask.updatedAt,
-                          })}
-                        </p>
                       </div>
                       <button
                         type="button"

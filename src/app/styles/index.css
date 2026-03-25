@@ -2491,7 +2491,6 @@ textarea::placeholder {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
 }
 
 .task-link-candidate-title {
@@ -2501,6 +2500,15 @@ textarea::placeholder {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text);
+  font-weight: 600;
+}
+
+.task-link-candidate-subtitle {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .task-link-candidate-status {
@@ -2514,6 +2522,7 @@ textarea::placeholder {
   font-size: 0.74rem;
   color: var(--text-subtle);
   font-family: var(--font-mono);
+  min-width: 0;
 }
 
 .task-dependencies-list {
