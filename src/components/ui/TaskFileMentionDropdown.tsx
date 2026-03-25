@@ -31,19 +31,11 @@ const TaskFileMentionDropdown: Component<Props> = (props) => {
           <Show
             when={props.results.length > 0}
             fallback={
-              <Show
-                when={props.loading}
-                fallback={
-                  <div class="task-file-mention-row">No matching files</div>
-                }
-              >
-                <div class="task-file-mention-row">Searching files…</div>
+              <Show when={!props.loading}>
+                <div class="task-file-mention-row">No matching files</div>
               </Show>
             }
           >
-            <Show when={props.loading}>
-              <div class="task-file-mention-row">Searching files…</div>
-            </Show>
             <For each={props.results}>
               {(path, index) => (
                 <button
