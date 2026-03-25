@@ -1905,6 +1905,72 @@ textarea::placeholder {
   border: 1px solid color-mix(in srgb, var(--border) 78%, var(--accent) 22%);
 }
 
+/* Task detail editor heading scale (scoped) */
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h1,
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h2,
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h3,
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h4,
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h5,
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h6 {
+  margin-bottom: 0.5rem;
+  color: var(--text);
+}
+
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h1 {
+  font-size: 1.5rem;
+  line-height: 1.25;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-top: 1.25rem;
+}
+
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h2 {
+  font-size: 1.3125rem;
+  line-height: 1.3;
+  font-weight: 620;
+  letter-spacing: -0.005em;
+  margin-top: 1.125rem;
+}
+
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h3 {
+  font-size: 1.125rem;
+  line-height: 1.35;
+  font-weight: 600;
+  margin-top: 1rem;
+}
+
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h4 {
+  font-size: 1rem;
+  line-height: 1.4;
+  font-weight: 600;
+  margin-top: 0.875rem;
+}
+
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h5 {
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  font-weight: 590;
+  letter-spacing: 0.005em;
+  margin-top: 0.875rem;
+}
+
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h6 {
+  font-size: 0.875rem;
+  line-height: 1.45;
+  font-weight: 580;
+  letter-spacing: 0.01em;
+  margin-top: 0.875rem;
+}
+
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h1:first-child,
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h2:first-child,
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h3:first-child,
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h4:first-child,
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h5:first-child,
+.task-detail-page .task-guide-crepe .milkdown .ProseMirror h6:first-child {
+  margin-top: 0;
+}
+
 .task-markdown-editor .cm-editor .cm-placeholder {
   color: var(--text-subtle);
 }
