@@ -141,11 +141,11 @@ const BoardScreen: Component = () => {
           </section>
         }
       >
-        <div class="board-columns min-h-0 flex-1 items-start">
+        <div class="board-columns min-h-0 flex-1">
           <For each={BOARD_COLUMNS}>
             {(column) => (
               <section
-                class="board-column border-base-content/10 flex min-h-[34rem] flex-col border-l bg-transparent p-0 first:border-l-0"
+                class="board-column border-base-content/10 flex flex-col border-l p-0 first:border-l-0"
                 classList={{
                   "board-column--drop-active":
                     activeDropStatus() === column.status,
