@@ -1,11 +1,15 @@
 import {
   IconArrowLeft,
   IconArrowRight,
+  IconFileText,
+  IconGitBranch,
+  IconGitCompare,
   IconLink,
   IconMenu2,
   IconPencil,
   IconPlus,
   IconSettings,
+  IconTerminal2,
   IconTrash,
   IconX,
 } from "@tabler/icons-solidjs";
@@ -21,6 +25,10 @@ const iconRegistry = {
   "action.link": IconLink,
   "action.edit": IconPencil,
   "task.transition": IconArrowRight,
+  "run.logs": IconFileText,
+  "run.terminal": IconTerminal2,
+  "run.review": IconGitCompare,
+  "run.git": IconGitBranch,
   "project.settings": IconSettings,
 } as const;
 

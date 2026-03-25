@@ -9,7 +9,6 @@ import {
   onCleanup,
   type Component,
 } from "solid-js";
-import BackIconLink from "../../../components/ui/BackIconLink";
 import NewRunChatWorkspace from "../components/NewRunChatWorkspace";
 import RunDiffDrawerPanel from "../components/RunDiffDrawerPanel";
 import { formatGitStateLabel } from "./gitStateLabels";
@@ -138,26 +137,6 @@ const formatBranchDirection = (ahead: number, behind: number): string => {
   return `ahead ${ahead} / behind ${behind}`;
 };
 
-const resolveRunDisplay = (
-  runValue: ReturnType<typeof useRunDetailModel>["run"] extends () => infer T
-    ? T
-    : never,
-): string => {
-  const displayKey = runValue?.displayKey?.trim();
-  if (displayKey) {
-    return displayKey;
-  }
-
-  if (
-    typeof runValue?.runNumber === "number" &&
-    Number.isFinite(runValue.runNumber)
-  ) {
-    return String(runValue.runNumber);
-  }
-
-  return "";
-};
-
 const resolveTaskTitle = (
   taskTitleValue: string | undefined,
   runValue: ReturnType<typeof useRunDetailModel>["run"] extends () => infer T
@@ -192,8 +171,6 @@ const NewRunDetailScreen: Component = () => {
   const [commitPromptDraft, setCommitPromptDraft] = createSignal("");
   const [isCommitPrefillLoading, setIsCommitPrefillLoading] =
     createSignal(false);
-  const [lastTriggerButton, setLastTriggerButton] =
-    createSignal<HTMLButtonElement | null>(null);
   let drawerOverlayCloseButtonRef: HTMLButtonElement | undefined;
   let terminalOverlayCloseButtonRef: HTMLButtonElement | undefined;
   let commitModalTextareaRef: HTMLTextAreaElement | undefined;
@@ -315,72 +292,17 @@ const NewRunDetailScreen: Component = () => {
     }
     return status.mergeDisabledReason || "Merge is currently unavailable.";
   });
-  const runHeaderTitle = createMemo(() => {
+  const runTopbarTitle = createMemo(() => {
     const runValue = model.run();
     const taskTitle = resolveTaskTitle(model.task()?.title, runValue);
-    const runDisplay = resolveRunDisplay(runValue);
-
-    if (taskTitle && runDisplay) {
-      return `RUN #${runDisplay} ${taskTitle}`;
-    }
-
-    if (taskTitle) {
-      return taskTitle;
-    }
-
-    if (runDisplay) {
-      return `RUN #${runDisplay}`;
-    }
-
-    return "Current task";
+    return taskTitle || "Current task";
   });
-  const runHeaderStatus = createMemo<"red" | "orange" | "green">(() => {
-    const agentState = model.agent.state();
-    const readinessPhase = model.agent.readinessPhase();
-    const agentStore = model.agent.store();
-    const hasAgentError = model.agent.error().trim().length > 0;
-    const runStatus = model.run()?.status;
-
-    const isRed =
-      agentState === "error" ||
-      agentState === "unsupported" ||
-      agentStore.status === "error" ||
-      hasAgentError ||
-      runStatus === "failed" ||
-      runStatus === "cancelled";
-
-    if (isRed) {
-      return "red";
-    }
-
-    const isGreen =
-      agentState === "running" &&
-      readinessPhase === "ready" &&
-      agentStore.streamConnected === true &&
-      agentStore.status !== "connecting";
-
-    if (isGreen) {
-      return "green";
-    }
-
-    return "orange";
-  });
-  const runHeaderStatusText = createMemo(() => {
-    const status = runHeaderStatus();
-    if (status === "red") {
-      return "Agent unavailable";
-    }
-    if (status === "green") {
-      return "Agent ready";
-    }
-    return "Agent connecting";
-  });
-  const runHeaderStatusLabel = createMemo(() => {
-    const status = runHeaderStatus();
-    if (status === "red") return "Unavailable";
-    if (status === "green") return "Ready";
-    return "Connecting";
-  });
+  const runTopbarSubtitle = createMemo(
+    () =>
+      model.task()?.targetRepositoryName ||
+      model.task()?.targetRepositoryPath ||
+      "Run workspace",
+  );
 
   const logsLines = createMemo(() => {
     if (model.agent.error().trim().length > 0) {
@@ -450,11 +372,7 @@ const NewRunDetailScreen: Component = () => {
     }
   });
 
-  const toggleOverlay = (
-    nextState: Exclude<OverlayState, "none">,
-    triggerButton: HTMLButtonElement,
-  ) => {
-    setLastTriggerButton(triggerButton);
+  const toggleOverlay = (nextState: Exclude<OverlayState, "none">) => {
     setOverlayState((current) => {
       const next = current === nextState ? "none" : nextState;
       setOverlaySize("normal");
@@ -523,6 +441,60 @@ const NewRunDetailScreen: Component = () => {
     model.setIsDiffTabActive(overlayState() === "drawer-diff");
   });
 
+  createEffect(() => {
+    const backHref = model.backHref();
+    const backLabel = model.backLabel();
+    const isLogsOpen = overlayState() === "drawer-logs";
+    const isTerminalOpen = overlayState() === "sheet-terminal";
+    const isReviewOpen = overlayState() === "drawer-diff";
+    const isGitOpen = overlayState() === "drawer-git";
+
+    window.dispatchEvent(
+      new CustomEvent("run-detail:topbar-config", {
+        detail: {
+          title: runTopbarTitle(),
+          subtitle: runTopbarSubtitle(),
+          backHref,
+          backLabel,
+          actions: [
+            {
+              key: "logs",
+              label: "Logs",
+              icon: "run.logs",
+              pressed: isLogsOpen,
+              onClick: () => toggleOverlay("drawer-logs"),
+            },
+            {
+              key: "terminal",
+              label: "Terminal",
+              icon: "run.terminal",
+              pressed: isTerminalOpen,
+              onClick: () => toggleOverlay("sheet-terminal"),
+            },
+            {
+              key: "review",
+              label: "Review",
+              icon: "run.review",
+              pressed: isReviewOpen,
+              onClick: () => toggleOverlay("drawer-diff"),
+            },
+            {
+              key: "git",
+              label: "Git",
+              icon: "run.git",
+              pressed: isGitOpen,
+              onClick: () => toggleOverlay("drawer-git"),
+            },
+          ],
+        },
+      }),
+    );
+  });
+
+  onCleanup(() => {
+    window.dispatchEvent(new CustomEvent("run-detail:topbar-clear"));
+  });
+
   createEffect((previousOverlayState: OverlayState | undefined) => {
     const currentOverlayState = overlayState();
     if (
@@ -540,10 +512,6 @@ const NewRunDetailScreen: Component = () => {
 
   createEffect(() => {
     if (!isOverlayOpen()) {
-      const trigger = lastTriggerButton();
-      if (trigger) {
-        trigger.focus();
-      }
       return;
     }
 
@@ -625,104 +593,10 @@ const NewRunDetailScreen: Component = () => {
             }
           >
             <>
-              <section
-                class="run-chat-header border-base-content/15 bg-base-200/35 border px-4 py-3"
-                aria-label="Run navigation"
-              >
-                <BackIconLink
-                  href={model.backHref()}
-                  label={model.backLabel()}
-                  class="project-detail-back-link project-detail-back-link--icon task-detail-back-link btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
-                />
-                <div class="min-w-0 flex-1">
-                  <h1 class="run-chat-header__title">{runHeaderTitle()}</h1>
-                  <p class="run-chat-header__subtitle">
-                    {model.task()?.targetRepositoryName ||
-                      model.task()?.targetRepositoryPath ||
-                      "Run workspace"}
-                  </p>
-                </div>
-                <span
-                  class="run-chat-header__status"
-                  aria-label={runHeaderStatusText()}
-                >
-                  <span
-                    class="run-chat-header__status-indicator"
-                    data-status={runHeaderStatus()}
-                    data-testid="run-status-indicator"
-                    aria-hidden="true"
-                  >
-                    {runHeaderStatusLabel()}
-                  </span>
-                  <span class="sr-only">{runHeaderStatusText()}</span>
-                </span>
-              </section>
               <NewRunChatWorkspace
                 model={model}
                 hideTranscriptScrollbar={isDrawerOverlay()}
               />
-              <div
-                class="run-chat-floating-toolbar border-base-content/15 bg-base-200/75 border"
-                role="toolbar"
-                aria-label="Run chat tools"
-              >
-                <button
-                  type="button"
-                  class="run-chat-floating-toolbar__button rounded-none"
-                  aria-label="Logs"
-                  aria-pressed={overlayState() === "drawer-logs"}
-                  title="Logs"
-                  onClick={(event) =>
-                    toggleOverlay("drawer-logs", event.currentTarget)
-                  }
-                >
-                  <svg viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M3.75 1A1.75 1.75 0 0 0 2 2.75v10.5C2 14.216 2.784 15 3.75 15h8.5A1.75 1.75 0 0 0 14 13.25V4.81a2.5 2.5 0 0 0-.732-1.768L11.958 1.73A2.5 2.5 0 0 0 10.19 1H3.75Zm0 1.5h6v2.75c0 .966.784 1.75 1.75 1.75h1v6.25a.25.25 0 0 1-.25.25h-8.5a.25.25 0 0 1-.25-.25V2.75a.25.25 0 0 1 .25-.25Zm7.5.56.68.68a1 1 0 0 1 .294.707v1.053h-.723a.25.25 0 0 1-.25-.25V3.06ZM4.75 8a.75.75 0 0 1 .75-.75h5a.75.75 0 0 1 0 1.5h-5A.75.75 0 0 1 4.75 8Zm0 2.5a.75.75 0 0 1 .75-.75h5a.75.75 0 0 1 0 1.5h-5a.75.75 0 0 1-.75-.75Zm0 2.5a.75.75 0 0 1 .75-.75h3a.75.75 0 0 1 0 1.5h-3a.75.75 0 0 1-.75-.75Z" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  class="run-chat-floating-toolbar__button rounded-none"
-                  aria-label="Terminal"
-                  aria-pressed={overlayState() === "sheet-terminal"}
-                  title="Terminal"
-                  onClick={(event) =>
-                    toggleOverlay("sheet-terminal", event.currentTarget)
-                  }
-                >
-                  <svg viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M2.75 2A1.75 1.75 0 0 0 1 3.75v8.5C1 13.216 1.784 14 2.75 14h10.5A1.75 1.75 0 0 0 15 12.25v-8.5A1.75 1.75 0 0 0 13.25 2H2.75Zm0 1.5h10.5a.25.25 0 0 1 .25.25v8.5a.25.25 0 0 1-.25.25H2.75a.25.25 0 0 1-.25-.25v-8.5a.25.25 0 0 1 .25-.25Zm1.24 2.09a.75.75 0 0 0-.98 1.14l1.75 1.5a.25.25 0 0 1 0 .38l-1.75 1.5a.75.75 0 1 0 .98 1.14l1.75-1.5a1.75 1.75 0 0 0 0-2.66l-1.75-1.5Zm4.26 4.66a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  class="run-chat-floating-toolbar__button rounded-none"
-                  aria-label="Review"
-                  aria-pressed={overlayState() === "drawer-diff"}
-                  title="Review"
-                  onClick={(event) =>
-                    toggleOverlay("drawer-diff", event.currentTarget)
-                  }
-                >
-                  <svg viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M5.75 2a.75.75 0 0 1 .75.75V5h2.5V2.75a.75.75 0 0 1 1.5 0V5h.75a1.75 1.75 0 0 1 1.75 1.75v6.5A1.75 1.75 0 0 1 11.75 15h-7A1.75 1.75 0 0 1 3 13.25v-6.5A1.75 1.75 0 0 1 4.75 5h.75V2.75A.75.75 0 0 1 5.75 2Zm0 4.5h-1a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h7a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25h-1v1.75a.75.75 0 0 1-1.5 0V6.5H6.5v1.75a.75.75 0 0 1-1.5 0V6.5Z" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  class="run-chat-floating-toolbar__button rounded-none"
-                  aria-label="Git"
-                  aria-pressed={overlayState() === "drawer-git"}
-                  title="Git"
-                  onClick={(event) =>
-                    toggleOverlay("drawer-git", event.currentTarget)
-                  }
-                >
-                  <svg viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M8 1.5a2.5 2.5 0 0 0-1.25 4.665v3.17A2.5 2.5 0 1 0 8.5 11.7v-1.35h2.17a2.5 2.5 0 1 0 0-1.5H8.5v-2.68A2.5 2.5 0 1 0 8 1.5Zm0 1.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM5 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm7-3a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z" />
-                  </svg>
-                </button>
-              </div>
               <Show when={isOverlayOpen()}>
                 <div
                   class="run-chat-overlay-backdrop"

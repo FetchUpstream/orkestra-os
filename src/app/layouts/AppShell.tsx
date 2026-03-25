@@ -50,6 +50,20 @@ type TaskDetailTopbarConfig =
       onRequestClose: () => void;
     };
 
+type RunDetailTopbarConfig = {
+  title: string;
+  subtitle: string;
+  backHref: string;
+  backLabel: string;
+  actions: Array<{
+    key: "logs" | "terminal" | "review" | "git";
+    label: string;
+    icon: "run.logs" | "run.terminal" | "run.review" | "run.git";
+    pressed: boolean;
+    onClick: () => void;
+  }>;
+};
+
 type AppShellProps = {
   children?: JSX.Element;
 };
@@ -66,6 +80,8 @@ const AppShell: Component<AppShellProps> = (props) => {
   const [boardSearchQuery, setBoardSearchQuery] = createSignal("");
   const [taskDetailTopbarConfig, setTaskDetailTopbarConfig] =
     createSignal<TaskDetailTopbarConfig | null>(null);
+  const [runDetailTopbarConfig, setRunDetailTopbarConfig] =
+    createSignal<RunDetailTopbarConfig | null>(null);
 
   const isSidebarVisible = () => (isMobile() ? mobileSidebarOpen() : true);
 
@@ -109,6 +125,13 @@ const AppShell: Component<AppShellProps> = (props) => {
     const onTaskDetailTopbarClear = () => {
       setTaskDetailTopbarConfig(null);
     };
+    const onRunDetailTopbarConfig = (event: Event) => {
+      const customEvent = event as CustomEvent<RunDetailTopbarConfig>;
+      setRunDetailTopbarConfig(customEvent.detail);
+    };
+    const onRunDetailTopbarClear = () => {
+      setRunDetailTopbarConfig(null);
+    };
 
     window.addEventListener(
       "task-detail:topbar-config",
@@ -118,6 +141,11 @@ const AppShell: Component<AppShellProps> = (props) => {
       "task-detail:topbar-clear",
       onTaskDetailTopbarClear,
     );
+    window.addEventListener(
+      "run-detail:topbar-config",
+      onRunDetailTopbarConfig,
+    );
+    window.addEventListener("run-detail:topbar-clear", onRunDetailTopbarClear);
 
     onCleanup(() => {
       window.removeEventListener(
@@ -128,12 +156,26 @@ const AppShell: Component<AppShellProps> = (props) => {
         "task-detail:topbar-clear",
         onTaskDetailTopbarClear,
       );
+      window.removeEventListener(
+        "run-detail:topbar-config",
+        onRunDetailTopbarConfig,
+      );
+      window.removeEventListener(
+        "run-detail:topbar-clear",
+        onRunDetailTopbarClear,
+      );
     });
   });
 
   createEffect(() => {
     if (!location.pathname.includes("/tasks/")) {
       setTaskDetailTopbarConfig(null);
+    }
+  });
+
+  createEffect(() => {
+    if (!location.pathname.startsWith("/runs/")) {
+      setRunDetailTopbarConfig(null);
     }
   });
 
@@ -231,6 +273,7 @@ const AppShell: Component<AppShellProps> = (props) => {
 
   const topbarTitle = () => {
     const config = taskDetailTopbarConfig();
+    const runConfig = runDetailTopbarConfig();
     if (location.pathname.includes("/tasks/") && config?.title?.trim()) {
       if (config.mode === "detail") {
         const key = config.projectKey?.trim();
@@ -249,13 +292,20 @@ const AppShell: Component<AppShellProps> = (props) => {
       }
       return config.title;
     }
+    if (location.pathname.startsWith("/runs/") && runConfig?.title?.trim()) {
+      return runConfig.title;
+    }
     return shellTitle();
   };
 
   const topbarSubtitle = () => {
     const config = taskDetailTopbarConfig();
+    const runConfig = runDetailTopbarConfig();
     if (location.pathname.includes("/tasks/") && config?.subtitle?.trim()) {
       return config.subtitle;
+    }
+    if (location.pathname.startsWith("/runs/") && runConfig?.subtitle?.trim()) {
+      return runConfig.subtitle;
     }
     return shellSubtitle();
   };
@@ -507,6 +557,41 @@ const AppShell: Component<AppShellProps> = (props) => {
                       >
                         <AppIcon name="action.delete" size={16} stroke={1.75} />
                       </button>
+                      <a
+                        href={config.backHref}
+                        class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 ml-1 rounded-none border"
+                        aria-label={`Back to ${config.backLabel}`}
+                        title={`Back to ${config.backLabel}`}
+                      >
+                        <AppIcon name="panel.close" size={16} stroke={1.75} />
+                      </a>
+                    </div>
+                  );
+                })()
+              ) : location.pathname.startsWith("/runs/") &&
+                runDetailTopbarConfig() ? (
+                (() => {
+                  const config = runDetailTopbarConfig()!;
+                  return (
+                    <div class="flex items-center gap-2">
+                      <For each={config.actions}>
+                        {(action) => (
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
+                            aria-label={action.label}
+                            title={action.label}
+                            aria-pressed={action.pressed}
+                            onClick={action.onClick}
+                          >
+                            <AppIcon
+                              name={action.icon}
+                              size={16}
+                              stroke={1.75}
+                            />
+                          </button>
+                        )}
+                      </For>
                       <a
                         href={config.backHref}
                         class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 ml-1 rounded-none border"

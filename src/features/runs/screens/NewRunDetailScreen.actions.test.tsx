@@ -7,6 +7,34 @@ const submitPromptMock =
   vi.fn<(value: string, options?: unknown) => Promise<boolean>>();
 const modelFactoryMock = vi.fn();
 
+const bindRunTopbarActions = () => {
+  let latestConfig:
+    | {
+        actions?: Array<{ label: string; onClick: () => void }>;
+      }
+    | undefined;
+
+  const onConfig = (event: Event) => {
+    latestConfig = (event as CustomEvent).detail;
+  };
+
+  window.addEventListener("run-detail:topbar-config", onConfig);
+
+  return {
+    invokeAction: async (label: string) => {
+      await waitFor(() => {
+        const action = latestConfig?.actions?.find(
+          (item) => item.label === label,
+        );
+        expect(action).toBeTruthy();
+      });
+      latestConfig?.actions?.find((item) => item.label === label)?.onClick();
+    },
+    cleanup: () =>
+      window.removeEventListener("run-detail:topbar-config", onConfig),
+  };
+};
+
 vi.mock("../../../components/ui/BackIconLink", () => ({
   default: () => <a href="/">Back</a>,
 }));
@@ -205,16 +233,18 @@ describe("NewRunDetailScreen git actions", () => {
         },
       }),
     );
+    const topbar = bindRunTopbarActions();
 
     render(() => <NewRunDetailScreen />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await topbar.invokeAction("Git");
 
     await waitFor(() => {
       expect(screen.queryByText("Rebase Worktree onto Source")).toBeNull();
       expect(screen.queryByText("Merge Worktree into Source")).toBeNull();
       expect(screen.getByText("Commit Changes")).toBeTruthy();
     });
+    topbar.cleanup();
   });
 
   it("closes commit modal and git drawer after successful submitPrompt", async () => {
@@ -230,10 +260,11 @@ describe("NewRunDetailScreen git actions", () => {
         diffPaths: ["src/foo.ts", "src/bar.ts"],
       }),
     );
+    const topbar = bindRunTopbarActions();
 
     render(() => <NewRunDetailScreen />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await topbar.invokeAction("Git");
     fireEvent.click(await screen.findByText("Commit Changes"));
 
     const textarea = await screen.findByLabelText("Commit request message");
@@ -255,6 +286,7 @@ describe("NewRunDetailScreen git actions", () => {
       expect(screen.queryByLabelText("Commit request message")).toBeNull();
       expect(screen.queryByText("Commit Changes")).toBeNull();
     });
+    topbar.cleanup();
   });
 
   it("shows committing changes while commit request is in flight", async () => {
@@ -275,10 +307,11 @@ describe("NewRunDetailScreen git actions", () => {
         },
       }),
     );
+    const topbar = bindRunTopbarActions();
 
     render(() => <NewRunDetailScreen />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await topbar.invokeAction("Git");
     fireEvent.click(await screen.findByText("Commit Changes"));
 
     const textarea = await screen.findByLabelText("Commit request message");
@@ -292,6 +325,7 @@ describe("NewRunDetailScreen git actions", () => {
     });
 
     resolveSubmit?.(true);
+    topbar.cleanup();
   });
 
   it("keeps git drawer open when commit modal submitPrompt fails", async () => {
@@ -307,10 +341,11 @@ describe("NewRunDetailScreen git actions", () => {
         diffPaths: ["src/foo.ts"],
       }),
     );
+    const topbar = bindRunTopbarActions();
 
     render(() => <NewRunDetailScreen />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await topbar.invokeAction("Git");
     fireEvent.click(await screen.findByText("Commit Changes"));
 
     const textarea = await screen.findByLabelText("Commit request message");
@@ -324,6 +359,7 @@ describe("NewRunDetailScreen git actions", () => {
       expect(screen.getByLabelText("Commit request message")).toBeTruthy();
       expect(screen.getByText("Commit Changes")).toBeTruthy();
     });
+    topbar.cleanup();
   });
 
   it("populates commit modal changed files from git drawer without opening review", async () => {
@@ -339,10 +375,11 @@ describe("NewRunDetailScreen git actions", () => {
         refreshedDiffPaths: ["src/git-only.ts", "src/another.ts"],
       }),
     );
+    const topbar = bindRunTopbarActions();
 
     render(() => <NewRunDetailScreen />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await topbar.invokeAction("Git");
     fireEvent.click(await screen.findByText("Commit Changes"));
 
     const textarea = await screen.findByLabelText("Commit request message");
@@ -354,6 +391,7 @@ describe("NewRunDetailScreen git actions", () => {
         "- src/another.ts",
       );
     });
+    topbar.cleanup();
   });
 
   it("hides commit action when worktree is clean", async () => {
@@ -364,13 +402,15 @@ describe("NewRunDetailScreen git actions", () => {
         },
       }),
     );
+    const topbar = bindRunTopbarActions();
 
     render(() => <NewRunDetailScreen />);
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await topbar.invokeAction("Git");
 
     await waitFor(() => {
       expect(screen.queryByText("Commit Changes")).toBeNull();
     });
+    topbar.cleanup();
   });
 
   it("hides commit action when worktree cleanliness is unknown", async () => {
@@ -381,18 +421,21 @@ describe("NewRunDetailScreen git actions", () => {
         },
       }),
     );
+    const topbar = bindRunTopbarActions();
 
     render(() => <NewRunDetailScreen />);
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await topbar.invokeAction("Git");
 
     await waitFor(() => {
       expect(screen.queryByText("Commit Changes")).toBeNull();
     });
+    topbar.cleanup();
   });
 
   it("refreshes git status and diff files when git drawer opens", async () => {
     const model = createModelStub();
     modelFactoryMock.mockReturnValue(model);
+    const topbar = bindRunTopbarActions();
 
     render(() => <NewRunDetailScreen />);
 
@@ -401,26 +444,27 @@ describe("NewRunDetailScreen git actions", () => {
       expect(model.refreshDiffFiles).toHaveBeenCalledTimes(0);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await topbar.invokeAction("Git");
 
     await waitFor(() => {
       expect(model.git.refreshStatus).toHaveBeenCalledTimes(1);
       expect(model.refreshDiffFiles).toHaveBeenCalledTimes(1);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await topbar.invokeAction("Git");
 
     await waitFor(() => {
       expect(model.git.refreshStatus).toHaveBeenCalledTimes(1);
       expect(model.refreshDiffFiles).toHaveBeenCalledTimes(1);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await topbar.invokeAction("Git");
 
     await waitFor(() => {
       expect(model.git.refreshStatus).toHaveBeenCalledTimes(2);
       expect(model.refreshDiffFiles).toHaveBeenCalledTimes(2);
     });
+    topbar.cleanup();
   });
 
   it("renders backend state guidance as non-error text", async () => {
@@ -435,9 +479,10 @@ describe("NewRunDetailScreen git actions", () => {
         gitLastActionMessage: "Rebase/merge backend state: mergeable.",
       }),
     );
+    const topbar = bindRunTopbarActions();
 
     render(() => <NewRunDetailScreen />);
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await topbar.invokeAction("Git");
 
     await waitFor(() => {
       const message = screen.getByText(
@@ -446,6 +491,7 @@ describe("NewRunDetailScreen git actions", () => {
       expect(message.className).toContain("project-placeholder-text");
       expect(message.className).not.toContain("projects-error");
     });
+    topbar.cleanup();
   });
 
   it("renders real failed messages as error text even with merged/completed words", async () => {
@@ -461,9 +507,10 @@ describe("NewRunDetailScreen git actions", () => {
           "Rebase failed after merged checks completed with unresolved conflicts.",
       }),
     );
+    const topbar = bindRunTopbarActions();
 
     render(() => <NewRunDetailScreen />);
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await topbar.invokeAction("Git");
 
     await waitFor(() => {
       const message = screen.getByText(
@@ -471,24 +518,34 @@ describe("NewRunDetailScreen git actions", () => {
       );
       expect(message.className).toContain("projects-error");
     });
+    topbar.cleanup();
   });
 
-  it("renders inline run title and green status indicator when ready", () => {
+  it("dispatches run topbar config with task title and workspace subtitle", async () => {
     modelFactoryMock.mockReturnValue(createModelStub());
+
+    const topbarEvents: CustomEvent[] = [];
+    const onTopbarConfig = (event: Event) => {
+      topbarEvents.push(event as CustomEvent);
+    };
+    window.addEventListener("run-detail:topbar-config", onTopbarConfig);
 
     render(() => <NewRunDetailScreen />);
 
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
-      "RUN #123 Ship redesign",
-    );
-    expect(screen.getByLabelText("Agent ready")).toBeTruthy();
-    expect(
-      screen.getByTestId("run-status-indicator").getAttribute("data-status"),
-    ).toBe("green");
-    expect(screen.getByText("✓")).toBeTruthy();
+    await waitFor(() => {
+      expect(topbarEvents.length).toBeGreaterThan(0);
+      const payload = topbarEvents[topbarEvents.length - 1]?.detail as {
+        title: string;
+        subtitle: string;
+      };
+      expect(payload.title).toBe("Ship redesign");
+      expect(payload.subtitle).toBe("Run workspace");
+    });
+
+    window.removeEventListener("run-detail:topbar-config", onTopbarConfig);
   });
 
-  it("renders task title without synthetic run number fallback", () => {
+  it("renders task title without synthetic run number fallback", async () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         task: { title: "" },
@@ -501,14 +558,25 @@ describe("NewRunDetailScreen git actions", () => {
       }),
     );
 
+    const topbarEvents: CustomEvent[] = [];
+    const onTopbarConfig = (event: Event) => {
+      topbarEvents.push(event as CustomEvent);
+    };
+    window.addEventListener("run-detail:topbar-config", onTopbarConfig);
+
     render(() => <NewRunDetailScreen />);
 
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
-      "Fix websocket transport",
-    );
+    await waitFor(() => {
+      const payload = topbarEvents[topbarEvents.length - 1]?.detail as {
+        title: string;
+      };
+      expect(payload.title).toBe("Fix websocket transport");
+    });
+
+    window.removeEventListener("run-detail:topbar-config", onTopbarConfig);
   });
 
-  it("uses fallback title and red status indicator when unavailable", () => {
+  it("uses fallback title when task title is unavailable", async () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         task: { title: "" },
@@ -523,18 +591,25 @@ describe("NewRunDetailScreen git actions", () => {
       }),
     );
 
+    const topbarEvents: CustomEvent[] = [];
+    const onTopbarConfig = (event: Event) => {
+      topbarEvents.push(event as CustomEvent);
+    };
+    window.addEventListener("run-detail:topbar-config", onTopbarConfig);
+
     render(() => <NewRunDetailScreen />);
 
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
-      "Current task",
-    );
-    expect(screen.getByLabelText("Agent unavailable")).toBeTruthy();
-    expect(
-      screen.getByTestId("run-status-indicator").getAttribute("data-status"),
-    ).toBe("red");
+    await waitFor(() => {
+      const payload = topbarEvents[topbarEvents.length - 1]?.detail as {
+        title: string;
+      };
+      expect(payload.title).toBe("Current task");
+    });
+
+    window.removeEventListener("run-detail:topbar-config", onTopbarConfig);
   });
 
-  it("renders orange status indicator for warming and connecting state", () => {
+  it("still renders run workspace content when warming and connecting", () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         agent: {
@@ -550,14 +625,10 @@ describe("NewRunDetailScreen git actions", () => {
 
     render(() => <NewRunDetailScreen />);
 
-    expect(screen.getByLabelText("Agent connecting")).toBeTruthy();
-    expect(
-      screen.getByTestId("run-status-indicator").getAttribute("data-status"),
-    ).toBe("orange");
-    expect(screen.getByText("~")).toBeTruthy();
+    expect(screen.getByText("workspace")).toBeTruthy();
   });
 
-  it("prioritizes red over orange and green status signals", () => {
+  it("still renders run workspace content when agent store reports error", () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         agent: {
@@ -573,11 +644,7 @@ describe("NewRunDetailScreen git actions", () => {
 
     render(() => <NewRunDetailScreen />);
 
-    expect(screen.getByLabelText("Agent unavailable")).toBeTruthy();
-    expect(
-      screen.getByTestId("run-status-indicator").getAttribute("data-status"),
-    ).toBe("red");
-    expect(screen.getByText("!")).toBeTruthy();
+    expect(screen.getByText("workspace")).toBeTruthy();
   });
 
   it("renders session.idle and completed message.updated logs with completed styling", async () => {
@@ -610,9 +677,10 @@ describe("NewRunDetailScreen git actions", () => {
         ],
       }),
     );
+    const topbar = bindRunTopbarActions();
 
     render(() => <NewRunDetailScreen />);
-    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    await topbar.invokeAction("Logs");
 
     await waitFor(() => {
       const idleLine = screen.getByText(/session\.idle/);
@@ -631,5 +699,6 @@ describe("NewRunDetailScreen git actions", () => {
         "run-chat-log-stream__line--completed",
       );
     });
+    topbar.cleanup();
   });
 });
