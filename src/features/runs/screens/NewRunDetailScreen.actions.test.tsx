@@ -947,6 +947,127 @@ describe("NewRunDetailScreen git actions", () => {
     topbar.cleanup();
   });
 
+  it("keeps viewport stable when new logs arrive during manual inspection", async () => {
+    const model = createModelStub({
+      agentEvents: Array.from({ length: 140 }, (_, index) => ({
+        ts: `2026-01-01T15:35:${String(index % 60).padStart(2, "0")}.000Z`,
+        event: "tool.output",
+        data: `Inspect line ${index}`,
+      })),
+    });
+    modelFactoryMock.mockReturnValue(model);
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Logs");
+
+    const stream = await screen.findByRole("log");
+    let scrollTopValue = 50;
+    let scrollToCalls = 0;
+    Object.defineProperty(stream, "scrollHeight", {
+      value: 2_400,
+      configurable: true,
+    });
+    Object.defineProperty(stream, "clientHeight", {
+      value: 300,
+      configurable: true,
+    });
+    Object.defineProperty(stream, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (next: number) => {
+        scrollTopValue = next;
+      },
+    });
+    Object.defineProperty(stream, "scrollTo", {
+      configurable: true,
+      value: ({ top }: { top: number }) => {
+        scrollToCalls += 1;
+        scrollTopValue = top;
+      },
+    });
+
+    fireEvent.scroll(stream);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Jump to latest" }),
+      ).toBeTruthy();
+    });
+
+    scrollToCalls = 0;
+    scrollTopValue = 50;
+
+    model.__setAgentEvents((previous) => [
+      ...(previous ?? []),
+      {
+        ts: "2026-01-01T15:36:40.000Z",
+        event: "tool.output",
+        data: "Inspect line 140",
+      },
+    ]);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Jump to latest" }),
+      ).toBeTruthy();
+      expect(scrollTopValue).toBe(50);
+      expect(scrollToCalls).toBe(0);
+    });
+
+    topbar.cleanup();
+  });
+
+  it("removes new-row highlight after about one second", async () => {
+    const model = createModelStub({
+      agentEvents: [
+        {
+          ts: "2026-01-01T15:31:20.570Z",
+          event: "tool.output",
+          data: "Line 1",
+        },
+      ],
+    });
+    modelFactoryMock.mockReturnValue(model);
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Logs");
+
+    model.__setAgentEvents((previous) => [
+      ...(previous ?? []),
+      {
+        ts: "2026-01-01T15:31:21.570Z",
+        event: "tool.output",
+        data: "Line 2",
+      },
+    ]);
+
+    await waitFor(() => {
+      const newestLine = screen
+        .getByText("Line 2")
+        .closest(".run-chat-log-stream__line");
+      expect(newestLine?.className).toContain("run-chat-log-stream__line--new");
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    expect(
+      screen.getByText("Line 2").closest(".run-chat-log-stream__line")
+        ?.className,
+    ).toContain("run-chat-log-stream__line--new");
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Line 2").closest(".run-chat-log-stream__line")
+          ?.className,
+      ).not.toContain("run-chat-log-stream__line--new");
+    });
+
+    topbar.cleanup();
+  });
+
   it("mounts only the latest window by default and prepends older chunks on upward scroll", async () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({

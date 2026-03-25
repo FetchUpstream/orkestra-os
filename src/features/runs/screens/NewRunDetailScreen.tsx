@@ -36,7 +36,7 @@ type LogLine = {
 };
 
 const LOG_NEAR_BOTTOM_THRESHOLD = 32;
-const LOG_NEW_ROW_HIGHLIGHT_MS = 3_000;
+const LOG_NEW_ROW_HIGHLIGHT_MS = 1_000;
 const LOG_RENDER_CHUNK_SIZE = 100;
 const LOG_PREPEND_TRIGGER_THRESHOLD = 96;
 
@@ -713,9 +713,10 @@ const NewRunDetailScreen: Component = () => {
     model.setIsDiffTabActive(overlayState() === "drawer-diff");
   });
 
-  createEffect(() => {
-    if (!isLogsDrawerOpen()) {
-      return;
+  createEffect((wasLogsDrawerOpen = false) => {
+    const isOpen = isLogsDrawerOpen();
+    if (!isOpen || wasLogsDrawerOpen) {
+      return isOpen;
     }
 
     mountLatestLogWindow();
@@ -729,6 +730,8 @@ const NewRunDetailScreen: Component = () => {
     onCleanup(() => {
       cancelAnimationFrame(frame);
     });
+
+    return isOpen;
   });
 
   createEffect((previousIds: string[] = []) => {
