@@ -209,9 +209,11 @@ export const searchProjectFiles = async (input: {
   limit?: number;
 }): Promise<string[]> => {
   return invoke<string[]>("search_project_files", {
-    project_id: input.projectId,
-    repository_id: input.repositoryId,
-    query: input.query,
-    limit: input.limit,
+    input: {
+      project_id: input.projectId,
+      repository_id: input.repositoryId,
+      query: input.query,
+      limit: input.limit,
+    },
   });
 };
