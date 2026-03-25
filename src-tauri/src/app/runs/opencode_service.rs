@@ -233,7 +233,6 @@ fn parse_providers_from_payload(value: &serde_json::Value) -> Vec<RunProviderDto
                 }
             }
         }
-
     }
 
     providers
@@ -295,14 +294,15 @@ fn parse_agents_from_config_payload(value: &serde_json::Value) -> Vec<RunAgentDt
         fallback_id: Option<&str>,
         allow_fallback_id: bool,
     ) -> Option<RunAgentDto> {
-        let id = parse_string_field(entry, &["id", "agentID", "agentId", "key", "value"])
-            .or_else(|| {
+        let id = parse_string_field(entry, &["id", "agentID", "agentId", "key", "value"]).or_else(
+            || {
                 if allow_fallback_id {
                     fallback_id.and_then(|v| to_nonempty_trimmed_string(Some(v)))
                 } else {
                     None
                 }
-            })?;
+            },
+        )?;
         let name = parse_string_field(entry, &["name", "title", "displayName", "display_name"])
             .or_else(|| fallback_id.and_then(|v| to_nonempty_trimmed_string(Some(v))));
         Some(RunAgentDto { id, name })
@@ -355,7 +355,6 @@ fn parse_agents_from_config_payload(value: &serde_json::Value) -> Vec<RunAgentDt
                 }
             }
         }
-
     }
 
     agents
@@ -1145,9 +1144,7 @@ impl RunsOpenCodeService {
                     .agents(RequestOptions::default())
                     .await
                     .map_err(|err| {
-                        AppError::validation(format!(
-                            "failed to list OpenCode app agents: {err}"
-                        ))
+                        AppError::validation(format!("failed to list OpenCode app agents: {err}"))
                     })?;
 
                 let config_response = client
@@ -1158,11 +1155,13 @@ impl RunsOpenCodeService {
                         AppError::validation(format!("failed to list OpenCode agents: {err}"))
                     })?;
 
-                let agents = dedupe_agents([
-                    parse_agents_from_config_payload(&app_agents_response.data),
-                    parse_agents_from_config_payload(&config_response.data),
-                ]
-                .concat());
+                let agents = dedupe_agents(
+                    [
+                        parse_agents_from_config_payload(&app_agents_response.data),
+                        parse_agents_from_config_payload(&config_response.data),
+                    ]
+                    .concat(),
+                );
 
                 Ok(RunAgentsResponseDto { agents })
             })
@@ -2655,11 +2654,13 @@ mod tests {
             }
         });
 
-        let agents = super::dedupe_agents([
-            super::parse_agents_from_config_payload(&app_agents),
-            super::parse_agents_from_config_payload(&config_get),
-        ]
-        .concat());
+        let agents = super::dedupe_agents(
+            [
+                super::parse_agents_from_config_payload(&app_agents),
+                super::parse_agents_from_config_payload(&config_get),
+            ]
+            .concat(),
+        );
 
         assert_eq!(agents.len(), 3);
         assert_eq!(agents[0].id, "build");

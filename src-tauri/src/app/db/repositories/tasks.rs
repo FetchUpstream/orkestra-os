@@ -124,10 +124,7 @@ impl TasksRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows
-            .into_iter()
-            .map(Self::map_task_row)
-            .collect())
+        Ok(rows.into_iter().map(Self::map_task_row).collect())
     }
 
     pub async fn list_tasks_by_ids(&self, task_ids: &[String]) -> Result<Vec<Task>, AppError> {

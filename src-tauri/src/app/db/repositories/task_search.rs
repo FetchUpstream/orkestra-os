@@ -57,5 +57,4 @@ impl TaskSearchRepository {
             })
             .collect())
     }
-
 }
