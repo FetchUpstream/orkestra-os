@@ -837,7 +837,7 @@ const NewRunDetailScreen: Component = () => {
                               <div class="run-chat-git-drawer__branches">
                                 <article class="run-chat-git-drawer__branch-row">
                                   <p class="run-chat-git-drawer__branch-label">
-                                    Base branch
+                                    Source
                                   </p>
                                   <p class="run-chat-git-drawer__branch-name">
                                     {status().sourceBranch.name}
@@ -856,7 +856,7 @@ const NewRunDetailScreen: Component = () => {
                                 </article>
                                 <article class="run-chat-git-drawer__branch-row">
                                   <p class="run-chat-git-drawer__branch-label">
-                                    Current branch
+                                    Current
                                   </p>
                                   <p class="run-chat-git-drawer__branch-name">
                                     {status().worktreeBranch.name}

@@ -269,8 +269,8 @@ describe("NewRunDetailScreen git actions", () => {
       expect(
         screen.getByRole("heading", { name: "Source Control" }),
       ).toBeTruthy();
-      expect(screen.getByText("Base branch")).toBeTruthy();
-      expect(screen.getByText("Current branch")).toBeTruthy();
+      expect(screen.getByText("Source")).toBeTruthy();
+      expect(screen.getByText("Current")).toBeTruthy();
       expect(screen.getByText("Repository status")).toBeTruthy();
       expect(screen.getByText("Working tree status")).toBeTruthy();
       expect(screen.getByText("+0")).toBeTruthy();
