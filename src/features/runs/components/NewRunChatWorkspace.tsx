@@ -971,11 +971,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               <p>{cleanupMessage()}</p>
             </section>
           </Show>
-          <Show when={props.model.agent.state() === "unsupported"}>
-            <p class="project-placeholder-text">
-              Agent stream is not available for this run.
-            </p>
-          </Show>
           <Show when={pendingPermissionCard() !== null}>
             {(() => {
               const card = pendingPermissionCard();
@@ -1056,24 +1051,31 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           <Show
             when={transcriptMessageOrder().length > 0}
             fallback={
-              <Show
-                when={isTranscriptWaitingForAgentOutput()}
-                fallback={
-                  <p class="project-placeholder-text">
-                    {agentReadinessCopy() || "No agent messages yet."}
-                  </p>
-                }
+              <section
+                class="run-chat-transcript run-chat-transcript--empty-state"
+                aria-label="Chat transcript"
               >
-                <p
-                  class="run-inline-loading-row"
-                  role="status"
-                  aria-live="polite"
-                  aria-atomic="true"
+                <Show
+                  when={isTranscriptWaitingForAgentOutput()}
+                  fallback={
+                    <p class="project-placeholder-text">
+                      {props.model.agent.state() === "unsupported"
+                        ? "Agent stream is not available for this run."
+                        : (agentReadinessCopy() ?? "No agent messages yet.")}
+                    </p>
+                  }
                 >
-                  <span class="run-inline-spinner" aria-hidden="true" />
-                  <span>Waiting for agent output...</span>
-                </p>
-              </Show>
+                  <p
+                    class="run-inline-loading-row"
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                  >
+                    <span class="run-inline-spinner" aria-hidden="true" />
+                    <span>Waiting for agent output...</span>
+                  </p>
+                </Show>
+              </section>
             }
           >
             <RunChatTranscript

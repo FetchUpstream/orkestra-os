@@ -4152,6 +4152,13 @@ textarea::placeholder {
   gap: 18px;
 }
 
+.run-chat-transcript--empty-state {
+  min-height: 100%;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+}
+
 .run-chat-transcript__older {
   display: grid;
   gap: 10px;
