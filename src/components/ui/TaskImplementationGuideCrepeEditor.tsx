@@ -92,7 +92,11 @@ const TaskImplementationGuideCrepeEditor: Component<
     crepe.editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
       const { from, to } = range;
-      const transaction = view.state.tr.insertText(`\`${path}\` `, from, to);
+      const transaction = view.state.tr.insertText(`${path} `, from, to);
+      const codeMark = view.state.schema.marks.code;
+      if (codeMark) {
+        transaction.addMark(from, from + path.length, codeMark.create());
+      }
       view.dispatch(transaction);
       view.focus();
     });
