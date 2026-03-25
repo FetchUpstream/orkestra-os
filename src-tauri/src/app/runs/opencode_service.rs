@@ -2,8 +2,9 @@ use crate::app::errors::AppError;
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent,
     ReplyRunOpenCodePermissionResponse, RunAgentDto, RunAgentsResponseDto, RunDto,
-    RunModelSelectionDto, RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, RunProviderDto,
-    RunProvidersResponseDto, StartRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
+    RunModelSelectionDto, RunOpenCodeChatModeDto, RunOpenCodeSessionMessageDto,
+    RunOpenCodeSessionTodoDto, RunProviderDto, RunProvidersResponseDto, StartRunOpenCodeResponse,
+    SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::service::RunsService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
@@ -800,6 +801,32 @@ impl RunsOpenCodeService {
         }
 
         true
+    }
+
+    async fn fetch_session_history_with_client(
+        client: &OpencodeClient,
+        session_id: &str,
+    ) -> Result<
+        (
+            Vec<RunOpenCodeSessionMessageDto>,
+            Vec<RunOpenCodeSessionTodoDto>,
+        ),
+        AppError,
+    > {
+        let request = RequestOptions::default().with_path("id", session_id.to_string());
+        let messages_response = client.session().messages(request).await.map_err(|err| {
+            AppError::validation(format!("failed to fetch OpenCode session messages: {err}"))
+        })?;
+
+        let request = RequestOptions::default().with_path("id", session_id.to_string());
+        let todos_response = client.session().todo(request).await.map_err(|err| {
+            AppError::validation(format!("failed to fetch OpenCode session todos: {err}"))
+        })?;
+
+        Ok((
+            value_array_to_message_wrappers(messages_response.data),
+            value_array_to_todo_wrappers(todos_response.data),
+        ))
     }
 
     fn normalize_initial_prompt_field(value: Option<&str>) -> String {
@@ -2023,6 +2050,55 @@ impl RunsOpenCodeService {
         run_id: &str,
     ) -> Result<BootstrapRunOpenCodeResponse, AppError> {
         let bootstrap_start = Instant::now();
+        let run = self.runs_service.get_run_model(run_id).await?;
+
+        if run.status == "completed" {
+            let session_id = run.opencode_session_id.filter(|id| !id.trim().is_empty());
+            let (messages, todos) = if let Some(session_id) = session_id.as_ref() {
+                let session_id_for_fetch = session_id.clone();
+                self.with_ephemeral_client(|client| {
+                    Box::pin(async move {
+                        Self::fetch_session_history_with_client(client, &session_id_for_fetch).await
+                    })
+                })
+                .await
+                .unwrap_or_else(|err| {
+                    warn!(
+                        target: "opencode.runtime",
+                        marker = "bootstrap_completed_history_failed",
+                        run_id = run_id,
+                        error = %err,
+                        "OpenCode completed run history fetch failed"
+                    );
+                    (vec![], vec![])
+                })
+            } else {
+                (vec![], vec![])
+            };
+
+            info!(
+                target: "opencode.runtime",
+                marker = "bootstrap_gather",
+                run_id = run_id,
+                ready_phase = "completed_history",
+                stream_connected = false,
+                latency_ms = bootstrap_start.elapsed().as_millis() as u64,
+                "OpenCode bootstrap payload gathered"
+            );
+
+            return Ok(BootstrapRunOpenCodeResponse {
+                state: "ready".to_string(),
+                reason: None,
+                chat_mode: RunOpenCodeChatModeDto::ReadOnly,
+                buffered_events: vec![],
+                messages,
+                todos,
+                session_id,
+                stream_connected: false,
+                ready_phase: Some("completed_history".to_string()),
+            });
+        }
+
         let (ensured, handle, ready_phase) = self.ensure_run_ready_for_operation(run_id).await?;
 
         if ensured.state == "unsupported" {
@@ -2038,6 +2114,7 @@ impl RunsOpenCodeService {
             return Ok(BootstrapRunOpenCodeResponse {
                 state: ensured.state,
                 reason: ensured.reason,
+                chat_mode: RunOpenCodeChatModeDto::Unavailable,
                 buffered_events: vec![],
                 messages: vec![],
                 todos: vec![],
@@ -2056,31 +2133,10 @@ impl RunsOpenCodeService {
             buffered.iter().cloned().collect::<Vec<_>>()
         };
 
-        let run = self.runs_service.get_run_model(run_id).await?;
         let session_id = run.opencode_session_id.filter(|id| !id.trim().is_empty());
 
         let (messages, todos) = if let Some(session_id) = session_id.as_ref() {
-            let request = RequestOptions::default().with_path("id", session_id.clone());
-            let messages_response =
-                handle
-                    .client
-                    .session()
-                    .messages(request)
-                    .await
-                    .map_err(|err| {
-                        AppError::validation(format!(
-                            "failed to fetch OpenCode session messages: {err}"
-                        ))
-                    })?;
-            let request = RequestOptions::default().with_path("id", session_id.clone());
-            let todos_response = handle.client.session().todo(request).await.map_err(|err| {
-                AppError::validation(format!("failed to fetch OpenCode session todos: {err}"))
-            })?;
-
-            (
-                value_array_to_message_wrappers(messages_response.data),
-                value_array_to_todo_wrappers(todos_response.data),
-            )
+            Self::fetch_session_history_with_client(&handle.client, session_id).await?
         } else {
             (vec![], vec![])
         };
@@ -2099,6 +2155,7 @@ impl RunsOpenCodeService {
         Ok(BootstrapRunOpenCodeResponse {
             state: ensured.state,
             reason: ensured.reason,
+            chat_mode: RunOpenCodeChatModeDto::Interactive,
             buffered_events,
             messages,
             todos,
@@ -2782,6 +2839,107 @@ mod tests {
             .await
             .unwrap();
         assert!(reclaimed);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_completed_run_returns_read_only_without_registering_handle() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "completed").await;
+
+        let response = opencode_service
+            .bootstrap_run_opencode("run-1")
+            .await
+            .unwrap();
+
+        assert_eq!(response.chat_mode, super::RunOpenCodeChatModeDto::ReadOnly);
+        assert_eq!(response.state, "ready");
+        assert!(response.reason.is_none());
+        assert!(response.buffered_events.is_empty());
+        assert!(!response.stream_connected);
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn bootstrap_failed_run_remains_unavailable() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "failed").await;
+
+        let response = opencode_service
+            .bootstrap_run_opencode("run-1")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.chat_mode,
+            super::RunOpenCodeChatModeDto::Unavailable
+        );
+        assert_eq!(response.state, "unsupported");
+        assert!(response.messages.is_empty());
+        assert!(response.todos.is_empty());
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn bootstrap_running_run_preserves_interactive_mode() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+
+        let server = create_opencode_server(Some(OpencodeServerOptions {
+            cwd: Some(repo_path.clone()),
+            port: 0,
+            config: Some(serde_json::json!({})),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+
+        let client = create_opencode_client(Some(OpencodeClientConfig {
+            base_url: server.url.clone(),
+            directory: Some(repo_path.to_string_lossy().to_string()),
+            ..Default::default()
+        }))
+        .unwrap();
+
+        let (event_tx, _rx) = tokio::sync::broadcast::channel(8);
+        let handle = Arc::new(super::RunOpenCodeHandle {
+            generation: 1,
+            _server: Arc::new(tokio::sync::Mutex::new(server)),
+            client,
+            session_id: Arc::new(Mutex::new(None)),
+            session_init_lock: tokio::sync::Mutex::new(()),
+            subscribers: Arc::new(Mutex::new(HashMap::new())),
+            subscriber_tasks: Arc::new(Mutex::new(HashMap::new())),
+            subscriber_generation: AtomicU64::new(1),
+            subscriber_lifecycle_lock: tokio::sync::Mutex::new(()),
+            event_tx,
+            buffered_events: Arc::new(Mutex::new(VecDeque::new())),
+            session_runtime_state: Arc::new(Mutex::new(super::SessionRuntimeState::default())),
+        });
+
+        let mut handles = opencode_service.handles.write().await;
+        handles.insert("run-1".to_string(), handle);
+        drop(handles);
+
+        let response = opencode_service
+            .bootstrap_run_opencode("run-1")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.chat_mode,
+            super::RunOpenCodeChatModeDto::Interactive
+        );
+        assert_eq!(response.state, "running");
+        assert_eq!(response.ready_phase.as_deref(), Some("warm_handle"));
     }
 
     #[tokio::test]

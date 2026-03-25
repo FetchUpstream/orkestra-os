@@ -184,11 +184,20 @@ pub struct RunMergeResponseDto {
     pub status: RunMergeStatusDto,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunOpenCodeChatModeDto {
+    Interactive,
+    ReadOnly,
+    Unavailable,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapRunOpenCodeResponse {
     pub state: String,
     pub reason: Option<String>,
+    pub chat_mode: RunOpenCodeChatModeDto,
     pub buffered_events: Vec<RawAgentEvent>,
     pub messages: Vec<RunOpenCodeSessionMessageDto>,
     pub todos: Vec<RunOpenCodeSessionTodoDto>,
