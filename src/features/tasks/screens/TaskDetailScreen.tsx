@@ -586,27 +586,27 @@ const TaskDetailScreen: Component = () => {
                                       <div class="task-dependencies-heading-actions">
                                         <button
                                           type="button"
-                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 inline-flex items-center gap-1.5 rounded-none border px-3 text-[11px] font-medium"
+                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 task-dependencies-heading-icon-action rounded-none border"
                                           onClick={() =>
                                             onOpenCreateDependencyModal(
                                               "parent",
                                             )
                                           }
                                           aria-label="Create parent dependency"
+                                          title="Create parent dependency"
                                         >
                                           <PlusIcon />
-                                          Create
                                         </button>
                                         <button
                                           type="button"
-                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 inline-flex items-center gap-1.5 rounded-none border px-3 text-[11px] font-medium"
+                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 task-dependencies-heading-icon-action rounded-none border"
                                           onClick={() =>
                                             onOpenLinkDependencyModal("parent")
                                           }
                                           aria-label="Link parent dependency"
+                                          title="Link parent dependency"
                                         >
                                           <LinkIcon />
-                                          Link
                                         </button>
                                       </div>
                                     </div>
@@ -727,25 +727,25 @@ const TaskDetailScreen: Component = () => {
                                       <div class="task-dependencies-heading-actions">
                                         <button
                                           type="button"
-                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 inline-flex items-center gap-1.5 rounded-none border px-3 text-[11px] font-medium"
+                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 task-dependencies-heading-icon-action rounded-none border"
                                           onClick={() =>
                                             onOpenCreateDependencyModal("child")
                                           }
                                           aria-label="Create blocked task"
+                                          title="Create blocked task"
                                         >
                                           <PlusIcon />
-                                          Create
                                         </button>
                                         <button
                                           type="button"
-                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 inline-flex items-center gap-1.5 rounded-none border px-3 text-[11px] font-medium"
+                                          class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 task-dependencies-heading-icon-action rounded-none border"
                                           onClick={() =>
                                             onOpenLinkDependencyModal("child")
                                           }
                                           aria-label="Link blocked task"
+                                          title="Link blocked task"
                                         >
                                           <LinkIcon />
-                                          Link
                                         </button>
                                       </div>
                                     </div>
