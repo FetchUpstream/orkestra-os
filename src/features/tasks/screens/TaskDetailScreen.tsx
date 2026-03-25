@@ -466,43 +466,45 @@ const TaskDetailScreen: Component = () => {
                                         >
                                           <div class="task-runs-content">
                                             <div class="task-runs-primary-row">
-                                              <span class="task-runs-label">
-                                                {getRunPrimaryLabel(runItem)}
-                                              </span>
-                                              <span
-                                                class={`project-task-status project-task-status--${runItem.status}`}
-                                              >
-                                                {formatRunStatus(
-                                                  runItem.status,
-                                                )}
-                                              </span>
+                                              <div class="task-runs-left-cluster">
+                                                <span class="task-runs-label">
+                                                  {getRunPrimaryLabel(runItem)}
+                                                </span>
+                                                <span
+                                                  class={`project-task-status project-task-status--${runItem.status}`}
+                                                >
+                                                  {formatRunStatus(
+                                                    runItem.status,
+                                                  )}
+                                                </span>
+                                                <span class="task-runs-created-at">
+                                                  {formatDateTime(
+                                                    runItem.createdAt,
+                                                  )}
+                                                </span>
+                                                <Show
+                                                  when={getRunTimingCopy(
+                                                    runItem,
+                                                  )}
+                                                >
+                                                  {(timingCopy) => (
+                                                    <span class="task-runs-timing-copy">
+                                                      {timingCopy()}
+                                                    </span>
+                                                  )}
+                                                </Show>
+                                              </div>
+                                              <p class="task-runs-summary-row">
+                                                {(
+                                                  runItem.errorMessage ||
+                                                  runItem.summary ||
+                                                  ""
+                                                ).trim() ||
+                                                  getRunSummaryFallback(
+                                                    runItem.status,
+                                                  )}
+                                              </p>
                                             </div>
-                                            <div class="task-runs-secondary-row">
-                                              <span class="task-runs-created-at">
-                                                {formatDateTime(
-                                                  runItem.createdAt,
-                                                )}
-                                              </span>
-                                              <Show
-                                                when={getRunTimingCopy(runItem)}
-                                              >
-                                                {(timingCopy) => (
-                                                  <span class="task-runs-timing-copy">
-                                                    {timingCopy()}
-                                                  </span>
-                                                )}
-                                              </Show>
-                                            </div>
-                                            <p class="task-runs-summary-row">
-                                              {(
-                                                runItem.errorMessage ||
-                                                runItem.summary ||
-                                                ""
-                                              ).trim() ||
-                                                getRunSummaryFallback(
-                                                  runItem.status,
-                                                )}
-                                            </p>
                                           </div>
                                         </A>
                                         <Show

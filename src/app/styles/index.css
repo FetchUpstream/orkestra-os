@@ -2574,36 +2574,38 @@ textarea::placeholder {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
+  border-top: 1px solid
+    color-mix(in srgb, var(--border-subtle) 70%, transparent);
 }
 
 .task-runs-item {
   position: relative;
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--surface-alt) 74%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--border-subtle) 68%, transparent);
 }
 
 .task-runs-delete-button {
   position: absolute;
-  top: 10px;
-  right: 10px;
-  transform: none;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 26px;
-  opacity: 0.72;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  opacity: 0.58;
 }
 
 .task-runs-start-button {
   position: absolute;
-  top: 10px;
-  right: 44px;
+  top: 50%;
+  right: 34px;
+  transform: translateY(-50%);
   z-index: 1;
-  height: 26px;
-  min-height: 26px;
-  min-width: 52px;
-  padding: 0 8px;
+  height: 22px;
+  min-height: 22px;
+  min-width: 44px;
+  padding: 0 6px;
   font-size: 0.72rem;
 }
 
@@ -2614,64 +2616,62 @@ textarea::placeholder {
 
 .task-runs-link {
   display: block;
-  padding: 10px 12px;
+  padding: 8px 12px;
   text-decoration: none;
   color: inherit;
-  border-radius: var(--radius-md);
+  border-radius: 0;
   transition:
-    border-color 0.15s ease,
     background 0.15s ease,
-    box-shadow 0.15s ease;
+    color 0.15s ease;
 }
 
 .task-runs-link--with-start-action {
-  padding-right: 118px;
+  padding-right: 82px;
 }
 
 .task-runs-link--with-delete-action {
-  padding-right: 48px;
+  padding-right: 36px;
 }
 
 .task-runs-link:hover {
-  background: color-mix(in srgb, var(--surface-hover) 80%, transparent);
-  box-shadow: none;
+  background: color-mix(in srgb, var(--surface-hover) 58%, transparent);
 }
 
 .task-runs-content {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  min-width: 0;
 }
 
 .task-runs-primary-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
+  min-width: 0;
+}
+
+.task-runs-left-cluster {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 0 1 auto;
 }
 
 .task-runs-label {
   color: var(--text);
-  font-size: 0.86rem;
+  font-size: 0.82rem;
   font-weight: 600;
-}
-
-.task-runs-secondary-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 .task-runs-created-at {
   color: var(--text-subtle);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-family: var(--font-mono);
 }
 
 .task-runs-timing-copy {
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
 }
 
 .task-runs-repo-tag {
@@ -2689,18 +2689,21 @@ textarea::placeholder {
 .task-runs-summary-row {
   margin: 0;
   color: var(--text-muted);
-  font-size: 0.8rem;
-  line-height: 1.35;
+  font-size: 0.74rem;
+  line-height: 1.25;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+  text-align: left;
 }
 
 .task-runs-start-error {
   margin: 0;
-  padding: 0 12px 10px;
+  padding: 0 12px 8px;
   color: var(--danger);
-  font-size: 0.74rem;
+  font-size: 0.72rem;
 }
 
 .run-detail-page {
@@ -4961,13 +4964,12 @@ textarea::placeholder {
   }
 
   .task-runs-link {
-    flex-wrap: wrap;
-    align-items: flex-start;
+    display: block;
   }
 
   .task-runs-created-at {
     margin-left: 0;
-    width: 100%;
+    width: auto;
   }
 
   .task-runs-defaults-grid {
@@ -4975,16 +4977,26 @@ textarea::placeholder {
   }
 
   .task-runs-link--with-start-action {
-    padding-right: 110px;
+    padding-right: 86px;
   }
 
   .task-runs-start-button {
-    right: 40px;
+    right: 34px;
     padding: 0 6px;
   }
 
   .task-runs-delete-button {
-    right: 8px;
+    right: 6px;
+  }
+
+  .task-runs-primary-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .task-runs-summary-row {
+    width: 100%;
   }
 
   .run-detail-topbar {
