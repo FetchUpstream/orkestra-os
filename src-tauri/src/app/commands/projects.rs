@@ -63,7 +63,12 @@ pub async fn search_project_files(
     let service = context::projects_service(&state);
     map_result(
         service
-            .search_project_files(&input.project_id, &input.query, input.limit)
+            .search_project_files(
+                &input.project_id,
+                &input.repository_id,
+                &input.query,
+                input.limit,
+            )
             .await,
     )
 }

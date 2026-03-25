@@ -65,6 +65,7 @@ pub struct ProjectDetailsDto {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchProjectFilesRequest {
     pub project_id: String,
+    pub repository_id: String,
     pub query: String,
     pub limit: Option<usize>,
 }

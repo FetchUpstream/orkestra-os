@@ -32,6 +32,7 @@ impl ProjectsService {
     pub async fn search_project_files(
         &self,
         project_id: &str,
+        repository_id: &str,
         query: &str,
         limit: Option<usize>,
     ) -> Result<Vec<String>, AppError> {
@@ -41,8 +42,14 @@ impl ProjectsService {
             .await?
             .ok_or_else(|| AppError::not_found("project not found"))?;
 
+        let repository = details
+            .repositories
+            .into_iter()
+            .find(|repository| repository.id == repository_id)
+            .ok_or_else(|| AppError::validation("repository not found for project"))?;
+
         self.file_search_service
-            .search_project_files(details.repositories, query, limit)
+            .search_project_files(repository, query, limit)
             .await
     }
 
@@ -757,5 +764,59 @@ mod tests {
 
         assert_eq!(project_exists, 0);
         assert!(!legacy_worktree_root.exists());
+    }
+
+    #[tokio::test]
+    async fn search_project_files_rejects_repository_outside_project() {
+        let service = setup_service().await;
+
+        let first = service
+            .create_project(CreateProjectRequest {
+                name: "First".to_string(),
+                description: None,
+                key: "FST".to_string(),
+                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
+                    id: None,
+                    name: "Main".to_string(),
+                    repo_path: "/repo/first".to_string(),
+                    is_default: true,
+                    setup_script: None,
+                    cleanup_script: None,
+                }],
+            })
+            .await
+            .unwrap();
+
+        let second = service
+            .create_project(CreateProjectRequest {
+                name: "Second".to_string(),
+                description: None,
+                key: "SCD".to_string(),
+                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
+                    id: None,
+                    name: "Main".to_string(),
+                    repo_path: "/repo/second".to_string(),
+                    is_default: true,
+                    setup_script: None,
+                    cleanup_script: None,
+                }],
+            })
+            .await
+            .unwrap();
+
+        let result = service
+            .search_project_files(
+                &first.project.id,
+                &second.repositories[0].id,
+                "Cargo",
+                Some(10),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "repository not found for project"
+        );
     }
 }
