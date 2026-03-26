@@ -994,6 +994,8 @@ const NewRunDetailScreen: Component = () => {
                   classList={{
                     "run-chat-overlay-panel": true,
                     "run-chat-overlay-panel--drawer": true,
+                    "run-chat-overlay-panel--review":
+                      overlayState() === "drawer-diff",
                     "run-chat-overlay-panel--maximized":
                       overlaySize() === "maximized",
                   }}

@@ -108,7 +108,16 @@ const CodeMirrorDiffEditor: Component<CodeMirrorDiffEditorProps> = (props) => {
     destroyCurrentView();
   });
 
-  return <div class="run-detail-codemirror-root" ref={setRootElement} />;
+  return (
+    <div
+      classList={{
+        "run-detail-codemirror-root": true,
+        "run-detail-codemirror-root--split": props.renderSideBySide !== false,
+        "run-detail-codemirror-root--unified": props.renderSideBySide === false,
+      }}
+      ref={setRootElement}
+    />
+  );
 };
 
 export default CodeMirrorDiffEditor;

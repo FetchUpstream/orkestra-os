@@ -3613,26 +3613,18 @@ textarea::placeholder {
   padding: 8px;
 }
 
-.run-detail-diff-panel {
-  width: 100%;
-  border: 1px solid var(--border-subtle);
-  background: #0b1118;
-  overflow: auto;
-}
-
-.run-diff-accordion {
+.run-diff-review-sections {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
 }
 
-.run-diff-item {
-  border: 1px solid var(--border-subtle);
-  border-radius: 0;
-  background: var(--surface-alt);
+.run-diff-section {
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
 }
 
-.run-diff-item-header {
+.run-diff-section__header {
   width: 100%;
   border: 0;
   background: transparent;
@@ -3641,49 +3633,100 @@ textarea::placeholder {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 10px;
+  padding: 10px 2px 9px;
   cursor: pointer;
+  text-align: left;
   transition: background 0.15s ease;
 }
 
-.run-diff-item-header:hover {
-  background: color-mix(in srgb, var(--surface-alt) 84%, var(--accent) 16%);
+.run-diff-section__header:hover {
+  background: color-mix(in srgb, var(--surface-alt) 86%, var(--accent) 14%);
 }
 
-.run-diff-item-path {
+.run-diff-section--expanded .run-diff-section__header {
+  background: color-mix(in srgb, var(--surface-alt) 90%, transparent);
+}
+
+.run-diff-section__path-wrap {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.run-diff-section__path {
   font-family: var(--font-mono);
-  font-size: 0.8rem;
-  text-align: left;
+  font-size: 0.79rem;
+  color: var(--text);
   overflow-wrap: anywhere;
 }
 
-.run-diff-item-stats {
+.run-diff-section__status {
   display: inline-flex;
-  gap: 8px;
-  font-size: 0.75rem;
+  align-items: center;
+  padding: 1px 6px;
+  border: 1px solid var(--border-subtle);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-subtle);
+}
+
+.run-diff-section__header-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+}
+
+.run-diff-section__stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.73rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-diff-section__stat {
   color: var(--text-muted);
 }
 
-.run-diff-item-stat-additions {
+.run-diff-section__stat--additions {
   color: var(--success);
 }
 
-.run-diff-item-stat-deletions {
+.run-diff-section__stat--deletions {
   color: var(--danger);
 }
 
-.run-diff-item-body {
-  border-top: 1px solid var(--border-subtle);
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.run-diff-section__toggle {
+  width: 16px;
+  height: 16px;
+  color: var(--text-subtle);
+  transition: transform 0.15s ease;
 }
 
-.run-diff-item-meta {
+.run-diff-section__toggle svg {
+  width: 100%;
+  height: 100%;
+}
+
+.run-diff-section__toggle--expanded {
+  transform: rotate(180deg);
+}
+
+.run-diff-section__workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0 14px;
+}
+
+.run-diff-section__helper {
   margin: 0;
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: 0.73rem;
   text-transform: capitalize;
 }
 
@@ -3783,6 +3826,15 @@ textarea::placeholder {
   border-top: 0;
   border-right: 0;
   border-bottom: 0;
+}
+
+.run-chat-overlay-panel--review {
+  gap: 0;
+  padding: 10px 0 0;
+}
+
+.run-chat-overlay-panel--review .run-chat-overlay-panel__header {
+  padding: 0 12px 10px;
 }
 
 .run-chat-overlay-panel--sheet {
@@ -3915,8 +3967,9 @@ textarea::placeholder {
 }
 
 .run-chat-overlay-panel__body--diff {
-  overflow: auto;
-  padding-right: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 12px 12px;
 }
 
 .run-chat-overlay-panel__body--git {
@@ -4071,8 +4124,12 @@ textarea::placeholder {
 .run-chat-diff-panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-right: 2px;
+  gap: 8px;
+  min-height: 100%;
+}
+
+.run-chat-diff-panel__state {
+  margin-top: 4px;
 }
 
 .run-chat-log-viewer {
@@ -5071,9 +5128,16 @@ textarea::placeholder {
 
 .run-detail-codemirror-root {
   width: 100%;
-  min-height: 120px;
-  max-height: 680px;
-  overflow: auto;
+  min-height: 140px;
+  overflow: visible;
+}
+
+.run-detail-codemirror-root--split {
+  min-width: 0;
+}
+
+.run-detail-codemirror-root--unified {
+  min-width: 0;
 }
 
 .run-detail-codemirror-root .cm-editor,
@@ -5084,6 +5148,7 @@ textarea::placeholder {
 
 .run-detail-codemirror-root .cm-editor {
   background: #0b1118;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, #000 18%);
 }
 
 .run-detail-codemirror-root .cm-gutters {
@@ -5098,7 +5163,7 @@ textarea::placeholder {
 }
 
 .run-detail-codemirror-root .cm-mergeView {
-  min-width: max-content;
+  min-width: 100%;
 }
 
 .run-detail-codemirror-root .cm-merge-a .cm-changedLine,
