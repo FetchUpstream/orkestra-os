@@ -64,7 +64,6 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (id.indexOf("node_modules") === -1) return;
-          if (id.indexOf("monaco-editor") !== -1) return "vendor-monaco";
           if (id.indexOf("@xterm") !== -1) return "vendor-terminal";
           if (id.indexOf("@sentry") !== -1) return "vendor-sentry";
           if (

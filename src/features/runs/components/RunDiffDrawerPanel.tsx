@@ -9,8 +9,8 @@ import {
 } from "solid-js";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 
-const MonacoDiffEditor = lazy(
-  () => import("../../../components/MonacoDiffEditor"),
+const CodeMirrorDiffEditor = lazy(
+  () => import("../../../components/CodeMirrorDiffEditor"),
 );
 
 type RunDiffDrawerPanelProps = {
@@ -150,7 +150,7 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                             {payload()?.isBinary ? "binary" : "text"}
                             {payload()?.truncated ? ", truncated" : ""}
                           </p>
-                          <div class="run-detail-monaco-panel">
+                          <div class="run-detail-diff-panel">
                             <Suspense
                               fallback={
                                 <p class="project-placeholder-text">
@@ -158,7 +158,7 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                                 </p>
                               }
                             >
-                              <MonacoDiffEditor
+                              <CodeMirrorDiffEditor
                                 original={payload()?.original ?? ""}
                                 modified={payload()?.modified ?? ""}
                                 language={payload()?.language}

@@ -3613,8 +3613,11 @@ textarea::placeholder {
   padding: 8px;
 }
 
-.run-detail-monaco-panel {
+.run-detail-diff-panel {
   width: 100%;
+  border: 1px solid var(--border-subtle);
+  background: #0b1118;
+  overflow: auto;
 }
 
 .run-diff-accordion {
@@ -5066,9 +5069,21 @@ textarea::placeholder {
   min-width: 0;
 }
 
-.monaco-editor-root {
+.run-detail-codemirror-root {
   width: 100%;
   min-height: 120px;
+  max-height: 680px;
+  overflow: auto;
+}
+
+.run-detail-codemirror-root .cm-editor,
+.run-detail-codemirror-root .cm-scroller {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.run-detail-codemirror-root .cm-mergeView {
+  min-width: max-content;
 }
 
 .sr-only {

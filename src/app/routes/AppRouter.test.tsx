@@ -74,28 +74,12 @@ vi.mock("../../components/ui/TaskMarkdownEditor", () => ({
   ),
 }));
 
-vi.mock("../../components/MonacoDiffEditor", () => ({
-  default: () => <div data-testid="monaco-diff-editor" />,
+vi.mock("../../components/CodeMirrorDiffEditor", () => ({
+  default: () => <div data-testid="codemirror-diff-editor" />,
 }));
 
-vi.mock("monaco-editor/esm/vs/editor/editor.worker?worker", () => ({
-  default: class MockEditorWorker {},
-}));
-
-vi.mock("monaco-editor/esm/vs/language/css/css.worker?worker", () => ({
-  default: class MockCssWorker {},
-}));
-
-vi.mock("monaco-editor/esm/vs/language/html/html.worker?worker", () => ({
-  default: class MockHtmlWorker {},
-}));
-
-vi.mock("monaco-editor/esm/vs/language/json/json.worker?worker", () => ({
-  default: class MockJsonWorker {},
-}));
-
-vi.mock("monaco-editor/esm/vs/language/typescript/ts.worker?worker", () => ({
-  default: class MockTsWorker {},
+vi.mock("/src/components/CodeMirrorDiffEditor", () => ({
+  default: () => <div data-testid="codemirror-diff-editor" />,
 }));
 
 const renderAt = (path: string) => {

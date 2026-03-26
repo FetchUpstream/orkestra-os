@@ -4,9 +4,9 @@ import { createSignal } from "solid-js";
 import type { useRunDetailModel } from "../model/useRunDetailModel";
 import RunDiffDrawerPanel from "./RunDiffDrawerPanel";
 
-vi.mock("../../../components/MonacoDiffEditor", () => ({
+vi.mock("../../../components/CodeMirrorDiffEditor", () => ({
   default: (props: { renderSideBySide?: boolean }) => (
-    <div data-testid="monaco-props">{String(props.renderSideBySide)}</div>
+    <div data-testid="diff-props">{String(props.renderSideBySide)}</div>
   ),
 }));
 
@@ -62,13 +62,13 @@ describe("RunDiffDrawerPanel", () => {
     });
   });
 
-  it("forwards layout mode to Monaco diff editor", async () => {
+  it("forwards layout mode to CodeMirror diff editor", async () => {
     const { model } = createModelStub();
     render(() => (
       <RunDiffDrawerPanel model={model} isActive={true} isSideBySide={false} />
     ));
 
-    const monacoProps = await screen.findByTestId("monaco-props");
-    expect(monacoProps.textContent).toBe("false");
+    const diffProps = await screen.findByTestId("diff-props");
+    expect(diffProps.textContent).toBe("false");
   });
 });
