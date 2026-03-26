@@ -39,6 +39,7 @@ const firstPartyLanguageLoaders: Record<string, LanguageLoader> = {
   "text/markdown": () => markdown(),
   html: () => html(),
   htm: () => html(),
+  astro: () => html(),
   css: () => css(),
   scss: () => css(),
   sass: () => css(),

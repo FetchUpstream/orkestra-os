@@ -133,6 +133,15 @@ describe("resolveCodeMirrorLanguageExtension", () => {
     expect(markdownMock).toHaveBeenCalledTimes(1);
   });
 
+  it("maps .astro files through the html resolver", () => {
+    const extension = resolveCodeMirrorLanguageExtension({
+      filePath: "src/components/component.astro",
+    });
+
+    expect(htmlMock).toHaveBeenCalledTimes(1);
+    expect(extension).toEqual({ extension: "html" });
+  });
+
   it("returns null for unknown languages", () => {
     const extension = resolveCodeMirrorLanguageExtension({
       language: "something-unknown",
