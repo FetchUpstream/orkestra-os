@@ -29,9 +29,9 @@ const formatDiffStatusLabel = (status: string): string => {
 };
 
 const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
-  const [expandedDiffPaths, setExpandedDiffPaths] = createSignal<
-    Record<string, boolean>
-  >({});
+  const [expandedDiffPath, setExpandedDiffPath] = createSignal<string | null>(
+    null,
+  );
 
   createEffect(() => {
     if (!props.isActive) {
@@ -39,40 +39,23 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
     }
 
     const files = props.model.diffFiles();
-    setExpandedDiffPaths((current) => {
-      const next: Record<string, boolean> = {};
-      let didChange = false;
+    const currentPath = expandedDiffPath();
 
-      for (const file of files) {
-        if (Object.prototype.hasOwnProperty.call(current, file.path)) {
-          next[file.path] = current[file.path] === true;
-          continue;
-        }
-
-        next[file.path] = true;
-        didChange = true;
+    if (files.length === 0) {
+      if (currentPath !== null) {
+        setExpandedDiffPath(null);
       }
+      return;
+    }
 
-      if (!didChange) {
-        const currentPaths = Object.keys(current);
-        if (currentPaths.length !== files.length) {
-          didChange = true;
-        } else {
-          for (const path of currentPaths) {
-            if (!Object.prototype.hasOwnProperty.call(next, path)) {
-              didChange = true;
-              break;
-            }
-            if (current[path] !== next[path]) {
-              didChange = true;
-              break;
-            }
-          }
-        }
-      }
+    if (
+      currentPath !== null &&
+      files.some((file) => file.path === currentPath)
+    ) {
+      return;
+    }
 
-      return didChange ? next : current;
-    });
+    setExpandedDiffPath(files[0]?.path ?? null);
   });
 
   createEffect(() => {
@@ -81,14 +64,18 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
     }
 
     const files = props.model.diffFiles();
-    const expanded = expandedDiffPaths();
-    const openPaths = files
-      .map((file) => file.path)
-      .filter((path) => expanded[path] === true);
+    const openPath = expandedDiffPath();
 
-    for (const path of openPaths) {
-      void props.model.loadDiffFile(path);
+    if (
+      !openPath ||
+      !files.some((file) => file.path === openPath) ||
+      props.model.diffFilePayloads()[openPath] ||
+      props.model.diffFileLoadingPaths()[openPath] === true
+    ) {
+      return;
     }
+
+    void props.model.loadDiffFile(openPath);
   });
 
   return (
@@ -121,7 +108,7 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
         <div class="run-diff-review-sections">
           <For each={props.model.diffFiles()}>
             {(file) => {
-              const expanded = () => expandedDiffPaths()[file.path] === true;
+              const expanded = () => expandedDiffPath() === file.path;
               const payload = () => props.model.diffFilePayloads()[file.path];
               const isFileLoading = () =>
                 props.model.diffFileLoadingPaths()[file.path] === true;
@@ -138,13 +125,12 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                     class="run-diff-section__header rounded-none"
                     aria-expanded={expanded() ? "true" : "false"}
                     onClick={() => {
-                      const previousExpanded =
-                        expandedDiffPaths()[file.path] === true;
-                      const nextExpanded = !previousExpanded;
-                      setExpandedDiffPaths((current) => ({
-                        ...current,
-                        [file.path]: nextExpanded,
-                      }));
+                      if (expanded()) {
+                        setExpandedDiffPath(null);
+                        return;
+                      }
+
+                      setExpandedDiffPath(file.path);
                     }}
                   >
                     <span class="run-diff-section__path-wrap">

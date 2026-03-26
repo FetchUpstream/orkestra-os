@@ -5140,6 +5140,12 @@ textarea::placeholder {
   min-width: 0;
 }
 
+.run-detail-codemirror-root--bounded {
+  min-height: clamp(320px, 62vh, 860px);
+  height: clamp(320px, 62vh, 860px);
+  overflow: hidden;
+}
+
 .run-detail-codemirror-root .cm-editor,
 .run-detail-codemirror-root .cm-scroller {
   font-family: var(--font-mono);
@@ -5164,6 +5170,16 @@ textarea::placeholder {
 
 .run-detail-codemirror-root .cm-mergeView {
   min-width: 100%;
+}
+
+.run-detail-codemirror-root--bounded .cm-editor,
+.run-detail-codemirror-root--bounded .cm-mergeView {
+  height: 100%;
+}
+
+.run-detail-codemirror-root--bounded .cm-scroller {
+  max-height: 100%;
+  overflow: auto;
 }
 
 .run-detail-codemirror-root .cm-merge-a .cm-changedLine,

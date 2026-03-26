@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import type { useRunDetailModel } from "../model/useRunDetailModel";
@@ -12,7 +12,7 @@ vi.mock("../../../components/CodeMirrorDiffEditor", () => ({
   ),
 }));
 
-const createModelStub = () => {
+const createModelStub = (options?: { withPayloads?: boolean }) => {
   const [diffFiles] = createSignal([
     {
       path: "src/demo.ts",
@@ -20,20 +20,41 @@ const createModelStub = () => {
       deletions: 1,
       status: "modified",
     },
-  ]);
-  const [diffFilePayloads] = createSignal({
-    "src/demo.ts": {
-      path: "src/demo.ts",
-      additions: 3,
-      deletions: 1,
-      original: "const before = 1;",
-      modified: "const after = 2;",
-      language: "typescript",
+    {
+      path: "src/other.ts",
+      additions: 7,
+      deletions: 2,
       status: "modified",
-      isBinary: false,
-      truncated: false,
     },
-  });
+  ]);
+  const [diffFilePayloads] = createSignal(
+    options?.withPayloads === false
+      ? {}
+      : {
+          "src/demo.ts": {
+            path: "src/demo.ts",
+            additions: 3,
+            deletions: 1,
+            original: "const before = 1;",
+            modified: "const after = 2;",
+            language: "typescript",
+            status: "modified",
+            isBinary: false,
+            truncated: false,
+          },
+          "src/other.ts": {
+            path: "src/other.ts",
+            additions: 7,
+            deletions: 2,
+            original: "export const oldValue = 1;",
+            modified: "export const newValue = 2;",
+            language: "typescript",
+            status: "modified",
+            isBinary: false,
+            truncated: false,
+          },
+        },
+  );
 
   const model = {
     diffFiles,
@@ -54,7 +75,7 @@ const createModelStub = () => {
 
 describe("RunDiffDrawerPanel", () => {
   it("loads expanded diff files when active", async () => {
-    const { model, spies } = createModelStub();
+    const { model, spies } = createModelStub({ withPayloads: false });
     render(() => (
       <RunDiffDrawerPanel model={model} isActive={true} isSideBySide={true} />
     ));
@@ -62,6 +83,7 @@ describe("RunDiffDrawerPanel", () => {
     await waitFor(() => {
       expect(spies.loadDiffFile).toHaveBeenCalledWith("src/demo.ts");
     });
+    expect(spies.loadDiffFile).toHaveBeenCalledTimes(1);
   });
 
   it("forwards layout mode to CodeMirror diff editor", async () => {
@@ -72,5 +94,25 @@ describe("RunDiffDrawerPanel", () => {
 
     const diffProps = await screen.findByTestId("diff-props");
     expect(diffProps.textContent).toBe("false|src/demo.ts");
+  });
+
+  it("keeps only one file expanded and mounts one editor", async () => {
+    const { model } = createModelStub();
+    render(() => (
+      <RunDiffDrawerPanel model={model} isActive={true} isSideBySide={true} />
+    ));
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("diff-props")).toHaveLength(1);
+      expect(screen.getByText("true|src/demo.ts")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /src\/other\.ts/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("diff-props")).toHaveLength(1);
+      expect(screen.queryByText("true|src/demo.ts")).toBeNull();
+      expect(screen.getByText("true|src/other.ts")).toBeTruthy();
+    });
   });
 });

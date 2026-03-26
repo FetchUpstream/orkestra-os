@@ -176,4 +176,43 @@ describe("CodeMirrorDiffEditor", () => {
       extension: "language",
     });
   });
+
+  it("uses natural height for smaller diffs", async () => {
+    const { container } = render(() => (
+      <CodeMirrorDiffEditor
+        original="before"
+        modified="after"
+        renderSideBySide={true}
+      />
+    ));
+
+    await waitFor(() => {
+      expect(mergeViewConstructor).toHaveBeenCalledTimes(1);
+    });
+
+    const root = container.querySelector(".run-detail-codemirror-root");
+    expect(
+      root?.classList.contains("run-detail-codemirror-root--bounded"),
+    ).toBe(false);
+  });
+
+  it("uses bounded height for very large diffs", async () => {
+    const veryLargeDiff = `${"line\n".repeat(1_400)}final`;
+    const { container } = render(() => (
+      <CodeMirrorDiffEditor
+        original="before"
+        modified={veryLargeDiff}
+        renderSideBySide={true}
+      />
+    ));
+
+    await waitFor(() => {
+      expect(mergeViewConstructor).toHaveBeenCalledTimes(1);
+    });
+
+    const root = container.querySelector(".run-detail-codemirror-root");
+    expect(
+      root?.classList.contains("run-detail-codemirror-root--bounded"),
+    ).toBe(true);
+  });
 });

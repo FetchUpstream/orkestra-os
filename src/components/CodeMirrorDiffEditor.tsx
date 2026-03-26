@@ -4,6 +4,7 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import {
   createEffect,
+  createMemo,
   createSignal,
   onCleanup,
   type Component,
@@ -23,10 +24,40 @@ const collapseUnchanged = {
   minSize: 4,
 };
 
+const countLines = (content: string): number => {
+  if (content.length === 0) {
+    return 0;
+  }
+
+  let lineCount = 1;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content.charCodeAt(index) === 10) {
+      lineCount += 1;
+    }
+  }
+  return lineCount;
+};
+
+const BOUNDED_DIFF_LINE_THRESHOLD = 1200;
+const BOUNDED_DIFF_CHAR_THRESHOLD = 150_000;
+
 const CodeMirrorDiffEditor: Component<CodeMirrorDiffEditorProps> = (props) => {
   const [rootElement, setRootElement] = createSignal<HTMLDivElement>();
   let mergeView: MergeView | null = null;
   let unifiedView: EditorView | null = null;
+
+  const shouldUseBoundedHeight = createMemo(() => {
+    const original = props.original;
+    const modified = props.modified;
+    const totalCharCount = original.length + modified.length;
+
+    if (totalCharCount >= BOUNDED_DIFF_CHAR_THRESHOLD) {
+      return true;
+    }
+
+    const maxLineCount = Math.max(countLines(original), countLines(modified));
+    return maxLineCount >= BOUNDED_DIFF_LINE_THRESHOLD;
+  });
 
   const destroyCurrentView = () => {
     mergeView?.destroy();
@@ -114,6 +145,7 @@ const CodeMirrorDiffEditor: Component<CodeMirrorDiffEditorProps> = (props) => {
         "run-detail-codemirror-root": true,
         "run-detail-codemirror-root--split": props.renderSideBySide !== false,
         "run-detail-codemirror-root--unified": props.renderSideBySide === false,
+        "run-detail-codemirror-root--bounded": shouldUseBoundedHeight(),
       }}
       ref={setRootElement}
     />
