@@ -44,6 +44,24 @@ import {
 import type { AgentStore, OpenCodeBusEvent } from "./agentTypes";
 import { setRunCommitPending } from "./commitUiState";
 
+export type DiffReviewCommentSide = "original" | "modified";
+
+export type DiffReviewCommentAnchor = {
+  side: DiffReviewCommentSide;
+  lineNumber: number;
+};
+
+export type DiffReviewDraftComment = DiffReviewCommentAnchor & {
+  id: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DiffReviewActiveComposer = DiffReviewCommentAnchor & {
+  body: string;
+};
+
 export const useRunDetailModel = () => {
   const navigate = useNavigate();
   const params = useParams();
@@ -60,6 +78,10 @@ export const useRunDetailModel = () => {
   const [diffFileLoadingPaths, setDiffFileLoadingPaths] = createSignal<
     Record<string, boolean>
   >({});
+  const [diffReviewDraftCommentsByPath, setDiffReviewDraftCommentsByPath] =
+    createSignal<Record<string, DiffReviewDraftComment[]>>({});
+  const [diffReviewActiveComposerByPath, setDiffReviewActiveComposerByPath] =
+    createSignal<Record<string, DiffReviewActiveComposer>>({});
   const [isLoading, setIsLoading] = createSignal(true);
   const [error, setError] = createSignal("");
   const [terminalSessionId, setTerminalSessionId] = createSignal<string | null>(
@@ -2105,6 +2127,184 @@ export const useRunDetailModel = () => {
     }
   };
 
+  const normalizeDiffAnchor = (
+    anchor: DiffReviewCommentAnchor,
+  ): DiffReviewCommentAnchor | null => {
+    const side = anchor.side;
+    const lineNumber = Math.floor(anchor.lineNumber);
+    if (side !== "original" && side !== "modified") {
+      return null;
+    }
+    if (!Number.isFinite(lineNumber) || lineNumber <= 0) {
+      return null;
+    }
+    return { side, lineNumber };
+  };
+
+  const listDiffReviewDraftComments = (
+    path: string,
+  ): DiffReviewDraftComment[] => {
+    return diffReviewDraftCommentsByPath()[path] ?? [];
+  };
+
+  const getDiffReviewActiveComposer = (
+    path: string,
+  ): DiffReviewActiveComposer | null => {
+    return diffReviewActiveComposerByPath()[path] ?? null;
+  };
+
+  const openDiffReviewComposer = (
+    path: string,
+    anchor: DiffReviewCommentAnchor,
+  ): void => {
+    const normalizedPath = path.trim();
+    const normalizedAnchor = normalizeDiffAnchor(anchor);
+    if (!normalizedPath || !normalizedAnchor) {
+      return;
+    }
+
+    const existingComment = listDiffReviewDraftComments(normalizedPath).find(
+      (comment) =>
+        comment.side === normalizedAnchor.side &&
+        comment.lineNumber === normalizedAnchor.lineNumber,
+    );
+
+    setDiffReviewActiveComposerByPath((current) => ({
+      ...current,
+      [normalizedPath]: {
+        ...normalizedAnchor,
+        body: existingComment?.body ?? "",
+      },
+    }));
+  };
+
+  const updateDiffReviewComposerBody = (path: string, body: string): void => {
+    const normalizedPath = path.trim();
+    if (!normalizedPath) {
+      return;
+    }
+
+    setDiffReviewActiveComposerByPath((current) => {
+      const composer = current[normalizedPath];
+      if (!composer) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [normalizedPath]: {
+          ...composer,
+          body,
+        },
+      };
+    });
+  };
+
+  const closeDiffReviewComposer = (path: string): void => {
+    const normalizedPath = path.trim();
+    if (!normalizedPath) {
+      return;
+    }
+
+    setDiffReviewActiveComposerByPath((current) => {
+      if (!Object.prototype.hasOwnProperty.call(current, normalizedPath)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[normalizedPath];
+      return next;
+    });
+  };
+
+  const saveDiffReviewComposer = (path: string): void => {
+    const normalizedPath = path.trim();
+    if (!normalizedPath) {
+      return;
+    }
+    const composer = getDiffReviewActiveComposer(normalizedPath);
+    if (!composer) {
+      return;
+    }
+
+    const normalizedBody = composer.body.trim();
+    if (!normalizedBody) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    setDiffReviewDraftCommentsByPath((current) => {
+      const existing = current[normalizedPath] ?? [];
+      const existingIndex = existing.findIndex(
+        (comment) =>
+          comment.side === composer.side &&
+          comment.lineNumber === composer.lineNumber,
+      );
+
+      if (existingIndex >= 0) {
+        const next = existing.slice();
+        const previous = next[existingIndex];
+        next[existingIndex] = {
+          ...previous,
+          body: normalizedBody,
+          updatedAt: now,
+        };
+        return {
+          ...current,
+          [normalizedPath]: next,
+        };
+      }
+
+      return {
+        ...current,
+        [normalizedPath]: [
+          ...existing,
+          {
+            id: crypto.randomUUID(),
+            side: composer.side,
+            lineNumber: composer.lineNumber,
+            body: normalizedBody,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      };
+    });
+
+    closeDiffReviewComposer(normalizedPath);
+  };
+
+  const removeDiffReviewDraftComment = (
+    path: string,
+    commentId: string,
+  ): void => {
+    const normalizedPath = path.trim();
+    const normalizedCommentId = commentId.trim();
+    if (!normalizedPath || !normalizedCommentId) {
+      return;
+    }
+
+    setDiffReviewDraftCommentsByPath((current) => {
+      const existing = current[normalizedPath] ?? [];
+      const nextComments = existing.filter(
+        (comment) => comment.id !== normalizedCommentId,
+      );
+      if (nextComments.length === existing.length) {
+        return current;
+      }
+
+      if (nextComments.length === 0) {
+        const next = { ...current };
+        delete next[normalizedPath];
+        return next;
+      }
+
+      return {
+        ...current,
+        [normalizedPath]: nextComments,
+      };
+    });
+  };
+
   createEffect(() => {
     const runId = params.runId;
     if (!runId) {
@@ -2157,6 +2357,21 @@ export const useRunDetailModel = () => {
     });
   });
 
+  createEffect((previousRunId = "") => {
+    const runId = params.runId?.trim() ?? "";
+    if (!runId || (previousRunId && previousRunId !== runId)) {
+      setDiffReviewDraftCommentsByPath({});
+      setDiffReviewActiveComposerByPath({});
+      return runId;
+    }
+
+    if (previousRunId !== runId) {
+      setDiffReviewActiveComposerByPath({});
+    }
+
+    return runId;
+  });
+
   createEffect(() => {
     const runId = params.runId;
     const active = isDiffTabActive();
@@ -2187,6 +2402,15 @@ export const useRunDetailModel = () => {
     diffFileLoadingPaths,
     loadDiffFile,
     refreshDiffFiles,
+    reviewComments: {
+      listCommentsForFile: listDiffReviewDraftComments,
+      getActiveComposerForFile: getDiffReviewActiveComposer,
+      openComposerForFile: openDiffReviewComposer,
+      updateComposerBodyForFile: updateDiffReviewComposerBody,
+      closeComposerForFile: closeDiffReviewComposer,
+      saveComposerForFile: saveDiffReviewComposer,
+      removeCommentForFile: removeDiffReviewDraftComment,
+    },
     git: {
       status: gitStatus,
       isLoading: isGitStatusLoading,

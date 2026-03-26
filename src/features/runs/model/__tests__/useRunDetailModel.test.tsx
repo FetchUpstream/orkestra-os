@@ -952,4 +952,94 @@ describe("useRunDetailModel startup ownership", () => {
       remember: false,
     });
   });
+
+  it("stores draft diff comments in app state and reopens composer on existing anchor", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    modelRef!.reviewComments.openComposerForFile("src/main.ts", {
+      side: "modified",
+      lineNumber: 12,
+    });
+    modelRef!.reviewComments.updateComposerBodyForFile(
+      "src/main.ts",
+      "  ship this change  ",
+    );
+    modelRef!.reviewComments.saveComposerForFile("src/main.ts");
+
+    const comments =
+      modelRef!.reviewComments.listCommentsForFile("src/main.ts");
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.side).toBe("modified");
+    expect(comments[0]?.lineNumber).toBe(12);
+    expect(comments[0]?.body).toBe("ship this change");
+    expect(
+      modelRef!.reviewComments.getActiveComposerForFile("src/main.ts"),
+    ).toBe(null);
+
+    modelRef!.reviewComments.openComposerForFile("src/main.ts", {
+      side: "modified",
+      lineNumber: 12,
+    });
+
+    expect(
+      modelRef!.reviewComments.getActiveComposerForFile("src/main.ts"),
+    ).toEqual({
+      side: "modified",
+      lineNumber: 12,
+      body: "ship this change",
+    });
+  });
+
+  it("updates and removes saved draft comments by anchor and id", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    modelRef!.reviewComments.openComposerForFile("src/main.ts", {
+      side: "original",
+      lineNumber: 9,
+    });
+    modelRef!.reviewComments.updateComposerBodyForFile(
+      "src/main.ts",
+      "first draft",
+    );
+    modelRef!.reviewComments.saveComposerForFile("src/main.ts");
+
+    modelRef!.reviewComments.openComposerForFile("src/main.ts", {
+      side: "original",
+      lineNumber: 9,
+    });
+    modelRef!.reviewComments.updateComposerBodyForFile(
+      "src/main.ts",
+      "updated draft",
+    );
+    modelRef!.reviewComments.saveComposerForFile("src/main.ts");
+
+    const updatedComments =
+      modelRef!.reviewComments.listCommentsForFile("src/main.ts");
+    expect(updatedComments).toHaveLength(1);
+    expect(updatedComments[0]?.body).toBe("updated draft");
+
+    const commentId = updatedComments[0]?.id;
+    expect(commentId).toBeTruthy();
+    modelRef!.reviewComments.removeCommentForFile("src/main.ts", commentId!);
+
+    expect(modelRef!.reviewComments.listCommentsForFile("src/main.ts")).toEqual(
+      [],
+    );
+  });
 });

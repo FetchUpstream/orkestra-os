@@ -150,6 +150,12 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                             {payload()?.isBinary ? "binary" : "text"}
                             {payload()?.truncated ? ", truncated" : ""}
                           </p>
+                          <Show when={!props.isSideBySide}>
+                            <p class="project-placeholder-text">
+                              Inline comments are available only in side-by-side
+                              layout.
+                            </p>
+                          </Show>
                           <div class="run-detail-monaco-panel">
                             <Suspense
                               fallback={
@@ -163,6 +169,40 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                                 modified={payload()?.modified ?? ""}
                                 language={payload()?.language}
                                 renderSideBySide={props.isSideBySide}
+                                reviewComments={props.model.reviewComments.listCommentsForFile(
+                                  file.path,
+                                )}
+                                activeReviewComposer={props.model.reviewComments.getActiveComposerForFile(
+                                  file.path,
+                                )}
+                                onOpenReviewComposer={(anchor) => {
+                                  props.model.reviewComments.openComposerForFile(
+                                    file.path,
+                                    anchor,
+                                  );
+                                }}
+                                onUpdateReviewComposerBody={(body) => {
+                                  props.model.reviewComments.updateComposerBodyForFile(
+                                    file.path,
+                                    body,
+                                  );
+                                }}
+                                onCloseReviewComposer={() => {
+                                  props.model.reviewComments.closeComposerForFile(
+                                    file.path,
+                                  );
+                                }}
+                                onSaveReviewComposer={() => {
+                                  props.model.reviewComments.saveComposerForFile(
+                                    file.path,
+                                  );
+                                }}
+                                onDeleteReviewComment={(commentId) => {
+                                  props.model.reviewComments.removeCommentForFile(
+                                    file.path,
+                                    commentId,
+                                  );
+                                }}
                               />
                             </Suspense>
                           </div>
