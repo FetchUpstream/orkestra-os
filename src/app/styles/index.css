@@ -5082,8 +5082,62 @@ textarea::placeholder {
   font-size: 0.78rem;
 }
 
+.run-detail-codemirror-root .cm-editor {
+  background: #0b1118;
+}
+
+.run-detail-codemirror-root .cm-gutters {
+  border-right: 1px solid color-mix(in srgb, var(--border-subtle) 84%, #000 16%);
+  background: color-mix(in srgb, #0b1118 88%, #05080d 12%);
+  color: color-mix(in srgb, var(--text-subtle) 78%, #000 22%);
+}
+
+.run-detail-codemirror-root .cm-lineNumbers .cm-gutterElement {
+  padding: 0 8px 0 12px;
+  font-size: 0.72rem;
+}
+
 .run-detail-codemirror-root .cm-mergeView {
   min-width: max-content;
+}
+
+.run-detail-codemirror-root .cm-merge-a .cm-changedLine,
+.run-detail-codemirror-root .cm-merge-a .cm-deletedLine,
+.run-detail-codemirror-root .cm-deletedChunk {
+  background: rgba(255, 107, 107, 0.12);
+}
+
+.run-detail-codemirror-root .cm-merge-b .cm-changedLine,
+.run-detail-codemirror-root .cm-merge-b .cm-insertedLine,
+.run-detail-codemirror-root .cm-insertedLine {
+  background: rgba(107, 207, 127, 0.14);
+}
+
+.run-detail-codemirror-root .cm-deletedText,
+.run-detail-codemirror-root .cm-insertedLine .cm-changedText,
+.run-detail-codemirror-root .cm-changedText {
+  text-decoration: none;
+  border-radius: 2px;
+}
+
+.run-detail-codemirror-root .cm-deletedText {
+  background: rgba(255, 107, 107, 0.2);
+}
+
+.run-detail-codemirror-root .cm-insertedLine .cm-changedText,
+.run-detail-codemirror-root .cm-insertedText,
+.run-detail-codemirror-root .cm-insertedLine ins {
+  background: rgba(107, 207, 127, 0.2);
+  text-decoration: none;
+}
+
+.run-detail-codemirror-root .cm-collapsedLines {
+  margin: 2px 0;
+  padding: 2px 8px;
+  border: 1px dashed color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-alt) 74%, #000 26%);
+  color: var(--text-subtle);
+  font-size: 0.72rem;
 }
 
 .sr-only {
