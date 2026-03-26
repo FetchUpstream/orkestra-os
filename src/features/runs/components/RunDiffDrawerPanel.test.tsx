@@ -98,15 +98,21 @@ const createModelStub = () => {
           id: "comment-1",
           side: "modified",
           lineNumber: 4,
+          lineContent: "const after = 2;",
           body: "Looks good",
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
+          anchorTrust: "trusted" as const,
+          anchorIssue: null,
         },
       ],
       getActiveComposerForFile: () => ({
         side: "modified" as const,
         lineNumber: 4,
+        lineContent: "const after = 2;",
         body: "Draft",
+        anchorTrust: "trusted" as const,
+        anchorIssue: null,
       }),
       openComposerForFile,
       updateComposerBodyForFile,
@@ -183,5 +189,34 @@ describe("RunDiffDrawerPanel review comments", () => {
       "src/demo.ts",
       "comment-1",
     );
+  });
+
+  it("surfaces untrusted anchor count in drawer messaging", async () => {
+    const { model } = createModelStub();
+    model.reviewComments.listCommentsForFile = () => [
+      {
+        id: "comment-1",
+        side: "modified",
+        lineNumber: 4,
+        body: "Needs review",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        anchorTrust: "untrusted",
+        anchorIssue: "Line changed",
+      },
+    ];
+    model.reviewComments.getActiveComposerForFile = () => ({
+      side: "modified",
+      lineNumber: 7,
+      body: "Draft",
+      anchorTrust: "untrusted",
+      anchorIssue: "Anchor out of range",
+    });
+
+    render(() => (
+      <RunDiffDrawerPanel model={model} isActive={true} isSideBySide={true} />
+    ));
+
+    expect(screen.getByText("2 anchors need manual review.")).toBeTruthy();
   });
 });

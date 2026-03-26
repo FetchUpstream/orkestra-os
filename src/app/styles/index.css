@@ -5119,6 +5119,17 @@ textarea::placeholder {
   padding: 8px;
 }
 
+.run-diff-inline-thread--anchor-review {
+  border-color: color-mix(in srgb, var(--danger) 46%, var(--border-subtle));
+  background: color-mix(in srgb, var(--surface-alt) 70%, var(--danger) 30%);
+}
+
+.run-diff-inline-thread__anchor-warning {
+  margin: 0;
+  font-size: 0.72rem;
+  color: color-mix(in srgb, var(--danger) 74%, #ffffff 26%);
+}
+
 .run-diff-inline-thread__comments {
   display: flex;
   flex-direction: column;

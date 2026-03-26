@@ -25,6 +25,8 @@ const {
   getRunGitMergeStatusMock,
   rebaseRunWorktreeOntoSourceMock,
   mergeRunWorktreeIntoSourceMock,
+  listRunDiffFilesMock,
+  getRunDiffFileMock,
   writeRunTerminalMock,
   getRunMock,
   getTaskMock,
@@ -41,6 +43,8 @@ const {
   getRunGitMergeStatusMock: vi.fn(),
   rebaseRunWorktreeOntoSourceMock: vi.fn(),
   mergeRunWorktreeIntoSourceMock: vi.fn(),
+  listRunDiffFilesMock: vi.fn(),
+  getRunDiffFileMock: vi.fn(),
   writeRunTerminalMock: vi.fn(),
   getRunMock: vi.fn(),
   getTaskMock: vi.fn(),
@@ -68,9 +72,9 @@ vi.mock("../../../../app/lib/runs", () => ({
   ],
   getRun: getRunMock,
   getRunGitMergeStatus: getRunGitMergeStatusMock,
-  getRunDiffFile: vi.fn(),
+  getRunDiffFile: getRunDiffFileMock,
   killRunTerminal: vi.fn(async () => undefined),
-  listRunDiffFiles: vi.fn(async () => []),
+  listRunDiffFiles: listRunDiffFilesMock,
   mergeRunWorktreeIntoSource: mergeRunWorktreeIntoSourceMock,
   openRunTerminal: vi.fn(async () => ({
     sessionId: "terminal-1",
@@ -110,6 +114,8 @@ describe("useRunDetailModel startup ownership", () => {
     getRunGitMergeStatusMock.mockReset();
     rebaseRunWorktreeOntoSourceMock.mockReset();
     mergeRunWorktreeIntoSourceMock.mockReset();
+    listRunDiffFilesMock.mockReset();
+    getRunDiffFileMock.mockReset();
     writeRunTerminalMock.mockReset();
     getRunMock.mockReset();
     getTaskMock.mockReset();
@@ -170,6 +176,18 @@ describe("useRunDetailModel startup ownership", () => {
       agents: [],
       providers: [],
       models: [],
+    });
+    listRunDiffFilesMock.mockResolvedValue([]);
+    getRunDiffFileMock.mockResolvedValue({
+      path: "src/main.ts",
+      additions: 1,
+      deletions: 1,
+      original: "before\nline two",
+      modified: "after\nline two",
+      language: "typescript",
+      status: "modified",
+      isBinary: false,
+      truncated: false,
     });
   });
 
@@ -991,11 +1009,13 @@ describe("useRunDetailModel startup ownership", () => {
 
     expect(
       modelRef!.reviewComments.getActiveComposerForFile("src/main.ts"),
-    ).toEqual({
-      side: "modified",
-      lineNumber: 12,
-      body: "ship this change",
-    });
+    ).toEqual(
+      expect.objectContaining({
+        side: "modified",
+        lineNumber: 12,
+        body: "ship this change",
+      }),
+    );
   });
 
   it("updates and removes saved draft comments by anchor and id", async () => {
@@ -1041,5 +1061,181 @@ describe("useRunDetailModel startup ownership", () => {
     expect(modelRef!.reviewComments.listCommentsForFile("src/main.ts")).toEqual(
       [],
     );
+  });
+
+  it("keeps draft comments across diff refresh and revalidates anchors after payload reload", async () => {
+    listRunDiffFilesMock
+      .mockResolvedValueOnce([
+        {
+          path: "src/main.ts",
+          additions: 1,
+          deletions: 1,
+          status: "modified",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          path: "src/main.ts",
+          additions: 2,
+          deletions: 1,
+          status: "modified",
+        },
+      ]);
+    getRunDiffFileMock
+      .mockResolvedValueOnce({
+        path: "src/main.ts",
+        additions: 1,
+        deletions: 1,
+        original: "before\nline two",
+        modified: "after\nline two",
+        language: "typescript",
+        status: "modified",
+        isBinary: false,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        path: "src/main.ts",
+        additions: 2,
+        deletions: 1,
+        original: "before\nline two",
+        modified: "after\nline two",
+        language: "typescript",
+        status: "modified",
+        isBinary: false,
+        truncated: false,
+      });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    modelRef!.setIsDiffTabActive(true);
+    await waitFor(() => {
+      expect(listRunDiffFilesMock).toHaveBeenCalled();
+    });
+
+    await modelRef!.loadDiffFile("src/main.ts");
+    modelRef!.reviewComments.openComposerForFile("src/main.ts", {
+      side: "modified",
+      lineNumber: 2,
+    });
+    modelRef!.reviewComments.updateComposerBodyForFile(
+      "src/main.ts",
+      "keep this note",
+    );
+    modelRef!.reviewComments.saveComposerForFile("src/main.ts");
+
+    await waitFor(() => {
+      expect(
+        modelRef!.reviewComments.listCommentsForFile("src/main.ts")[0]
+          ?.anchorTrust,
+      ).toBe("trusted");
+    });
+
+    await modelRef!.refreshDiffFiles();
+
+    await waitFor(() => {
+      const comment =
+        modelRef!.reviewComments.listCommentsForFile("src/main.ts")[0];
+      expect(comment?.body).toBe("keep this note");
+      expect(comment?.anchorTrust).toBe("untrusted");
+      expect(comment?.anchorIssue).toContain("Reload this file");
+    });
+
+    await modelRef!.loadDiffFile("src/main.ts");
+
+    await waitFor(() => {
+      const comment =
+        modelRef!.reviewComments.listCommentsForFile("src/main.ts")[0];
+      expect(comment?.body).toBe("keep this note");
+      expect(comment?.anchorTrust).toBe("trusted");
+      expect(comment?.anchorIssue).toBeNull();
+    });
+  });
+
+  it("marks anchors untrusted when line content changes after reload", async () => {
+    listRunDiffFilesMock
+      .mockResolvedValueOnce([
+        {
+          path: "src/main.ts",
+          additions: 1,
+          deletions: 1,
+          status: "modified",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          path: "src/main.ts",
+          additions: 3,
+          deletions: 1,
+          status: "modified",
+        },
+      ]);
+    getRunDiffFileMock
+      .mockResolvedValueOnce({
+        path: "src/main.ts",
+        additions: 1,
+        deletions: 1,
+        original: "before\nline two",
+        modified: "after\nline two",
+        language: "typescript",
+        status: "modified",
+        isBinary: false,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        path: "src/main.ts",
+        additions: 3,
+        deletions: 1,
+        original: "before\nline two",
+        modified: "after\nchanged two",
+        language: "typescript",
+        status: "modified",
+        isBinary: false,
+        truncated: false,
+      });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    modelRef!.setIsDiffTabActive(true);
+    await waitFor(() => {
+      expect(listRunDiffFilesMock).toHaveBeenCalled();
+    });
+
+    await modelRef!.loadDiffFile("src/main.ts");
+    modelRef!.reviewComments.openComposerForFile("src/main.ts", {
+      side: "modified",
+      lineNumber: 2,
+    });
+    modelRef!.reviewComments.updateComposerBodyForFile(
+      "src/main.ts",
+      "anchored note",
+    );
+    modelRef!.reviewComments.saveComposerForFile("src/main.ts");
+
+    await modelRef!.refreshDiffFiles();
+    await modelRef!.loadDiffFile("src/main.ts");
+
+    await waitFor(() => {
+      const comment =
+        modelRef!.reviewComments.listCommentsForFile("src/main.ts")[0];
+      expect(comment?.body).toBe("anchored note");
+      expect(comment?.anchorTrust).toBe("untrusted");
+      expect(comment?.anchorIssue).toContain("content changed");
+    });
   });
 });

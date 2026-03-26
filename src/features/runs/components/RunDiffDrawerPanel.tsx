@@ -102,6 +102,18 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
               const payload = () => props.model.diffFilePayloads()[file.path];
               const isFileLoading = () =>
                 props.model.diffFileLoadingPaths()[file.path] === true;
+              const reviewComments = () =>
+                props.model.reviewComments.listCommentsForFile(file.path);
+              const activeComposer = () =>
+                props.model.reviewComments.getActiveComposerForFile(file.path);
+              const untrustedAnchorCount = () => {
+                const untrustedComments = reviewComments().filter(
+                  (comment) => comment.anchorTrust === "untrusted",
+                ).length;
+                const composerUntrusted =
+                  activeComposer()?.anchorTrust === "untrusted" ? 1 : 0;
+                return untrustedComments + composerUntrusted;
+              };
 
               return (
                 <article class="run-diff-item">
@@ -156,6 +168,13 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                               layout.
                             </p>
                           </Show>
+                          <Show when={untrustedAnchorCount() > 0}>
+                            <p class="projects-error" role="status">
+                              {untrustedAnchorCount()} anchor
+                              {untrustedAnchorCount() === 1 ? "" : "s"} need
+                              manual review.
+                            </p>
+                          </Show>
                           <div class="run-detail-monaco-panel">
                             <Suspense
                               fallback={
@@ -169,12 +188,8 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                                 modified={payload()?.modified ?? ""}
                                 language={payload()?.language}
                                 renderSideBySide={props.isSideBySide}
-                                reviewComments={props.model.reviewComments.listCommentsForFile(
-                                  file.path,
-                                )}
-                                activeReviewComposer={props.model.reviewComments.getActiveComposerForFile(
-                                  file.path,
-                                )}
+                                reviewComments={reviewComments()}
+                                activeReviewComposer={activeComposer()}
                                 onOpenReviewComposer={(anchor) => {
                                   props.model.reviewComments.openComposerForFile(
                                     file.path,

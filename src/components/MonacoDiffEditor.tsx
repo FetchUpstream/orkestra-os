@@ -15,11 +15,15 @@ type MonacoDiffEditorProps = {
     side: "original" | "modified";
     lineNumber: number;
     body: string;
+    anchorTrust?: "trusted" | "untrusted";
+    anchorIssue?: string | null;
   }>;
   activeReviewComposer?: {
     side: "original" | "modified";
     lineNumber: number;
     body: string;
+    anchorTrust?: "trusted" | "untrusted";
+    anchorIssue?: string | null;
   } | null;
   onOpenReviewComposer?: (anchor: {
     side: "original" | "modified";
@@ -228,6 +232,21 @@ const MonacoDiffEditor: Component<MonacoDiffEditorProps> = (props) => {
 
     const originalDecorations: monaco.editor.IModelDeltaDecoration[] = [];
     const modifiedDecorations: monaco.editor.IModelDeltaDecoration[] = [];
+    const originalLineCount = originalModel?.getLineCount() ?? 0;
+    const modifiedLineCount = modifiedModel?.getLineCount() ?? 0;
+
+    const isLineInBounds = (
+      side: "original" | "modified",
+      lineNumber: number,
+    ): boolean => {
+      if (!Number.isFinite(lineNumber) || lineNumber <= 0) {
+        return false;
+      }
+
+      return side === "original"
+        ? lineNumber <= originalLineCount
+        : lineNumber <= modifiedLineCount;
+    };
 
     if (isSideBySide && props.onOpenReviewComposer) {
       for (const lineNumber of commentableOriginalLines) {
@@ -254,6 +273,9 @@ const MonacoDiffEditor: Component<MonacoDiffEditorProps> = (props) => {
     }
 
     for (const comment of comments) {
+      if (!isLineInBounds(comment.side, comment.lineNumber)) {
+        continue;
+      }
       const isOriginal = comment.side === "original";
       const targetDecorations = isOriginal
         ? originalDecorations
@@ -270,25 +292,29 @@ const MonacoDiffEditor: Component<MonacoDiffEditorProps> = (props) => {
     }
 
     if (activeComposer) {
-      const targetDecorations =
-        activeComposer.side === "original"
-          ? originalDecorations
-          : modifiedDecorations;
-      targetDecorations.push({
-        range: new monaco.Range(
-          activeComposer.lineNumber,
-          1,
-          activeComposer.lineNumber,
-          1,
-        ),
-        options: {
-          isWholeLine: true,
-          className:
-            "run-diff-comment-line run-diff-comment-line--composer-active",
-          linesDecorationsClassName:
-            "run-diff-comment-gutter run-diff-comment-gutter--composer-active",
-        },
-      });
+      if (!isLineInBounds(activeComposer.side, activeComposer.lineNumber)) {
+        // Composer stays in app state; a fallback thread card is rendered below.
+      } else {
+        const targetDecorations =
+          activeComposer.side === "original"
+            ? originalDecorations
+            : modifiedDecorations;
+        targetDecorations.push({
+          range: new monaco.Range(
+            activeComposer.lineNumber,
+            1,
+            activeComposer.lineNumber,
+            1,
+          ),
+          options: {
+            isWholeLine: true,
+            className:
+              "run-diff-comment-line run-diff-comment-line--composer-active",
+            linesDecorationsClassName:
+              "run-diff-comment-gutter run-diff-comment-gutter--composer-active",
+          },
+        });
+      }
     }
 
     originalCommentDecorations = originalEditor.deltaDecorations(
@@ -310,6 +336,9 @@ const MonacoDiffEditor: Component<MonacoDiffEditorProps> = (props) => {
         if (comment.side !== side) {
           continue;
         }
+        if (!isLineInBounds(comment.side, comment.lineNumber)) {
+          continue;
+        }
         const current = grouped.get(comment.lineNumber) ?? [];
         current.push(comment);
         grouped.set(comment.lineNumber, current);
@@ -325,8 +354,21 @@ const MonacoDiffEditor: Component<MonacoDiffEditorProps> = (props) => {
       sideEditor: monaco.editor.IStandaloneCodeEditor,
       sideCommentsByLine: Map<number, Array<(typeof comments)[number]>>,
     ): string[] => {
+      const fallbackComments = comments.filter(
+        (comment) =>
+          comment.side === side &&
+          !isLineInBounds(comment.side, comment.lineNumber),
+      );
       const composerLine =
-        activeComposer?.side === side ? activeComposer.lineNumber : null;
+        activeComposer?.side === side &&
+        isLineInBounds(activeComposer.side, activeComposer.lineNumber)
+          ? activeComposer.lineNumber
+          : null;
+      const fallbackComposer =
+        activeComposer?.side === side &&
+        !isLineInBounds(activeComposer.side, activeComposer.lineNumber)
+          ? activeComposer
+          : null;
       const anchorLines = new Set<number>(sideCommentsByLine.keys());
       if (composerLine !== null) {
         anchorLines.add(composerLine);
@@ -334,11 +376,81 @@ const MonacoDiffEditor: Component<MonacoDiffEditorProps> = (props) => {
 
       const sortedLines = Array.from(anchorLines).sort((a, b) => a - b);
       const addedZoneIds: string[] = [];
-      if (sortedLines.length === 0) {
+      if (
+        sortedLines.length === 0 &&
+        fallbackComments.length === 0 &&
+        !fallbackComposer
+      ) {
         return addedZoneIds;
       }
 
       sideEditor.changeViewZones((accessor) => {
+        if (fallbackComments.length > 0 || fallbackComposer) {
+          const fallbackNode = document.createElement("div");
+          fallbackNode.className =
+            "run-diff-inline-thread run-diff-inline-thread--anchor-review";
+
+          const fallbackTitle = document.createElement("p");
+          fallbackTitle.className = "run-diff-inline-thread__anchor-warning";
+          fallbackTitle.textContent =
+            "Some anchors no longer map to visible diff lines. Review manually.";
+          fallbackNode.append(fallbackTitle);
+
+          for (const comment of fallbackComments) {
+            const item = document.createElement("article");
+            item.className = "run-diff-inline-thread__comment";
+
+            const warning = document.createElement("p");
+            warning.className = "run-diff-inline-thread__anchor-warning";
+            warning.textContent =
+              comment.anchorIssue ??
+              `Anchor line ${comment.lineNumber} needs review.`;
+
+            const body = document.createElement("p");
+            body.className = "run-diff-inline-thread__comment-body";
+            body.textContent = comment.body;
+
+            const actionRow = document.createElement("div");
+            actionRow.className = "run-diff-inline-thread__comment-actions";
+            const deleteButton = document.createElement("button");
+            deleteButton.type = "button";
+            deleteButton.className =
+              "run-diff-inline-thread__action run-diff-inline-thread__action--danger";
+            deleteButton.textContent = "Delete";
+            deleteButton.addEventListener("click", () => {
+              props.onDeleteReviewComment?.(comment.id);
+            });
+            actionRow.append(deleteButton);
+
+            item.append(warning, body, actionRow);
+            fallbackNode.append(item);
+          }
+
+          if (fallbackComposer) {
+            const composerWarning = document.createElement("p");
+            composerWarning.className =
+              "run-diff-inline-thread__anchor-warning";
+            composerWarning.textContent =
+              fallbackComposer.anchorIssue ??
+              `Composer anchor line ${fallbackComposer.lineNumber} needs review.`;
+            fallbackNode.append(composerWarning);
+          }
+
+          const fallbackZoneId = accessor.addZone({
+            afterLineNumber: 1,
+            heightInLines: Math.min(
+              24,
+              Math.max(
+                5,
+                4 + fallbackComments.length * 4 + (fallbackComposer ? 3 : 0),
+              ),
+            ),
+            domNode: fallbackNode,
+            suppressMouseDown: false,
+          });
+          addedZoneIds.push(fallbackZoneId);
+        }
+
         for (const lineNumber of sortedLines) {
           const lineComments = sideCommentsByLine.get(lineNumber) ?? [];
           const isComposerLine = composerLine === lineNumber;
@@ -352,6 +464,15 @@ const MonacoDiffEditor: Component<MonacoDiffEditorProps> = (props) => {
             for (const comment of lineComments) {
               const item = document.createElement("article");
               item.className = "run-diff-inline-thread__comment";
+
+              if (comment.anchorTrust === "untrusted") {
+                const warning = document.createElement("p");
+                warning.className = "run-diff-inline-thread__anchor-warning";
+                warning.textContent =
+                  comment.anchorIssue ??
+                  `Anchor line ${comment.lineNumber} needs review.`;
+                item.append(warning);
+              }
 
               const body = document.createElement("p");
               body.className = "run-diff-inline-thread__comment-body";
@@ -379,6 +500,14 @@ const MonacoDiffEditor: Component<MonacoDiffEditorProps> = (props) => {
           if (isComposerLine && activeComposer) {
             const composer = document.createElement("div");
             composer.className = "run-diff-inline-thread__composer";
+            if (activeComposer.anchorTrust === "untrusted") {
+              const warning = document.createElement("p");
+              warning.className = "run-diff-inline-thread__anchor-warning";
+              warning.textContent =
+                activeComposer.anchorIssue ??
+                `Anchor line ${activeComposer.lineNumber} needs review.`;
+              composer.append(warning);
+            }
             const textarea = document.createElement("textarea");
             textarea.className = "run-diff-inline-thread__composer-input";
             textarea.rows = 3;
