@@ -162,6 +162,7 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                                 original={payload()?.original ?? ""}
                                 modified={payload()?.modified ?? ""}
                                 language={payload()?.language}
+                                filePath={payload()?.path}
                                 renderSideBySide={props.isSideBySide}
                               />
                             </Suspense>

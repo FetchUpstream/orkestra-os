@@ -1,5 +1,5 @@
 import { render, waitFor } from "@solidjs/testing-library";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import CodeMirrorDiffEditor from "./CodeMirrorDiffEditor";
 
 const {
@@ -9,7 +9,7 @@ const {
   lineNumbersMock,
   editableOfMock,
   readOnlyOfMock,
-  pythonMock,
+  resolveLanguageExtensionMock,
 } = vi.hoisted(() => {
   const mergeViewConstructor = vi.fn(function MockMergeView() {
     return { destroy: vi.fn() };
@@ -21,7 +21,12 @@ const {
   const lineNumbersMock = vi.fn(() => ({ extension: "lineNumbers" }));
   const editableOfMock = vi.fn(() => ({ extension: "editable" }));
   const readOnlyOfMock = vi.fn(() => ({ extension: "readonly" }));
-  const pythonMock = vi.fn(() => ({ extension: "python" }));
+  const resolveLanguageExtensionMock = vi.fn<
+    (input: {
+      language?: string;
+      filePath?: string;
+    }) => { extension: string } | null
+  >(() => ({ extension: "language" }));
 
   return {
     mergeViewConstructor,
@@ -30,7 +35,7 @@ const {
     lineNumbersMock,
     editableOfMock,
     readOnlyOfMock,
-    pythonMock,
+    resolveLanguageExtensionMock,
   };
 });
 
@@ -61,56 +66,8 @@ vi.mock("@codemirror/theme-one-dark", () => ({
   oneDark: { extension: "oneDark" },
 }));
 
-vi.mock("@codemirror/lang-javascript", () => ({
-  javascript: vi.fn(() => ({ extension: "javascript" })),
-}));
-
-vi.mock("@codemirror/lang-json", () => ({
-  json: vi.fn(() => ({ extension: "json" })),
-}));
-
-vi.mock("@codemirror/lang-markdown", () => ({
-  markdown: vi.fn(() => ({ extension: "markdown" })),
-}));
-
-vi.mock("@codemirror/lang-python", () => ({
-  python: pythonMock,
-}));
-
-vi.mock("@codemirror/lang-go", () => ({
-  go: vi.fn(() => ({ extension: "go" })),
-}));
-
-vi.mock("@codemirror/lang-rust", () => ({
-  rust: vi.fn(() => ({ extension: "rust" })),
-}));
-
-vi.mock("@codemirror/lang-java", () => ({
-  java: vi.fn(() => ({ extension: "java" })),
-}));
-
-vi.mock("@codemirror/lang-css", () => ({
-  css: vi.fn(() => ({ extension: "css" })),
-}));
-
-vi.mock("@codemirror/lang-html", () => ({
-  html: vi.fn(() => ({ extension: "html" })),
-}));
-
-vi.mock("@codemirror/lang-xml", () => ({
-  xml: vi.fn(() => ({ extension: "xml" })),
-}));
-
-vi.mock("@codemirror/lang-sql", () => ({
-  sql: vi.fn(() => ({ extension: "sql" })),
-}));
-
-vi.mock("@codemirror/lang-php", () => ({
-  php: vi.fn(() => ({ extension: "php" })),
-}));
-
-vi.mock("@codemirror/lang-yaml", () => ({
-  yaml: vi.fn(() => ({ extension: "yaml" })),
+vi.mock("./codemirrorLanguages", () => ({
+  resolveCodeMirrorLanguageExtension: resolveLanguageExtensionMock,
 }));
 
 describe("CodeMirrorDiffEditor", () => {
@@ -121,7 +78,8 @@ describe("CodeMirrorDiffEditor", () => {
     lineNumbersMock.mockClear();
     editableOfMock.mockClear();
     readOnlyOfMock.mockClear();
-    pythonMock.mockClear();
+    resolveLanguageExtensionMock.mockReset();
+    resolveLanguageExtensionMock.mockReturnValue({ extension: "language" });
   });
 
   it("renders side-by-side diffs with MergeView", async () => {
@@ -130,6 +88,7 @@ describe("CodeMirrorDiffEditor", () => {
         original="const before = 1;"
         modified="const after = 2;"
         language="typescript"
+        filePath="src/demo.ts"
         renderSideBySide={true}
       />
     ));
@@ -138,6 +97,10 @@ describe("CodeMirrorDiffEditor", () => {
       expect(mergeViewConstructor).toHaveBeenCalledTimes(1);
     });
     expect(editorViewConstructor).not.toHaveBeenCalled();
+    expect(resolveLanguageExtensionMock).toHaveBeenCalledWith({
+      language: "typescript",
+      filePath: "src/demo.ts",
+    });
     expect(lineNumbersMock).toHaveBeenCalled();
     expect(editableOfMock).toHaveBeenCalledWith(false);
     expect(readOnlyOfMock).toHaveBeenCalledWith(true);
@@ -149,9 +112,14 @@ describe("CodeMirrorDiffEditor", () => {
         },
       }),
     );
+
     const mergeViewCalls = mergeViewConstructor.mock.calls as unknown[][];
-    const mergeViewConfig = mergeViewCalls[0]?.[0];
-    expect(mergeViewConfig).not.toHaveProperty("revertControls");
+    const mergeViewConfig = mergeViewCalls[0]?.[0] as {
+      a: { extensions: unknown[] };
+    };
+    expect(mergeViewConfig.a.extensions).toContainEqual({
+      extension: "language",
+    });
   });
 
   it("renders unified diffs with unifiedMergeView", async () => {
@@ -184,12 +152,14 @@ describe("CodeMirrorDiffEditor", () => {
     expect(readOnlyOfMock).toHaveBeenCalledWith(true);
   });
 
-  it("resolves highlighting extension for additional languages", async () => {
+  it("stays stable when language resolver returns null", async () => {
+    resolveLanguageExtensionMock.mockImplementation(() => null);
+
     render(() => (
       <CodeMirrorDiffEditor
-        original="print('before')"
-        modified="print('after')"
-        language="python"
+        original="before"
+        modified="after"
+        language="unknown-lang"
         renderSideBySide={true}
       />
     ));
@@ -198,6 +168,12 @@ describe("CodeMirrorDiffEditor", () => {
       expect(mergeViewConstructor).toHaveBeenCalledTimes(1);
     });
 
-    expect(pythonMock).toHaveBeenCalledTimes(2);
+    const mergeViewCalls = mergeViewConstructor.mock.calls as unknown[][];
+    const mergeViewConfig = mergeViewCalls[0]?.[0] as {
+      a: { extensions: unknown[] };
+    };
+    expect(mergeViewConfig.a.extensions).not.toContainEqual({
+      extension: "language",
+    });
   });
 });

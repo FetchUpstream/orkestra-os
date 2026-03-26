@@ -5,8 +5,10 @@ import type { useRunDetailModel } from "../model/useRunDetailModel";
 import RunDiffDrawerPanel from "./RunDiffDrawerPanel";
 
 vi.mock("../../../components/CodeMirrorDiffEditor", () => ({
-  default: (props: { renderSideBySide?: boolean }) => (
-    <div data-testid="diff-props">{String(props.renderSideBySide)}</div>
+  default: (props: { renderSideBySide?: boolean; filePath?: string }) => (
+    <div data-testid="diff-props">
+      {String(props.renderSideBySide)}|{props.filePath}
+    </div>
   ),
 }));
 
@@ -69,6 +71,6 @@ describe("RunDiffDrawerPanel", () => {
     ));
 
     const diffProps = await screen.findByTestId("diff-props");
-    expect(diffProps.textContent).toBe("false");
+    expect(diffProps.textContent).toBe("false|src/demo.ts");
   });
 });
