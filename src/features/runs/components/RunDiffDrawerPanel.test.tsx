@@ -5,9 +5,15 @@ import type { useRunDetailModel } from "../model/useRunDetailModel";
 import RunDiffDrawerPanel from "./RunDiffDrawerPanel";
 
 vi.mock("../../../components/CodeMirrorDiffEditor", () => ({
-  default: (props: { renderSideBySide?: boolean; filePath?: string }) => (
+  default: (props: {
+    renderSideBySide?: boolean;
+    filePath?: string;
+    canCreateDraftComments?: boolean;
+    draftComments?: { id: string }[];
+  }) => (
     <div data-testid="diff-props">
-      {String(props.renderSideBySide)}|{props.filePath}
+      {String(props.renderSideBySide)}|{props.filePath}|
+      {String(props.canCreateDraftComments)}|{props.draftComments?.length ?? 0}
     </div>
   ),
 }));
@@ -63,6 +69,25 @@ const createModelStub = (options?: { withPayloads?: boolean }) => {
     diffFilePayloads,
     diffFileLoadingPaths: () => ({}),
     loadDiffFile: vi.fn(async () => undefined),
+    review: {
+      getDraftCommentsForFile: vi.fn((path: string) =>
+        path === "src/demo.ts"
+          ? [
+              {
+                id: "draft-1",
+                filePath: "src/demo.ts",
+                side: "modified",
+                line: 1,
+                body: "Looks good.",
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              },
+            ]
+          : [],
+      ),
+      upsertDraftComment: vi.fn(),
+      removeDraftComment: vi.fn(),
+    },
   };
 
   return {
@@ -93,7 +118,10 @@ describe("RunDiffDrawerPanel", () => {
     ));
 
     const diffProps = await screen.findByTestId("diff-props");
-    expect(diffProps.textContent).toBe("false|src/demo.ts");
+    expect(diffProps.textContent).toBe("false|src/demo.ts|false|1");
+    expect(
+      screen.getByText(/Inline review comments are available only in/i),
+    ).toBeTruthy();
   });
 
   it("keeps only one file expanded and mounts one editor", async () => {
@@ -104,15 +132,15 @@ describe("RunDiffDrawerPanel", () => {
 
     await waitFor(() => {
       expect(screen.getAllByTestId("diff-props")).toHaveLength(1);
-      expect(screen.getByText("true|src/demo.ts")).toBeTruthy();
+      expect(screen.getByText("true|src/demo.ts|true|1")).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole("button", { name: /src\/other\.ts/i }));
 
     await waitFor(() => {
       expect(screen.getAllByTestId("diff-props")).toHaveLength(1);
-      expect(screen.queryByText("true|src/demo.ts")).toBeNull();
-      expect(screen.getByText("true|src/other.ts")).toBeTruthy();
+      expect(screen.queryByText("true|src/demo.ts|true|1")).toBeNull();
+      expect(screen.getByText("true|src/other.ts|true|0")).toBeTruthy();
     });
   });
 });

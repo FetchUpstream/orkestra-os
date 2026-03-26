@@ -5221,6 +5221,116 @@ textarea::placeholder {
   font-size: 0.72rem;
 }
 
+.run-detail-codemirror-root .cm-review-gutter .cm-gutterElement {
+  padding: 0 6px;
+}
+
+.run-detail-codemirror-root .cm-review-gutter__marker {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #8da2c2 72%, #0d1724 28%);
+  background: transparent;
+  opacity: 0.75;
+}
+
+.run-detail-codemirror-root .cm-review-gutter__marker--commented {
+  border-color: #7ac7ff;
+  background: #42a5f5;
+  box-shadow: 0 0 0 1px rgba(122, 199, 255, 0.28);
+  opacity: 1;
+}
+
+.run-detail-codemirror-root .cm-review-commented-line {
+  background: linear-gradient(
+    90deg,
+    rgba(66, 165, 245, 0.11),
+    rgba(66, 165, 245, 0.04) 65%,
+    rgba(66, 165, 245, 0)
+  );
+}
+
+.run-detail-codemirror-root .cm-review-thread {
+  margin: 8px 12px 12px 12px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, #8fb1d9 35%, #1a2433 65%);
+  border-radius: 10px;
+  background: color-mix(in srgb, #101a28 90%, #06090f 10%);
+}
+
+.run-detail-codemirror-root .cm-review-thread__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.run-detail-codemirror-root .cm-review-thread__item {
+  padding-bottom: 8px;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--border-subtle) 70%, #000 30%);
+}
+
+.run-detail-codemirror-root .cm-review-thread__item:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.run-detail-codemirror-root .cm-review-thread__label {
+  margin: 0;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: color-mix(in srgb, var(--text-subtle) 88%, #fff 12%);
+}
+
+.run-detail-codemirror-root .cm-review-thread__body {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  color: color-mix(in srgb, var(--text) 92%, #fff 8%);
+}
+
+.run-detail-codemirror-root .cm-review-thread__actions,
+.run-detail-codemirror-root .cm-review-composer__actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.run-detail-codemirror-root .cm-review-thread__button,
+.run-detail-codemirror-root .cm-review-composer__button {
+  border: 1px solid color-mix(in srgb, #7ea9d8 40%, #1b2a3d 60%);
+  border-radius: 8px;
+  background: color-mix(in srgb, #13253b 74%, #0a1420 26%);
+  color: color-mix(in srgb, var(--text) 90%, #fff 10%);
+  padding: 4px 8px;
+  font-size: 0.72rem;
+}
+
+.run-detail-codemirror-root .cm-review-thread__button--danger {
+  border-color: color-mix(in srgb, #ff8c94 48%, #2a1b22 52%);
+  background: color-mix(in srgb, #391e25 70%, #170d11 30%);
+}
+
+.run-detail-codemirror-root .cm-review-composer {
+  margin-top: 10px;
+}
+
+.run-detail-codemirror-root .cm-review-composer__input {
+  width: 100%;
+  resize: vertical;
+  min-height: 68px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 78%, #000 22%);
+  background: color-mix(in srgb, #0b1118 85%, #05080d 15%);
+  color: var(--text);
+  padding: 8px;
+}
+
+.run-detail-codemirror-root .cm-review-composer__button--ghost {
+  background: transparent;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

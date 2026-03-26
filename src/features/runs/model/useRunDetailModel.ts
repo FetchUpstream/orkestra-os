@@ -44,6 +44,26 @@ import {
 import type { AgentStore, OpenCodeBusEvent } from "./agentTypes";
 import { setRunCommitPending } from "./commitUiState";
 
+export type RunReviewCommentSide = "original" | "modified";
+
+export type RunReviewDraftComment = {
+  id: string;
+  filePath: string;
+  side: RunReviewCommentSide;
+  line: number;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type UpsertRunReviewDraftCommentInput = {
+  id?: string;
+  filePath: string;
+  side: RunReviewCommentSide;
+  line: number;
+  body: string;
+};
+
 export const useRunDetailModel = () => {
   const navigate = useNavigate();
   const params = useParams();
@@ -62,6 +82,9 @@ export const useRunDetailModel = () => {
   >({});
   const [isLoading, setIsLoading] = createSignal(true);
   const [error, setError] = createSignal("");
+  const [reviewDraftComments, setReviewDraftComments] = createSignal<
+    RunReviewDraftComment[]
+  >([]);
   const [terminalSessionId, setTerminalSessionId] = createSignal<string | null>(
     null,
   );
@@ -281,6 +304,94 @@ export const useRunDetailModel = () => {
     }
 
     return "";
+  };
+
+  const getDraftCommentsForFile = (
+    filePath: string,
+  ): RunReviewDraftComment[] => {
+    const normalizedPath = filePath.trim();
+    if (!normalizedPath) {
+      return [];
+    }
+
+    return reviewDraftComments()
+      .filter((comment) => comment.filePath === normalizedPath)
+      .sort((left, right) => {
+        if (left.line !== right.line) {
+          return left.line - right.line;
+        }
+        return left.createdAt.localeCompare(right.createdAt);
+      });
+  };
+
+  const upsertDraftComment = (
+    input: UpsertRunReviewDraftCommentInput,
+  ): RunReviewDraftComment | null => {
+    const normalizedFilePath = input.filePath.trim();
+    const normalizedBody = input.body.trim();
+    const normalizedLine = Number.isFinite(input.line)
+      ? Math.max(1, Math.floor(input.line))
+      : NaN;
+    if (
+      !normalizedFilePath ||
+      !normalizedBody ||
+      !Number.isFinite(normalizedLine)
+    ) {
+      return null;
+    }
+
+    const timestamp = new Date().toISOString();
+    const existingId = input.id?.trim() || "";
+    let saved: RunReviewDraftComment | null = null;
+
+    setReviewDraftComments((current) => {
+      const next = [...current];
+      if (existingId) {
+        const existingIndex = next.findIndex(
+          (comment) => comment.id === existingId,
+        );
+        if (existingIndex >= 0) {
+          const previous = next[existingIndex];
+          const updated: RunReviewDraftComment = {
+            ...previous,
+            filePath: normalizedFilePath,
+            side: input.side,
+            line: normalizedLine,
+            body: normalizedBody,
+            updatedAt: timestamp,
+          };
+          next[existingIndex] = updated;
+          saved = updated;
+          return next;
+        }
+      }
+
+      const created: RunReviewDraftComment = {
+        id: crypto.randomUUID(),
+        filePath: normalizedFilePath,
+        side: input.side,
+        line: normalizedLine,
+        body: normalizedBody,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      saved = created;
+      next.push(created);
+      return next;
+    });
+
+    return saved;
+  };
+
+  const removeDraftComment = (commentId: string): void => {
+    const normalizedId = commentId.trim();
+    if (!normalizedId) {
+      return;
+    }
+
+    setReviewDraftComments((current) =>
+      current.filter((comment) => comment.id !== normalizedId),
+    );
   };
 
   const isInformationalGitStateMessage = (value: string): boolean => {
@@ -1152,6 +1263,11 @@ export const useRunDetailModel = () => {
         }
       }
     })();
+  });
+
+  createEffect(() => {
+    params.runId;
+    setReviewDraftComments([]);
   });
 
   createEffect(() => {
@@ -2187,6 +2303,12 @@ export const useRunDetailModel = () => {
     diffFileLoadingPaths,
     loadDiffFile,
     refreshDiffFiles,
+    review: {
+      draftComments: reviewDraftComments,
+      getDraftCommentsForFile,
+      upsertDraftComment,
+      removeDraftComment,
+    },
     git: {
       status: gitStatus,
       isLoading: isGitStatusLoading,

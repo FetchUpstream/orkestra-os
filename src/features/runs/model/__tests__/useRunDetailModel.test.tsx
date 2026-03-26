@@ -970,4 +970,72 @@ describe("useRunDetailModel startup ownership", () => {
       remember: false,
     });
   });
+
+  it("stores and updates draft review comments in app state", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    const created = modelRef!.review.upsertDraftComment({
+      filePath: "src/demo.ts",
+      side: "modified",
+      line: 3,
+      body: "Need to handle null cases.",
+    });
+
+    expect(created).toBeTruthy();
+    expect(modelRef!.review.getDraftCommentsForFile("src/demo.ts")).toEqual([
+      expect.objectContaining({
+        id: created?.id,
+        line: 3,
+        body: "Need to handle null cases.",
+        side: "modified",
+      }),
+    ]);
+
+    modelRef!.review.upsertDraftComment({
+      id: created!.id,
+      filePath: "src/demo.ts",
+      side: "modified",
+      line: 3,
+      body: "Need to handle null + undefined cases.",
+    });
+
+    expect(modelRef!.review.getDraftCommentsForFile("src/demo.ts")).toEqual([
+      expect.objectContaining({
+        id: created!.id,
+        body: "Need to handle null + undefined cases.",
+      }),
+    ]);
+  });
+
+  it("removes draft review comments by id", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    const created = modelRef!.review.upsertDraftComment({
+      filePath: "src/demo.ts",
+      side: "modified",
+      line: 2,
+      body: "Consider extracting a helper.",
+    });
+    expect(modelRef!.review.draftComments()).toHaveLength(1);
+
+    modelRef!.review.removeDraftComment(created!.id);
+
+    expect(modelRef!.review.draftComments()).toHaveLength(0);
+  });
 });

@@ -7,6 +7,7 @@ import {
   lazy,
   type Component,
 } from "solid-js";
+import type { UpsertCodeMirrorDiffDraftCommentInput } from "../../../components/CodeMirrorDiffEditor";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 
 const CodeMirrorDiffEditor = lazy(
@@ -190,6 +191,20 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                             {payload()?.isBinary ? "binary" : "text"}
                             {payload()?.truncated ? ", truncated" : ""}
                           </p>
+                          <Show when={!props.isSideBySide}>
+                            <p class="run-diff-section__helper">
+                              Inline review comments are available only in
+                              side-by-side mode.
+                            </p>
+                          </Show>
+                          <Show
+                            when={payload()?.isBinary || payload()?.truncated}
+                          >
+                            <p class="run-diff-section__helper">
+                              Inline comments are disabled for binary or
+                              truncated diffs.
+                            </p>
+                          </Show>
                           <Suspense
                             fallback={
                               <p class="project-placeholder-text run-diff-section__helper">
@@ -203,6 +218,28 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                               language={payload()?.language}
                               filePath={payload()?.path}
                               renderSideBySide={props.isSideBySide}
+                              draftComments={props.model.review
+                                .getDraftCommentsForFile(file.path)
+                                .filter(
+                                  (comment) => comment.side === "modified",
+                                )}
+                              canCreateDraftComments={
+                                props.isSideBySide &&
+                                !payload()?.isBinary &&
+                                !payload()?.truncated
+                              }
+                              onUpsertDraftComment={(
+                                nextComment: UpsertCodeMirrorDiffDraftCommentInput,
+                              ) => {
+                                props.model.review.upsertDraftComment(
+                                  nextComment,
+                                );
+                              }}
+                              onDeleteDraftComment={(commentId: string) => {
+                                props.model.review.removeDraftComment(
+                                  commentId,
+                                );
+                              }}
                             />
                           </Suspense>
                         </Show>

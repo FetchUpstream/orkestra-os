@@ -1,14 +1,19 @@
 import { render, waitFor } from "@solidjs/testing-library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createSignal } from "solid-js";
 import CodeMirrorDiffEditor from "./CodeMirrorDiffEditor";
 
 const {
   mergeViewConstructor,
   unifiedMergeViewMock,
   editorViewConstructor,
+  decorationsFromMock,
   lineNumbersMock,
   editableOfMock,
   readOnlyOfMock,
+  gutterMock,
+  stateEffectDefineMock,
+  stateFieldDefineMock,
   resolveLanguageExtensionMock,
 } = vi.hoisted(() => {
   const mergeViewConstructor = vi.fn(function MockMergeView() {
@@ -18,9 +23,16 @@ const {
   const editorViewConstructor = vi.fn(function MockEditorView() {
     return { destroy: vi.fn() };
   });
+  const decorationsFromMock = vi.fn(() => ({ extension: "decorations" }));
   const lineNumbersMock = vi.fn(() => ({ extension: "lineNumbers" }));
   const editableOfMock = vi.fn(() => ({ extension: "editable" }));
   const readOnlyOfMock = vi.fn(() => ({ extension: "readonly" }));
+  const gutterMock = vi.fn(() => ({ extension: "gutter" }));
+  const stateEffectDefineMock = vi.fn(() => ({
+    of: vi.fn((value: unknown) => ({ value })),
+    is: vi.fn(() => false),
+  }));
+  const stateFieldDefineMock = vi.fn((config: unknown) => config);
   const resolveLanguageExtensionMock = vi.fn<
     (input: {
       language?: string;
@@ -32,9 +44,13 @@ const {
     mergeViewConstructor,
     unifiedMergeViewMock,
     editorViewConstructor,
+    decorationsFromMock,
     lineNumbersMock,
     editableOfMock,
     readOnlyOfMock,
+    gutterMock,
+    stateEffectDefineMock,
+    stateFieldDefineMock,
     resolveLanguageExtensionMock,
   };
 });
@@ -45,16 +61,42 @@ vi.mock("@codemirror/merge", () => ({
 }));
 
 vi.mock("@codemirror/view", () => ({
+  Decoration: {
+    none: { extension: "none" },
+    line: vi.fn(() => ({ extension: "line" })),
+    widget: vi.fn(() => ({ extension: "widget" })),
+  },
+  GutterMarker: class {},
+  WidgetType: class {},
+  gutter: gutterMock,
   EditorView: Object.assign(editorViewConstructor, {
     lineWrapping: { extension: "lineWrapping" },
     editable: {
       of: editableOfMock,
+    },
+    decorations: {
+      from: decorationsFromMock,
     },
   }),
   lineNumbers: lineNumbersMock,
 }));
 
 vi.mock("@codemirror/state", () => ({
+  RangeSetBuilder: class {
+    add() {
+      return undefined;
+    }
+
+    finish() {
+      return { extension: "ranges" };
+    }
+  },
+  StateEffect: {
+    define: stateEffectDefineMock,
+  },
+  StateField: {
+    define: stateFieldDefineMock,
+  },
   EditorState: {
     readOnly: {
       of: readOnlyOfMock,
@@ -75,9 +117,13 @@ describe("CodeMirrorDiffEditor", () => {
     mergeViewConstructor.mockClear();
     unifiedMergeViewMock.mockClear();
     editorViewConstructor.mockClear();
+    decorationsFromMock.mockClear();
     lineNumbersMock.mockClear();
     editableOfMock.mockClear();
     readOnlyOfMock.mockClear();
+    gutterMock.mockClear();
+    stateEffectDefineMock.mockClear();
+    stateFieldDefineMock.mockClear();
     resolveLanguageExtensionMock.mockReset();
     resolveLanguageExtensionMock.mockReturnValue({ extension: "language" });
   });
@@ -214,5 +260,37 @@ describe("CodeMirrorDiffEditor", () => {
     expect(
       root?.classList.contains("run-detail-codemirror-root--bounded"),
     ).toBe(true);
+  });
+
+  it("does not recreate merge editor when draft comments update", async () => {
+    const [draftComments, setDraftComments] = createSignal<
+      { id: string; line: number; body: string }[]
+    >([]);
+
+    render(() => (
+      <CodeMirrorDiffEditor
+        original="const before = 1;"
+        modified="const after = 2;"
+        renderSideBySide={true}
+        draftComments={draftComments()}
+        canCreateDraftComments={true}
+      />
+    ));
+
+    await waitFor(() => {
+      expect(mergeViewConstructor).toHaveBeenCalledTimes(1);
+    });
+
+    setDraftComments([
+      {
+        id: "draft-1",
+        line: 1,
+        body: "Looks good",
+      },
+    ]);
+
+    await waitFor(() => {
+      expect(mergeViewConstructor).toHaveBeenCalledTimes(1);
+    });
   });
 });
