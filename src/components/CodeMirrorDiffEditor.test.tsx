@@ -149,6 +149,9 @@ describe("CodeMirrorDiffEditor", () => {
         },
       }),
     );
+    const mergeViewCalls = mergeViewConstructor.mock.calls as unknown[][];
+    const mergeViewConfig = mergeViewCalls[0]?.[0];
+    expect(mergeViewConfig).not.toHaveProperty("revertControls");
   });
 
   it("renders unified diffs with unifiedMergeView", async () => {
@@ -168,6 +171,7 @@ describe("CodeMirrorDiffEditor", () => {
       expect.objectContaining({
         original: "const before = 1;",
         gutter: true,
+        mergeControls: false,
         collapseUnchanged: {
           margin: 3,
           minSize: 4,

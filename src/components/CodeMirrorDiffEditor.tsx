@@ -154,6 +154,7 @@ const CodeMirrorDiffEditor: Component<CodeMirrorDiffEditorProps> = (props) => {
         unifiedMergeView({
           original,
           gutter: true,
+          mergeControls: false,
           collapseUnchanged,
         }),
       ],
