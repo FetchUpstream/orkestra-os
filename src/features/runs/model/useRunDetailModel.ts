@@ -44,31 +44,6 @@ import {
 import type { AgentStore, OpenCodeBusEvent } from "./agentTypes";
 import { setRunCommitPending } from "./commitUiState";
 
-export type DiffReviewCommentSide = "original" | "modified";
-
-export type DiffReviewCommentAnchor = {
-  side: DiffReviewCommentSide;
-  lineNumber: number;
-  lineContent?: string | null;
-};
-
-export type DiffReviewAnchorTrustState = "trusted" | "untrusted";
-
-export type DiffReviewDraftComment = DiffReviewCommentAnchor & {
-  id: string;
-  body: string;
-  createdAt: string;
-  updatedAt: string;
-  anchorTrust: DiffReviewAnchorTrustState;
-  anchorIssue: string | null;
-};
-
-export type DiffReviewActiveComposer = DiffReviewCommentAnchor & {
-  body: string;
-  anchorTrust: DiffReviewAnchorTrustState;
-  anchorIssue: string | null;
-};
-
 export const useRunDetailModel = () => {
   const navigate = useNavigate();
   const params = useParams();
@@ -85,10 +60,6 @@ export const useRunDetailModel = () => {
   const [diffFileLoadingPaths, setDiffFileLoadingPaths] = createSignal<
     Record<string, boolean>
   >({});
-  const [diffReviewDraftCommentsByPath, setDiffReviewDraftCommentsByPath] =
-    createSignal<Record<string, DiffReviewDraftComment[]>>({});
-  const [diffReviewActiveComposerByPath, setDiffReviewActiveComposerByPath] =
-    createSignal<Record<string, DiffReviewActiveComposer>>({});
   const [isLoading, setIsLoading] = createSignal(true);
   const [error, setError] = createSignal("");
   const [terminalSessionId, setTerminalSessionId] = createSignal<string | null>(
@@ -2089,14 +2060,6 @@ export const useRunDetailModel = () => {
         }
         return didChange ? next : current;
       });
-
-      for (const path of invalidatedPaths) {
-        revalidateReviewAnchorsForPath(path, {
-          payload: null,
-          missingPayloadIssue:
-            "Diff metadata changed. Reload this file to verify anchors.",
-        });
-      }
     } catch {
       if (
         params.runId !== runId ||
@@ -2129,7 +2092,6 @@ export const useRunDetailModel = () => {
       const payload = await getRunDiffFile(runId, path);
       if (params.runId !== runId) return;
       setDiffFilePayloads((current) => ({ ...current, [path]: payload }));
-      revalidateReviewAnchorsForPath(path, { payload });
     } catch (loadError) {
       throw loadError;
     } finally {
@@ -2141,365 +2103,6 @@ export const useRunDetailModel = () => {
         });
       }
     }
-  };
-
-  const normalizeDiffAnchor = (
-    anchor: DiffReviewCommentAnchor,
-  ): DiffReviewCommentAnchor | null => {
-    const side = anchor.side;
-    const lineNumber = Math.floor(anchor.lineNumber);
-    const lineContent =
-      typeof anchor.lineContent === "string" ? anchor.lineContent : null;
-    if (side !== "original" && side !== "modified") {
-      return null;
-    }
-    if (!Number.isFinite(lineNumber) || lineNumber <= 0) {
-      return null;
-    }
-    return { side, lineNumber, lineContent };
-  };
-
-  const getPayloadLineContent = (
-    payload: RunDiffFilePayload,
-    side: DiffReviewCommentSide,
-    lineNumber: number,
-  ): string | null => {
-    if (!Number.isFinite(lineNumber) || lineNumber <= 0) {
-      return null;
-    }
-
-    const source = side === "original" ? payload.original : payload.modified;
-    const lines = source.split(/\r?\n/);
-    const line = lines[lineNumber - 1];
-    return typeof line === "string" ? line : null;
-  };
-
-  const validateDiffAnchorForPath = (
-    path: string,
-    anchor: DiffReviewCommentAnchor,
-    options?: {
-      payload?: RunDiffFilePayload | null;
-      missingPayloadIssue?: string;
-    },
-  ): {
-    anchorTrust: DiffReviewAnchorTrustState;
-    anchorIssue: string | null;
-    lineContent: string | null;
-  } => {
-    const payload =
-      options?.payload !== undefined
-        ? options.payload
-        : (diffFilePayloads()[path] ?? null);
-
-    if (!payload) {
-      return {
-        anchorTrust: "untrusted",
-        anchorIssue:
-          options?.missingPayloadIssue ??
-          "Diff content changed. Reload this file to review anchors.",
-        lineContent: anchor.lineContent ?? null,
-      };
-    }
-
-    const currentLineContent = getPayloadLineContent(
-      payload,
-      anchor.side,
-      anchor.lineNumber,
-    );
-    if (currentLineContent === null) {
-      return {
-        anchorTrust: "untrusted",
-        anchorIssue: `${anchor.side === "original" ? "Original" : "Modified"} line ${anchor.lineNumber} is no longer present in this diff.`,
-        lineContent: anchor.lineContent ?? null,
-      };
-    }
-
-    if (
-      anchor.lineContent !== null &&
-      anchor.lineContent !== undefined &&
-      anchor.lineContent !== currentLineContent
-    ) {
-      return {
-        anchorTrust: "untrusted",
-        anchorIssue: `Line ${anchor.lineNumber} content changed since this draft was created.`,
-        lineContent: anchor.lineContent,
-      };
-    }
-
-    return {
-      anchorTrust: "trusted",
-      anchorIssue: null,
-      lineContent: anchor.lineContent ?? currentLineContent,
-    };
-  };
-
-  const revalidateReviewAnchorsForPath = (
-    path: string,
-    options?: {
-      payload?: RunDiffFilePayload | null;
-      missingPayloadIssue?: string;
-    },
-  ): void => {
-    const normalizedPath = path.trim();
-    if (!normalizedPath) {
-      return;
-    }
-
-    setDiffReviewDraftCommentsByPath((current) => {
-      const existing = current[normalizedPath];
-      if (!existing || existing.length === 0) {
-        return current;
-      }
-
-      let didChange = false;
-      const nextComments = existing.map((comment) => {
-        const validation = validateDiffAnchorForPath(normalizedPath, comment, {
-          payload: options?.payload,
-          missingPayloadIssue: options?.missingPayloadIssue,
-        });
-
-        if (
-          comment.anchorTrust === validation.anchorTrust &&
-          comment.anchorIssue === validation.anchorIssue &&
-          comment.lineContent === validation.lineContent
-        ) {
-          return comment;
-        }
-
-        didChange = true;
-        return {
-          ...comment,
-          anchorTrust: validation.anchorTrust,
-          anchorIssue: validation.anchorIssue,
-          lineContent: validation.lineContent,
-        };
-      });
-
-      if (!didChange) {
-        return current;
-      }
-
-      return {
-        ...current,
-        [normalizedPath]: nextComments,
-      };
-    });
-
-    setDiffReviewActiveComposerByPath((current) => {
-      const composer = current[normalizedPath];
-      if (!composer) {
-        return current;
-      }
-
-      const validation = validateDiffAnchorForPath(normalizedPath, composer, {
-        payload: options?.payload,
-        missingPayloadIssue: options?.missingPayloadIssue,
-      });
-
-      if (
-        composer.anchorTrust === validation.anchorTrust &&
-        composer.anchorIssue === validation.anchorIssue &&
-        composer.lineContent === validation.lineContent
-      ) {
-        return current;
-      }
-
-      return {
-        ...current,
-        [normalizedPath]: {
-          ...composer,
-          anchorTrust: validation.anchorTrust,
-          anchorIssue: validation.anchorIssue,
-          lineContent: validation.lineContent,
-        },
-      };
-    });
-  };
-
-  const listDiffReviewDraftComments = (
-    path: string,
-  ): DiffReviewDraftComment[] => {
-    return diffReviewDraftCommentsByPath()[path] ?? [];
-  };
-
-  const getDiffReviewActiveComposer = (
-    path: string,
-  ): DiffReviewActiveComposer | null => {
-    return diffReviewActiveComposerByPath()[path] ?? null;
-  };
-
-  const openDiffReviewComposer = (
-    path: string,
-    anchor: DiffReviewCommentAnchor,
-  ): void => {
-    const normalizedPath = path.trim();
-    const normalizedAnchor = normalizeDiffAnchor(anchor);
-    if (!normalizedPath || !normalizedAnchor) {
-      return;
-    }
-
-    const existingComment = listDiffReviewDraftComments(normalizedPath).find(
-      (comment) =>
-        comment.side === normalizedAnchor.side &&
-        comment.lineNumber === normalizedAnchor.lineNumber,
-    );
-    const payloadForPath = diffFilePayloads()[normalizedPath];
-
-    setDiffReviewActiveComposerByPath((current) => ({
-      ...current,
-      [normalizedPath]: {
-        ...normalizedAnchor,
-        body: existingComment?.body ?? "",
-        lineContent:
-          normalizedAnchor.lineContent ??
-          existingComment?.lineContent ??
-          (payloadForPath
-            ? getPayloadLineContent(
-                payloadForPath,
-                normalizedAnchor.side,
-                normalizedAnchor.lineNumber,
-              )
-            : null),
-        anchorTrust: "trusted",
-        anchorIssue: null,
-      },
-    }));
-
-    revalidateReviewAnchorsForPath(normalizedPath);
-  };
-
-  const updateDiffReviewComposerBody = (path: string, body: string): void => {
-    const normalizedPath = path.trim();
-    if (!normalizedPath) {
-      return;
-    }
-
-    setDiffReviewActiveComposerByPath((current) => {
-      const composer = current[normalizedPath];
-      if (!composer) {
-        return current;
-      }
-
-      return {
-        ...current,
-        [normalizedPath]: {
-          ...composer,
-          body,
-        },
-      };
-    });
-  };
-
-  const closeDiffReviewComposer = (path: string): void => {
-    const normalizedPath = path.trim();
-    if (!normalizedPath) {
-      return;
-    }
-
-    setDiffReviewActiveComposerByPath((current) => {
-      if (!Object.prototype.hasOwnProperty.call(current, normalizedPath)) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[normalizedPath];
-      return next;
-    });
-  };
-
-  const saveDiffReviewComposer = (path: string): void => {
-    const normalizedPath = path.trim();
-    if (!normalizedPath) {
-      return;
-    }
-    const composer = getDiffReviewActiveComposer(normalizedPath);
-    if (!composer) {
-      return;
-    }
-
-    const normalizedBody = composer.body.trim();
-    if (!normalizedBody) {
-      return;
-    }
-
-    const now = new Date().toISOString();
-    const validation = validateDiffAnchorForPath(normalizedPath, composer);
-    setDiffReviewDraftCommentsByPath((current) => {
-      const existing = current[normalizedPath] ?? [];
-      const existingIndex = existing.findIndex(
-        (comment) =>
-          comment.side === composer.side &&
-          comment.lineNumber === composer.lineNumber,
-      );
-
-      if (existingIndex >= 0) {
-        const next = existing.slice();
-        const previous = next[existingIndex];
-        next[existingIndex] = {
-          ...previous,
-          body: normalizedBody,
-          updatedAt: now,
-          lineContent: validation.lineContent,
-          anchorTrust: validation.anchorTrust,
-          anchorIssue: validation.anchorIssue,
-        };
-        return {
-          ...current,
-          [normalizedPath]: next,
-        };
-      }
-
-      return {
-        ...current,
-        [normalizedPath]: [
-          ...existing,
-          {
-            id: crypto.randomUUID(),
-            side: composer.side,
-            lineNumber: composer.lineNumber,
-            lineContent: validation.lineContent,
-            body: normalizedBody,
-            createdAt: now,
-            updatedAt: now,
-            anchorTrust: validation.anchorTrust,
-            anchorIssue: validation.anchorIssue,
-          },
-        ],
-      };
-    });
-
-    closeDiffReviewComposer(normalizedPath);
-  };
-
-  const removeDiffReviewDraftComment = (
-    path: string,
-    commentId: string,
-  ): void => {
-    const normalizedPath = path.trim();
-    const normalizedCommentId = commentId.trim();
-    if (!normalizedPath || !normalizedCommentId) {
-      return;
-    }
-
-    setDiffReviewDraftCommentsByPath((current) => {
-      const existing = current[normalizedPath] ?? [];
-      const nextComments = existing.filter(
-        (comment) => comment.id !== normalizedCommentId,
-      );
-      if (nextComments.length === existing.length) {
-        return current;
-      }
-
-      if (nextComments.length === 0) {
-        const next = { ...current };
-        delete next[normalizedPath];
-        return next;
-      }
-
-      return {
-        ...current,
-        [normalizedPath]: nextComments,
-      };
-    });
   };
 
   createEffect(() => {
@@ -2554,21 +2157,6 @@ export const useRunDetailModel = () => {
     });
   });
 
-  createEffect((previousRunId = "") => {
-    const runId = params.runId?.trim() ?? "";
-    if (!runId || (previousRunId && previousRunId !== runId)) {
-      setDiffReviewDraftCommentsByPath({});
-      setDiffReviewActiveComposerByPath({});
-      return runId;
-    }
-
-    if (previousRunId !== runId) {
-      setDiffReviewActiveComposerByPath({});
-    }
-
-    return runId;
-  });
-
   createEffect(() => {
     const runId = params.runId;
     const active = isDiffTabActive();
@@ -2599,15 +2187,6 @@ export const useRunDetailModel = () => {
     diffFileLoadingPaths,
     loadDiffFile,
     refreshDiffFiles,
-    reviewComments: {
-      listCommentsForFile: listDiffReviewDraftComments,
-      getActiveComposerForFile: getDiffReviewActiveComposer,
-      openComposerForFile: openDiffReviewComposer,
-      updateComposerBodyForFile: updateDiffReviewComposerBody,
-      closeComposerForFile: closeDiffReviewComposer,
-      saveComposerForFile: saveDiffReviewComposer,
-      removeCommentForFile: removeDiffReviewDraftComment,
-    },
     git: {
       status: gitStatus,
       isLoading: isGitStatusLoading,
