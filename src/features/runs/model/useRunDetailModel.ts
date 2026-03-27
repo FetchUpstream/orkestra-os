@@ -64,6 +64,16 @@ export type RunReviewDraftComment = {
   anchorLineSnippet?: string;
 };
 
+export type RunDraftReviewSubmissionPlan = {
+  message: string;
+  submittedCommentIds: string[];
+  eligibleCount: number;
+  ineligibleCount: number;
+  fileCount: number;
+  isSubmittable: boolean;
+  blockedReason: string;
+};
+
 type UpsertRunReviewDraftCommentInput = {
   id?: string;
   filePath: string;
@@ -341,6 +351,87 @@ export const useRunDetailModel = () => {
       });
   };
 
+  const sortDraftCommentsForSubmission = (
+    comments: RunReviewDraftComment[],
+  ): RunReviewDraftComment[] => {
+    return [...comments].sort((left, right) => {
+      if (left.filePath !== right.filePath) {
+        return left.filePath.localeCompare(right.filePath);
+      }
+      if (left.line !== right.line) {
+        return left.line - right.line;
+      }
+      if (left.createdAt !== right.createdAt) {
+        return left.createdAt.localeCompare(right.createdAt);
+      }
+      return left.id.localeCompare(right.id);
+    });
+  };
+
+  const isDraftCommentEligibleForSubmission = (
+    comment: RunReviewDraftComment,
+  ): boolean => {
+    const filePath = comment.filePath.trim();
+    const body = comment.body.trim();
+    const line = Number.isFinite(comment.line)
+      ? Math.floor(comment.line)
+      : Number.NaN;
+
+    return (
+      comment.anchorTrust === "trusted" &&
+      comment.side === "modified" &&
+      filePath.length > 0 &&
+      Number.isFinite(line) &&
+      line >= 1 &&
+      body.length > 0
+    );
+  };
+
+  const formatDraftReviewSubmissionMessage = (
+    comments: RunReviewDraftComment[],
+  ): string => {
+    const groupedByFile = new Map<string, RunReviewDraftComment[]>();
+    for (const comment of comments) {
+      const filePath = comment.filePath.trim();
+      const entry = groupedByFile.get(filePath);
+      if (entry) {
+        entry.push(comment);
+      } else {
+        groupedByFile.set(filePath, [comment]);
+      }
+    }
+
+    const fileCount = groupedByFile.size;
+    const commentCount = comments.length;
+    const lines: string[] = [
+      "# Review: Requested changes",
+      "Please address the following review comments on the modified files.",
+      "",
+      `Summary: ${commentCount} comment${commentCount === 1 ? "" : "s"} across ${fileCount} file${fileCount === 1 ? "" : "s"}.`,
+      "",
+    ];
+
+    for (const [filePath, fileComments] of groupedByFile.entries()) {
+      lines.push(`## ${filePath}`);
+      lines.push("");
+
+      for (const comment of fileComments) {
+        const bodyLines = comment.body.trim().split(/\r?\n/);
+        lines.push(`- Side: ${comment.side} · Line: ${comment.line}`);
+        for (const bodyLine of bodyLines) {
+          if (bodyLine.trim().length === 0) {
+            lines.push("  >");
+          } else {
+            lines.push(`  > ${bodyLine}`);
+          }
+        }
+        lines.push("");
+      }
+    }
+
+    return lines.join("\n").trim();
+  };
+
   const getDraftCommentsNeedingAttention = (): RunReviewDraftComment[] => {
     return reviewDraftComments()
       .filter((comment) => comment.anchorTrust !== "trusted")
@@ -353,6 +444,52 @@ export const useRunDetailModel = () => {
         }
         return left.createdAt.localeCompare(right.createdAt);
       });
+  };
+
+  const getDraftReviewSubmissionPlan = (): RunDraftReviewSubmissionPlan => {
+    const drafts = reviewDraftComments();
+    const eligibleDrafts = sortDraftCommentsForSubmission(
+      drafts.filter((comment) => isDraftCommentEligibleForSubmission(comment)),
+    );
+    const ineligibleCount = drafts.length - eligibleDrafts.length;
+    const fileCount = new Set(
+      eligibleDrafts.map((comment) => comment.filePath.trim()),
+    ).size;
+
+    if (eligibleDrafts.length === 0) {
+      return {
+        message: "",
+        submittedCommentIds: [],
+        eligibleCount: 0,
+        ineligibleCount,
+        fileCount: 0,
+        isSubmittable: false,
+        blockedReason:
+          "Add at least one trusted draft comment on modified lines to submit review.",
+      };
+    }
+
+    if (ineligibleCount > 0) {
+      return {
+        message: "",
+        submittedCommentIds: [],
+        eligibleCount: eligibleDrafts.length,
+        ineligibleCount,
+        fileCount,
+        isSubmittable: false,
+        blockedReason: `Resolve or remove ${ineligibleCount} draft comment${ineligibleCount === 1 ? "" : "s"} that cannot be submitted yet.`,
+      };
+    }
+
+    return {
+      message: formatDraftReviewSubmissionMessage(eligibleDrafts),
+      submittedCommentIds: eligibleDrafts.map((comment) => comment.id),
+      eligibleCount: eligibleDrafts.length,
+      ineligibleCount,
+      fileCount,
+      isSubmittable: true,
+      blockedReason: "",
+    };
   };
 
   const upsertDraftComment = (
@@ -430,6 +567,21 @@ export const useRunDetailModel = () => {
 
     setReviewDraftComments((current) =>
       current.filter((comment) => comment.id !== normalizedId),
+    );
+  };
+
+  const removeDraftComments = (commentIds: readonly string[]): void => {
+    const normalizedIds = new Set(
+      commentIds
+        .map((commentId) => commentId.trim())
+        .filter((commentId) => commentId.length > 0),
+    );
+    if (normalizedIds.size === 0) {
+      return;
+    }
+
+    setReviewDraftComments((current) =>
+      current.filter((comment) => !normalizedIds.has(comment.id)),
     );
   };
 
@@ -2464,8 +2616,10 @@ export const useRunDetailModel = () => {
       draftComments: reviewDraftComments,
       getDraftCommentsForFile,
       getDraftCommentsNeedingAttention,
+      getDraftReviewSubmissionPlan,
       upsertDraftComment,
       removeDraftComment,
+      removeDraftComments,
       validateDraftAnchorsForFile,
     },
     git: {

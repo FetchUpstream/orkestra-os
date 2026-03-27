@@ -320,6 +320,22 @@ const NewRunDetailScreen: Component = () => {
     return `There are still uncommited changes, please attomically commit the following changes\n${renderedFiles}`;
   });
   const isCommitDisabled = createMemo(() => model.agent.isSubmittingPrompt());
+  const reviewSubmissionPlan = createMemo(() =>
+    model.review.getDraftReviewSubmissionPlan(),
+  );
+  const isReviewSubmitting = createMemo(() => model.agent.isSubmittingPrompt());
+  const isSubmitReviewDisabled = createMemo(() => {
+    if (isReviewSubmitting()) {
+      return true;
+    }
+    return !reviewSubmissionPlan().isSubmittable;
+  });
+  const submitReviewButtonLabel = createMemo(() => {
+    if (isReviewSubmitting()) {
+      return "Submitting review";
+    }
+    return "Submit review";
+  });
   const mergeRequiresRebase = createMemo(() => {
     const status = gitStatus();
     return status?.requiresRebase === true;
@@ -709,6 +725,23 @@ const NewRunDetailScreen: Component = () => {
     }
   };
 
+  const submitDraftReview = async () => {
+    if (isSubmitReviewDisabled()) {
+      return;
+    }
+
+    const plan = reviewSubmissionPlan();
+    if (!plan.isSubmittable) {
+      return;
+    }
+
+    const accepted = await model.agent.submitPrompt(plan.message);
+    if (accepted) {
+      model.review.removeDraftComments(plan.submittedCommentIds);
+      closeOverlay();
+    }
+  };
+
   createEffect(() => {
     model.setIsDiffTabActive(overlayState() === "drawer-diff");
   });
@@ -1052,6 +1085,21 @@ const NewRunDetailScreen: Component = () => {
                         </button>
                       </div>
                       <Show when={overlayState() === "drawer-diff"}>
+                        <div class="run-chat-overlay-panel__layout-toggle">
+                          <button
+                            type="button"
+                            class="run-chat-overlay-panel__layout-button btn btn-xs border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-3"
+                            onClick={() => {
+                              void submitDraftReview();
+                            }}
+                            disabled={isSubmitReviewDisabled()}
+                            title={
+                              reviewSubmissionPlan().blockedReason || undefined
+                            }
+                          >
+                            {submitReviewButtonLabel()}
+                          </button>
+                        </div>
                         <div
                           class="run-chat-overlay-panel__layout-toggle join"
                           role="group"
@@ -1172,6 +1220,32 @@ const NewRunDetailScreen: Component = () => {
                       </div>
                     </Show>
                     <Show when={overlayState() === "drawer-diff"}>
+                      <Show
+                        when={
+                          reviewSubmissionPlan().blockedReason.length > 0 ||
+                          model.agent.submitError().length > 0
+                        }
+                      >
+                        <div
+                          class="run-diff-review-attention-list"
+                          role="status"
+                        >
+                          <Show
+                            when={
+                              reviewSubmissionPlan().blockedReason.length > 0
+                            }
+                          >
+                            <p class="run-diff-review-attention-list__reason">
+                              {reviewSubmissionPlan().blockedReason}
+                            </p>
+                          </Show>
+                          <Show when={model.agent.submitError().length > 0}>
+                            <p class="projects-error">
+                              {model.agent.submitError()}
+                            </p>
+                          </Show>
+                        </div>
+                      </Show>
                       <RunDiffDrawerPanel
                         model={model}
                         isActive={overlayState() === "drawer-diff"}

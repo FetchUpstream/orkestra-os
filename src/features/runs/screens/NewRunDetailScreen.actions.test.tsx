@@ -115,6 +115,15 @@ const createModelStub = (options?: {
   gitLastActionMessage?: string;
   postMergeCompletionMessage?: string;
   isRunCompleted?: boolean;
+  reviewPlan?: {
+    message: string;
+    submittedCommentIds: string[];
+    eligibleCount: number;
+    ineligibleCount: number;
+    fileCount: number;
+    isSubmittable: boolean;
+    blockedReason: string;
+  };
 }) => {
   const [diffPaths, setDiffPaths] = createSignal(options?.diffPaths ?? []);
   const [agentEvents, setAgentEvents] = createSignal(
@@ -125,6 +134,17 @@ const createModelStub = (options?: {
   );
 
   const refreshStatus = vi.fn(async () => undefined);
+  const removeDraftComments = vi.fn();
+  const defaultReviewPlan = {
+    message: "",
+    submittedCommentIds: [],
+    eligibleCount: 0,
+    ineligibleCount: 0,
+    fileCount: 0,
+    isSubmittable: false,
+    blockedReason:
+      "Add at least one trusted draft comment on modified lines to submit review.",
+  };
 
   return {
     error: () => "",
@@ -218,11 +238,23 @@ const createModelStub = (options?: {
         return accepted;
       },
     },
+    review: {
+      getDraftReviewSubmissionPlan: () =>
+        options?.reviewPlan ?? defaultReviewPlan,
+      removeDraftComments,
+      getDraftCommentsNeedingAttention: () => [],
+      getDraftCommentsForFile: () => [],
+      upsertDraftComment: vi.fn(),
+      removeDraftComment: vi.fn(),
+      validateDraftAnchorsForFile: vi.fn(),
+    },
     __setAgentEvents: setAgentEvents,
+    __removeDraftComments: removeDraftComments,
   } as unknown as ReturnType<
     typeof import("../model/useRunDetailModel").useRunDetailModel
   > & {
     git: { refreshStatus: ReturnType<typeof vi.fn> };
+    __removeDraftComments: ReturnType<typeof vi.fn>;
     __setAgentEvents: (
       next:
         | Array<{
@@ -589,6 +621,114 @@ describe("NewRunDetailScreen git actions", () => {
       expect(model.git.refreshStatus).toHaveBeenCalledTimes(2);
       expect(model.refreshDiffFiles).toHaveBeenCalledTimes(2);
     });
+    topbar.cleanup();
+  });
+
+  it("submits review through chat pipeline and clears submitted drafts on success", async () => {
+    submitPromptMock.mockResolvedValue(true);
+    const model = createModelStub({
+      reviewPlan: {
+        message:
+          "# Review: Requested changes\n\nSummary: 2 comments across 1 file.",
+        submittedCommentIds: ["draft-1", "draft-2"],
+        eligibleCount: 2,
+        ineligibleCount: 0,
+        fileCount: 1,
+        isSubmittable: true,
+        blockedReason: "",
+      },
+    });
+    modelFactoryMock.mockReturnValue(model);
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+
+    await topbar.invokeAction("Review");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Submit review" }),
+    );
+
+    await waitFor(() => {
+      expect(submitPromptMock).toHaveBeenCalledWith(
+        "# Review: Requested changes\n\nSummary: 2 comments across 1 file.",
+        undefined,
+      );
+      expect(model.__removeDraftComments).toHaveBeenCalledWith([
+        "draft-1",
+        "draft-2",
+      ]);
+      expect(screen.queryByText("diff panel")).toBeNull();
+    });
+
+    topbar.cleanup();
+  });
+
+  it("keeps review drawer open and preserves drafts when review submission fails", async () => {
+    submitPromptMock.mockResolvedValue(false);
+    const model = createModelStub({
+      reviewPlan: {
+        message: "Review payload",
+        submittedCommentIds: ["draft-1"],
+        eligibleCount: 1,
+        ineligibleCount: 0,
+        fileCount: 1,
+        isSubmittable: true,
+        blockedReason: "",
+      },
+    });
+    modelFactoryMock.mockReturnValue(model);
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+
+    await topbar.invokeAction("Review");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Submit review" }),
+    );
+
+    await waitFor(() => {
+      expect(submitPromptMock).toHaveBeenCalledWith(
+        "Review payload",
+        undefined,
+      );
+      expect(model.__removeDraftComments).not.toHaveBeenCalled();
+      expect(screen.getByText("diff panel")).toBeTruthy();
+    });
+
+    topbar.cleanup();
+  });
+
+  it("disables submit review and shows blocked reason for ineligible drafts", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        reviewPlan: {
+          message: "",
+          submittedCommentIds: [],
+          eligibleCount: 1,
+          ineligibleCount: 1,
+          fileCount: 1,
+          isSubmittable: false,
+          blockedReason:
+            "Resolve or remove 1 draft comment that cannot be submitted yet.",
+        },
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+
+    await topbar.invokeAction("Review");
+
+    await waitFor(() => {
+      const button = screen.getByRole("button", { name: "Submit review" });
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+      expect(
+        screen.getByText(
+          "Resolve or remove 1 draft comment that cannot be submitted yet.",
+        ),
+      ).toBeTruthy();
+    });
+
     topbar.cleanup();
   });
 

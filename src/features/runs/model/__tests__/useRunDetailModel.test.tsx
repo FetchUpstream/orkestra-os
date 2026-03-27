@@ -1039,6 +1039,106 @@ describe("useRunDetailModel startup ownership", () => {
     expect(modelRef!.review.draftComments()).toHaveLength(0);
   });
 
+  it("builds a deterministic multi-file review submission plan", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    modelRef!.review.upsertDraftComment({
+      filePath: "src/zeta.ts",
+      side: "modified",
+      line: 8,
+      body: "Zeta change request.",
+    });
+    vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
+    modelRef!.review.upsertDraftComment({
+      filePath: "src/alpha.ts",
+      side: "modified",
+      line: 5,
+      body: "Please update naming.\nPreserve readability.",
+    });
+    vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+    modelRef!.review.upsertDraftComment({
+      filePath: "src/alpha.ts",
+      side: "modified",
+      line: 2,
+      body: "Guard the undefined case.",
+    });
+    vi.useRealTimers();
+
+    const plan = modelRef!.review.getDraftReviewSubmissionPlan();
+
+    expect(plan.isSubmittable).toBe(true);
+    expect(plan.eligibleCount).toBe(3);
+    expect(plan.ineligibleCount).toBe(0);
+    expect(plan.fileCount).toBe(2);
+    expect(plan.message).toContain("# Review: Requested changes");
+    expect(plan.message).toContain("Summary: 3 comments across 2 files.");
+    expect(plan.message).toContain("## src/alpha.ts");
+    expect(plan.message).toContain("## src/zeta.ts");
+    expect(plan.message).toContain("- Side: modified · Line: 2");
+    expect(plan.message).toContain("- Side: modified · Line: 5");
+    expect(plan.message).toContain("  > Please update naming.");
+    expect(plan.message).toContain("  > Preserve readability.");
+    expect(plan.message).not.toContain("[internal-id]");
+
+    const alphaSectionStart = plan.message.indexOf("## src/alpha.ts");
+    const zetaSectionStart = plan.message.indexOf("## src/zeta.ts");
+    const alphaLineTwo = plan.message.indexOf("- Side: modified · Line: 2");
+    const alphaLineFive = plan.message.indexOf("- Side: modified · Line: 5");
+    expect(alphaSectionStart).toBeGreaterThan(-1);
+    expect(zetaSectionStart).toBeGreaterThan(alphaSectionStart);
+    expect(alphaLineFive).toBeGreaterThan(alphaLineTwo);
+  });
+
+  it("blocks review submission when any draft comment is ineligible", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    modelRef!.review.upsertDraftComment({
+      filePath: "src/demo.ts",
+      side: "modified",
+      line: 3,
+      body: "Valid comment.",
+    });
+    const ineligible = modelRef!.review.upsertDraftComment({
+      filePath: "src/demo.ts",
+      side: "original",
+      line: 2,
+      body: "Ineligible because side is original.",
+    });
+
+    const blockedPlan = modelRef!.review.getDraftReviewSubmissionPlan();
+    expect(blockedPlan.isSubmittable).toBe(false);
+    expect(blockedPlan.eligibleCount).toBe(1);
+    expect(blockedPlan.ineligibleCount).toBe(1);
+    expect(blockedPlan.blockedReason).toContain(
+      "Resolve or remove 1 draft comment",
+    );
+
+    modelRef!.review.removeDraftComments([ineligible!.id]);
+
+    const unblockedPlan = modelRef!.review.getDraftReviewSubmissionPlan();
+    expect(unblockedPlan.isSubmittable).toBe(true);
+    expect(unblockedPlan.eligibleCount).toBe(1);
+    expect(unblockedPlan.ineligibleCount).toBe(0);
+  });
+
   it("marks draft anchors for revalidation when diff metadata changes", async () => {
     listRunDiffFilesMock
       .mockResolvedValueOnce([
