@@ -5,6 +5,7 @@ use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext};
 use crate::app::worktrees::dto::{CreateWorktreeRequest, RemoveWorktreeRequest};
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
+use tracing::{info, warn};
 
 #[derive(Clone, Debug)]
 pub struct RunsService {
@@ -31,6 +32,13 @@ impl RunsService {
         if task_id.is_empty() {
             return Err(AppError::validation("task_id is required"));
         }
+
+        info!(
+            subsystem = "runs",
+            operation = "create_with_defaults",
+            task_id = task_id,
+            "Creating run with defaults"
+        );
 
         let selected_agent_id = normalize_optional_nonempty(agent_id);
         let selected_provider_id = normalize_optional_nonempty(provider_id);
@@ -69,11 +77,27 @@ impl RunsService {
         };
 
         let created = self.repository.create_run(new_run).await.inspect_err(|_| {
+            warn!(
+                subsystem = "runs",
+                operation = "create_with_defaults",
+                task_id = task_id,
+                worktree_id = worktree.worktree_id.as_str(),
+                "Run creation failed; cleaning up worktree"
+            );
             let _ = self.worktrees_service.remove(RemoveWorktreeRequest {
                 repo_path,
                 worktree_id: worktree.worktree_id.clone(),
             });
         })?;
+
+        info!(
+            subsystem = "runs",
+            operation = "create_with_defaults",
+            task_id = task_id,
+            run_id = created.id.as_str(),
+            status = created.status.as_str(),
+            "Created run with defaults"
+        );
 
         Ok(Self::to_dto(created))
     }
@@ -95,6 +119,14 @@ impl RunsService {
             .get_latest_active_run_for_task(task_id)
             .await?
         {
+            info!(
+                subsystem = "runs",
+                operation = "create_or_reuse_active_with_defaults",
+                task_id = task_id,
+                run_id = existing.id.as_str(),
+                reused = true,
+                "Reused existing active run"
+            );
             return Ok(Self::to_dto(existing));
         }
 
@@ -104,11 +136,25 @@ impl RunsService {
         {
             Ok(created) => Ok(created),
             Err(err) if Self::is_active_run_uniqueness_violation(&err) => {
+                warn!(
+                    subsystem = "runs",
+                    operation = "create_or_reuse_active_with_defaults",
+                    task_id = task_id,
+                    "Active-run uniqueness race detected"
+                );
                 if let Some(existing) = self
                     .repository
                     .get_latest_active_run_for_task(task_id)
                     .await?
                 {
+                    info!(
+                        subsystem = "runs",
+                        operation = "create_or_reuse_active_with_defaults",
+                        task_id = task_id,
+                        run_id = existing.id.as_str(),
+                        reused = true,
+                        "Reused active run after uniqueness race"
+                    );
                     return Ok(Self::to_dto(existing));
                 }
 
@@ -219,6 +265,13 @@ impl RunsService {
             return Err(AppError::validation("run_id is required"));
         }
 
+        info!(
+            subsystem = "runs",
+            operation = "transition_queued_to_running",
+            run_id = run_id,
+            "Transitioning run to running"
+        );
+
         let started_at = Utc::now().to_rfc3339();
         let updated = self
             .repository
@@ -226,8 +279,23 @@ impl RunsService {
             .await?;
 
         if !updated {
+            info!(
+                subsystem = "runs",
+                operation = "transition_queued_to_running",
+                run_id = run_id,
+                updated = false,
+                "Run transition already applied"
+            );
             return self.get_run(run_id).await;
         }
+
+        info!(
+            subsystem = "runs",
+            operation = "transition_queued_to_running",
+            run_id = run_id,
+            updated = true,
+            "Run transitioned to running"
+        );
 
         self.get_run(run_id).await
     }

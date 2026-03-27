@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
+use tracing::{info, warn};
 
 const RUN_DIFF_EVENT: &str = "run-diff-updated";
 const MAX_TEXT_BYTES: usize = 500_000;
@@ -42,6 +43,12 @@ impl RunsDiffService {
     }
 
     pub async fn list_run_diff_files(&self, run_id: &str) -> Result<Vec<RunDiffFileDto>, AppError> {
+        info!(
+            subsystem = "runs.diff",
+            operation = "list_files",
+            run_id = run_id,
+            "Listing run diff files"
+        );
         let run = self.runs_service.get_run(run_id).await?;
         let worktree_path = self.resolve_worktree_path(&run)?;
         let repo = self.open_repository(&worktree_path)?;
@@ -64,6 +71,14 @@ impl RunsDiffService {
 
         files.sort_by(|a, b| a.path.cmp(&b.path));
 
+        info!(
+            subsystem = "runs.diff",
+            operation = "list_files",
+            run_id = run.id.as_str(),
+            file_count = files.len(),
+            "Listed run diff files"
+        );
+
         Ok(files)
     }
 
@@ -76,6 +91,14 @@ impl RunsDiffService {
         if normalized_path.is_empty() {
             return Err(RunsDiffError::validation("path is required").into());
         }
+
+        info!(
+            subsystem = "runs.diff",
+            operation = "get_file",
+            run_id = run_id,
+            path = normalized_path,
+            "Loading run diff file payload"
+        );
 
         let run = self.runs_service.get_run(run_id).await?;
         let worktree_path = self.resolve_worktree_path(&run)?;
@@ -140,6 +163,14 @@ impl RunsDiffService {
                 RunsDiffError::validation("failed to lock run diff watcher registry")
             })?;
             watchers.remove(&key);
+            info!(
+                subsystem = "runs.diff",
+                operation = "set_watch",
+                run_id = normalized_run_id,
+                enabled = false,
+                window_label = window.label(),
+                "Disabled run diff watcher"
+            );
             return Ok(());
         }
 
@@ -149,6 +180,14 @@ impl RunsDiffService {
             .map_err(|_| RunsDiffError::validation("failed to lock run diff watcher registry"))?
             .contains_key(&key);
         if has_existing {
+            info!(
+                subsystem = "runs.diff",
+                operation = "set_watch",
+                run_id = normalized_run_id,
+                enabled = true,
+                window_label = window.label(),
+                "Run diff watcher already active"
+            );
             return Ok(());
         }
 
@@ -181,6 +220,14 @@ impl RunsDiffService {
             .lock()
             .map_err(|_| RunsDiffError::validation("failed to lock run diff watcher registry"))?;
         watchers.insert(key, debouncer);
+        info!(
+            subsystem = "runs.diff",
+            operation = "set_watch",
+            run_id = run.id.as_str(),
+            enabled = true,
+            window_label = window.label(),
+            "Enabled run diff watcher"
+        );
         Ok(())
     }
 
@@ -237,9 +284,12 @@ impl RunsDiffService {
             let merge_base_oid = match repo.merge_base(base_commit.id(), head_commit.id()) {
                 Ok(oid) => oid,
                 Err(err) => {
-                    eprintln!(
-                        "[RunsDiffService] failed to resolve merge-base for '{}': {err}",
-                        Self::describe_commit_reference(repo, base_commit.id())
+                    warn!(
+                        subsystem = "runs.diff",
+                        operation = "resolve_baseline_tree",
+                        reference = Self::describe_commit_reference(repo, base_commit.id()),
+                        error = %err,
+                        "Failed to resolve merge-base; falling back"
                     );
                     return None;
                 }
@@ -248,9 +298,12 @@ impl RunsDiffService {
             let merge_base_commit = match repo.find_commit(merge_base_oid) {
                 Ok(commit) => commit,
                 Err(err) => {
-                    eprintln!(
-                        "[RunsDiffService] failed to load merge-base commit for '{}': {err}",
-                        Self::describe_commit_reference(repo, base_commit.id())
+                    warn!(
+                        subsystem = "runs.diff",
+                        operation = "resolve_baseline_tree",
+                        reference = Self::describe_commit_reference(repo, base_commit.id()),
+                        error = %err,
+                        "Failed to load merge-base commit; falling back"
                     );
                     return None;
                 }
@@ -259,9 +312,12 @@ impl RunsDiffService {
             match merge_base_commit.tree() {
                 Ok(tree) => Some(tree),
                 Err(err) => {
-                    eprintln!(
-                        "[RunsDiffService] failed to resolve merge-base tree for '{}': {err}",
-                        Self::describe_commit_reference(repo, base_commit.id())
+                    warn!(
+                        subsystem = "runs.diff",
+                        operation = "resolve_baseline_tree",
+                        reference = Self::describe_commit_reference(repo, base_commit.id()),
+                        error = %err,
+                        "Failed to resolve merge-base tree; falling back"
                     );
                     None
                 }
@@ -277,8 +333,11 @@ impl RunsDiffService {
                     return Ok(tree);
                 }
             } else {
-                eprintln!(
-                    "[RunsDiffService] failed to resolve source branch '{source_branch}', trying default branch fallback"
+                warn!(
+                    subsystem = "runs.diff",
+                    operation = "resolve_baseline_tree",
+                    source_branch = source_branch,
+                    "Failed to resolve source branch; trying default branch"
                 );
             }
         }

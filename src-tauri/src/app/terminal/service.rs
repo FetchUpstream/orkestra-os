@@ -11,6 +11,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
+use tracing::{info, warn};
 
 #[derive(Clone)]
 pub struct TerminalService {
@@ -107,6 +108,16 @@ impl TerminalService {
             return Err(TerminalServiceError::RouteInstanceIdRequired);
         }
 
+        info!(
+            subsystem = "terminal",
+            operation = "open",
+            run_id = run_id,
+            owner_label = owner_label,
+            cols = cols,
+            rows = rows,
+            "Opening run terminal"
+        );
+
         let size = Self::validate_size(cols, rows)?;
         let run = self.runs_service.get_run(run_id).await.map_err(|source| {
             TerminalServiceError::ResolveRun {
@@ -163,6 +174,15 @@ impl TerminalService {
 
         self.spawn_terminal_reader(session_id.clone(), generation, reader, child_arc, on_output);
 
+        info!(
+            subsystem = "terminal",
+            operation = "open",
+            run_id = run_id,
+            session_id = session_id.as_str(),
+            generation = generation,
+            "Opened run terminal"
+        );
+
         Ok(OpenRunTerminalResponse {
             session_id,
             generation,
@@ -187,6 +207,14 @@ impl TerminalService {
         generation: u64,
         data: &str,
     ) -> Result<(), TerminalServiceError> {
+        info!(
+            subsystem = "terminal",
+            operation = "write",
+            session_id = session_id,
+            generation = generation,
+            byte_len = data.len(),
+            "Writing terminal input"
+        );
         let writer = self.with_session(owner_label, session_id, generation, |session| {
             session.writer.clone()
         })?;
@@ -221,6 +249,15 @@ impl TerminalService {
         cols: u16,
         rows: u16,
     ) -> Result<(), TerminalServiceError> {
+        info!(
+            subsystem = "terminal",
+            operation = "resize",
+            session_id = session_id,
+            generation = generation,
+            cols = cols,
+            rows = rows,
+            "Resizing terminal"
+        );
         let size = Self::validate_size(cols, rows)?;
         let master = self.with_session(owner_label, session_id, generation, |session| {
             session.master.clone()
@@ -247,6 +284,13 @@ impl TerminalService {
         session_id: &str,
         generation: u64,
     ) -> Result<(), TerminalServiceError> {
+        info!(
+            subsystem = "terminal",
+            operation = "kill",
+            session_id = session_id,
+            generation = generation,
+            "Killing terminal session"
+        );
         let session = {
             let mut sessions = self
                 .sessions
@@ -266,6 +310,13 @@ impl TerminalService {
             .lock()
             .map_err(|_| TerminalServiceError::LockProcessHandle)?;
         let _ = killer.kill();
+        info!(
+            subsystem = "terminal",
+            operation = "kill",
+            session_id = session_id,
+            generation = generation,
+            "Killed terminal session"
+        );
         Ok(())
     }
 
@@ -394,6 +445,14 @@ impl TerminalService {
                         }
                     }
                     Err(err) => {
+                        warn!(
+                            subsystem = "terminal",
+                            operation = "reader",
+                            session_id = session_id.as_str(),
+                            generation = generation,
+                            error = %err,
+                            "Terminal read failed"
+                        );
                         let _ = on_output.send(TerminalFrame::Error {
                             message: format!("terminal read failed: {err}"),
                         });
@@ -410,6 +469,14 @@ impl TerminalService {
                         (code, signal)
                     }
                     Err(err) => {
+                        warn!(
+                            subsystem = "terminal",
+                            operation = "wait",
+                            session_id = session_id.as_str(),
+                            generation = generation,
+                            error = %err,
+                            "Terminal wait failed"
+                        );
                         let _ = on_output.send(TerminalFrame::Error {
                             message: format!("terminal wait failed: {err}"),
                         });
@@ -417,6 +484,13 @@ impl TerminalService {
                     }
                 },
                 Err(_) => {
+                    warn!(
+                        subsystem = "terminal",
+                        operation = "wait",
+                        session_id = session_id.as_str(),
+                        generation = generation,
+                        "Failed to lock terminal process handle"
+                    );
                     let _ = on_output.send(TerminalFrame::Error {
                         message: "failed to lock terminal process handle".to_string(),
                     });

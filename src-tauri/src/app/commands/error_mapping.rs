@@ -1,15 +1,43 @@
 use crate::app::errors::AppError;
+use tracing::warn;
 
 pub fn map_app_error(error: AppError) -> String {
+    let mapped_message = mapped_message_for_error(&error);
+    log_mapped_error(&error, &mapped_message);
     maybe_capture_handled_error(&error);
 
+    mapped_message
+}
+
+fn mapped_message_for_error(error: &AppError) -> String {
     match error {
-        AppError::Validation(message) => message,
-        AppError::NotFound(message) => message,
-        AppError::Conflict(message) => message,
+        AppError::Validation(message) => message.clone(),
+        AppError::NotFound(message) => message.clone(),
+        AppError::Conflict(message) => message.clone(),
         AppError::Database(_) => "Unable to complete this request right now.".to_string(),
         AppError::Infrastructure(_) => "Something went wrong. Please try again.".to_string(),
     }
+}
+
+fn log_mapped_error(error: &AppError, mapped_message: &str) {
+    let (error_kind, message_for_log) = match error {
+        AppError::Validation(message) => ("validation", Some(message.as_str())),
+        AppError::NotFound(message) => ("not_found", Some(message.as_str())),
+        AppError::Conflict(message) => ("conflict", Some(message.as_str())),
+        AppError::Database(_) => ("database", None),
+        AppError::Infrastructure(_) => ("infrastructure", None),
+    };
+
+    warn!(
+        subsystem = "commands.error_mapping",
+        operation = "map_app_error",
+        error_kind = error_kind,
+        user_safe = error.is_user_safe(),
+        sentry_capture = !error.is_user_safe(),
+        safe_message = message_for_log.unwrap_or("<redacted>"),
+        mapped_message = mapped_message,
+        "Mapped top-level app error"
+    );
 }
 
 fn maybe_capture_handled_error(error: &AppError) {

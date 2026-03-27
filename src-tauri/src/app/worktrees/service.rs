@@ -11,6 +11,7 @@ use git2::{
     BranchType, Error, ErrorClass, ErrorCode, Repository, WorktreeAddOptions, WorktreePruneOptions,
 };
 use std::path::PathBuf;
+use tracing::{info, warn};
 
 const CREATE_WORKTREE_MAX_RETRIES: usize = 8;
 
@@ -43,6 +44,14 @@ impl WorktreesService {
             return Err(WorktreesServiceError::RepoPathRequired);
         }
 
+        info!(
+            subsystem = "worktrees",
+            operation = "create",
+            project_key = input.project_key.as_str(),
+            branch_title = input.branch_title.as_str(),
+            "Creating worktree"
+        );
+
         let repo = Repository::open(&input.repo_path).map_err(|source| {
             WorktreesServiceError::OpenRepository {
                 repo_path: input.repo_path.clone(),
@@ -66,7 +75,7 @@ impl WorktreesService {
             .map_err(|source| WorktreesServiceError::ResolveHeadCommit { source })?;
 
         let branch_slug = sanitize_branch_segment(&input.branch_title);
-        for _attempt in 0..CREATE_WORKTREE_MAX_RETRIES {
+        for attempt in 0..CREATE_WORKTREE_MAX_RETRIES {
             let worktree_id =
                 choose_unique_worktree_id(&self.base_root, &input.project_key, &branch_slug, &repo);
             let branch_name = worktree_id.clone();
@@ -89,7 +98,17 @@ impl WorktreesService {
                 Err(err) if err.code() == ErrorCode::NotFound => {
                     match repo.branch(&branch_name, &head_commit, false) {
                         Ok(branch) => branch,
-                        Err(source) if is_retryable_worktree_conflict(&source) => continue,
+                        Err(source) if is_retryable_worktree_conflict(&source) => {
+                            warn!(
+                                subsystem = "worktrees",
+                                operation = "create",
+                                project_key = input.project_key.as_str(),
+                                branch_name = branch_name.as_str(),
+                                attempt = attempt + 1,
+                                "Retrying worktree create after branch conflict"
+                            );
+                            continue;
+                        }
                         Err(source) => {
                             return Err(WorktreesServiceError::CreateBranch {
                                 branch_name: branch_name.clone(),
@@ -123,6 +142,15 @@ impl WorktreesService {
 
             match repo.worktree(&worktree_id, &worktree_path, Some(&mut options)) {
                 Ok(_) => {
+                    info!(
+                        subsystem = "worktrees",
+                        operation = "create",
+                        project_key = input.project_key.as_str(),
+                        worktree_id = worktree_id.as_str(),
+                        branch_name = branch_name.as_str(),
+                        source_branch = source_branch.as_deref().unwrap_or("<none>"),
+                        "Created worktree"
+                    );
                     return Ok(CreateWorktreeResponse {
                         worktree_id,
                         branch_name,
@@ -130,7 +158,17 @@ impl WorktreesService {
                         path: worktree_path.to_string_lossy().to_string(),
                     });
                 }
-                Err(source) if is_retryable_worktree_conflict(&source) => continue,
+                Err(source) if is_retryable_worktree_conflict(&source) => {
+                    warn!(
+                        subsystem = "worktrees",
+                        operation = "create",
+                        project_key = input.project_key.as_str(),
+                        worktree_id = worktree_id.as_str(),
+                        attempt = attempt + 1,
+                        "Retrying worktree create after metadata conflict"
+                    );
+                    continue;
+                }
                 Err(source) => {
                     return Err(WorktreesServiceError::CreateWorktree {
                         worktree_id,
@@ -165,6 +203,13 @@ impl WorktreesService {
             return Err(WorktreesServiceError::WorktreeIdRequired);
         }
 
+        info!(
+            subsystem = "worktrees",
+            operation = "remove",
+            worktree_id = input.worktree_id.as_str(),
+            "Removing worktree"
+        );
+
         let repo = Repository::open(&input.repo_path).map_err(|source| {
             WorktreesServiceError::OpenRepository {
                 repo_path: input.repo_path.clone(),
@@ -187,6 +232,13 @@ impl WorktreesService {
             }
         })?;
 
+        info!(
+            subsystem = "worktrees",
+            operation = "remove",
+            worktree_id = input.worktree_id.as_str(),
+            "Removed worktree"
+        );
+
         Ok(())
     }
 
@@ -206,6 +258,14 @@ impl WorktreesService {
     ) -> Result<(), WorktreesServiceError> {
         let project_key = project_key.trim();
         validate_project_key_segment_typed(project_key)?;
+
+        info!(
+            subsystem = "worktrees",
+            operation = "remove_project_artifacts",
+            project_key = project_key,
+            worktree_count = worktree_ids.len(),
+            "Removing project worktree artifacts"
+        );
 
         for worktree_id in worktree_ids {
             let (parsed_project_key, _) = parse_worktree_id_typed(worktree_id)?;
@@ -238,6 +298,13 @@ impl WorktreesService {
                 }
             })?;
         }
+
+        info!(
+            subsystem = "worktrees",
+            operation = "remove_project_artifacts",
+            project_key = project_key,
+            "Removed project worktree artifacts"
+        );
 
         Ok(())
     }

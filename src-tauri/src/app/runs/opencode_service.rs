@@ -1015,6 +1015,14 @@ impl RunsOpenCodeService {
             return Ok(());
         };
 
+        info!(
+            target: "opencode.runtime",
+            subsystem = "runs.opencode",
+            operation = "lifecycle_script",
+            run_id = run_id,
+            "Executing lifecycle script"
+        );
+
         let run = self.runs_service.get_run(run_id).await?;
         let worktree_path = self.resolve_worktree_path(&run)?;
         let output = Command::new("bash")
@@ -1031,6 +1039,13 @@ impl RunsOpenCodeService {
             .map_err(app_error_from_anyhow)?;
 
         if output.status.success() {
+            info!(
+                target: "opencode.runtime",
+                subsystem = "runs.opencode",
+                operation = "lifecycle_script",
+                run_id = run_id,
+                "Lifecycle script completed successfully"
+            );
             return Ok(());
         }
 
@@ -1043,6 +1058,14 @@ impl RunsOpenCodeService {
         } else {
             format!("exit status {}", output.status)
         };
+        warn!(
+            target: "opencode.runtime",
+            subsystem = "runs.opencode",
+            operation = "lifecycle_script",
+            run_id = run_id,
+            exit_status = output.status.to_string(),
+            "Lifecycle script failed"
+        );
         Err(app_error_from_anyhow(AnyhowError::new(
             OpenCodeServiceError::LifecycleScriptFailed {
                 run_id: run_id.to_string(),
@@ -1412,45 +1435,14 @@ impl RunsOpenCodeService {
         };
         options.port = 0;
         options.config = Some(serde_json::json!({}));
-
-        let path = std::env::var("PATH").unwrap_or_default();
-        let shell = std::env::var("SHELL").unwrap_or_default();
-        let home = std::env::var("HOME").unwrap_or_default();
         info!(
             target: "opencode.runtime",
             marker = "ensure",
+            subsystem = "runs.opencode",
+            operation = "ensure_runtime",
             run_id = run.id.as_str(),
-            path = path.as_str(),
-            shell = shell.as_str(),
-            home = home.as_str(),
-            "OpenCode launch PATH"
+            "Starting OpenCode runtime"
         );
-        match Command::new("opencode").arg("--version").output().await {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                info!(
-                    target: "opencode.runtime",
-                    marker = "ensure",
-                    run_id = run.id.as_str(),
-                    success = output.status.success(),
-                    status = output.status.code(),
-                    stdout = stdout.as_str(),
-                    stderr = stderr.as_str(),
-                    "OpenCode --version diagnostics"
-                );
-            }
-            Err(err) => {
-                error!(
-                    target: "opencode.runtime",
-                    marker = "ensure",
-                    run_id = run.id.as_str(),
-                    error = err.to_string(),
-                    error_kind = ?err.kind(),
-                    "OpenCode --version invocation failed"
-                );
-            }
-        }
 
         let server = create_opencode_server(Some(options)).await.map_err(|err| {
             match &err {
@@ -1472,7 +1464,6 @@ impl RunsOpenCodeService {
                         run_id = run.id.as_str(),
                         error_variant = "Process",
                         exit_code = ?inner.exit_code,
-                        output = ?inner.output,
                         message = inner.message.as_str(),
                         "OpenCode server launch failed"
                     );
