@@ -1,7 +1,8 @@
 use crate::app::errors::AppError;
 use crate::app::runs::dto::RunDto;
 use crate::app::runs::service::RunsService;
-use crate::app::worktrees::pathing::resolve_worktree_path;
+use crate::app::terminal::error::TerminalServiceError;
+use crate::app::worktrees::pathing::resolve_worktree_path_typed;
 use base64::Engine;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
@@ -76,39 +77,72 @@ impl TerminalService {
         rows: u16,
         on_output: Channel<TerminalFrame>,
     ) -> Result<OpenRunTerminalResponse, AppError> {
+        self.open_run_terminal_typed(
+            owner_label,
+            run_id,
+            route_instance_id,
+            cols,
+            rows,
+            on_output,
+        )
+        .await
+        .map_err(|err| err.to_app_error())
+    }
+
+    async fn open_run_terminal_typed(
+        &self,
+        owner_label: &str,
+        run_id: &str,
+        route_instance_id: &str,
+        cols: u16,
+        rows: u16,
+        on_output: Channel<TerminalFrame>,
+    ) -> Result<OpenRunTerminalResponse, TerminalServiceError> {
         let owner_label = owner_label.trim();
         let route_instance_id = route_instance_id.trim();
         if owner_label.is_empty() {
-            return Err(AppError::validation("owner label is required"));
+            return Err(TerminalServiceError::OwnerLabelRequired);
         }
         if route_instance_id.is_empty() {
-            return Err(AppError::validation("route_instance_id is required"));
+            return Err(TerminalServiceError::RouteInstanceIdRequired);
         }
 
         let size = Self::validate_size(cols, rows)?;
-        let run = self.runs_service.get_run(run_id).await?;
-        let cwd = self.resolve_worktree_path(&run)?;
+        let run = self.runs_service.get_run(run_id).await.map_err(|source| {
+            TerminalServiceError::ResolveRun {
+                run_id: run_id.to_string(),
+                source,
+            }
+        })?;
+        let cwd = self.resolve_worktree_path_typed(&run)?;
         let shell = Self::resolve_shell();
 
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(size)
-            .map_err(|err| AppError::validation(format!("failed to open pty: {err}")))?;
+            .map_err(|source| TerminalServiceError::OpenPty { source })?;
 
-        let mut cmd = CommandBuilder::new(shell);
-        cmd.cwd(cwd);
+        let mut cmd = CommandBuilder::new(&shell);
+        cmd.cwd(cwd.clone());
 
-        let child = pair.slave.spawn_command(cmd).map_err(|err| {
-            AppError::validation(format!("failed to spawn terminal process: {err}"))
-        })?;
+        let child =
+            pair.slave
+                .spawn_command(cmd)
+                .map_err(|source| TerminalServiceError::SpawnProcess {
+                    shell: shell.clone(),
+                    cwd: cwd.display().to_string(),
+                    source,
+                })?;
         drop(pair.slave);
 
-        let reader = pair.master.try_clone_reader().map_err(|err| {
-            AppError::validation(format!("failed to create terminal reader: {err}"))
-        })?;
-        let writer = pair.master.take_writer().map_err(|err| {
-            AppError::validation(format!("failed to create terminal writer: {err}"))
-        })?;
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|source| TerminalServiceError::CreateReader { source })?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|source| TerminalServiceError::CreateWriter { source })?;
 
         let session_id = uuid::Uuid::new_v4().to_string();
         let generation = 1_u64;
@@ -124,7 +158,7 @@ impl TerminalService {
 
         self.sessions
             .lock()
-            .map_err(|_| AppError::validation("failed to lock terminal session registry"))?
+            .map_err(|_| TerminalServiceError::LockSessionRegistry)?
             .insert(session_id.clone(), session);
 
         self.spawn_terminal_reader(session_id.clone(), generation, reader, child_arc, on_output);
@@ -142,18 +176,29 @@ impl TerminalService {
         generation: u64,
         data: &str,
     ) -> Result<(), AppError> {
+        self.write_run_terminal_typed(owner_label, session_id, generation, data)
+            .map_err(|err| err.to_app_error())
+    }
+
+    fn write_run_terminal_typed(
+        &self,
+        owner_label: &str,
+        session_id: &str,
+        generation: u64,
+        data: &str,
+    ) -> Result<(), TerminalServiceError> {
         let writer = self.with_session(owner_label, session_id, generation, |session| {
             session.writer.clone()
         })?;
         let mut writer = writer
             .lock()
-            .map_err(|_| AppError::validation("failed to lock terminal writer"))?;
+            .map_err(|_| TerminalServiceError::LockWriter)?;
         writer
             .write_all(data.as_bytes())
-            .map_err(|err| AppError::validation(format!("failed to write to terminal: {err}")))?;
+            .map_err(|source| TerminalServiceError::WriteTerminal { source })?;
         writer
             .flush()
-            .map_err(|err| AppError::validation(format!("failed to flush terminal write: {err}")))
+            .map_err(|source| TerminalServiceError::FlushTerminal { source })
     }
 
     pub fn resize_run_terminal(
@@ -164,16 +209,26 @@ impl TerminalService {
         cols: u16,
         rows: u16,
     ) -> Result<(), AppError> {
+        self.resize_run_terminal_typed(owner_label, session_id, generation, cols, rows)
+            .map_err(|err| err.to_app_error())
+    }
+
+    fn resize_run_terminal_typed(
+        &self,
+        owner_label: &str,
+        session_id: &str,
+        generation: u64,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), TerminalServiceError> {
         let size = Self::validate_size(cols, rows)?;
         let master = self.with_session(owner_label, session_id, generation, |session| {
             session.master.clone()
         })?;
-        let master = master
-            .lock()
-            .map_err(|_| AppError::validation("failed to lock terminal pty"))?;
+        let master = master.lock().map_err(|_| TerminalServiceError::LockPty)?;
         master
             .resize(size)
-            .map_err(|err| AppError::validation(format!("failed to resize terminal: {err}")))
+            .map_err(|source| TerminalServiceError::ResizeTerminal { source })
     }
 
     pub fn kill_run_terminal(
@@ -182,24 +237,34 @@ impl TerminalService {
         session_id: &str,
         generation: u64,
     ) -> Result<(), AppError> {
+        self.kill_run_terminal_typed(owner_label, session_id, generation)
+            .map_err(|err| err.to_app_error())
+    }
+
+    fn kill_run_terminal_typed(
+        &self,
+        owner_label: &str,
+        session_id: &str,
+        generation: u64,
+    ) -> Result<(), TerminalServiceError> {
         let session = {
             let mut sessions = self
                 .sessions
                 .lock()
-                .map_err(|_| AppError::validation("failed to lock terminal session registry"))?;
+                .map_err(|_| TerminalServiceError::LockSessionRegistry)?;
             let Some(session) = sessions.get(session_id) else {
                 return Ok(());
             };
             self.validate_owner_generation(owner_label, session_id, generation, session)?;
             sessions
                 .remove(session_id)
-                .ok_or_else(|| AppError::not_found("terminal session not found"))?
+                .ok_or(TerminalServiceError::SessionNotFound)?
         };
 
         let mut killer = session
             .killer
             .lock()
-            .map_err(|_| AppError::validation("failed to lock terminal process handle"))?;
+            .map_err(|_| TerminalServiceError::LockProcessHandle)?;
         let _ = killer.kill();
         Ok(())
     }
@@ -210,14 +275,14 @@ impl TerminalService {
         session_id: &str,
         generation: u64,
         selector: impl FnOnce(&TerminalSession) -> T,
-    ) -> Result<T, AppError> {
+    ) -> Result<T, TerminalServiceError> {
         let sessions = self
             .sessions
             .lock()
-            .map_err(|_| AppError::validation("failed to lock terminal session registry"))?;
+            .map_err(|_| TerminalServiceError::LockSessionRegistry)?;
         let session = sessions
             .get(session_id)
-            .ok_or_else(|| AppError::not_found("terminal session not found"))?;
+            .ok_or(TerminalServiceError::SessionNotFound)?;
         self.validate_owner_generation(owner_label, session_id, generation, session)?;
         Ok(selector(session))
     }
@@ -228,32 +293,33 @@ impl TerminalService {
         session_id: &str,
         generation: u64,
         session: &TerminalSession,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), TerminalServiceError> {
         if session.generation != generation {
-            return Err(AppError::validation(format!(
-                "terminal session generation mismatch for '{session_id}'"
-            )));
+            return Err(TerminalServiceError::SessionGenerationMismatch {
+                session_id: session_id.to_string(),
+            });
         }
         if session.owner_label != owner_label {
-            return Err(AppError::validation(format!(
-                "terminal session owner mismatch for '{session_id}'"
-            )));
+            return Err(TerminalServiceError::SessionOwnerMismatch {
+                session_id: session_id.to_string(),
+            });
         }
         Ok(())
     }
 
-    fn resolve_worktree_path(&self, run: &RunDto) -> Result<PathBuf, AppError> {
+    fn resolve_worktree_path_typed(&self, run: &RunDto) -> Result<PathBuf, TerminalServiceError> {
         let worktree_id = run
             .worktree_id
             .as_deref()
-            .ok_or_else(|| AppError::not_found("run worktree not found"))?
+            .ok_or(TerminalServiceError::RunWorktreeMissing)?
             .trim();
-        resolve_worktree_path(&self.worktrees_root, worktree_id)
+        resolve_worktree_path_typed(&self.worktrees_root, worktree_id)
+            .map_err(TerminalServiceError::from)
     }
 
-    fn validate_size(cols: u16, rows: u16) -> Result<PtySize, AppError> {
+    fn validate_size(cols: u16, rows: u16) -> Result<PtySize, TerminalServiceError> {
         if cols == 0 || rows == 0 {
-            return Err(AppError::validation("terminal size must be >= 1"));
+            return Err(TerminalServiceError::InvalidTerminalSize);
         }
         Ok(PtySize {
             rows,

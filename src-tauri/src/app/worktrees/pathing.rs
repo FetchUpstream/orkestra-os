@@ -1,4 +1,5 @@
 use crate::app::errors::AppError;
+use crate::app::worktrees::error::WorktreePathError;
 use git2::{BranchType, Repository};
 use std::path::{Component, Path, PathBuf};
 
@@ -38,50 +39,56 @@ pub fn compose_worktree_id(project_key: &str, branch_segment: &str) -> String {
 }
 
 pub fn validate_project_key_segment(project_key: &str) -> Result<(), AppError> {
+    validate_project_key_segment_typed(project_key).map_err(|err| err.to_app_error())
+}
+
+pub fn validate_project_key_segment_typed(project_key: &str) -> Result<(), WorktreePathError> {
     if project_key.is_empty() {
-        return Err(AppError::validation("project_key is required"));
+        return Err(WorktreePathError::ProjectKeyRequired);
     }
 
     let len = project_key.len();
     if !(PROJECT_KEY_MIN_LEN..=PROJECT_KEY_MAX_LEN).contains(&len) {
-        return Err(AppError::validation(format!(
-            "project_key length must be {PROJECT_KEY_MIN_LEN} to {PROJECT_KEY_MAX_LEN}"
-        )));
+        return Err(WorktreePathError::ProjectKeyLength);
     }
 
     if !project_key
         .chars()
         .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit())
     {
-        return Err(AppError::validation(
-            "project_key must be uppercase alphanumeric",
-        ));
+        return Err(WorktreePathError::ProjectKeyFormat);
     }
 
     Ok(())
 }
 
 pub fn validate_branch_segment(branch_segment: &str) -> Result<(), AppError> {
+    validate_branch_segment_typed(branch_segment).map_err(|err| err.to_app_error())
+}
+
+pub fn validate_branch_segment_typed(branch_segment: &str) -> Result<(), WorktreePathError> {
     if branch_segment.is_empty() {
-        return Err(AppError::validation("worktree branch segment is required"));
+        return Err(WorktreePathError::BranchSegmentRequired);
     }
 
     if !branch_segment
         .chars()
         .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
     {
-        return Err(AppError::validation(
-            "worktree branch segment must match [a-z0-9-]",
-        ));
+        return Err(WorktreePathError::BranchSegmentFormat);
     }
 
     Ok(())
 }
 
 pub fn parse_worktree_id(worktree_id: &str) -> Result<(&str, &str), AppError> {
+    parse_worktree_id_typed(worktree_id).map_err(|err| err.to_app_error())
+}
+
+pub fn parse_worktree_id_typed(worktree_id: &str) -> Result<(&str, &str), WorktreePathError> {
     let normalized_id = worktree_id.trim();
     if normalized_id.is_empty() {
-        return Err(AppError::not_found("run worktree not found"));
+        return Err(WorktreePathError::WorktreeNotFound);
     }
 
     let path = Path::new(normalized_id);
@@ -92,9 +99,7 @@ pub fn parse_worktree_id(worktree_id: &str) -> Result<(&str, &str), AppError> {
             | Component::CurDir
             | Component::ParentDir
             | Component::Prefix(_) => {
-                return Err(AppError::validation(
-                    "worktree id must use exactly two normal path segments",
-                ));
+                return Err(WorktreePathError::InvalidWorktreeIdPathShape);
             }
         }
     }
@@ -103,13 +108,11 @@ pub fn parse_worktree_id(worktree_id: &str) -> Result<(&str, &str), AppError> {
     let project_key = parts.next().unwrap_or_default();
     let branch_segment = parts.next().unwrap_or_default();
     if parts.next().is_some() || project_key.is_empty() || branch_segment.is_empty() {
-        return Err(AppError::validation(
-            "worktree id must be '<PROJECT_KEY>/<branch-segment>'",
-        ));
+        return Err(WorktreePathError::InvalidWorktreeId);
     }
 
-    validate_project_key_segment(project_key)?;
-    validate_branch_segment(branch_segment)?;
+    validate_project_key_segment_typed(project_key)?;
+    validate_branch_segment_typed(branch_segment)?;
 
     Ok((project_key, branch_segment))
 }
@@ -118,30 +121,35 @@ pub fn resolve_worktree_path(
     worktrees_root: &Path,
     worktree_id: &str,
 ) -> Result<PathBuf, AppError> {
-    let _ = parse_worktree_id(worktree_id)?;
+    resolve_worktree_path_typed(worktrees_root, worktree_id).map_err(|err| err.to_app_error())
+}
+
+pub fn resolve_worktree_path_typed(
+    worktrees_root: &Path,
+    worktree_id: &str,
+) -> Result<PathBuf, WorktreePathError> {
+    let _ = parse_worktree_id_typed(worktree_id)?;
     let normalized_id = worktree_id.trim();
 
     let worktree_path = worktrees_root.join(normalized_id);
     if !worktree_path.exists() {
-        return Err(AppError::not_found("run worktree path not found"));
+        return Err(WorktreePathError::WorktreeNotFound);
     }
 
-    let canonical_root = std::fs::canonicalize(worktrees_root).map_err(|err| {
-        AppError::validation(format!(
-            "failed to resolve worktrees root path '{}': {err}",
-            worktrees_root.display()
-        ))
+    let canonical_root = std::fs::canonicalize(worktrees_root).map_err(|source| {
+        WorktreePathError::CanonicalizeWorktreesRoot {
+            path: worktrees_root.display().to_string(),
+            source,
+        }
     })?;
-    let canonical_candidate = std::fs::canonicalize(&worktree_path).map_err(|err| {
-        AppError::validation(format!(
-            "failed to resolve worktree path '{}': {err}",
-            worktree_path.display()
-        ))
+    let canonical_candidate = std::fs::canonicalize(&worktree_path).map_err(|source| {
+        WorktreePathError::CanonicalizeWorktreePath {
+            path: worktree_path.display().to_string(),
+            source,
+        }
     })?;
     if !canonical_candidate.starts_with(&canonical_root) {
-        return Err(AppError::validation(
-            "resolved worktree path is outside worktrees root",
-        ));
+        return Err(WorktreePathError::WorktreePathOutsideRoot);
     }
 
     Ok(worktree_path)

@@ -2,9 +2,10 @@ use crate::app::errors::AppError;
 use crate::app::worktrees::dto::{
     CreateWorktreeRequest, CreateWorktreeResponse, RemoveWorktreeRequest,
 };
+use crate::app::worktrees::error::WorktreesServiceError;
 use crate::app::worktrees::pathing::{
-    choose_unique_worktree_id, parse_worktree_id, sanitize_branch_segment,
-    validate_project_key_segment,
+    choose_unique_worktree_id, parse_worktree_id_typed, sanitize_branch_segment,
+    validate_project_key_segment_typed,
 };
 use git2::{BranchType, ErrorCode, Repository, WorktreeAddOptions, WorktreePruneOptions};
 use std::path::PathBuf;
@@ -21,31 +22,36 @@ impl WorktreesService {
         }
     }
 
-    pub fn create(
+    pub fn create(&self, input: CreateWorktreeRequest) -> Result<CreateWorktreeResponse, AppError> {
+        self.create_typed(input).map_err(|err| err.to_app_error())
+    }
+
+    fn create_typed(
         &self,
         mut input: CreateWorktreeRequest,
-    ) -> Result<CreateWorktreeResponse, AppError> {
+    ) -> Result<CreateWorktreeResponse, WorktreesServiceError> {
         input.project_key = input.project_key.trim().to_string();
         input.repo_path = input.repo_path.trim().to_string();
         input.branch_title = input.branch_title.trim().to_string();
 
-        if input.project_key.is_empty() {
-            return Err(AppError::validation("project_key is required"));
-        }
-        validate_project_key_segment(&input.project_key)?;
+        validate_project_key_segment_typed(&input.project_key)?;
         if input.repo_path.is_empty() {
-            return Err(AppError::validation("repo_path is required"));
+            return Err(WorktreesServiceError::RepoPathRequired);
         }
 
-        let repo = Repository::open(&input.repo_path)
-            .map_err(|err| AppError::validation(format!("failed to open repository: {err}")))?;
-        if repo.is_bare() {
-            return Err(AppError::validation("repository must not be bare"));
-        }
-
-        let head = repo.head().map_err(|err| {
-            AppError::validation(format!("failed to resolve HEAD reference: {err}"))
+        let repo = Repository::open(&input.repo_path).map_err(|source| {
+            WorktreesServiceError::OpenRepository {
+                repo_path: input.repo_path.clone(),
+                source,
+            }
         })?;
+        if repo.is_bare() {
+            return Err(WorktreesServiceError::BareRepository);
+        }
+
+        let head = repo
+            .head()
+            .map_err(|source| WorktreesServiceError::ResolveHeadRef { source })?;
         let source_branch = if head.is_branch() {
             head.shorthand().map(str::to_string)
         } else {
@@ -53,7 +59,7 @@ impl WorktreesService {
         };
         let head_commit = head
             .peel_to_commit()
-            .map_err(|err| AppError::validation(format!("failed to resolve HEAD commit: {err}")))?;
+            .map_err(|source| WorktreesServiceError::ResolveHeadCommit { source })?;
 
         let branch_slug = sanitize_branch_segment(&input.branch_title);
         let worktree_id =
@@ -63,21 +69,29 @@ impl WorktreesService {
         std::fs::create_dir_all(
             worktree_path
                 .parent()
-                .ok_or_else(|| AppError::validation("invalid worktree path"))?,
+                .ok_or(WorktreesServiceError::InvalidWorktreePath)?,
         )
-        .map_err(|err| {
-            AppError::validation(format!("failed to create worktree parent directory: {err}"))
+        .map_err(|source| WorktreesServiceError::CreateWorktreeParentDir {
+            path: worktree_path
+                .parent()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            source,
         })?;
 
         let branch = match repo.find_branch(&branch_name, BranchType::Local) {
             Ok(branch) => branch,
             Err(err) if err.code() == ErrorCode::NotFound => repo
                 .branch(&branch_name, &head_commit, false)
-                .map_err(|err| AppError::validation(format!("failed to create branch: {err}")))?,
+                .map_err(|source| WorktreesServiceError::CreateBranch {
+                    branch_name: branch_name.clone(),
+                    source,
+                })?,
             Err(err) => {
-                return Err(AppError::validation(format!(
-                    "failed to lookup branch: {err}"
-                )));
+                return Err(WorktreesServiceError::LookupBranch {
+                    branch_name: branch_name.clone(),
+                    source: err,
+                });
             }
         };
 
@@ -87,17 +101,19 @@ impl WorktreesService {
         let metadata_parent = repo.path().join("worktrees").join(
             PathBuf::from(&worktree_id)
                 .parent()
-                .ok_or_else(|| AppError::validation("invalid worktree id"))?,
+                .ok_or(WorktreesServiceError::InvalidWorktreeId)?,
         );
-        std::fs::create_dir_all(&metadata_parent).map_err(|err| {
-            AppError::validation(format!(
-                "failed to prepare worktree metadata directory: {err}"
-            ))
+        std::fs::create_dir_all(&metadata_parent).map_err(|source| {
+            WorktreesServiceError::PrepareWorktreeMetadataDir {
+                path: metadata_parent.display().to_string(),
+                source,
+            }
         })?;
 
         repo.worktree(&worktree_id, &worktree_path, Some(&mut options))
-            .map_err(|err| {
-                AppError::validation(format!("failed to create worktree '{worktree_id}': {err}"))
+            .map_err(|source| WorktreesServiceError::CreateWorktree {
+                worktree_id: worktree_id.clone(),
+                source,
             })?;
 
         Ok(CreateWorktreeResponse {
@@ -108,28 +124,42 @@ impl WorktreesService {
         })
     }
 
-    pub fn remove(&self, mut input: RemoveWorktreeRequest) -> Result<(), AppError> {
+    pub fn remove(&self, input: RemoveWorktreeRequest) -> Result<(), AppError> {
+        self.remove_typed(input).map_err(|err| err.to_app_error())
+    }
+
+    fn remove_typed(&self, mut input: RemoveWorktreeRequest) -> Result<(), WorktreesServiceError> {
         input.repo_path = input.repo_path.trim().to_string();
         input.worktree_id = input.worktree_id.trim().to_string();
 
         if input.repo_path.is_empty() {
-            return Err(AppError::validation("repo_path is required"));
+            return Err(WorktreesServiceError::RepoPathRequired);
         }
         if input.worktree_id.is_empty() {
-            return Err(AppError::validation("worktree_id is required"));
+            return Err(WorktreesServiceError::WorktreeIdRequired);
         }
 
-        let repo = Repository::open(&input.repo_path)
-            .map_err(|err| AppError::validation(format!("failed to open repository: {err}")))?;
-        let worktree = repo.find_worktree(&input.worktree_id).map_err(|err| {
-            AppError::not_found(format!("worktree '{}' not found: {err}", input.worktree_id))
+        let repo = Repository::open(&input.repo_path).map_err(|source| {
+            WorktreesServiceError::OpenRepository {
+                repo_path: input.repo_path.clone(),
+                source,
+            }
+        })?;
+        let worktree = repo.find_worktree(&input.worktree_id).map_err(|source| {
+            WorktreesServiceError::WorktreeNotFound {
+                worktree_id: input.worktree_id.clone(),
+                source,
+            }
         })?;
 
         let mut prune_options = WorktreePruneOptions::new();
         prune_options.working_tree(true).valid(true).locked(true);
-        worktree
-            .prune(Some(&mut prune_options))
-            .map_err(|err| AppError::validation(format!("failed to prune worktree: {err}")))?;
+        worktree.prune(Some(&mut prune_options)).map_err(|source| {
+            WorktreesServiceError::PruneWorktree {
+                worktree_id: input.worktree_id.clone(),
+                source,
+            }
+        })?;
 
         Ok(())
     }
@@ -139,21 +169,30 @@ impl WorktreesService {
         project_key: &str,
         worktree_ids: &[String],
     ) -> Result<(), AppError> {
+        self.remove_project_artifacts_typed(project_key, worktree_ids)
+            .map_err(|err| err.to_app_error())
+    }
+
+    fn remove_project_artifacts_typed(
+        &self,
+        project_key: &str,
+        worktree_ids: &[String],
+    ) -> Result<(), WorktreesServiceError> {
         let project_key = project_key.trim();
-        validate_project_key_segment(project_key)?;
+        validate_project_key_segment_typed(project_key)?;
 
         for worktree_id in worktree_ids {
-            let (parsed_project_key, _) = parse_worktree_id(worktree_id)?;
+            let (parsed_project_key, _) = parse_worktree_id_typed(worktree_id)?;
 
             let worktree_path = self.base_root.join(worktree_id.trim());
             if !worktree_path.exists() {
                 continue;
             }
-            std::fs::remove_dir_all(&worktree_path).map_err(|err| {
-                AppError::validation(format!(
-                    "failed to remove worktree directory '{}': {err}",
-                    worktree_path.display()
-                ))
+            std::fs::remove_dir_all(&worktree_path).map_err(|source| {
+                WorktreesServiceError::RemoveWorktreeDirectory {
+                    path: worktree_path.display().to_string(),
+                    source,
+                }
             })?;
 
             let legacy_project_root = self.base_root.join(parsed_project_key);
@@ -166,11 +205,11 @@ impl WorktreesService {
 
         let project_root = self.base_root.join(project_key);
         if project_root.exists() {
-            std::fs::remove_dir_all(&project_root).map_err(|err| {
-                AppError::validation(format!(
-                    "failed to remove project worktree root '{}': {err}",
-                    project_root.display()
-                ))
+            std::fs::remove_dir_all(&project_root).map_err(|source| {
+                WorktreesServiceError::RemoveProjectWorktreeRoot {
+                    path: project_root.display().to_string(),
+                    source,
+                }
             })?;
         }
 
