@@ -336,6 +336,10 @@ const NewRunDetailScreen: Component = () => {
     }
     return "Submit review";
   });
+  const hasDraftReviewComments = createMemo(() => {
+    const plan = reviewSubmissionPlan();
+    return plan.eligibleCount + plan.ineligibleCount > 0;
+  });
   const mergeRequiresRebase = createMemo(() => {
     const status = gitStatus();
     return status?.requiresRebase === true;
@@ -1044,6 +1048,61 @@ const NewRunDetailScreen: Component = () => {
                       {overlayTitle()}
                     </h2>
                     <div class="run-chat-overlay-panel__header-actions">
+                      <Show
+                        when={
+                          overlayState() === "drawer-diff" &&
+                          hasDraftReviewComments()
+                        }
+                      >
+                        <button
+                          type="button"
+                          class="run-chat-overlay-panel__submit-review"
+                          onClick={() => {
+                            void submitDraftReview();
+                          }}
+                          disabled={isSubmitReviewDisabled()}
+                          title={
+                            !reviewSubmissionPlan().isSubmittable &&
+                            reviewSubmissionPlan().blockedReason.length > 0
+                              ? reviewSubmissionPlan().blockedReason
+                              : undefined
+                          }
+                        >
+                          {submitReviewButtonLabel()}
+                        </button>
+                      </Show>
+                      <Show when={overlayState() === "drawer-diff"}>
+                        <div
+                          class="run-chat-overlay-panel__layout-toggle join"
+                          role="group"
+                          aria-label="Review layout"
+                        >
+                          <button
+                            type="button"
+                            class="run-chat-overlay-panel__layout-button join-item btn btn-xs btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
+                            aria-label="Unified diff layout"
+                            title="Unified diff layout"
+                            aria-pressed={!isDiffSideBySide()}
+                            onClick={() => setIsDiffSideBySide(false)}
+                          >
+                            <svg viewBox="0 0 16 16" aria-hidden="true">
+                              <path d="M3 2.5A1.5 1.5 0 0 1 4.5 1h7A1.5 1.5 0 0 1 13 2.5v11a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 13.5v-11Zm1.5 0v11h7v-11h-7Zm1 2.25a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Z" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            class="run-chat-overlay-panel__layout-button join-item btn btn-xs btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
+                            aria-label="Side-by-side diff layout"
+                            title="Side-by-side diff layout"
+                            aria-pressed={isDiffSideBySide()}
+                            onClick={() => setIsDiffSideBySide(true)}
+                          >
+                            <svg viewBox="0 0 16 16" aria-hidden="true">
+                              <path d="M2.5 1A1.5 1.5 0 0 0 1 2.5v11A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 13.5 1h-11Zm0 1.5h5v11h-5v-11Zm6.5 0h4.5v11H9v-11Zm1 2.25a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm-7 0a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 3 7.75Zm0-3a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 3 4.75Z" />
+                            </svg>
+                          </button>
+                        </div>
+                      </Show>
                       <div class="run-chat-overlay-panel__header-action-row">
                         <button
                           type="button"
@@ -1084,53 +1143,6 @@ const NewRunDetailScreen: Component = () => {
                           </svg>
                         </button>
                       </div>
-                      <Show when={overlayState() === "drawer-diff"}>
-                        <div class="run-chat-overlay-panel__layout-toggle">
-                          <button
-                            type="button"
-                            class="run-chat-overlay-panel__layout-button btn btn-xs border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-3"
-                            onClick={() => {
-                              void submitDraftReview();
-                            }}
-                            disabled={isSubmitReviewDisabled()}
-                            title={
-                              reviewSubmissionPlan().blockedReason || undefined
-                            }
-                          >
-                            {submitReviewButtonLabel()}
-                          </button>
-                        </div>
-                        <div
-                          class="run-chat-overlay-panel__layout-toggle join"
-                          role="group"
-                          aria-label="Review layout"
-                        >
-                          <button
-                            type="button"
-                            class="run-chat-overlay-panel__layout-button join-item btn btn-xs btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
-                            aria-label="Unified diff layout"
-                            title="Unified diff layout"
-                            aria-pressed={!isDiffSideBySide()}
-                            onClick={() => setIsDiffSideBySide(false)}
-                          >
-                            <svg viewBox="0 0 16 16" aria-hidden="true">
-                              <path d="M3 2.5A1.5 1.5 0 0 1 4.5 1h7A1.5 1.5 0 0 1 13 2.5v11a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 13.5v-11Zm1.5 0v11h7v-11h-7Zm1 2.25a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Z" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            class="run-chat-overlay-panel__layout-button join-item btn btn-xs btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
-                            aria-label="Side-by-side diff layout"
-                            title="Side-by-side diff layout"
-                            aria-pressed={isDiffSideBySide()}
-                            onClick={() => setIsDiffSideBySide(true)}
-                          >
-                            <svg viewBox="0 0 16 16" aria-hidden="true">
-                              <path d="M2.5 1A1.5 1.5 0 0 0 1 2.5v11A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 13.5 1h-11Zm0 1.5h5v11h-5v-11Zm6.5 0h4.5v11H9v-11Zm1 2.25a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm-7 0a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 3 7.75Zm0-3a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 3 4.75Z" />
-                            </svg>
-                          </button>
-                        </div>
-                      </Show>
                     </div>
                   </header>
                   <div
@@ -1220,31 +1232,10 @@ const NewRunDetailScreen: Component = () => {
                       </div>
                     </Show>
                     <Show when={overlayState() === "drawer-diff"}>
-                      <Show
-                        when={
-                          reviewSubmissionPlan().blockedReason.length > 0 ||
-                          model.agent.submitError().length > 0
-                        }
-                      >
-                        <div
-                          class="run-diff-review-attention-list"
-                          role="status"
-                        >
-                          <Show
-                            when={
-                              reviewSubmissionPlan().blockedReason.length > 0
-                            }
-                          >
-                            <p class="run-diff-review-attention-list__reason">
-                              {reviewSubmissionPlan().blockedReason}
-                            </p>
-                          </Show>
-                          <Show when={model.agent.submitError().length > 0}>
-                            <p class="projects-error">
-                              {model.agent.submitError()}
-                            </p>
-                          </Show>
-                        </div>
+                      <Show when={model.agent.submitError().length > 0}>
+                        <p class="projects-error">
+                          {model.agent.submitError()}
+                        </p>
                       </Show>
                       <RunDiffDrawerPanel
                         model={model}

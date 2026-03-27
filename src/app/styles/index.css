@@ -3868,8 +3868,8 @@ textarea::placeholder {
 
 .run-chat-overlay-panel__header-actions {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  flex-direction: row;
+  align-items: center;
   justify-content: center;
   gap: 8px;
 }
@@ -3951,6 +3951,39 @@ textarea::placeholder {
   border-color: rgba(91, 138, 255, 0.35);
   background: var(--accent-subtle);
   color: var(--accent);
+}
+
+.run-chat-overlay-panel__submit-review {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(91, 138, 255, 0.42);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--accent-subtle) 86%, var(--surface) 14%);
+  color: var(--accent);
+  padding: 0 10px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.run-chat-overlay-panel__submit-review:hover:not(:disabled) {
+  border-color: rgba(91, 138, 255, 0.66);
+  background: color-mix(in srgb, var(--accent-subtle) 92%, var(--surface) 8%);
+  color: var(--accent-hover);
+}
+
+.run-chat-overlay-panel__submit-review:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
 }
 
 .run-chat-overlay-panel__body {

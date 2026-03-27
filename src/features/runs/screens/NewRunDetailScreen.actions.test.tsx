@@ -698,7 +698,7 @@ describe("NewRunDetailScreen git actions", () => {
     topbar.cleanup();
   });
 
-  it("disables submit review and shows blocked reason for ineligible drafts", async () => {
+  it("disables submit review for ineligible drafts without showing helper banner", async () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         reviewPlan: {
@@ -722,11 +722,49 @@ describe("NewRunDetailScreen git actions", () => {
     await waitFor(() => {
       const button = screen.getByRole("button", { name: "Submit review" });
       expect((button as HTMLButtonElement).disabled).toBe(true);
+      expect(button.getAttribute("title")).toBe(
+        "Resolve or remove 1 draft comment that cannot be submitted yet.",
+      );
       expect(
-        screen.getByText(
+        screen.queryByText(
           "Resolve or remove 1 draft comment that cannot be submitted yet.",
         ),
-      ).toBeTruthy();
+      ).toBeNull();
+    });
+
+    topbar.cleanup();
+  });
+
+  it("hides submit review action when no draft comments exist", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        reviewPlan: {
+          message: "",
+          submittedCommentIds: [],
+          eligibleCount: 0,
+          ineligibleCount: 0,
+          fileCount: 0,
+          isSubmittable: false,
+          blockedReason:
+            "Add at least one trusted draft comment on modified lines to submit review.",
+        },
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+
+    await topbar.invokeAction("Review");
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Submit review" }),
+      ).toBeNull();
+      expect(
+        screen.queryByText(
+          "Add at least one trusted draft comment on modified lines to submit review.",
+        ),
+      ).toBeNull();
     });
 
     topbar.cleanup();
