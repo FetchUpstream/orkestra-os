@@ -8,6 +8,7 @@ use crate::app::runs::dto::{
 };
 use crate::app::runs::service::RunsService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
+use anyhow::{Context, Error as AnyhowError};
 use chrono::Utc;
 use opencode::{
     create_opencode_client, create_opencode_server, types::PartInput, OpencodeClient,
@@ -19,6 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
+use thiserror::Error;
 use tokio::process::Command;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration, Instant};
@@ -26,6 +28,90 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tracing::{error, info, warn};
+
+#[derive(Debug, Error)]
+enum OpenCodeServiceError {
+    #[error("failed to lock {resource}")]
+    LockPoisoned { resource: &'static str },
+
+    #[error("OpenCode run handle not found")]
+    MissingRunHandle,
+
+    #[error("OpenCode session create response missing id")]
+    MissingSessionIdField,
+
+    #[error("OpenCode session id was not persisted and no canonical value exists")]
+    MissingCanonicalSessionId,
+
+    #[error("failed to start OpenCode server")]
+    ServerStart {
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to create OpenCode client")]
+    ClientCreate {
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("OpenCode health check failed")]
+    HealthCheck {
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to create OpenCode session")]
+    SessionCreate {
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to fetch OpenCode session messages for session '{session_id}'")]
+    SessionMessages {
+        session_id: String,
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to fetch OpenCode session todos for session '{session_id}'")]
+    SessionTodos {
+        session_id: String,
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to submit OpenCode prompt for run '{run_id}'")]
+    PromptSubmit {
+        run_id: String,
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to reply to OpenCode permission request '{request_id}'")]
+    PermissionReply {
+        request_id: String,
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to execute lifecycle script for run '{run_id}'")]
+    LifecycleScriptSpawn {
+        run_id: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("lifecycle script failed for run '{run_id}' (status: {exit_status}): {details}")]
+    LifecycleScriptFailed {
+        run_id: String,
+        exit_status: String,
+        details: String,
+    },
+
+    #[error("initial prompt claimant failed to finalize sent state")]
+    InitialPromptFinalizeRejected,
+}
 
 fn format_error_chain<E>(err: &E) -> Option<String>
 where
@@ -39,6 +125,21 @@ where
     }
 
     Some(chain.join(": "))
+}
+
+fn app_error_from_anyhow(err: AnyhowError) -> AppError {
+    let chain = err
+        .chain()
+        .map(|cause| cause.to_string())
+        .collect::<Vec<_>>()
+        .join(": ");
+    AppError::validation(chain)
+}
+
+fn lock_error(resource: &'static str) -> AppError {
+    app_error_from_anyhow(AnyhowError::new(OpenCodeServiceError::LockPoisoned {
+        resource,
+    }))
 }
 
 fn value_array_to_message_wrappers(value: serde_json::Value) -> Vec<RunOpenCodeSessionMessageDto> {
@@ -582,9 +683,9 @@ impl RunsOpenCodeService {
                     return Ok(());
                 }
 
-                let mut state = session_runtime_state.lock().map_err(|_| {
-                    AppError::validation("failed to lock OpenCode session runtime state")
-                })?;
+                let mut state = session_runtime_state
+                    .lock()
+                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
                 state.last_status_hint = Some(status);
                 if state.last_status_hint.as_deref() == Some("busy")
                     || state.last_status_hint.as_deref() == Some("active")
@@ -611,9 +712,9 @@ impl RunsOpenCodeService {
                 else {
                     return Ok(());
                 };
-                let mut state = session_runtime_state.lock().map_err(|_| {
-                    AppError::validation("failed to lock OpenCode session runtime state")
-                })?;
+                let mut state = session_runtime_state
+                    .lock()
+                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
                 state.pending_questions.insert(request_id);
                 Ok(())
             }
@@ -635,9 +736,9 @@ impl RunsOpenCodeService {
                 else {
                     return Ok(());
                 };
-                let mut state = session_runtime_state.lock().map_err(|_| {
-                    AppError::validation("failed to lock OpenCode session runtime state")
-                })?;
+                let mut state = session_runtime_state
+                    .lock()
+                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
                 state.pending_questions.remove(&request_id);
                 Ok(())
             }
@@ -659,9 +760,9 @@ impl RunsOpenCodeService {
                 else {
                     return Ok(());
                 };
-                let mut state = session_runtime_state.lock().map_err(|_| {
-                    AppError::validation("failed to lock OpenCode session runtime state")
-                })?;
+                let mut state = session_runtime_state
+                    .lock()
+                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
                 state.pending_permissions.insert(request_id);
                 Ok(())
             }
@@ -683,9 +784,9 @@ impl RunsOpenCodeService {
                 else {
                     return Ok(());
                 };
-                let mut state = session_runtime_state.lock().map_err(|_| {
-                    AppError::validation("failed to lock OpenCode session runtime state")
-                })?;
+                let mut state = session_runtime_state
+                    .lock()
+                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
                 state.pending_permissions.remove(&request_id);
                 Ok(())
             }
@@ -704,9 +805,9 @@ impl RunsOpenCodeService {
                 }
 
                 let should_block = {
-                    let state = session_runtime_state.lock().map_err(|_| {
-                        AppError::validation("failed to lock OpenCode session runtime state")
-                    })?;
+                    let state = session_runtime_state
+                        .lock()
+                        .map_err(|_| lock_error("OpenCode session runtime state"))?;
                     !state.pending_questions.is_empty()
                         || !state.pending_permissions.is_empty()
                         || !state.idle_cleanup_ready
@@ -754,9 +855,9 @@ impl RunsOpenCodeService {
                     }
                 }
 
-                let mut state = session_runtime_state.lock().map_err(|_| {
-                    AppError::validation("failed to lock OpenCode session runtime state")
-                })?;
+                let mut state = session_runtime_state
+                    .lock()
+                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
                 state.idle_cleanup_ready = false;
 
                 Ok(())
@@ -814,14 +915,32 @@ impl RunsOpenCodeService {
         AppError,
     > {
         let request = RequestOptions::default().with_path("id", session_id.to_string());
-        let messages_response = client.session().messages(request).await.map_err(|err| {
-            AppError::validation(format!("failed to fetch OpenCode session messages: {err}"))
-        })?;
+        let messages_response = client
+            .session()
+            .messages(request)
+            .await
+            .map_err(|source| OpenCodeServiceError::SessionMessages {
+                session_id: session_id.to_string(),
+                source,
+            })
+            .with_context(|| {
+                format!("while fetching OpenCode message history for session '{session_id}'")
+            })
+            .map_err(app_error_from_anyhow)?;
 
         let request = RequestOptions::default().with_path("id", session_id.to_string());
-        let todos_response = client.session().todo(request).await.map_err(|err| {
-            AppError::validation(format!("failed to fetch OpenCode session todos: {err}"))
-        })?;
+        let todos_response = client
+            .session()
+            .todo(request)
+            .await
+            .map_err(|source| OpenCodeServiceError::SessionTodos {
+                session_id: session_id.to_string(),
+                source,
+            })
+            .with_context(|| {
+                format!("while fetching OpenCode todo history for session '{session_id}'")
+            })
+            .map_err(app_error_from_anyhow)?;
 
         Ok((
             value_array_to_message_wrappers(messages_response.data),
@@ -904,7 +1023,12 @@ impl RunsOpenCodeService {
             .current_dir(worktree_path)
             .output()
             .await
-            .map_err(|err| AppError::validation(format!("failed to execute script: {err}")))?;
+            .map_err(|source| OpenCodeServiceError::LifecycleScriptSpawn {
+                run_id: run_id.to_string(),
+                source,
+            })
+            .with_context(|| format!("while executing lifecycle script for run '{run_id}'"))
+            .map_err(app_error_from_anyhow)?;
 
         if output.status.success() {
             return Ok(());
@@ -919,7 +1043,13 @@ impl RunsOpenCodeService {
         } else {
             format!("exit status {}", output.status)
         };
-        Err(AppError::validation(details))
+        Err(app_error_from_anyhow(AnyhowError::new(
+            OpenCodeServiceError::LifecycleScriptFailed {
+                run_id: run_id.to_string(),
+                exit_status: output.status.to_string(),
+                details,
+            },
+        )))
     }
 
     async fn ensure_run_ready_for_operation(
@@ -979,7 +1109,7 @@ impl RunsOpenCodeService {
             let session_guard = handle
                 .session_id
                 .lock()
-                .map_err(|_| AppError::validation("failed to lock OpenCode session id"))?;
+                .map_err(|_| lock_error("OpenCode session id"))?;
             session_guard.clone()
         };
 
@@ -987,7 +1117,7 @@ impl RunsOpenCodeService {
             let mut session_guard = handle
                 .session_id
                 .lock()
-                .map_err(|_| AppError::validation("failed to lock OpenCode session id"))?;
+                .map_err(|_| lock_error("OpenCode session id"))?;
             if session_guard.is_none() {
                 *session_guard = Some(existing.clone());
             }
@@ -1000,15 +1130,19 @@ impl RunsOpenCodeService {
             .session()
             .create(RequestOptions::default())
             .await
-            .map_err(|err| {
-                AppError::validation(format!("failed to create OpenCode session: {err}"))
-            })?;
+            .map_err(|source| OpenCodeServiceError::SessionCreate { source })
+            .with_context(|| format!("while creating OpenCode session for run '{run_id}'"))
+            .map_err(app_error_from_anyhow)?;
         let id = created
             .data
             .get("id")
             .and_then(|v| v.as_str())
             .map(ToString::to_string)
-            .ok_or_else(|| AppError::validation("OpenCode session create response missing id"))?;
+            .ok_or_else(|| {
+                app_error_from_anyhow(AnyhowError::new(
+                    OpenCodeServiceError::MissingSessionIdField,
+                ))
+            })?;
         info!(
             target: "opencode.runtime",
             marker = "session_create",
@@ -1030,16 +1164,16 @@ impl RunsOpenCodeService {
                 .opencode_session_id
                 .filter(|existing| !existing.trim().is_empty())
                 .ok_or_else(|| {
-                    AppError::validation(
-                        "OpenCode session id was not persisted and no canonical value exists",
-                    )
+                    app_error_from_anyhow(AnyhowError::new(
+                        OpenCodeServiceError::MissingCanonicalSessionId,
+                    ))
                 })?
         };
 
         let mut session_guard = handle
             .session_id
             .lock()
-            .map_err(|_| AppError::validation("failed to lock OpenCode session id"))?;
+            .map_err(|_| lock_error("OpenCode session id"))?;
         if let Some(existing) = session_guard.as_ref() {
             Ok(existing.clone())
         } else {
@@ -1111,15 +1245,19 @@ impl RunsOpenCodeService {
         options.port = 0;
         options.config = Some(serde_json::json!({}));
 
-        let server = create_opencode_server(Some(options)).await.map_err(|err| {
-            AppError::validation(format!("failed to start OpenCode server: {err}"))
-        })?;
+        let server = create_opencode_server(Some(options))
+            .await
+            .map_err(|source| OpenCodeServiceError::ServerStart { source })
+            .context("while creating ephemeral OpenCode server")
+            .map_err(app_error_from_anyhow)?;
         let client = create_opencode_client(Some(OpencodeClientConfig {
             base_url: server.url.clone(),
             timeout: Duration::from_secs(30),
             ..Default::default()
         }))
-        .map_err(|err| AppError::validation(format!("failed to create OpenCode client: {err}")))?;
+        .map_err(|source| OpenCodeServiceError::ClientCreate { source })
+        .context("while creating ephemeral OpenCode client")
+        .map_err(app_error_from_anyhow)?;
 
         op(&client).await
     }
@@ -1378,7 +1516,11 @@ impl RunsOpenCodeService {
                 error = err.to_string(),
                 "OpenCode server launch failed"
             );
-            AppError::validation(format!("failed to start OpenCode server: {err}"))
+            app_error_from_anyhow(
+                AnyhowError::new(OpenCodeServiceError::ServerStart { source: err }).context(
+                    format!("while ensuring OpenCode runtime for run '{}'", run.id),
+                ),
+            )
         })?;
         let client = create_opencode_client(Some(OpencodeClientConfig {
             base_url: server.url.clone(),
@@ -1386,7 +1528,9 @@ impl RunsOpenCodeService {
             timeout: Duration::from_secs(1800),
             ..Default::default()
         }))
-        .map_err(|err| AppError::validation(format!("failed to create OpenCode client: {err}")))?;
+        .map_err(|source| OpenCodeServiceError::ClientCreate { source })
+        .with_context(|| format!("while creating OpenCode client for run '{}'", run.id))
+        .map_err(app_error_from_anyhow)?;
 
         let max_health_wait = Duration::from_secs(10);
         let health_retry_interval = Duration::from_millis(250);
@@ -1396,10 +1540,17 @@ impl RunsOpenCodeService {
             match client.global().health(RequestOptions::default()).await {
                 Ok(_) => break,
                 Err(err) => {
+                    let health_err =
+                        AnyhowError::new(OpenCodeServiceError::HealthCheck { source: err })
+                            .context(format!(
+                                "while waiting for OpenCode health on run '{}'",
+                                run.id
+                            ));
                     if health_start.elapsed() >= max_health_wait {
-                        return Err(AppError::validation(format!(
-                            "OpenCode health check failed after retries: {err}"
-                        )));
+                        let elapsed_ms = health_start.elapsed().as_millis();
+                        return Err(app_error_from_anyhow(health_err.context(format!(
+                            "OpenCode health check failed after retries (elapsed_ms={elapsed_ms})"
+                        ))));
                     }
                     sleep(health_retry_interval).await;
                 }
@@ -1584,9 +1735,13 @@ impl RunsOpenCodeService {
         if let Err(err) = send_result {
             self.release_initial_seed_claim_if_claimant(run_id, claimed_initial_seed_request_id)
                 .await?;
-            return Err(AppError::validation(format!(
-                "failed to submit OpenCode prompt: {err}"
-            )));
+            return Err(app_error_from_anyhow(
+                AnyhowError::new(OpenCodeServiceError::PromptSubmit {
+                    run_id: run_id.to_string(),
+                    source: err,
+                })
+                .context("while submitting prompt to OpenCode session"),
+            ));
         }
 
         if let Some(claim_request_id) = claimed_initial_seed_request_id {
@@ -1595,9 +1750,9 @@ impl RunsOpenCodeService {
                 .finalize_initial_prompt_send_for_claimant(run_id, claim_request_id)
                 .await?;
             if !finalized {
-                return Err(AppError::validation(
-                    "initial prompt claimant failed to finalize sent state",
-                ));
+                return Err(app_error_from_anyhow(AnyhowError::new(
+                    OpenCodeServiceError::InitialPromptFinalizeRejected,
+                )));
             }
         }
 
@@ -1671,7 +1826,7 @@ impl RunsOpenCodeService {
             let in_memory_session_id = handle
                 .session_id
                 .lock()
-                .map_err(|_| AppError::validation("failed to lock OpenCode session id"))?
+                .map_err(|_| lock_error("OpenCode session id"))?
                 .clone();
             if let Some(in_memory_session_id) = in_memory_session_id {
                 if in_memory_session_id.trim() != session_id {
@@ -1681,9 +1836,10 @@ impl RunsOpenCodeService {
         }
 
         {
-            let state = handle.session_runtime_state.lock().map_err(|_| {
-                AppError::validation("failed to lock OpenCode session runtime state")
-            })?;
+            let state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
             if !state.pending_permissions.contains(request_id) {
                 return Err(AppError::validation("permission request is stale"));
             }
@@ -1704,9 +1860,12 @@ impl RunsOpenCodeService {
                     })),
             )
             .await
-            .map_err(|err| {
-                AppError::validation(format!("failed to reply to OpenCode permission: {err}"))
-            })?;
+            .map_err(|source| OpenCodeServiceError::PermissionReply {
+                request_id: request_id.to_string(),
+                source,
+            })
+            .context("while forwarding permission decision to OpenCode")
+            .map_err(app_error_from_anyhow)?;
 
         let response_state = response
             .data
@@ -1843,6 +2002,7 @@ impl RunsOpenCodeService {
         let Some(session_id) = run.opencode_session_id else {
             return Ok(vec![]);
         };
+        let session_id_for_error = session_id.clone();
 
         let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
         if ensured.state == "unsupported" {
@@ -1857,9 +2017,12 @@ impl RunsOpenCodeService {
             .session()
             .messages(request)
             .await
-            .map_err(|err| {
-                AppError::validation(format!("failed to fetch OpenCode session messages: {err}"))
-            })?;
+            .map_err(|source| OpenCodeServiceError::SessionMessages {
+                session_id: session_id_for_error.clone(),
+                source,
+            })
+            .context("while loading run OpenCode session messages")
+            .map_err(app_error_from_anyhow)?;
 
         Ok(value_array_to_message_wrappers(response.data))
     }
@@ -1872,6 +2035,7 @@ impl RunsOpenCodeService {
         let Some(session_id) = run.opencode_session_id else {
             return Ok(vec![]);
         };
+        let session_id_for_error = session_id.clone();
 
         let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
         if ensured.state == "unsupported" {
@@ -1881,9 +2045,17 @@ impl RunsOpenCodeService {
         let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
 
         let request = RequestOptions::default().with_path("id", session_id);
-        let response = handle.client.session().todo(request).await.map_err(|err| {
-            AppError::validation(format!("failed to fetch OpenCode session todos: {err}"))
-        })?;
+        let response = handle
+            .client
+            .session()
+            .todo(request)
+            .await
+            .map_err(|source| OpenCodeServiceError::SessionTodos {
+                session_id: session_id_for_error.clone(),
+                source,
+            })
+            .context("while loading run OpenCode session todos")
+            .map_err(app_error_from_anyhow)?;
 
         Ok(value_array_to_todo_wrappers(response.data))
     }
@@ -1916,7 +2088,7 @@ impl RunsOpenCodeService {
             let mut subscribers = handle
                 .subscribers
                 .lock()
-                .map_err(|_| AppError::validation("failed to lock OpenCode subscribers"))?;
+                .map_err(|_| lock_error("OpenCode subscribers"))?;
             subscribers.insert(subscriber_id.to_string(), on_output);
         }
 
@@ -1924,7 +2096,7 @@ impl RunsOpenCodeService {
             let mut subscriber_tasks = handle
                 .subscriber_tasks
                 .lock()
-                .map_err(|_| AppError::validation("failed to lock OpenCode subscriber tasks"))?;
+                .map_err(|_| lock_error("OpenCode subscriber tasks"))?;
             subscriber_tasks.remove(subscriber_id)
         };
         if let Some(previous_task) = previous_task {
@@ -2013,7 +2185,7 @@ impl RunsOpenCodeService {
             let mut subscriber_tasks = handle
                 .subscriber_tasks
                 .lock()
-                .map_err(|_| AppError::validation("failed to lock OpenCode subscriber tasks"))?;
+                .map_err(|_| lock_error("OpenCode subscriber tasks"))?;
             subscriber_tasks.insert(
                 subscriber_id.to_string(),
                 SubscriberTaskEntry {
@@ -2041,7 +2213,7 @@ impl RunsOpenCodeService {
         let buffered = handle
             .buffered_events
             .lock()
-            .map_err(|_| AppError::validation("failed to lock OpenCode buffered events"))?;
+            .map_err(|_| lock_error("OpenCode buffered events"))?;
         Ok(buffered.iter().cloned().collect())
     }
 
@@ -2129,7 +2301,7 @@ impl RunsOpenCodeService {
             let buffered = handle
                 .buffered_events
                 .lock()
-                .map_err(|_| AppError::validation("failed to lock OpenCode buffered events"))?;
+                .map_err(|_| lock_error("OpenCode buffered events"))?;
             buffered.iter().cloned().collect::<Vec<_>>()
         };
 
@@ -2195,14 +2367,15 @@ impl RunsOpenCodeService {
                 let mut subscribers = handle
                     .subscribers
                     .lock()
-                    .map_err(|_| AppError::validation("failed to lock OpenCode subscribers"))?;
+                    .map_err(|_| lock_error("OpenCode subscribers"))?;
                 subscribers.remove(subscriber_id);
             }
 
             let subscriber_task = {
-                let mut subscriber_tasks = handle.subscriber_tasks.lock().map_err(|_| {
-                    AppError::validation("failed to lock OpenCode subscriber tasks")
-                })?;
+                let mut subscriber_tasks = handle
+                    .subscriber_tasks
+                    .lock()
+                    .map_err(|_| lock_error("OpenCode subscriber tasks"))?;
                 subscriber_tasks.remove(subscriber_id)
             };
 
@@ -2428,6 +2601,7 @@ mod tests {
     use crate::app::db::repositories::runs::RunsRepository;
     use crate::app::runs::service::RunsService;
     use crate::app::worktrees::service::WorktreesService;
+    use anyhow::Context;
     use opencode::{
         create_opencode_client, create_opencode_server, OpencodeClientConfig, OpencodeServerOptions,
     };
@@ -2791,6 +2965,16 @@ mod tests {
 
         let agents = super::dedupe_agents(super::parse_agents_from_config_payload(&config_get));
         assert!(agents.is_empty());
+    }
+
+    #[test]
+    fn app_error_from_anyhow_preserves_context_chain() {
+        let err = anyhow::Error::new(super::OpenCodeServiceError::MissingRunHandle)
+            .context("while preparing run bootstrap payload");
+        let app_err = super::app_error_from_anyhow(err);
+        let rendered = app_err.to_string();
+        assert!(rendered.contains("while preparing run bootstrap payload"));
+        assert!(rendered.contains("OpenCode run handle not found"));
     }
 
     #[tokio::test]
