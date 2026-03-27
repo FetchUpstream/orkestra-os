@@ -39,6 +39,7 @@ const RunTerminal: Component<RunTerminalProps> = (props) => {
   let fitAddon: FitAddon | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastSentTerminalSize: { cols: number; rows: number } | null = null;
 
   const fitAndResize = (): void => {
     if (!terminal || !fitAddon || !props.isVisible) {
@@ -46,7 +47,21 @@ const RunTerminal: Component<RunTerminalProps> = (props) => {
     }
 
     fitAddon.fit();
-    void props.resizeTerminal(terminal.cols, terminal.rows);
+    const fittedCols = terminal.cols;
+    const fittedRows = terminal.rows;
+    if (
+      lastSentTerminalSize &&
+      lastSentTerminalSize.cols === fittedCols &&
+      lastSentTerminalSize.rows === fittedRows
+    ) {
+      return;
+    }
+
+    lastSentTerminalSize = {
+      cols: fittedCols,
+      rows: fittedRows,
+    };
+    void props.resizeTerminal(fittedCols, fittedRows);
   };
 
   const scheduleFitAndResize = (): void => {
@@ -63,8 +78,7 @@ const RunTerminal: Component<RunTerminalProps> = (props) => {
     terminal = new Terminal({
       cursorBlink: true,
       disableStdin: !props.isInputEnabled,
-      fontFamily:
-        'var(--font-sans, "SF Pro Text", "Segoe UI", Roboto, sans-serif)',
+      fontFamily: "var(--font-sans)",
       fontSize: 13,
       lineHeight: 1.4,
       scrollback: 5000,
@@ -129,6 +143,7 @@ const RunTerminal: Component<RunTerminalProps> = (props) => {
       resizeObserver.observe(containerRef);
     }
 
+    fitAndResize();
     scheduleFitAndResize();
 
     onCleanup(() => {

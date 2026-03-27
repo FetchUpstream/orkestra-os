@@ -188,6 +188,8 @@ export const useRunDetailModel = () => {
   let terminalRunId: string | null = null;
   let terminalRouteInstanceId = crypto.randomUUID();
   let terminalFrameHandler: ((frame: RunTerminalFrame) => void) | null = null;
+  let terminalRequestedSize: { cols: number; rows: number } | null = null;
+  let terminalAppliedSize: { cols: number; rows: number } | null = null;
   let postMergeRedirectTimer: ReturnType<typeof setTimeout> | null = null;
   let cleanupRefreshFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
   const sentGitConflictFingerprints = new Set<string>();
@@ -2255,6 +2257,7 @@ export const useRunDetailModel = () => {
     setIsTerminalStarting(false);
     setIsTerminalReady(false);
     terminalRunId = null;
+    terminalAppliedSize = null;
     setTerminalSessionId(null);
     setTerminalGeneration(null);
 
@@ -2299,12 +2302,17 @@ export const useRunDetailModel = () => {
     setTerminalSessionId(null);
     setTerminalGeneration(null);
 
+    const initialTerminalSize = terminalRequestedSize ?? {
+      cols: 120,
+      rows: 32,
+    };
+
     try {
       const session = await openRunTerminal({
         runId: normalizedRunId,
         routeInstanceId: terminalRouteInstanceId,
-        cols: 120,
-        rows: 32,
+        cols: initialTerminalSize.cols,
+        rows: initialTerminalSize.rows,
         onOutput: (frame) => {
           if (requestVersion !== activeTerminalRequestVersion) {
             return;
@@ -2328,6 +2336,10 @@ export const useRunDetailModel = () => {
 
       setTerminalSessionId(session.sessionId);
       setTerminalGeneration(session.generation);
+      terminalAppliedSize = {
+        cols: initialTerminalSize.cols,
+        rows: initialTerminalSize.rows,
+      };
       setIsTerminalReady(true);
     } catch {
       if (requestVersion !== activeTerminalRequestVersion) {
@@ -2369,14 +2381,27 @@ export const useRunDetailModel = () => {
   };
 
   const resizeTerminal = async (cols: number, rows: number): Promise<void> => {
+    const normalizedCols = Math.max(1, Math.floor(cols));
+    const normalizedRows = Math.max(1, Math.floor(rows));
+
+    terminalRequestedSize = {
+      cols: normalizedCols,
+      rows: normalizedRows,
+    };
+
     const sessionId = terminalSessionId();
     const generation = terminalGeneration();
     if (!sessionId || generation === null) {
       return;
     }
 
-    const normalizedCols = Math.max(1, Math.floor(cols));
-    const normalizedRows = Math.max(1, Math.floor(rows));
+    if (
+      terminalAppliedSize &&
+      terminalAppliedSize.cols === normalizedCols &&
+      terminalAppliedSize.rows === normalizedRows
+    ) {
+      return;
+    }
 
     try {
       await resizeRunTerminal({
@@ -2385,6 +2410,10 @@ export const useRunDetailModel = () => {
         cols: normalizedCols,
         rows: normalizedRows,
       });
+      terminalAppliedSize = {
+        cols: normalizedCols,
+        rows: normalizedRows,
+      };
     } catch {
       setTerminalError("Failed to resize terminal.");
     }
