@@ -1,4 +1,4 @@
-use crate::app::errors::AppError;
+use crate::app::tasks::errors::TaskRepositoryError;
 use crate::app::tasks::models::{
     MoveTaskRepository, NewTask, Task, TaskDependencies, TaskDependencyEdge, TaskDependencyTask,
     UpdateTaskDetails, UpdateTaskStatus,
@@ -16,11 +16,12 @@ impl TasksRepository {
         Self { pool }
     }
 
-    pub async fn project_exists(&self, project_id: &str) -> Result<bool, AppError> {
+    pub async fn project_exists(&self, project_id: &str) -> Result<bool, TaskRepositoryError> {
         let row = sqlx::query("SELECT 1 FROM projects WHERE id = ? LIMIT 1")
             .bind(project_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_err(|source| TaskRepositoryError::db("project_exists", source))?;
         Ok(row.is_some())
     }
 
@@ -28,18 +29,19 @@ impl TasksRepository {
         &self,
         repository_id: &str,
         project_id: &str,
-    ) -> Result<bool, AppError> {
+    ) -> Result<bool, TaskRepositoryError> {
         let row = sqlx::query(
             "SELECT 1 FROM project_repositories WHERE id = ? AND project_id = ? LIMIT 1",
         )
         .bind(repository_id)
         .bind(project_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("repository_belongs_to_project", source))?;
         Ok(row.is_some())
     }
 
-    pub async fn create_task(&self, input: NewTask) -> Result<Task, AppError> {
+    pub async fn create_task(&self, input: NewTask) -> Result<Task, TaskRepositoryError> {
         sqlx::query(
             "INSERT INTO tasks (
                 id,
@@ -77,14 +79,18 @@ impl TasksRepository {
         .bind(&input.created_at)
         .bind(&input.updated_at)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("create_task", source))?;
 
-        self.get_task(&input.id)
-            .await?
-            .ok_or_else(|| AppError::not_found("task not found after create"))
+        self.get_task(&input.id).await?.ok_or_else(|| {
+            TaskRepositoryError::db("create_task.fetch_created_task", sqlx::Error::RowNotFound)
+        })
     }
 
-    pub async fn list_project_tasks(&self, project_id: &str) -> Result<Vec<Task>, AppError> {
+    pub async fn list_project_tasks(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<Task>, TaskRepositoryError> {
         let rows = sqlx::query(
             "SELECT
                 t.id,
@@ -122,12 +128,16 @@ impl TasksRepository {
         )
         .bind(project_id)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("list_project_tasks", source))?;
 
         Ok(rows.into_iter().map(Self::map_task_row).collect())
     }
 
-    pub async fn list_tasks_by_ids(&self, task_ids: &[String]) -> Result<Vec<Task>, AppError> {
+    pub async fn list_tasks_by_ids(
+        &self,
+        task_ids: &[String],
+    ) -> Result<Vec<Task>, TaskRepositoryError> {
         if task_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -176,11 +186,15 @@ impl TasksRepository {
 
         query_builder.push(")");
 
-        let rows = query_builder.build().fetch_all(&self.pool).await?;
+        let rows = query_builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|source| TaskRepositoryError::db("list_tasks_by_ids", source))?;
         Ok(rows.into_iter().map(Self::map_task_row).collect())
     }
 
-    pub async fn get_task(&self, id: &str) -> Result<Option<Task>, AppError> {
+    pub async fn get_task(&self, id: &str) -> Result<Option<Task>, TaskRepositoryError> {
         let row = sqlx::query(
             "SELECT
                 t.id,
@@ -217,7 +231,8 @@ impl TasksRepository {
         )
         .bind(id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("get_task", source))?;
 
         Ok(row.map(Self::map_task_row))
     }
@@ -250,7 +265,7 @@ impl TasksRepository {
         &self,
         id: &str,
         input: UpdateTaskDetails,
-    ) -> Result<Option<Task>, AppError> {
+    ) -> Result<Option<Task>, TaskRepositoryError> {
         sqlx::query(
             "UPDATE tasks
              SET title = ?,
@@ -266,7 +281,8 @@ impl TasksRepository {
         .bind(&input.updated_at)
         .bind(id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("update_task_details", source))?;
 
         self.get_task(id).await
     }
@@ -275,7 +291,7 @@ impl TasksRepository {
         &self,
         id: &str,
         input: UpdateTaskStatus,
-    ) -> Result<(Option<Task>, bool), AppError> {
+    ) -> Result<(Option<Task>, bool), TaskRepositoryError> {
         let result = sqlx::query(
             "UPDATE tasks
               SET status = ?, updated_at = ?
@@ -287,7 +303,8 @@ impl TasksRepository {
         .bind(id)
         .bind(&input.status)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("update_task_status", source))?;
 
         Ok((self.get_task(id).await?, result.rows_affected() > 0))
     }
@@ -296,7 +313,7 @@ impl TasksRepository {
         &self,
         id: &str,
         input: MoveTaskRepository,
-    ) -> Result<Option<Task>, AppError> {
+    ) -> Result<Option<Task>, TaskRepositoryError> {
         sqlx::query(
             "UPDATE tasks
              SET repository_id = ?, updated_at = ?
@@ -306,25 +323,31 @@ impl TasksRepository {
         .bind(&input.updated_at)
         .bind(id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("move_task_repository", source))?;
 
         self.get_task(id).await
     }
 
-    pub async fn delete_task(&self, id: &str) -> Result<bool, AppError> {
+    pub async fn delete_task(&self, id: &str) -> Result<bool, TaskRepositoryError> {
         let result = sqlx::query("DELETE FROM tasks WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_err(|source| TaskRepositoryError::db("delete_task", source))?;
 
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn get_task_project_id(&self, task_id: &str) -> Result<Option<String>, AppError> {
+    pub async fn get_task_project_id(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<String>, TaskRepositoryError> {
         let row = sqlx::query("SELECT project_id FROM tasks WHERE id = ?")
             .bind(task_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_err(|source| TaskRepositoryError::db("get_task_project_id", source))?;
 
         Ok(row.map(|row| row.get("project_id")))
     }
@@ -333,7 +356,7 @@ impl TasksRepository {
         &self,
         parent_task_id: &str,
         child_task_id: &str,
-    ) -> Result<bool, AppError> {
+    ) -> Result<bool, TaskRepositoryError> {
         let row = sqlx::query(
             "SELECT 1
              FROM task_dependencies
@@ -343,7 +366,8 @@ impl TasksRepository {
         .bind(parent_task_id)
         .bind(child_task_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("dependency_exists", source))?;
 
         Ok(row.is_some())
     }
@@ -352,7 +376,7 @@ impl TasksRepository {
         &self,
         parent_task_id: &str,
         child_task_id: &str,
-    ) -> Result<bool, AppError> {
+    ) -> Result<bool, TaskRepositoryError> {
         if parent_task_id == child_task_id {
             return Ok(true);
         }
@@ -374,7 +398,8 @@ impl TasksRepository {
         .bind(child_task_id)
         .bind(parent_task_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("dependency_would_create_cycle", source))?;
 
         Ok(row.is_some())
     }
@@ -382,7 +407,7 @@ impl TasksRepository {
     pub async fn list_task_dependencies(
         &self,
         task_id: &str,
-    ) -> Result<Option<TaskDependencies>, AppError> {
+    ) -> Result<Option<TaskDependencies>, TaskRepositoryError> {
         let Some(project_id) = self.get_task_project_id(task_id).await? else {
             return Ok(None);
         };
@@ -407,7 +432,8 @@ impl TasksRepository {
         .bind(&project_id)
         .bind(task_id)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("list_task_dependencies.parents", source))?;
 
         let child_rows = sqlx::query(
             "SELECT
@@ -429,7 +455,8 @@ impl TasksRepository {
         .bind(&project_id)
         .bind(task_id)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("list_task_dependencies.children", source))?;
 
         let parents = parent_rows
             .into_iter()
@@ -474,7 +501,7 @@ impl TasksRepository {
         parent_task_id: &str,
         child_task_id: &str,
         created_at: &str,
-    ) -> Result<TaskDependencyEdge, AppError> {
+    ) -> Result<TaskDependencyEdge, TaskRepositoryError> {
         sqlx::query(
             "INSERT INTO task_dependencies (
                 project_id,
@@ -488,7 +515,8 @@ impl TasksRepository {
         .bind(child_task_id)
         .bind(created_at)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("add_task_dependency", source))?;
 
         Ok(TaskDependencyEdge {
             parent_task_id: parent_task_id.to_string(),
@@ -501,7 +529,7 @@ impl TasksRepository {
         &self,
         parent_task_id: &str,
         child_task_id: &str,
-    ) -> Result<bool, AppError> {
+    ) -> Result<bool, TaskRepositoryError> {
         let result = sqlx::query(
             "DELETE FROM task_dependencies
              WHERE parent_task_id = ? AND child_task_id = ?",
@@ -509,7 +537,8 @@ impl TasksRepository {
         .bind(parent_task_id)
         .bind(child_task_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskRepositoryError::db("remove_task_dependency", source))?;
 
         Ok(result.rows_affected() > 0)
     }

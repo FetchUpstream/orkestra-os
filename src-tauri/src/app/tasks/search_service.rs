@@ -1,7 +1,7 @@
 use crate::app::db::repositories::task_search::{TaskSearchCandidate, TaskSearchRepository};
 use crate::app::db::repositories::tasks::TasksRepository;
-use crate::app::errors::AppError;
 use crate::app::tasks::dto::TaskDto;
+use crate::app::tasks::errors::TaskSearchError;
 use nucleo::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo::{Config, Matcher, Utf32Str};
 use once_cell::sync::Lazy;
@@ -42,9 +42,14 @@ impl TaskSearchService {
         &self,
         project_id: &str,
         query: &str,
-    ) -> Result<Vec<TaskDto>, AppError> {
-        if !self.tasks_repository.project_exists(project_id).await? {
-            return Err(AppError::not_found("project not found"));
+    ) -> Result<Vec<TaskDto>, TaskSearchError> {
+        if !self
+            .tasks_repository
+            .project_exists(project_id)
+            .await
+            .map_err(|source| TaskSearchError::TasksRepository { source })?
+        {
+            return Err(TaskSearchError::ProjectNotFound);
         }
 
         let normalized_query = Self::normalize_query(query);
@@ -60,7 +65,8 @@ impl TaskSearchService {
         let strict_candidates = self
             .repository
             .list_project_candidates(project_id, &fts_query, MAX_CANDIDATES)
-            .await?;
+            .await
+            .map_err(|source| TaskSearchError::SearchRepository { source })?;
         let (candidates, used_fallback) = if strict_candidates.is_empty() {
             let relaxed_fts_query = Self::build_relaxed_fts_query(&normalized_query);
             if relaxed_fts_query.is_empty() {
@@ -70,7 +76,8 @@ impl TaskSearchService {
             (
                 self.repository
                     .list_project_candidates(project_id, &relaxed_fts_query, MAX_CANDIDATES)
-                    .await?,
+                    .await
+                    .map_err(|source| TaskSearchError::SearchRepository { source })?,
                 true,
             )
         } else {
@@ -87,7 +94,11 @@ impl TaskSearchService {
             .map(|candidate| candidate.task_id)
             .collect::<Vec<_>>();
 
-        let fetched_tasks = self.tasks_repository.list_tasks_by_ids(&ranked_ids).await?;
+        let fetched_tasks = self
+            .tasks_repository
+            .list_tasks_by_ids(&ranked_ids)
+            .await
+            .map_err(|source| TaskSearchError::TasksRepository { source })?;
         let tasks_by_id = fetched_tasks
             .into_iter()
             .map(|task| (task.id.clone(), task))
@@ -169,11 +180,11 @@ impl TaskSearchService {
         query: &str,
         candidates: Vec<TaskSearchCandidate>,
         fallback_mode: bool,
-    ) -> Result<Vec<RankedCandidate>, AppError> {
+    ) -> Result<Vec<RankedCandidate>, TaskSearchError> {
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
         let mut matcher = TASK_QUERY_MATCHER
             .lock()
-            .map_err(|_| AppError::validation("task search matcher unavailable"))?;
+            .map_err(|_| TaskSearchError::MatcherUnavailable)?;
         let mut buf = Vec::new();
 
         let mut ranked = candidates

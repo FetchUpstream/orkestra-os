@@ -1,4 +1,4 @@
-use crate::app::errors::AppError;
+use crate::app::tasks::errors::TaskSearchRepositoryError;
 use sqlx::{Row, SqlitePool};
 
 #[derive(Clone, Debug)]
@@ -25,7 +25,7 @@ impl TaskSearchRepository {
         project_id: &str,
         fts_query: &str,
         limit: i64,
-    ) -> Result<Vec<TaskSearchCandidate>, AppError> {
+    ) -> Result<Vec<TaskSearchCandidate>, TaskSearchRepositoryError> {
         let rows = sqlx::query(
             "SELECT
                 d.task_id,
@@ -44,7 +44,8 @@ impl TaskSearchRepository {
         .bind(fts_query)
         .bind(limit)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| TaskSearchRepositoryError::db("list_project_candidates", source))?;
 
         Ok(rows
             .into_iter()

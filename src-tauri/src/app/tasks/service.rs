@@ -7,6 +7,7 @@ use crate::app::tasks::dto::{
     RemoveTaskDependencyRequest, RemoveTaskDependencyResponse, SetTaskStatusRequest,
     TaskDependenciesDto, TaskDependencyEdgeDto, TaskDependencyTaskDto, TaskDto, UpdateTaskRequest,
 };
+use crate::app::tasks::errors::TaskServiceError;
 use crate::app::tasks::models::{
     MoveTaskRepository, NewTask, Task, TaskDependencyTask, UpdateTaskDetails, UpdateTaskStatus,
 };
@@ -65,14 +66,20 @@ impl TasksService {
 
         Self::validate_status(&input.status)?;
 
-        if !self.repository.project_exists(&input.project_id).await? {
+        if !self
+            .repository
+            .project_exists(&input.project_id)
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
+        {
             return Err(AppError::not_found("project not found"));
         }
 
         if !self
             .repository
             .repository_belongs_to_project(&input.repository_id, &input.project_id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
         {
             return Err(AppError::validation(
                 "repository must belong to the specified project",
@@ -93,17 +100,27 @@ impl TasksService {
                 created_at: now.clone(),
                 updated_at: now,
             })
-            .await?;
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?;
 
         Ok(Self::to_dto(created))
     }
 
     pub async fn list_project_tasks(&self, project_id: &str) -> Result<Vec<TaskDto>, AppError> {
-        if !self.repository.project_exists(project_id).await? {
+        if !self
+            .repository
+            .project_exists(project_id)
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
+        {
             return Err(AppError::not_found("project not found"));
         }
 
-        let tasks = self.repository.list_project_tasks(project_id).await?;
+        let tasks = self
+            .repository
+            .list_project_tasks(project_id)
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?;
         Ok(tasks.into_iter().map(Self::to_dto).collect())
     }
 
@@ -115,13 +132,15 @@ impl TasksService {
         self.search_service
             .search_project_tasks(project_id, query)
             .await
+            .map_err(|source| TaskServiceError::Search { source }.into_app_error())
     }
 
     pub async fn get_task(&self, id: &str) -> Result<TaskDto, AppError> {
         let task = self
             .repository
             .get_task(id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
         Ok(Self::to_dto(task))
@@ -155,7 +174,8 @@ impl TasksService {
                     updated_at: Utc::now().to_rfc3339(),
                 },
             )
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
         Ok(Self::to_dto(updated))
@@ -176,7 +196,8 @@ impl TasksService {
         let existing_task = self
             .repository
             .get_task(id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
         if !Self::can_transition_status(&existing_task.status, &input.status) {
@@ -192,7 +213,8 @@ impl TasksService {
                     updated_at: Utc::now().to_rfc3339(),
                 },
             )
-            .await?;
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?;
         let updated = updated_task.ok_or_else(|| AppError::not_found("task not found"))?;
 
         let should_auto_start_run = source_action.as_deref()
@@ -239,8 +261,24 @@ impl TasksService {
 
         let run = runs_service
             .create_or_reuse_active_run_with_defaults(task_id, agent_id, provider_id, model_id)
-            .await?;
-        let _ = runs_opencode_service.start_run_opencode(&run.id).await?;
+            .await
+            .map_err(|source| {
+                TaskServiceError::RunAutoStart {
+                    operation: "create_or_reuse_active_run_with_defaults",
+                    source,
+                }
+                .into_app_error()
+            })?;
+        let _ = runs_opencode_service
+            .start_run_opencode(&run.id)
+            .await
+            .map_err(|source| {
+                TaskServiceError::RunAutoStart {
+                    operation: "start_run_opencode",
+                    source,
+                }
+                .into_app_error()
+            })?;
         Ok(())
     }
 
@@ -254,13 +292,15 @@ impl TasksService {
         let existing_task = self
             .repository
             .get_task(id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
         if !self
             .repository
             .repository_belongs_to_project(&input.repository_id, &existing_task.project_id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
         {
             return Err(AppError::validation(
                 "repository must belong to the specified project",
@@ -276,14 +316,19 @@ impl TasksService {
                     updated_at: Utc::now().to_rfc3339(),
                 },
             )
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
         Ok(Self::to_dto(updated))
     }
 
     pub async fn delete_task(&self, id: &str) -> Result<DeleteTaskResponse, AppError> {
-        let deleted = self.repository.delete_task(id).await?;
+        let deleted = self
+            .repository
+            .delete_task(id)
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?;
         if !deleted {
             return Err(AppError::not_found("task not found"));
         }
@@ -299,13 +344,15 @@ impl TasksService {
 
         self.repository
             .get_task(&task_id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
         let dependencies = self
             .repository
             .list_task_dependencies(&task_id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
         Ok(TaskDependenciesDto {
@@ -337,12 +384,14 @@ impl TasksService {
         let parent_task = self
             .repository
             .get_task(&input.parent_task_id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
             .ok_or_else(|| AppError::not_found("task not found"))?;
         let child_task = self
             .repository
             .get_task(&input.child_task_id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
         if parent_task.project_id != child_task.project_id {
@@ -354,7 +403,8 @@ impl TasksService {
         if self
             .repository
             .dependency_exists(&input.parent_task_id, &input.child_task_id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
         {
             return Err(AppError::validation("dependency already exists"));
         }
@@ -362,7 +412,8 @@ impl TasksService {
         if self
             .repository
             .dependency_would_create_cycle(&input.parent_task_id, &input.child_task_id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
         {
             return Err(AppError::validation("dependency would create a cycle"));
         }
@@ -376,7 +427,8 @@ impl TasksService {
                 &input.child_task_id,
                 &created_at,
             )
-            .await?;
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?;
 
         Ok(TaskDependencyEdgeDto {
             parent_task_id: edge.parent_task_id,
@@ -399,12 +451,14 @@ impl TasksService {
         let parent_task = self
             .repository
             .get_task(&input.parent_task_id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
             .ok_or_else(|| AppError::not_found("task not found"))?;
         let child_task = self
             .repository
             .get_task(&input.child_task_id)
-            .await?
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
         if parent_task.project_id != child_task.project_id {
@@ -416,7 +470,8 @@ impl TasksService {
         let removed = self
             .repository
             .remove_task_dependency(&input.parent_task_id, &input.child_task_id)
-            .await?;
+            .await
+            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?;
 
         Ok(RemoveTaskDependencyResponse {
             parent_task_id: input.parent_task_id,
