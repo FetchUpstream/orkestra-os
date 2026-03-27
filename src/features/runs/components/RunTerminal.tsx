@@ -63,10 +63,18 @@ const RunTerminal: Component<RunTerminalProps> = (props) => {
     terminal = new Terminal({
       cursorBlink: true,
       disableStdin: !props.isInputEnabled,
-      fontFamily: "var(--font-mono)",
-      fontSize: 12,
-      lineHeight: 1.35,
+      fontFamily:
+        'var(--font-sans, "SF Pro Text", "Segoe UI", Roboto, sans-serif)',
+      fontSize: 13,
+      lineHeight: 1.4,
       scrollback: 5000,
+      theme: {
+        background: "#0a1119",
+        foreground: "#d7e4f6",
+        cursor: "#8ac6ff",
+        cursorAccent: "#0a1119",
+        selectionBackground: "rgba(122, 175, 255, 0.24)",
+      },
     });
     fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -153,12 +161,14 @@ const RunTerminal: Component<RunTerminalProps> = (props) => {
       <div class="run-detail-terminal-root" ref={containerRef}>
         <div class="run-detail-terminal-host" ref={hostRef} />
       </div>
-      <Show when={props.isStarting}>
-        <p class="project-placeholder-text">Starting terminal...</p>
-      </Show>
-      <Show when={props.error.trim().length > 0}>
-        <p class="projects-error">{props.error}</p>
-      </Show>
+      <div class="run-detail-terminal-feedback">
+        <Show when={props.isStarting}>
+          <p class="run-detail-terminal-status">Starting terminal...</p>
+        </Show>
+        <Show when={props.error.trim().length > 0}>
+          <p class="projects-error">{props.error}</p>
+        </Show>
+      </div>
     </section>
   );
 };

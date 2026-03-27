@@ -1462,7 +1462,7 @@ const NewRunDetailScreen: Component = () => {
                 aria-hidden={!isTerminalOverlayOpen()}
                 aria-labelledby="run-chat-overlay-title-terminal"
               >
-                <header class="run-chat-overlay-panel__header">
+                <header class="run-chat-overlay-panel__header run-chat-overlay-panel__header--terminal">
                   <h2
                     id="run-chat-overlay-title-terminal"
                     class="run-chat-overlay-panel__title"
@@ -1472,7 +1472,7 @@ const NewRunDetailScreen: Component = () => {
                   <div class="run-chat-overlay-panel__header-actions">
                     <button
                       type="button"
-                      class="run-chat-overlay-panel__control btn btn-xs btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
+                      class="run-chat-overlay-panel__control"
                       aria-label={overlaySizeLabel()}
                       title={overlaySizeLabel()}
                       onClick={() => toggleOverlaySize()}
@@ -1493,7 +1493,7 @@ const NewRunDetailScreen: Component = () => {
                     <button
                       ref={terminalOverlayCloseButtonRef}
                       type="button"
-                      class="run-chat-overlay-panel__close btn btn-xs btn-square border-base-content/15 bg-base-100 text-base-content/70 hover:bg-base-100 rounded-none border"
+                      class="run-chat-overlay-panel__close"
                       aria-label={overlayCloseLabel()}
                       title={overlayCloseLabel()}
                       onClick={() => closeOverlay()}
