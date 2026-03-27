@@ -43,6 +43,11 @@ import {
 } from "./agentReducer";
 import type { AgentStore, OpenCodeBusEvent } from "./agentTypes";
 import { setRunCommitPending } from "./commitUiState";
+import {
+  validateReviewAnchor,
+  type RunReviewAnchorTrust,
+  type RunReviewAnchorTrustReason,
+} from "./reviewAnchorValidation";
 
 export type RunReviewCommentSide = "original" | "modified";
 
@@ -54,6 +59,9 @@ export type RunReviewDraftComment = {
   body: string;
   createdAt: string;
   updatedAt: string;
+  anchorTrust: RunReviewAnchorTrust;
+  anchorTrustReason?: RunReviewAnchorTrustReason;
+  anchorLineSnippet?: string;
 };
 
 type UpsertRunReviewDraftCommentInput = {
@@ -62,6 +70,15 @@ type UpsertRunReviewDraftCommentInput = {
   side: RunReviewCommentSide;
   line: number;
   body: string;
+  anchorLineSnippet?: string;
+};
+
+type ValidateRunReviewDraftAnchorsForFileInput = {
+  filePath: string;
+  side: RunReviewCommentSide;
+  modifiedLineCount: number;
+  commentableModifiedLines: Set<number>;
+  modifiedLineTextByLine: Map<number, string>;
 };
 
 export const useRunDetailModel = () => {
@@ -324,6 +341,20 @@ export const useRunDetailModel = () => {
       });
   };
 
+  const getDraftCommentsNeedingAttention = (): RunReviewDraftComment[] => {
+    return reviewDraftComments()
+      .filter((comment) => comment.anchorTrust !== "trusted")
+      .sort((left, right) => {
+        if (left.filePath !== right.filePath) {
+          return left.filePath.localeCompare(right.filePath);
+        }
+        if (left.line !== right.line) {
+          return left.line - right.line;
+        }
+        return left.createdAt.localeCompare(right.createdAt);
+      });
+  };
+
   const upsertDraftComment = (
     input: UpsertRunReviewDraftCommentInput,
   ): RunReviewDraftComment | null => {
@@ -341,6 +372,8 @@ export const useRunDetailModel = () => {
     }
 
     const timestamp = new Date().toISOString();
+    const normalizedAnchorSnippet =
+      input.anchorLineSnippet?.trim() || undefined;
     const existingId = input.id?.trim() || "";
     let saved: RunReviewDraftComment | null = null;
 
@@ -359,6 +392,9 @@ export const useRunDetailModel = () => {
             line: normalizedLine,
             body: normalizedBody,
             updatedAt: timestamp,
+            anchorTrust: "trusted",
+            anchorTrustReason: undefined,
+            anchorLineSnippet: normalizedAnchorSnippet,
           };
           next[existingIndex] = updated;
           saved = updated;
@@ -374,6 +410,9 @@ export const useRunDetailModel = () => {
         body: normalizedBody,
         createdAt: timestamp,
         updatedAt: timestamp,
+        anchorTrust: "trusted",
+        anchorTrustReason: "created",
+        anchorLineSnippet: normalizedAnchorSnippet,
       };
       saved = created;
       next.push(created);
@@ -392,6 +431,122 @@ export const useRunDetailModel = () => {
     setReviewDraftComments((current) =>
       current.filter((comment) => comment.id !== normalizedId),
     );
+  };
+
+  const markDraftAnchorTrustByDiffInvalidation = (
+    invalidatedPaths: ReadonlySet<string>,
+    presentPaths: ReadonlySet<string>,
+  ): void => {
+    if (invalidatedPaths.size === 0) {
+      return;
+    }
+
+    setReviewDraftComments((current) => {
+      let didChange = false;
+      const next = current.map((comment) => {
+        if (!invalidatedPaths.has(comment.filePath)) {
+          return comment;
+        }
+
+        const nextTrust: RunReviewAnchorTrust = presentPaths.has(
+          comment.filePath,
+        )
+          ? "needs_validation"
+          : "untrusted";
+        const nextReason: RunReviewAnchorTrustReason = presentPaths.has(
+          comment.filePath,
+        )
+          ? "diff_changed"
+          : "file_removed";
+
+        if (
+          comment.anchorTrust === nextTrust &&
+          comment.anchorTrustReason === nextReason
+        ) {
+          return comment;
+        }
+
+        didChange = true;
+        return {
+          ...comment,
+          anchorTrust: nextTrust,
+          anchorTrustReason: nextReason,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      return didChange ? next : current;
+    });
+  };
+
+  const validateDraftAnchorsForFile = (
+    input: ValidateRunReviewDraftAnchorsForFileInput,
+  ): void => {
+    const normalizedPath = input.filePath.trim();
+    if (!normalizedPath) {
+      return;
+    }
+
+    const normalizedLineCount = Number.isFinite(input.modifiedLineCount)
+      ? Math.max(0, Math.floor(input.modifiedLineCount))
+      : 0;
+    const normalizedCommentableLines = new Set<number>();
+    for (const line of input.commentableModifiedLines) {
+      if (!Number.isFinite(line)) {
+        continue;
+      }
+      normalizedCommentableLines.add(Math.max(1, Math.floor(line)));
+    }
+
+    const normalizedLineTextByLine = new Map<number, string>();
+    for (const [line, text] of input.modifiedLineTextByLine.entries()) {
+      if (!Number.isFinite(line)) {
+        continue;
+      }
+      normalizedLineTextByLine.set(Math.max(1, Math.floor(line)), text);
+    }
+
+    setReviewDraftComments((current) => {
+      let didChange = false;
+      const next = current.map((comment) => {
+        if (
+          comment.filePath !== normalizedPath ||
+          comment.side !== input.side
+        ) {
+          return comment;
+        }
+
+        if (comment.anchorTrustReason === "file_removed") {
+          return comment;
+        }
+
+        const validation = validateReviewAnchor({
+          side: comment.side,
+          line: comment.line,
+          anchorLineSnippet: comment.anchorLineSnippet,
+          modifiedLineCount: normalizedLineCount,
+          commentableModifiedLines: normalizedCommentableLines,
+          modifiedLineTextByLine: normalizedLineTextByLine,
+        });
+
+        if (
+          comment.anchorTrust === validation.trust &&
+          comment.anchorTrustReason === validation.reason
+        ) {
+          return comment;
+        }
+
+        didChange = true;
+        return {
+          ...comment,
+          anchorTrust: validation.trust,
+          anchorTrustReason: validation.reason,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      return didChange ? next : current;
+    });
   };
 
   const isInformationalGitStateMessage = (value: string): boolean => {
@@ -2152,6 +2307,8 @@ export const useRunDetailModel = () => {
         return mergedFiles;
       });
 
+      markDraftAnchorTrustByDiffInvalidation(invalidatedPaths, presentPaths);
+
       setDiffFilePayloads((current) => {
         let didChange = false;
         const next: Record<string, RunDiffFilePayload> = {};
@@ -2306,8 +2463,10 @@ export const useRunDetailModel = () => {
     review: {
       draftComments: reviewDraftComments,
       getDraftCommentsForFile,
+      getDraftCommentsNeedingAttention,
       upsertDraftComment,
       removeDraftComment,
+      validateDraftAnchorsForFile,
     },
     git: {
       status: gitStatus,

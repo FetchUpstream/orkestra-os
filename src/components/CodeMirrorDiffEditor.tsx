@@ -38,6 +38,15 @@ export type UpsertCodeMirrorDiffDraftCommentInput = {
   side: ReviewCommentSide;
   line: number;
   body: string;
+  anchorLineSnippet?: string;
+};
+
+export type CodeMirrorReviewValidationContext = {
+  filePath: string;
+  side: "modified";
+  modifiedLineCount: number;
+  commentableModifiedLines: Set<number>;
+  modifiedLineTextByLine: Map<number, string>;
 };
 
 type CodeMirrorDiffEditorProps = {
@@ -50,6 +59,9 @@ type CodeMirrorDiffEditorProps = {
   canCreateDraftComments?: boolean;
   onUpsertDraftComment?: (input: UpsertCodeMirrorDiffDraftCommentInput) => void;
   onDeleteDraftComment?: (commentId: string) => void;
+  onReviewValidationContext?: (
+    context: CodeMirrorReviewValidationContext,
+  ) => void;
 };
 
 const collapseUnchanged = {
@@ -402,6 +414,7 @@ class InlineReviewWidget extends WidgetType {
           side: "modified",
           line: this.lineNumber,
           body,
+          anchorLineSnippet: view.state.doc.line(this.lineNumber).text,
         });
         view.dispatch({ effects: closeReviewComposerEffect.of(undefined) });
       };
@@ -640,8 +653,23 @@ const deriveModifiedCommentableLines = (
   return lines;
 };
 
+const collectModifiedLineTextByLine = (
+  view: EditorView,
+): Map<number, string> => {
+  const lines = new Map<number, string>();
+  for (
+    let lineNumber = 1;
+    lineNumber <= view.state.doc.lines;
+    lineNumber += 1
+  ) {
+    lines.set(lineNumber, view.state.doc.line(lineNumber).text);
+  }
+  return lines;
+};
+
 const CodeMirrorDiffEditor: Component<CodeMirrorDiffEditorProps> = (props) => {
   const [rootElement, setRootElement] = createSignal<HTMLDivElement>();
+  const [editorViewVersion, setEditorViewVersion] = createSignal(0);
   let mergeView: MergeView | null = null;
   let unifiedView: EditorView | null = null;
 
@@ -687,10 +715,26 @@ const CodeMirrorDiffEditor: Component<CodeMirrorDiffEditorProps> = (props) => {
       return;
     }
 
+    const commentableLines = deriveModifiedCommentableLines(
+      mergeView,
+      modifiedEditor,
+    );
+
     modifiedEditor.dispatch({
-      effects: setReviewCommentableLinesEffect.of(
-        deriveModifiedCommentableLines(mergeView, modifiedEditor),
-      ),
+      effects: setReviewCommentableLinesEffect.of(commentableLines),
+    });
+
+    const filePath = props.filePath?.trim() ?? "";
+    if (!filePath) {
+      return;
+    }
+
+    props.onReviewValidationContext?.({
+      filePath,
+      side: "modified",
+      modifiedLineCount: modifiedEditor.state.doc.lines,
+      commentableModifiedLines: commentableLines,
+      modifiedLineTextByLine: collectModifiedLineTextByLine(modifiedEditor),
     });
   };
 
@@ -743,6 +787,8 @@ const CodeMirrorDiffEditor: Component<CodeMirrorDiffEditorProps> = (props) => {
         collapseUnchanged,
       });
 
+      setEditorViewVersion((current) => current + 1);
+
       queueMicrotask(() => {
         syncModifiedCommentableLines();
       });
@@ -762,9 +808,12 @@ const CodeMirrorDiffEditor: Component<CodeMirrorDiffEditorProps> = (props) => {
         }),
       ],
     });
+
+    setEditorViewVersion((current) => current + 1);
   });
 
   createEffect(() => {
+    editorViewVersion();
     rootElement();
     const normalizedComments = normalizeDraftComments(props.draftComments);
     const canCreateDraftComments = props.canCreateDraftComments === true;

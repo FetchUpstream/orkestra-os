@@ -1038,4 +1038,180 @@ describe("useRunDetailModel startup ownership", () => {
 
     expect(modelRef!.review.draftComments()).toHaveLength(0);
   });
+
+  it("marks draft anchors for revalidation when diff metadata changes", async () => {
+    listRunDiffFilesMock
+      .mockResolvedValueOnce([
+        {
+          path: "src/demo.ts",
+          additions: 1,
+          deletions: 0,
+          status: "modified",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          path: "src/demo.ts",
+          additions: 2,
+          deletions: 0,
+          status: "modified",
+        },
+      ]);
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    await modelRef!.refreshDiffFiles();
+    const created = modelRef!.review.upsertDraftComment({
+      filePath: "src/demo.ts",
+      side: "modified",
+      line: 1,
+      body: "Do not lose this note.",
+      anchorLineSnippet: "const after = 2;",
+    });
+
+    await modelRef!.refreshDiffFiles();
+
+    const updated = modelRef!.review
+      .draftComments()
+      .find((comment) => comment.id === created?.id);
+    expect(updated).toMatchObject({
+      body: "Do not lose this note.",
+      anchorTrust: "needs_validation",
+      anchorTrustReason: "diff_changed",
+    });
+  });
+
+  it("marks removed-file draft anchors as untrusted and keeps them visible", async () => {
+    listRunDiffFilesMock
+      .mockResolvedValueOnce([
+        {
+          path: "src/demo.ts",
+          additions: 1,
+          deletions: 0,
+          status: "modified",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    await modelRef!.refreshDiffFiles();
+    const created = modelRef!.review.upsertDraftComment({
+      filePath: "src/demo.ts",
+      side: "modified",
+      line: 1,
+      body: "Preserve me.",
+    });
+
+    await modelRef!.refreshDiffFiles();
+
+    const removed = modelRef!.review
+      .draftComments()
+      .find((comment) => comment.id === created?.id);
+    expect(removed).toMatchObject({
+      body: "Preserve me.",
+      anchorTrust: "untrusted",
+      anchorTrustReason: "file_removed",
+    });
+    expect(
+      modelRef!.review
+        .getDraftCommentsNeedingAttention()
+        .some((comment) => comment.id === created?.id),
+    ).toBe(true);
+  });
+
+  it("validates draft anchors against current commentable diff context", async () => {
+    listRunDiffFilesMock
+      .mockResolvedValueOnce([
+        {
+          path: "src/demo.ts",
+          additions: 1,
+          deletions: 0,
+          status: "modified",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          path: "src/demo.ts",
+          additions: 2,
+          deletions: 0,
+          status: "modified",
+        },
+      ]);
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    await modelRef!.refreshDiffFiles();
+    const created = modelRef!.review.upsertDraftComment({
+      filePath: "src/demo.ts",
+      side: "modified",
+      line: 2,
+      body: "Please keep this behavior.",
+      anchorLineSnippet: "const after = 2;",
+    });
+
+    await modelRef!.refreshDiffFiles();
+
+    modelRef!.review.validateDraftAnchorsForFile({
+      filePath: "src/demo.ts",
+      side: "modified",
+      modifiedLineCount: 2,
+      commentableModifiedLines: new Set([2]),
+      modifiedLineTextByLine: new Map([
+        [1, "const before = 1;"],
+        [2, "const after = 2;"],
+      ]),
+    });
+
+    let validated = modelRef!.review
+      .draftComments()
+      .find((comment) => comment.id === created?.id);
+    expect(validated).toMatchObject({
+      anchorTrust: "trusted",
+      anchorTrustReason: undefined,
+    });
+
+    modelRef!.review.validateDraftAnchorsForFile({
+      filePath: "src/demo.ts",
+      side: "modified",
+      modifiedLineCount: 2,
+      commentableModifiedLines: new Set([2]),
+      modifiedLineTextByLine: new Map([
+        [1, "const before = 1;"],
+        [2, "const after changed = 3;"],
+      ]),
+    });
+
+    validated = modelRef!.review
+      .draftComments()
+      .find((comment) => comment.id === created?.id);
+    expect(validated).toMatchObject({
+      anchorTrust: "untrusted",
+      anchorTrustReason: "snippet_mismatch",
+    });
+  });
 });

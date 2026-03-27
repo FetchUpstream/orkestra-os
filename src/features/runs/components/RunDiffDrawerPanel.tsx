@@ -7,8 +7,30 @@ import {
   lazy,
   type Component,
 } from "solid-js";
-import type { UpsertCodeMirrorDiffDraftCommentInput } from "../../../components/CodeMirrorDiffEditor";
+import type {
+  CodeMirrorReviewValidationContext,
+  UpsertCodeMirrorDiffDraftCommentInput,
+} from "../../../components/CodeMirrorDiffEditor";
 import { useRunDetailModel } from "../model/useRunDetailModel";
+
+const formatAnchorTrustReasonLabel = (reason: string | undefined): string => {
+  switch (reason) {
+    case "diff_changed":
+      return "Needs review after diff refresh.";
+    case "file_removed":
+      return "File is no longer in the latest diff.";
+    case "line_out_of_range":
+      return "Anchored line is no longer available.";
+    case "line_not_commentable":
+      return "Anchored line is not in a changed hunk anymore.";
+    case "snippet_mismatch":
+      return "Anchored line content changed.";
+    case "side_not_supported":
+      return "Anchor side is not supported in this view.";
+    default:
+      return "Anchor needs manual review.";
+  }
+};
 
 const CodeMirrorDiffEditor = lazy(
   () => import("../../../components/CodeMirrorDiffEditor"),
@@ -81,6 +103,30 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
 
   return (
     <section class="run-chat-diff-panel" aria-label="Run diff files">
+      <Show
+        when={props.model.review.getDraftCommentsNeedingAttention().length > 0}
+      >
+        <div class="run-diff-review-attention-list" role="status">
+          <h3 class="run-diff-review-attention-list__title">Needs review</h3>
+          <ul class="run-diff-review-attention-list__items">
+            <For each={props.model.review.getDraftCommentsNeedingAttention()}>
+              {(comment) => (
+                <li class="run-diff-review-attention-list__item">
+                  <p class="run-diff-review-attention-list__meta">
+                    {comment.filePath}: line {comment.line}
+                  </p>
+                  <p class="run-diff-review-attention-list__reason">
+                    {formatAnchorTrustReasonLabel(comment.anchorTrustReason)}
+                  </p>
+                  <p class="run-diff-review-attention-list__body">
+                    {comment.body}
+                  </p>
+                </li>
+              )}
+            </For>
+          </ul>
+        </div>
+      </Show>
       <Show when={props.model.diffFilesError().length > 0}>
         <p class="projects-error run-chat-diff-panel__state">
           {props.model.diffFilesError()}
@@ -221,7 +267,9 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                               draftComments={props.model.review
                                 .getDraftCommentsForFile(file.path)
                                 .filter(
-                                  (comment) => comment.side === "modified",
+                                  (comment) =>
+                                    comment.side === "modified" &&
+                                    comment.anchorTrust === "trusted",
                                 )}
                               canCreateDraftComments={
                                 props.isSideBySide &&
@@ -238,6 +286,13 @@ const RunDiffDrawerPanel: Component<RunDiffDrawerPanelProps> = (props) => {
                               onDeleteDraftComment={(commentId: string) => {
                                 props.model.review.removeDraftComment(
                                   commentId,
+                                );
+                              }}
+                              onReviewValidationContext={(
+                                context: CodeMirrorReviewValidationContext,
+                              ) => {
+                                props.model.review.validateDraftAnchorsForFile(
+                                  context,
                                 );
                               }}
                             />

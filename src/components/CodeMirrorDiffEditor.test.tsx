@@ -7,6 +7,7 @@ const {
   mergeViewConstructor,
   unifiedMergeViewMock,
   editorViewConstructor,
+  modifiedEditorDispatchMock,
   decorationsFromMock,
   lineNumbersMock,
   editableOfMock,
@@ -16,8 +17,49 @@ const {
   stateFieldDefineMock,
   resolveLanguageExtensionMock,
 } = vi.hoisted(() => {
-  const mergeViewConstructor = vi.fn(function MockMergeView() {
-    return { destroy: vi.fn() };
+  const modifiedEditorDispatchMock = vi.fn();
+  const mergeViewConstructor = vi.fn(function MockMergeView(config: {
+    b?: { doc?: string };
+  }) {
+    const modifiedDoc = config.b?.doc ?? "";
+    const lines = modifiedDoc.length === 0 ? [""] : modifiedDoc.split("\n");
+    return {
+      destroy: vi.fn(),
+      chunks: [{ fromB: 0, toB: Math.max(1, modifiedDoc.length) }],
+      b: {
+        dispatch: modifiedEditorDispatchMock,
+        state: {
+          doc: {
+            lines: lines.length,
+            length: modifiedDoc.length,
+            lineAt: (position: number) => {
+              const safe = Math.max(0, Math.min(position, modifiedDoc.length));
+              let consumed = 0;
+              for (let index = 0; index < lines.length; index += 1) {
+                const lineText = lines[index] ?? "";
+                const lineLength = lineText.length;
+                const boundary = consumed + lineLength;
+                if (safe <= boundary || index === lines.length - 1) {
+                  return {
+                    number: index + 1,
+                    from: consumed,
+                    to: boundary,
+                    text: lineText,
+                  };
+                }
+                consumed = boundary + 1;
+              }
+              return { number: 1, from: 0, to: 0, text: "" };
+            },
+            line: (lineNumber: number) => {
+              const safeLine = Math.max(1, Math.min(lineNumber, lines.length));
+              const text = lines[safeLine - 1] ?? "";
+              return { number: safeLine, from: 0, to: text.length, text };
+            },
+          },
+        },
+      },
+    };
   });
   const unifiedMergeViewMock = vi.fn(() => ({ extension: "unified" }));
   const editorViewConstructor = vi.fn(function MockEditorView() {
@@ -44,6 +86,7 @@ const {
     mergeViewConstructor,
     unifiedMergeViewMock,
     editorViewConstructor,
+    modifiedEditorDispatchMock,
     decorationsFromMock,
     lineNumbersMock,
     editableOfMock,
@@ -117,6 +160,7 @@ describe("CodeMirrorDiffEditor", () => {
     mergeViewConstructor.mockClear();
     unifiedMergeViewMock.mockClear();
     editorViewConstructor.mockClear();
+    modifiedEditorDispatchMock.mockClear();
     decorationsFromMock.mockClear();
     lineNumbersMock.mockClear();
     editableOfMock.mockClear();
@@ -291,6 +335,43 @@ describe("CodeMirrorDiffEditor", () => {
 
     await waitFor(() => {
       expect(mergeViewConstructor).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("re-dispatches current review comments after editor recreation", async () => {
+    const [modified, setModified] = createSignal("const after = 2;");
+    const stableDraftComments = [
+      {
+        id: "draft-1",
+        line: 1,
+        body: "Looks good",
+      },
+    ];
+
+    render(() => (
+      <CodeMirrorDiffEditor
+        original="const before = 1;"
+        modified={modified()}
+        renderSideBySide={true}
+        draftComments={stableDraftComments}
+        canCreateDraftComments={true}
+      />
+    ));
+
+    await waitFor(() => {
+      expect(mergeViewConstructor).toHaveBeenCalledTimes(1);
+      expect(modifiedEditorDispatchMock).toHaveBeenCalled();
+    });
+
+    const initialDispatchCount = modifiedEditorDispatchMock.mock.calls.length;
+
+    setModified("const after = 3;\nconst next = 4;");
+
+    await waitFor(() => {
+      expect(mergeViewConstructor).toHaveBeenCalledTimes(2);
+      expect(modifiedEditorDispatchMock.mock.calls.length).toBeGreaterThan(
+        initialDispatchCount,
+      );
     });
   });
 });

@@ -81,12 +81,16 @@ const createModelStub = (options?: { withPayloads?: boolean }) => {
                 body: "Looks good.",
                 createdAt: "2026-01-01T00:00:00.000Z",
                 updatedAt: "2026-01-01T00:00:00.000Z",
+                anchorTrust: "trusted",
+                anchorTrustReason: "created",
               },
             ]
           : [],
       ),
+      getDraftCommentsNeedingAttention: vi.fn(() => []),
       upsertDraftComment: vi.fn(),
       removeDraftComment: vi.fn(),
+      validateDraftAnchorsForFile: vi.fn(),
     },
   };
 
@@ -142,5 +146,33 @@ describe("RunDiffDrawerPanel", () => {
       expect(screen.queryByText("true|src/demo.ts|true|1")).toBeNull();
       expect(screen.getByText("true|src/other.ts|true|0")).toBeTruthy();
     });
+  });
+
+  it("surfaces untrusted draft anchors in fallback list", async () => {
+    const { model } = createModelStub();
+    model.review.getDraftCommentsNeedingAttention = vi.fn(() => [
+      {
+        id: "draft-untrusted",
+        filePath: "src/demo.ts",
+        side: "modified" as const,
+        line: 4,
+        body: "Keep this note.",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        anchorTrust: "untrusted" as const,
+        anchorTrustReason: "line_not_commentable" as const,
+      },
+    ]);
+
+    render(() => (
+      <RunDiffDrawerPanel model={model} isActive={true} isSideBySide={true} />
+    ));
+
+    expect(screen.getByText("Needs review")).toBeTruthy();
+    expect(screen.getByText(/src\/demo\.ts: line 4/i)).toBeTruthy();
+    expect(
+      screen.getByText(/Anchored line is not in a changed hunk anymore\./i),
+    ).toBeTruthy();
+    expect(screen.getByText("Keep this note.")).toBeTruthy();
   });
 });
