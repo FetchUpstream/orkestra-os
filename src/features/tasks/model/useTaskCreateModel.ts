@@ -97,7 +97,13 @@ export const useTaskCreateModel = () => {
         status: status(),
         targetRepositoryId: targetRepositoryId() || undefined,
       });
-      navigate(`/projects/${params.projectId}/tasks/${created.id}`);
+      const detailHref = `/projects/${params.projectId}/tasks/${created.id}`;
+      const originQuery = origin();
+      navigate(
+        originQuery
+          ? `${detailHref}?origin=${encodeURIComponent(originQuery)}`
+          : detailHref,
+      );
     } catch (createError) {
       const backendMessage = getCreateTaskErrorMessage(createError);
       setActionError(
