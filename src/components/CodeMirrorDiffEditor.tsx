@@ -272,6 +272,22 @@ type ReviewWidgetRuntime = {
   onDeleteDraftComment: () => ((commentId: string) => void) | undefined;
 };
 
+export const shouldSubmitInlineReviewComposer = (
+  event: Pick<
+    KeyboardEvent,
+    "key" | "shiftKey" | "altKey" | "ctrlKey" | "metaKey" | "isComposing"
+  >,
+): boolean => {
+  return (
+    event.key === "Enter" &&
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.isComposing
+  );
+};
+
 class ReviewLineMarker extends GutterMarker {
   constructor(private readonly kind: "commentable" | "commented") {
     super();
@@ -392,7 +408,21 @@ class InlineReviewWidget extends WidgetType {
       const saveButton = document.createElement("button");
       saveButton.type = "submit";
       saveButton.className = "cm-review-composer__button";
-      saveButton.textContent = "Save draft";
+      saveButton.textContent = "Create";
+
+      textarea.addEventListener("keydown", (event) => {
+        if (!shouldSubmitInlineReviewComposer(event)) {
+          return;
+        }
+
+        event.preventDefault();
+        if (typeof composer.requestSubmit === "function") {
+          composer.requestSubmit();
+          return;
+        }
+
+        saveButton.click();
+      });
 
       const handleSubmit = (event: Event): void => {
         event.preventDefault();

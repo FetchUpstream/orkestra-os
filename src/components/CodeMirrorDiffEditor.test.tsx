@@ -1,7 +1,9 @@
 import { render, waitFor } from "@solidjs/testing-library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
-import CodeMirrorDiffEditor from "./CodeMirrorDiffEditor";
+import CodeMirrorDiffEditor, {
+  shouldSubmitInlineReviewComposer,
+} from "./CodeMirrorDiffEditor";
 
 const {
   mergeViewConstructor,
@@ -373,5 +375,51 @@ describe("CodeMirrorDiffEditor", () => {
         initialDispatchCount,
       );
     });
+  });
+
+  it("submits inline composer on bare Enter only", () => {
+    expect(
+      shouldSubmitInlineReviewComposer({
+        key: "Enter",
+        shiftKey: false,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+        isComposing: false,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldSubmitInlineReviewComposer({
+        key: "Enter",
+        shiftKey: true,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+        isComposing: false,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldSubmitInlineReviewComposer({
+        key: "Enter",
+        shiftKey: false,
+        altKey: false,
+        ctrlKey: true,
+        metaKey: false,
+        isComposing: false,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldSubmitInlineReviewComposer({
+        key: "Enter",
+        shiftKey: false,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+        isComposing: true,
+      }),
+    ).toBe(false);
   });
 });

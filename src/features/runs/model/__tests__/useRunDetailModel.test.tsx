@@ -1082,16 +1082,17 @@ describe("useRunDetailModel startup ownership", () => {
     expect(plan.fileCount).toBe(2);
     expect(plan.message).toContain("# Review: Requested changes");
     expect(plan.message).toContain("Summary: 3 comments across 2 files.");
-    expect(plan.message).toContain("## src/alpha.ts");
-    expect(plan.message).toContain("## src/zeta.ts");
+    expect(plan.message).toContain("File: `src/alpha.ts`");
+    expect(plan.message).toContain("File: `src/zeta.ts`");
+    expect(plan.message).not.toContain("## src/");
     expect(plan.message).toContain("- Side: modified · Line: 2");
     expect(plan.message).toContain("- Side: modified · Line: 5");
     expect(plan.message).toContain("  > Please update naming.");
     expect(plan.message).toContain("  > Preserve readability.");
     expect(plan.message).not.toContain("[internal-id]");
 
-    const alphaSectionStart = plan.message.indexOf("## src/alpha.ts");
-    const zetaSectionStart = plan.message.indexOf("## src/zeta.ts");
+    const alphaSectionStart = plan.message.indexOf("File: `src/alpha.ts`");
+    const zetaSectionStart = plan.message.indexOf("File: `src/zeta.ts`");
     const alphaLineTwo = plan.message.indexOf("- Side: modified · Line: 2");
     const alphaLineFive = plan.message.indexOf("- Side: modified · Line: 5");
     expect(alphaSectionStart).toBeGreaterThan(-1);

@@ -412,7 +412,7 @@ export const useRunDetailModel = () => {
     ];
 
     for (const [filePath, fileComments] of groupedByFile.entries()) {
-      lines.push(`## ${filePath}`);
+      lines.push(`File: \`${filePath}\``);
       lines.push("");
 
       for (const comment of fileComments) {
