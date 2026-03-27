@@ -7,8 +7,12 @@ use crate::app::worktrees::pathing::{
     choose_unique_worktree_id, parse_worktree_id_typed, sanitize_branch_segment,
     validate_project_key_segment_typed,
 };
-use git2::{BranchType, ErrorCode, Repository, WorktreeAddOptions, WorktreePruneOptions};
+use git2::{
+    BranchType, Error, ErrorClass, ErrorCode, Repository, WorktreeAddOptions, WorktreePruneOptions,
+};
 use std::path::PathBuf;
+
+const CREATE_WORKTREE_MAX_RETRIES: usize = 8;
 
 #[derive(Clone, Debug)]
 pub struct WorktreesService {
@@ -62,65 +66,87 @@ impl WorktreesService {
             .map_err(|source| WorktreesServiceError::ResolveHeadCommit { source })?;
 
         let branch_slug = sanitize_branch_segment(&input.branch_title);
-        let worktree_id =
-            choose_unique_worktree_id(&self.base_root, &input.project_key, &branch_slug, &repo);
-        let branch_name = worktree_id.clone();
-        let worktree_path = self.base_root.join(&worktree_id);
-        std::fs::create_dir_all(
-            worktree_path
-                .parent()
-                .ok_or(WorktreesServiceError::InvalidWorktreePath)?,
-        )
-        .map_err(|source| WorktreesServiceError::CreateWorktreeParentDir {
-            path: worktree_path
-                .parent()
-                .map(|path| path.display().to_string())
-                .unwrap_or_default(),
-            source,
-        })?;
-
-        let branch = match repo.find_branch(&branch_name, BranchType::Local) {
-            Ok(branch) => branch,
-            Err(err) if err.code() == ErrorCode::NotFound => repo
-                .branch(&branch_name, &head_commit, false)
-                .map_err(|source| WorktreesServiceError::CreateBranch {
-                    branch_name: branch_name.clone(),
-                    source,
-                })?,
-            Err(err) => {
-                return Err(WorktreesServiceError::LookupBranch {
-                    branch_name: branch_name.clone(),
-                    source: err,
-                });
-            }
-        };
-
-        let mut options = WorktreeAddOptions::new();
-        options.reference(Some(branch.get()));
-
-        let metadata_parent = repo.path().join("worktrees").join(
-            PathBuf::from(&worktree_id)
-                .parent()
-                .ok_or(WorktreesServiceError::InvalidWorktreeId)?,
-        );
-        std::fs::create_dir_all(&metadata_parent).map_err(|source| {
-            WorktreesServiceError::PrepareWorktreeMetadataDir {
-                path: metadata_parent.display().to_string(),
-                source,
-            }
-        })?;
-
-        repo.worktree(&worktree_id, &worktree_path, Some(&mut options))
-            .map_err(|source| WorktreesServiceError::CreateWorktree {
-                worktree_id: worktree_id.clone(),
+        for _attempt in 0..CREATE_WORKTREE_MAX_RETRIES {
+            let worktree_id =
+                choose_unique_worktree_id(&self.base_root, &input.project_key, &branch_slug, &repo);
+            let branch_name = worktree_id.clone();
+            let worktree_path = self.base_root.join(&worktree_id);
+            std::fs::create_dir_all(
+                worktree_path
+                    .parent()
+                    .ok_or(WorktreesServiceError::InvalidWorktreePath)?,
+            )
+            .map_err(|source| WorktreesServiceError::CreateWorktreeParentDir {
+                path: worktree_path
+                    .parent()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
                 source,
             })?;
 
-        Ok(CreateWorktreeResponse {
+            let branch = match repo.find_branch(&branch_name, BranchType::Local) {
+                Ok(branch) => branch,
+                Err(err) if err.code() == ErrorCode::NotFound => {
+                    match repo.branch(&branch_name, &head_commit, false) {
+                        Ok(branch) => branch,
+                        Err(source) if is_retryable_worktree_conflict(&source) => continue,
+                        Err(source) => {
+                            return Err(WorktreesServiceError::CreateBranch {
+                                branch_name: branch_name.clone(),
+                                source,
+                            });
+                        }
+                    }
+                }
+                Err(err) => {
+                    return Err(WorktreesServiceError::LookupBranch {
+                        branch_name: branch_name.clone(),
+                        source: err,
+                    });
+                }
+            };
+
+            let mut options = WorktreeAddOptions::new();
+            options.reference(Some(branch.get()));
+
+            let metadata_parent = repo.path().join("worktrees").join(
+                PathBuf::from(&worktree_id)
+                    .parent()
+                    .ok_or(WorktreesServiceError::InvalidWorktreeId)?,
+            );
+            std::fs::create_dir_all(&metadata_parent).map_err(|source| {
+                WorktreesServiceError::PrepareWorktreeMetadataDir {
+                    path: metadata_parent.display().to_string(),
+                    source,
+                }
+            })?;
+
+            match repo.worktree(&worktree_id, &worktree_path, Some(&mut options)) {
+                Ok(_) => {
+                    return Ok(CreateWorktreeResponse {
+                        worktree_id,
+                        branch_name,
+                        source_branch,
+                        path: worktree_path.to_string_lossy().to_string(),
+                    });
+                }
+                Err(source) if is_retryable_worktree_conflict(&source) => continue,
+                Err(source) => {
+                    return Err(WorktreesServiceError::CreateWorktree {
+                        worktree_id,
+                        source,
+                    });
+                }
+            }
+        }
+
+        let worktree_id =
+            choose_unique_worktree_id(&self.base_root, &input.project_key, &branch_slug, &repo);
+        Err(WorktreesServiceError::CreateWorktree {
             worktree_id,
-            branch_name,
-            source_branch,
-            path: worktree_path.to_string_lossy().to_string(),
+            source: Error::from_str(
+                "worktree creation retries exhausted due to repeated conflicts",
+            ),
         })
     }
 
@@ -220,6 +246,21 @@ impl WorktreesService {
     pub fn base_root_for_tests(&self) -> &PathBuf {
         &self.base_root
     }
+}
+
+fn is_retryable_worktree_conflict(err: &Error) -> bool {
+    if err.code() == ErrorCode::Exists {
+        return true;
+    }
+
+    if err.class() != ErrorClass::Worktree {
+        return false;
+    }
+
+    let message = err.message().to_ascii_lowercase();
+    message.contains("already checked out")
+        || message.contains("already exists")
+        || message.contains("is already used")
 }
 
 #[cfg(test)]

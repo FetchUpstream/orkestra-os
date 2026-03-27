@@ -2,7 +2,7 @@ use crate::app::db::repositories::runs::RunsRepository;
 use crate::app::errors::AppError;
 use crate::app::runs::dto::RunDto;
 use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext};
-use crate::app::worktrees::dto::CreateWorktreeRequest;
+use crate::app::worktrees::dto::{CreateWorktreeRequest, RemoveWorktreeRequest};
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
 
@@ -46,29 +46,34 @@ impl RunsService {
             .await?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
+        let repo_path = task_context.repository_path.clone();
         let worktree = self.worktrees_service.create(CreateWorktreeRequest {
             project_key: task_context.project_key,
-            repo_path: task_context.repository_path,
+            repo_path: repo_path.clone(),
             branch_title: task_context.branch_title,
         })?;
 
-        let created = self
-            .repository
-            .create_run(NewRun {
-                id: uuid::Uuid::new_v4().to_string(),
-                task_id: task_id.to_string(),
-                project_id: task_context.project_id,
-                target_repo_id: Some(task_context.repository_id),
-                status: "queued".to_string(),
-                triggered_by: "user".to_string(),
-                created_at: Utc::now().to_rfc3339(),
-                worktree_id: Some(worktree.worktree_id),
-                agent_id: selected_agent_id,
-                provider_id,
-                model_id,
-                source_branch: worktree.source_branch,
-            })
-            .await?;
+        let new_run = NewRun {
+            id: uuid::Uuid::new_v4().to_string(),
+            task_id: task_id.to_string(),
+            project_id: task_context.project_id,
+            target_repo_id: Some(task_context.repository_id),
+            status: "queued".to_string(),
+            triggered_by: "user".to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            worktree_id: Some(worktree.worktree_id.clone()),
+            agent_id: selected_agent_id,
+            provider_id,
+            model_id,
+            source_branch: worktree.source_branch,
+        };
+
+        let created = self.repository.create_run(new_run).await.inspect_err(|_| {
+            let _ = self.worktrees_service.remove(RemoveWorktreeRequest {
+                repo_path,
+                worktree_id: worktree.worktree_id.clone(),
+            });
+        })?;
 
         Ok(Self::to_dto(created))
     }
@@ -702,6 +707,28 @@ mod tests {
             Err(AppError::Validation(message)) => assert_eq!(message, "task_id is required"),
             _ => panic!("expected validation error"),
         }
+    }
+
+    #[tokio::test]
+    async fn create_run_cleans_up_worktree_when_persistence_fails() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run_with_status(&pool, "run-active", "task-1", "running").await;
+
+        let result = service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await;
+        assert!(result.is_err(), "expected uniqueness failure");
+
+        let repo = Repository::open(&repo_path).unwrap();
+        let linked = repo.worktrees().unwrap();
+        assert_eq!(
+            linked.iter().count(),
+            0,
+            "expected worktree metadata cleanup"
+        );
     }
 
     #[tokio::test]
