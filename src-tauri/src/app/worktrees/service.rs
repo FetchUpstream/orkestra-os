@@ -93,11 +93,15 @@ impl WorktreesService {
                 source,
             })?;
 
+            let mut branch_created_in_attempt = false;
             let branch = match repo.find_branch(&branch_name, BranchType::Local) {
                 Ok(branch) => branch,
                 Err(err) if err.code() == ErrorCode::NotFound => {
                     match repo.branch(&branch_name, &head_commit, false) {
-                        Ok(branch) => branch,
+                        Ok(branch) => {
+                            branch_created_in_attempt = true;
+                            branch
+                        }
                         Err(source) if is_retryable_worktree_conflict(&source) => {
                             warn!(
                                 subsystem = "worktrees",
@@ -159,6 +163,21 @@ impl WorktreesService {
                     });
                 }
                 Err(source) if is_retryable_worktree_conflict(&source) => {
+                    if branch_created_in_attempt {
+                        if let Err(cleanup_err) = cleanup_newly_created_branch(&repo, &branch_name)
+                        {
+                            warn!(
+                                subsystem = "worktrees",
+                                operation = "create",
+                                project_key = input.project_key.as_str(),
+                                worktree_id = worktree_id.as_str(),
+                                branch_name = branch_name.as_str(),
+                                attempt = attempt + 1,
+                                error = cleanup_err.message(),
+                                "Failed to clean up newly created branch after retryable worktree conflict"
+                            );
+                        }
+                    }
                     warn!(
                         subsystem = "worktrees",
                         operation = "create",
@@ -330,13 +349,24 @@ fn is_retryable_worktree_conflict(err: &Error) -> bool {
         || message.contains("is already used")
 }
 
+fn cleanup_newly_created_branch(repo: &Repository, branch_name: &str) -> Result<(), Error> {
+    match repo.find_branch(branch_name, BranchType::Local) {
+        Ok(mut branch) => branch.delete(),
+        Err(err) if err.code() == ErrorCode::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::WorktreesService;
     use crate::app::errors::AppError;
     use crate::app::worktrees::dto::CreateWorktreeRequest;
     use crate::app::worktrees::pathing::{compose_worktree_id, sanitize_branch_segment};
+    use git2::{BranchType, Repository, Signature};
+    use std::fs;
     use std::path::{Path, PathBuf};
+    use uuid::Uuid;
 
     #[test]
     fn path_helpers_produce_project_key_and_slug_segments() {
@@ -371,5 +401,42 @@ mod tests {
             }
             _ => panic!("expected project_key validation error"),
         }
+    }
+
+    #[test]
+    fn cleanup_newly_created_branch_deletes_only_target_branch() {
+        let repo_root =
+            std::env::temp_dir().join(format!("orkestra-worktrees-tests-{}", Uuid::new_v4()));
+        fs::create_dir_all(&repo_root).unwrap();
+        let repo = Repository::init(&repo_root).unwrap();
+
+        fs::write(repo_root.join("README.md"), "seed\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("README.md")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let signature = Signature::now("orkestra", "orkestra@example.com").unwrap();
+        let commit_id = repo
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                "initial commit",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        let commit = repo.find_commit(commit_id).unwrap();
+
+        repo.branch("ALP/branch-a", &commit, false).unwrap();
+        repo.branch("ALP/branch-b", &commit, false).unwrap();
+
+        super::cleanup_newly_created_branch(&repo, "ALP/branch-a").unwrap();
+
+        assert!(repo.find_branch("ALP/branch-a", BranchType::Local).is_err());
+        assert!(repo.find_branch("ALP/branch-b", BranchType::Local).is_ok());
+
+        let _ = fs::remove_dir_all(&repo_root);
     }
 }

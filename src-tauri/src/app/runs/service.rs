@@ -5,12 +5,16 @@ use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext};
 use crate::app::worktrees::dto::{CreateWorktreeRequest, RemoveWorktreeRequest};
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 #[derive(Clone, Debug)]
 pub struct RunsService {
     repository: RunsRepository,
     worktrees_service: WorktreesService,
+    create_or_reuse_task_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
 
 impl RunsService {
@@ -18,6 +22,7 @@ impl RunsService {
         Self {
             repository,
             worktrees_service,
+            create_or_reuse_task_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -114,6 +119,9 @@ impl RunsService {
             return Err(AppError::validation("task_id is required"));
         }
 
+        let task_lock = self.get_or_create_task_create_or_reuse_lock(task_id).await;
+        let _task_guard = task_lock.lock().await;
+
         if let Some(existing) = self
             .repository
             .get_latest_active_run_for_task(task_id)
@@ -162,6 +170,14 @@ impl RunsService {
             }
             Err(err) => Err(err),
         }
+    }
+
+    async fn get_or_create_task_create_or_reuse_lock(&self, task_id: &str) -> Arc<Mutex<()>> {
+        let mut lock_map = self.create_or_reuse_task_locks.lock().await;
+        lock_map
+            .entry(task_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
     fn is_active_run_uniqueness_violation(err: &AppError) -> bool {
