@@ -1,4 +1,4 @@
-use crate::app::errors::AppError;
+use crate::app::projects::errors::ProjectFileSearchError;
 use crate::app::projects::models::ProjectRepository;
 use ignore::WalkBuilder;
 use nucleo::pattern::{CaseMatching, Normalization, Pattern};
@@ -33,42 +33,40 @@ impl ProjectFileSearchService {
         repository: ProjectRepository,
         query: &str,
         limit: Option<usize>,
-    ) -> Result<Vec<String>, AppError> {
+    ) -> Result<Vec<String>, ProjectFileSearchError> {
         let normalized_query = Self::normalize_query(query);
         let max_results = Self::normalize_limit(limit);
         tokio::task::spawn_blocking(move || {
             Self::search_project_files_blocking(repository, normalized_query, max_results)
         })
         .await
-        .map_err(|_| AppError::validation("project file search failed"))?
+        .map_err(|source| ProjectFileSearchError::TaskJoin { source })?
     }
 
     fn search_project_files_blocking(
         repository: ProjectRepository,
         query: String,
         limit: usize,
-    ) -> Result<Vec<String>, AppError> {
+    ) -> Result<Vec<String>, ProjectFileSearchError> {
         let has_query = !query.is_empty();
-        let pattern = has_query
-            .then(|| Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart));
+        let pattern =
+            has_query.then(|| Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart));
         let mut matcher = PROJECT_FILE_MATCHER
             .lock()
-            .map_err(|_| AppError::validation("project file matcher unavailable"))?;
+            .map_err(|_| ProjectFileSearchError::MatcherUnavailable)?;
         let mut buf = Vec::new();
 
         let repo_root = PathBuf::from(&repository.repo_path);
         if !repo_root.exists() {
-            return Err(AppError::validation(format!(
-                "repository path does not exist for '{}'",
-                repository.name
-            )));
+            return Err(ProjectFileSearchError::RepositoryPathMissing {
+                repository_name: repository.name,
+            });
         }
 
         if !repo_root.is_dir() {
-            return Err(AppError::validation(format!(
-                "repository path is not a directory for '{}'",
-                repository.name
-            )));
+            return Err(ProjectFileSearchError::RepositoryPathNotDirectory {
+                repository_name: repository.name,
+            });
         }
 
         let walker = WalkBuilder::new(&repo_root)
@@ -197,7 +195,8 @@ mod tests {
 
     #[tokio::test]
     async fn empty_query_returns_deterministic_initial_results() {
-        let temp_root = std::env::temp_dir().join(format!("orkestra-search-{}", uuid::Uuid::new_v4()));
+        let temp_root =
+            std::env::temp_dir().join(format!("orkestra-search-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(temp_root.join("src/bin")).unwrap();
         std::fs::write(temp_root.join("README.md"), "# hi").unwrap();
         std::fs::write(temp_root.join("src/main.rs"), "fn main() {}\n").unwrap();
@@ -205,7 +204,11 @@ mod tests {
 
         let service = ProjectFileSearchService::new();
         let results = service
-            .search_project_files(make_repository("main", temp_root.to_string_lossy().to_string()), "   ", Some(20))
+            .search_project_files(
+                make_repository("main", temp_root.to_string_lossy().to_string()),
+                "   ",
+                Some(20),
+            )
             .await
             .unwrap();
 
@@ -221,7 +224,8 @@ mod tests {
 
     #[tokio::test]
     async fn returns_relative_paths_and_excludes_directories() {
-        let temp_root = std::env::temp_dir().join(format!("orkestra-search-{}", uuid::Uuid::new_v4()));
+        let temp_root =
+            std::env::temp_dir().join(format!("orkestra-search-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(temp_root.join("src/nested")).unwrap();
         std::fs::write(temp_root.join("src/main.rs"), "fn main() {}\n").unwrap();
 
@@ -262,7 +266,8 @@ mod tests {
 
     #[tokio::test]
     async fn non_directory_repository_path_fails_cleanly() {
-        let temp_file = std::env::temp_dir().join(format!("orkestra-search-file-{}", uuid::Uuid::new_v4()));
+        let temp_file =
+            std::env::temp_dir().join(format!("orkestra-search-file-{}", uuid::Uuid::new_v4()));
         std::fs::write(&temp_file, "not a directory").unwrap();
 
         let service = ProjectFileSearchService::new();

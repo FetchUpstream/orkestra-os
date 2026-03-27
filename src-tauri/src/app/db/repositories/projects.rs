@@ -1,4 +1,4 @@
-use crate::app::errors::AppError;
+use crate::app::projects::errors::ProjectsRepositoryError;
 use crate::app::projects::models::{
     NewProject, Project, ProjectDetails, ProjectRepository, UpsertProjectRepository,
 };
@@ -21,14 +21,15 @@ impl ProjectsRepository {
         Self { pool }
     }
 
-    pub async fn list_projects(&self) -> Result<Vec<Project>, AppError> {
+    pub async fn list_projects(&self) -> Result<Vec<Project>, ProjectsRepositoryError> {
         let rows = sqlx::query(
             "SELECT id, key, name, description, default_repo_id, created_at, updated_at
             FROM projects
             ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| ProjectsRepositoryError::db("listing projects", source))?;
 
         let projects = rows
             .into_iter()
@@ -46,7 +47,10 @@ impl ProjectsRepository {
         Ok(projects)
     }
 
-    pub async fn get_project(&self, id: &str) -> Result<Option<ProjectDetails>, AppError> {
+    pub async fn get_project(
+        &self,
+        id: &str,
+    ) -> Result<Option<ProjectDetails>, ProjectsRepositoryError> {
         let maybe_project = sqlx::query(
             "SELECT id, key, name, description, default_repo_id, created_at, updated_at
             FROM projects
@@ -54,7 +58,8 @@ impl ProjectsRepository {
         )
         .bind(id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| ProjectsRepositoryError::db("loading project", source))?;
 
         let Some(project_row) = maybe_project else {
             return Ok(None);
@@ -78,7 +83,8 @@ impl ProjectsRepository {
         )
         .bind(id)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| ProjectsRepositoryError::db("loading project repositories", source))?;
 
         let repositories = repository_rows
             .into_iter()
@@ -100,11 +106,14 @@ impl ProjectsRepository {
         }))
     }
 
-    pub async fn key_exists(&self, key: &str) -> Result<bool, AppError> {
+    pub async fn key_exists(&self, key: &str) -> Result<bool, ProjectsRepositoryError> {
         let row = sqlx::query("SELECT 1 FROM projects WHERE key = ? LIMIT 1")
             .bind(key)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_err(|source| {
+                ProjectsRepositoryError::db("checking project key uniqueness", source)
+            })?;
         Ok(row.is_some())
     }
 
@@ -112,17 +121,25 @@ impl ProjectsRepository {
         &self,
         key: &str,
         project_id: &str,
-    ) -> Result<bool, AppError> {
+    ) -> Result<bool, ProjectsRepositoryError> {
         let row = sqlx::query("SELECT 1 FROM projects WHERE key = ? AND id != ? LIMIT 1")
             .bind(key)
             .bind(project_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_err(|source| {
+                ProjectsRepositoryError::db("checking project key uniqueness for update", source)
+            })?;
         Ok(row.is_some())
     }
 
-    pub async fn create_project(&self, input: NewProject) -> Result<ProjectDetails, AppError> {
-        let mut tx = self.pool.begin().await?;
+    pub async fn create_project(
+        &self,
+        input: NewProject,
+    ) -> Result<ProjectDetails, ProjectsRepositoryError> {
+        let mut tx = self.pool.begin().await.map_err(|source| {
+            ProjectsRepositoryError::db("starting project creation transaction", source)
+        })?;
 
         sqlx::query(
             "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
@@ -136,7 +153,8 @@ impl ProjectsRepository {
         .bind(&input.created_at)
         .bind(&input.updated_at)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(|source| ProjectsRepositoryError::db("inserting project", source))?;
 
         let mut saved_repositories = Vec::with_capacity(input.repositories.len());
         let mut selected_default_repo_id: Option<String> = None;
@@ -156,7 +174,8 @@ impl ProjectsRepository {
             .bind(&repository.cleanup_script)
             .bind(&input.created_at)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_err(|source| ProjectsRepositoryError::db("inserting project repository", source))?;
 
             if repository.is_default {
                 selected_default_repo_id = Some(repository_id.clone());
@@ -179,9 +198,14 @@ impl ProjectsRepository {
             .bind(&input.updated_at)
             .bind(&input.id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_err(|source| {
+                ProjectsRepositoryError::db("updating project default repository", source)
+            })?;
 
-        tx.commit().await?;
+        tx.commit().await.map_err(|source| {
+            ProjectsRepositoryError::db("committing project creation transaction", source)
+        })?;
 
         Ok(ProjectDetails {
             project: Project {
@@ -205,17 +229,22 @@ impl ProjectsRepository {
         description: &Option<String>,
         updated_at: &str,
         repositories: &[UpsertProjectRepository],
-    ) -> Result<Option<ProjectDetails>, AppError> {
-        let mut tx = self.pool.begin().await?;
+    ) -> Result<Option<ProjectDetails>, ProjectsRepositoryError> {
+        let mut tx = self.pool.begin().await.map_err(|source| {
+            ProjectsRepositoryError::db("starting project update transaction", source)
+        })?;
 
         let project_exists = sqlx::query("SELECT 1 FROM projects WHERE id = ? LIMIT 1")
             .bind(project_id)
             .fetch_optional(&mut *tx)
-            .await?
+            .await
+            .map_err(|source| ProjectsRepositoryError::db("checking project existence", source))?
             .is_some();
 
         if !project_exists {
-            tx.rollback().await?;
+            tx.rollback().await.map_err(|source| {
+                ProjectsRepositoryError::db("rolling back missing project update", source)
+            })?;
             return Ok(None);
         }
 
@@ -228,7 +257,8 @@ impl ProjectsRepository {
         .bind(updated_at)
         .bind(project_id)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(|source| ProjectsRepositoryError::db("updating project fields", source))?;
 
         let existing_repository_rows = sqlx::query(
             "SELECT id, name, repo_path, is_default, setup_script, cleanup_script, created_at
@@ -237,7 +267,10 @@ impl ProjectsRepository {
         )
         .bind(project_id)
         .fetch_all(&mut *tx)
-        .await?;
+        .await
+        .map_err(|source| {
+            ProjectsRepositoryError::db("loading existing project repositories", source)
+        })?;
 
         let existing_repository_ids: HashSet<String> = existing_repository_rows
             .iter()
@@ -268,7 +301,8 @@ impl ProjectsRepository {
                 .bind(&repository_id)
                 .bind(project_id)
                 .execute(&mut *tx)
-                .await?;
+                .await
+                .map_err(|source| ProjectsRepositoryError::db("updating existing project repository", source))?;
             } else {
                 sqlx::query(
                     "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, setup_script, cleanup_script, created_at)
@@ -283,7 +317,8 @@ impl ProjectsRepository {
                 .bind(&repository.cleanup_script)
                 .bind(updated_at)
                 .execute(&mut *tx)
-                .await?;
+                .await
+                .map_err(|source| ProjectsRepositoryError::db("inserting new project repository", source))?;
             }
 
             if repository.is_default {
@@ -301,12 +336,20 @@ impl ProjectsRepository {
             let used_by_task = sqlx::query("SELECT 1 FROM tasks WHERE repository_id = ? LIMIT 1")
                 .bind(&existing_repository_id)
                 .fetch_optional(&mut *tx)
-                .await?
+                .await
+                .map_err(|source| {
+                    ProjectsRepositoryError::db("checking repository task usage", source)
+                })?
                 .is_some();
 
             if used_by_task {
-                tx.rollback().await?;
-                return Err(AppError::validation(
+                tx.rollback().await.map_err(|source| {
+                    ProjectsRepositoryError::db(
+                        "rolling back repository removal blocked by tasks",
+                        source,
+                    )
+                })?;
+                return Err(ProjectsRepositoryError::validation(
                     "cannot remove repository with existing tasks",
                 ));
             }
@@ -315,7 +358,10 @@ impl ProjectsRepository {
                 .bind(&existing_repository_id)
                 .bind(project_id)
                 .execute(&mut *tx)
-                .await?;
+                .await
+                .map_err(|source| {
+                    ProjectsRepositoryError::db("deleting removed project repository", source)
+                })?;
         }
 
         sqlx::query("UPDATE projects SET default_repo_id = ?, updated_at = ? WHERE id = ?")
@@ -323,9 +369,14 @@ impl ProjectsRepository {
             .bind(updated_at)
             .bind(project_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_err(|source| {
+                ProjectsRepositoryError::db("updating project default repository", source)
+            })?;
 
-        tx.commit().await?;
+        tx.commit().await.map_err(|source| {
+            ProjectsRepositoryError::db("committing project update transaction", source)
+        })?;
 
         self.get_project(project_id).await
     }
@@ -338,17 +389,24 @@ impl ProjectsRepository {
         new_key: &str,
         repository_destination: &str,
         now: &str,
-    ) -> Result<Option<ProjectDetails>, AppError> {
-        let mut tx = self.pool.begin().await?;
+    ) -> Result<Option<ProjectDetails>, ProjectsRepositoryError> {
+        let mut tx = self.pool.begin().await.map_err(|source| {
+            ProjectsRepositoryError::db("starting project clone transaction", source)
+        })?;
 
         let source_project_row =
             sqlx::query("SELECT id, description FROM projects WHERE id = ? LIMIT 1")
                 .bind(source_project_id)
                 .fetch_optional(&mut *tx)
-                .await?;
+                .await
+                .map_err(|source| {
+                    ProjectsRepositoryError::db("loading clone source project", source)
+                })?;
 
         let Some(source_project_row) = source_project_row else {
-            tx.rollback().await?;
+            tx.rollback().await.map_err(|source| {
+                ProjectsRepositoryError::db("rolling back missing clone source project", source)
+            })?;
             return Ok(None);
         };
 
@@ -362,11 +420,19 @@ impl ProjectsRepository {
         )
         .bind(source_project_id)
         .fetch_all(&mut *tx)
-        .await?;
+        .await
+        .map_err(|source| {
+            ProjectsRepositoryError::db("loading clone source repositories", source)
+        })?;
 
         if source_repository_rows.len() != 1 {
-            tx.rollback().await?;
-            return Err(AppError::validation(
+            tx.rollback().await.map_err(|source| {
+                ProjectsRepositoryError::db(
+                    "rolling back invalid clone source repositories",
+                    source,
+                )
+            })?;
+            return Err(ProjectsRepositoryError::validation(
                 "cloning requires exactly one source repository",
             ));
         }
@@ -383,7 +449,8 @@ impl ProjectsRepository {
         .bind(now)
         .bind(now)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(|source| ProjectsRepositoryError::db("inserting cloned project", source))?;
 
         let mut selected_default_repo_id: Option<String> = None;
         let mut repository_id_map = HashMap::new();
@@ -415,7 +482,8 @@ impl ProjectsRepository {
             .bind(&source_cleanup_script)
             .bind(now)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_err(|source| ProjectsRepositoryError::db("inserting cloned project repository", source))?;
 
             if source_is_default {
                 selected_default_repo_id = Some(next_repository_id.clone());
@@ -429,7 +497,10 @@ impl ProjectsRepository {
             .bind(now)
             .bind(new_project_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_err(|source| {
+                ProjectsRepositoryError::db("setting cloned project default repository", source)
+            })?;
 
         let source_task_rows = sqlx::query(
             "SELECT id, repository_id, task_number, title, description, implementation_guide, status
@@ -439,7 +510,8 @@ impl ProjectsRepository {
         )
         .bind(source_project_id)
         .fetch_all(&mut *tx)
-        .await?;
+        .await
+        .map_err(|source| ProjectsRepositoryError::db("loading clone source tasks", source))?;
 
         let mut task_id_map = HashMap::new();
 
@@ -447,8 +519,13 @@ impl ProjectsRepository {
             let source_task_id: String = row.get("id");
             let source_repository_id: String = row.get("repository_id");
             let Some(next_repository_id) = repository_id_map.get(&source_repository_id) else {
-                tx.rollback().await?;
-                return Err(AppError::validation(
+                tx.rollback().await.map_err(|source| {
+                    ProjectsRepositoryError::db(
+                        "rolling back invalid cloned repository mapping",
+                        source,
+                    )
+                })?;
+                return Err(ProjectsRepositoryError::validation(
                     "source project repository mapping is invalid",
                 ));
             };
@@ -480,7 +557,8 @@ impl ProjectsRepository {
             .bind(now)
             .bind(now)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_err(|source| ProjectsRepositoryError::db("inserting cloned task", source))?;
 
             task_id_map.insert(source_task_id, next_task_id);
         }
@@ -492,20 +570,33 @@ impl ProjectsRepository {
         )
         .bind(source_project_id)
         .fetch_all(&mut *tx)
-        .await?;
+        .await
+        .map_err(|source| {
+            ProjectsRepositoryError::db("loading clone source task dependencies", source)
+        })?;
 
         for row in source_dependency_rows {
             let parent_task_id: String = row.get("parent_task_id");
             let child_task_id: String = row.get("child_task_id");
             let Some(next_parent_task_id) = task_id_map.get(&parent_task_id) else {
-                tx.rollback().await?;
-                return Err(AppError::validation(
+                tx.rollback().await.map_err(|source| {
+                    ProjectsRepositoryError::db(
+                        "rolling back invalid cloned parent dependency mapping",
+                        source,
+                    )
+                })?;
+                return Err(ProjectsRepositoryError::validation(
                     "source task dependency mapping is invalid",
                 ));
             };
             let Some(next_child_task_id) = task_id_map.get(&child_task_id) else {
-                tx.rollback().await?;
-                return Err(AppError::validation(
+                tx.rollback().await.map_err(|source| {
+                    ProjectsRepositoryError::db(
+                        "rolling back invalid cloned child dependency mapping",
+                        source,
+                    )
+                })?;
+                return Err(ProjectsRepositoryError::validation(
                     "source task dependency mapping is invalid",
                 ));
             };
@@ -519,21 +610,27 @@ impl ProjectsRepository {
             .bind(next_child_task_id)
             .bind(now)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_err(|source| ProjectsRepositoryError::db("inserting cloned task dependency", source))?;
         }
 
-        tx.commit().await?;
+        tx.commit().await.map_err(|source| {
+            ProjectsRepositoryError::db("committing project clone transaction", source)
+        })?;
         self.get_project(new_project_id).await
     }
 
     pub async fn get_project_deletion_context(
         &self,
         project_id: &str,
-    ) -> Result<Option<ProjectDeletionContext>, AppError> {
+    ) -> Result<Option<ProjectDeletionContext>, ProjectsRepositoryError> {
         let maybe_project = sqlx::query("SELECT key FROM projects WHERE id = ?")
             .bind(project_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_err(|source| {
+                ProjectsRepositoryError::db("loading project deletion context", source)
+            })?;
 
         let Some(project_row) = maybe_project else {
             return Ok(None);
@@ -544,7 +641,8 @@ impl ProjectsRepository {
         )
         .bind(project_id)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_err(|source| ProjectsRepositoryError::db("loading project worktree references", source))?;
 
         let worktree_ids = worktree_rows
             .into_iter()
@@ -557,11 +655,12 @@ impl ProjectsRepository {
         }))
     }
 
-    pub async fn delete_project(&self, project_id: &str) -> Result<bool, AppError> {
+    pub async fn delete_project(&self, project_id: &str) -> Result<bool, ProjectsRepositoryError> {
         let result = sqlx::query("DELETE FROM projects WHERE id = ?")
             .bind(project_id)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_err(|source| ProjectsRepositoryError::db("deleting project", source))?;
 
         Ok(result.rows_affected() > 0)
     }

@@ -4,6 +4,7 @@ use crate::app::projects::dto::{
     CloneProjectRequest, CreateProjectRequest, ProjectDetailsDto, ProjectDto, ProjectRepositoryDto,
     UpdateProjectRequest,
 };
+use crate::app::projects::errors::ProjectsServiceError;
 use crate::app::projects::models::{NewProject, NewProjectRepository, UpsertProjectRepository};
 use crate::app::projects::search_service::ProjectFileSearchService;
 use crate::app::worktrees::service::WorktreesService;
@@ -36,25 +37,46 @@ impl ProjectsService {
         query: &str,
         limit: Option<usize>,
     ) -> Result<Vec<String>, AppError> {
+        self.search_project_files_internal(project_id, repository_id, query, limit)
+            .await
+            .map_err(AppError::from)
+    }
+
+    async fn search_project_files_internal(
+        &self,
+        project_id: &str,
+        repository_id: &str,
+        query: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<String>, ProjectsServiceError> {
         let details = self
             .repository
             .get_project(project_id)
-            .await?
-            .ok_or_else(|| AppError::not_found("project not found"))?;
+            .await
+            .map_err(|source| ProjectsServiceError::QueryProjectData { source })?
+            .ok_or(ProjectsServiceError::NotFound("project not found"))?;
 
         let repository = details
             .repositories
             .into_iter()
             .find(|repository| repository.id == repository_id)
-            .ok_or_else(|| AppError::validation("repository not found for project"))?;
+            .ok_or(ProjectsServiceError::Validation(
+                "repository not found for project",
+            ))?;
 
         self.file_search_service
             .search_project_files(repository, query, limit)
             .await
+            .map_err(|source| ProjectsServiceError::SearchProjectFiles { source })
     }
 
     pub async fn list_projects(&self) -> Result<Vec<ProjectDto>, AppError> {
-        let projects = self.repository.list_projects().await?;
+        let projects = self
+            .repository
+            .list_projects()
+            .await
+            .map_err(|source| ProjectsServiceError::QueryProjectData { source })
+            .map_err(AppError::from)?;
         Ok(projects
             .into_iter()
             .map(|project| ProjectDto {
@@ -73,8 +95,10 @@ impl ProjectsService {
         let details = self
             .repository
             .get_project(id)
-            .await?
-            .ok_or_else(|| AppError::not_found("project not found"))?;
+            .await
+            .map_err(|source| ProjectsServiceError::QueryProjectData { source })
+            .map_err(AppError::from)?
+            .ok_or_else(|| AppError::from(ProjectsServiceError::NotFound("project not found")))?;
 
         Ok(ProjectDetailsDto {
             project: ProjectDto {
@@ -108,11 +132,20 @@ impl ProjectsService {
         mut input: CreateProjectRequest,
     ) -> Result<ProjectDetailsDto, AppError> {
         input.key = input.key.trim().to_string();
-        self.validate_key(&input.key)?;
-        self.validate_repositories(&input.repositories)?;
+        self.validate_key(&input.key).map_err(AppError::from)?;
+        self.validate_repositories(&input.repositories)
+            .map_err(AppError::from)?;
 
-        if self.repository.key_exists(&input.key).await? {
-            return Err(AppError::validation("project key already exists"));
+        if self
+            .repository
+            .key_exists(&input.key)
+            .await
+            .map_err(|source| ProjectsServiceError::QueryProjectData { source })
+            .map_err(AppError::from)?
+        {
+            return Err(AppError::from(ProjectsServiceError::Validation(
+                "project key already exists",
+            )));
         }
 
         let now = Utc::now().to_rfc3339();
@@ -145,7 +178,12 @@ impl ProjectsService {
                 .collect(),
         };
 
-        let created = self.repository.create_project(new_project).await?;
+        let created = self
+            .repository
+            .create_project(new_project)
+            .await
+            .map_err(|source| ProjectsServiceError::PersistProjectData { source })
+            .map_err(AppError::from)?;
 
         Ok(ProjectDetailsDto {
             project: ProjectDto {
@@ -180,15 +218,20 @@ impl ProjectsService {
         mut input: UpdateProjectRequest,
     ) -> Result<ProjectDetailsDto, AppError> {
         input.key = input.key.trim().to_string();
-        self.validate_key(&input.key)?;
-        self.validate_repositories(&input.repositories)?;
+        self.validate_key(&input.key).map_err(AppError::from)?;
+        self.validate_repositories(&input.repositories)
+            .map_err(AppError::from)?;
 
         if self
             .repository
             .key_exists_for_other_project(&input.key, id)
-            .await?
+            .await
+            .map_err(|source| ProjectsServiceError::QueryProjectData { source })
+            .map_err(AppError::from)?
         {
-            return Err(AppError::validation("project key already exists"));
+            return Err(AppError::from(ProjectsServiceError::Validation(
+                "project key already exists",
+            )));
         }
 
         let now = Utc::now().to_rfc3339();
@@ -225,8 +268,10 @@ impl ProjectsService {
                 &now,
                 &normalized_repositories,
             )
-            .await?
-            .ok_or_else(|| AppError::not_found("project not found"))?;
+            .await
+            .map_err(|source| ProjectsServiceError::PersistProjectData { source })
+            .map_err(AppError::from)?
+            .ok_or_else(|| AppError::from(ProjectsServiceError::NotFound("project not found")))?;
 
         Ok(ProjectDetailsDto {
             project: ProjectDto {
@@ -264,29 +309,43 @@ impl ProjectsService {
         input.key = input.key.trim().to_string();
 
         if input.name.is_empty() {
-            return Err(AppError::validation("project name is required"));
+            return Err(AppError::from(ProjectsServiceError::Validation(
+                "project name is required",
+            )));
         }
 
-        self.validate_key(&input.key)?;
+        self.validate_key(&input.key).map_err(AppError::from)?;
 
         if input.repository_destination.trim().is_empty() {
-            return Err(AppError::validation("repository destination is required"));
+            return Err(AppError::from(ProjectsServiceError::Validation(
+                "repository destination is required",
+            )));
         }
 
-        if self.repository.key_exists(&input.key).await? {
-            return Err(AppError::validation("project key already exists"));
+        if self
+            .repository
+            .key_exists(&input.key)
+            .await
+            .map_err(|source| ProjectsServiceError::QueryProjectData { source })
+            .map_err(AppError::from)?
+        {
+            return Err(AppError::from(ProjectsServiceError::Validation(
+                "project key already exists",
+            )));
         }
 
         let source = self
             .repository
             .get_project(source_project_id)
-            .await?
-            .ok_or_else(|| AppError::not_found("project not found"))?;
+            .await
+            .map_err(|source| ProjectsServiceError::QueryProjectData { source })
+            .map_err(AppError::from)?
+            .ok_or_else(|| AppError::from(ProjectsServiceError::NotFound("project not found")))?;
 
         if source.repositories.len() != 1 {
-            return Err(AppError::validation(
+            return Err(AppError::from(ProjectsServiceError::Validation(
                 "cloning requires exactly one source repository",
-            ));
+            )));
         }
 
         let now = Utc::now().to_rfc3339();
@@ -300,8 +359,10 @@ impl ProjectsService {
                 &input.repository_destination.trim().to_string(),
                 &now,
             )
-            .await?
-            .ok_or_else(|| AppError::not_found("project not found"))?;
+            .await
+            .map_err(|source| ProjectsServiceError::CloneProject { source })
+            .map_err(AppError::from)?
+            .ok_or_else(|| AppError::from(ProjectsServiceError::NotFound("project not found")))?;
 
         Ok(ProjectDetailsDto {
             project: ProjectDto {
@@ -331,43 +392,57 @@ impl ProjectsService {
     }
 
     pub async fn delete_project(&self, id: &str) -> Result<(), AppError> {
+        self.delete_project_internal(id)
+            .await
+            .map_err(AppError::from)
+    }
+
+    async fn delete_project_internal(&self, id: &str) -> Result<(), ProjectsServiceError> {
         let id = id.trim();
         if id.is_empty() {
-            return Err(AppError::validation("project id is required"));
+            return Err(ProjectsServiceError::Validation("project id is required"));
         }
 
         let context = self
             .repository
             .get_project_deletion_context(id)
-            .await?
-            .ok_or_else(|| AppError::not_found("project not found"))?;
+            .await
+            .map_err(|source| ProjectsServiceError::DeleteProject { source })?
+            .ok_or(ProjectsServiceError::NotFound("project not found"))?;
 
         self.worktrees_service
-            .remove_project_artifacts(&context.project_key, &context.worktree_ids)?;
+            .remove_project_artifacts(&context.project_key, &context.worktree_ids)
+            .map_err(|source| ProjectsServiceError::RemoveProjectArtifacts { source })?;
 
-        let deleted = self.repository.delete_project(id).await?;
+        let deleted = self
+            .repository
+            .delete_project(id)
+            .await
+            .map_err(|source| ProjectsServiceError::DeleteProject { source })?;
         if !deleted {
-            return Err(AppError::not_found("project not found"));
+            return Err(ProjectsServiceError::NotFound("project not found"));
         }
 
         Ok(())
     }
 
-    fn validate_key(&self, key: &str) -> Result<(), AppError> {
+    fn validate_key(&self, key: &str) -> Result<(), ProjectsServiceError> {
         if key.is_empty() {
-            return Err(AppError::validation("project key is required"));
+            return Err(ProjectsServiceError::Validation("project key is required"));
         }
 
         let len = key.len();
         if !(2..=4).contains(&len) {
-            return Err(AppError::validation("project key length must be 2 to 4"));
+            return Err(ProjectsServiceError::Validation(
+                "project key length must be 2 to 4",
+            ));
         }
 
         if !key
             .chars()
             .all(|character| character.is_ascii_uppercase() || character.is_ascii_digit())
         {
-            return Err(AppError::validation(
+            return Err(ProjectsServiceError::Validation(
                 "project key must be uppercase alphanumeric",
             ));
         }
@@ -378,9 +453,11 @@ impl ProjectsService {
     fn validate_repositories(
         &self,
         repositories: &[crate::app::projects::dto::CreateProjectRepositoryRequest],
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ProjectsServiceError> {
         if repositories.is_empty() {
-            return Err(AppError::validation("at least one repository is required"));
+            return Err(ProjectsServiceError::Validation(
+                "at least one repository is required",
+            ));
         }
 
         let default_count = repositories
@@ -388,7 +465,7 @@ impl ProjectsService {
             .filter(|repository| repository.is_default)
             .count();
         if default_count != 1 {
-            return Err(AppError::validation(
+            return Err(ProjectsServiceError::Validation(
                 "exactly one default repository is required",
             ));
         }
