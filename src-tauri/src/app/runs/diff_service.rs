@@ -1,5 +1,6 @@
 use crate::app::errors::AppError;
 use crate::app::runs::dto::{RunDiffFileDto, RunDiffFilePayloadDto, RunDiffUpdatedEventDto};
+use crate::app::runs::errors::RunsDiffError;
 use crate::app::runs::service::RunsService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
 use git2::{Commit, Delta, Diff, DiffDelta, DiffOptions, Repository, Tree};
@@ -51,7 +52,7 @@ impl RunsDiffService {
         let mut files = Vec::new();
         for delta in diff.deltas() {
             let path = Self::delta_path(&delta)
-                .ok_or_else(|| AppError::validation("failed to resolve changed file path"))?;
+                .ok_or_else(|| RunsDiffError::validation("failed to resolve changed file path"))?;
             let (additions, deletions) = counts.get(&path).copied().unwrap_or((0, 0));
             files.push(RunDiffFileDto {
                 path,
@@ -73,7 +74,7 @@ impl RunsDiffService {
     ) -> Result<RunDiffFilePayloadDto, AppError> {
         let normalized_path = path.trim();
         if normalized_path.is_empty() {
-            return Err(AppError::validation("path is required"));
+            return Err(RunsDiffError::validation("path is required").into());
         }
 
         let run = self.runs_service.get_run(run_id).await?;
@@ -86,7 +87,7 @@ impl RunsDiffService {
         let delta = diff
             .deltas()
             .find(|delta| Self::delta_path(delta).as_deref() == Some(normalized_path))
-            .ok_or_else(|| AppError::not_found("diff file not found"))?;
+            .ok_or_else(|| RunsDiffError::not_found("diff file not found"))?;
 
         let status = Self::status_to_string(delta.status()).to_string();
         let is_binary = delta.old_file().is_binary() || delta.new_file().is_binary();
@@ -129,16 +130,15 @@ impl RunsDiffService {
     ) -> Result<(), AppError> {
         let normalized_run_id = run_id.trim();
         if normalized_run_id.is_empty() {
-            return Err(AppError::validation("run_id is required"));
+            return Err(RunsDiffError::validation("run_id is required").into());
         }
 
         let key = format!("{}:{normalized_run_id}", window.label());
 
         if !enabled {
-            let mut watchers = self
-                .watchers
-                .lock()
-                .map_err(|_| AppError::validation("failed to lock run diff watcher registry"))?;
+            let mut watchers = self.watchers.lock().map_err(|_| {
+                RunsDiffError::validation("failed to lock run diff watcher registry")
+            })?;
             watchers.remove(&key);
             return Ok(());
         }
@@ -146,7 +146,7 @@ impl RunsDiffService {
         let has_existing = self
             .watchers
             .lock()
-            .map_err(|_| AppError::validation("failed to lock run diff watcher registry"))?
+            .map_err(|_| RunsDiffError::validation("failed to lock run diff watcher registry"))?
             .contains_key(&key);
         if has_existing {
             return Ok(());
@@ -168,16 +168,18 @@ impl RunsDiffService {
                 }
             },
         )
-        .map_err(|err| AppError::validation(format!("failed to create watcher: {err}")))?;
+        .map_err(|err| RunsDiffError::validation(format!("failed to create watcher: {err}")))?;
 
         debouncer
             .watch(&worktree_path, RecursiveMode::Recursive)
-            .map_err(|err| AppError::validation(format!("failed to watch worktree path: {err}")))?;
+            .map_err(|err| {
+                RunsDiffError::validation(format!("failed to watch worktree path: {err}"))
+            })?;
 
         let mut watchers = self
             .watchers
             .lock()
-            .map_err(|_| AppError::validation("failed to lock run diff watcher registry"))?;
+            .map_err(|_| RunsDiffError::validation("failed to lock run diff watcher registry"))?;
         watchers.insert(key, debouncer);
         Ok(())
     }
@@ -189,15 +191,18 @@ impl RunsDiffService {
         let worktree_id = run
             .worktree_id
             .as_deref()
-            .ok_or_else(|| AppError::not_found("run worktree not found"))?
+            .ok_or_else(|| RunsDiffError::not_found("run worktree not found"))?
             .trim();
         resolve_worktree_path(&self.worktrees_root, worktree_id)
     }
 
     fn open_repository(&self, worktree_path: &Path) -> Result<Repository, AppError> {
-        Repository::open(worktree_path).map_err(|err| {
-            AppError::validation(format!("failed to open worktree repository: {err}"))
-        })
+        Repository::open(worktree_path)
+            .map_err(|source| RunsDiffError::Git {
+                operation: "opening worktree repository",
+                source,
+            })
+            .map_err(Into::into)
     }
 
     fn build_workdir_diff<'repo>(
@@ -211,7 +216,11 @@ impl RunsDiffService {
             .include_typechange(true)
             .include_unmodified(false);
         repo.diff_tree_to_workdir_with_index(Some(baseline_tree), Some(&mut options))
-            .map_err(|err| AppError::validation(format!("failed to build git diff: {err}")))
+            .map_err(|source| RunsDiffError::Git {
+                operation: "building workdir diff",
+                source,
+            })
+            .map_err(Into::into)
     }
 
     fn resolve_baseline_tree<'repo>(
@@ -219,9 +228,10 @@ impl RunsDiffService {
         source_branch: Option<&str>,
     ) -> Result<Tree<'repo>, AppError> {
         let head_commit = Self::head_commit(repo)?;
-        let head_tree = head_commit
-            .tree()
-            .map_err(|err| AppError::validation(format!("failed to resolve HEAD tree: {err}")))?;
+        let head_tree = head_commit.tree().map_err(|source| RunsDiffError::Git {
+            operation: "resolving HEAD tree",
+            source,
+        })?;
 
         let resolve_merge_base_tree = |base_commit: Commit<'repo>| -> Option<Tree<'repo>> {
             let merge_base_oid = match repo.merge_base(base_commit.id(), head_commit.id()) {
@@ -285,7 +295,11 @@ impl RunsDiffService {
     fn head_commit<'repo>(repo: &'repo Repository) -> Result<Commit<'repo>, AppError> {
         repo.head()
             .and_then(|head| head.peel_to_commit())
-            .map_err(|err| AppError::validation(format!("failed to resolve HEAD commit: {err}")))
+            .map_err(|source| RunsDiffError::Git {
+                operation: "resolving HEAD commit",
+                source,
+            })
+            .map_err(Into::into)
     }
 
     fn resolve_source_commit<'repo>(
@@ -397,7 +411,10 @@ impl RunsDiffService {
         };
         let blob = repo
             .find_blob(entry.id())
-            .map_err(|err| AppError::validation(format!("failed to read baseline blob: {err}")))?;
+            .map_err(|source| RunsDiffError::Git {
+                operation: "reading baseline blob",
+                source,
+            })?;
         Ok(String::from_utf8_lossy(blob.content()).to_string())
     }
 
@@ -409,10 +426,11 @@ impl RunsDiffService {
         match std::fs::read(&absolute_path) {
             Ok(content) => Ok(String::from_utf8_lossy(&content).to_string()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-            Err(err) => Err(AppError::validation(format!(
-                "failed to read worktree file '{}': {err}",
-                absolute_path.display()
-            ))),
+            Err(source) => Err(RunsDiffError::Io {
+                operation: "reading worktree file",
+                source,
+            }
+            .into()),
         }
     }
 

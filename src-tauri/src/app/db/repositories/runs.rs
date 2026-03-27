@@ -1,6 +1,17 @@
 use crate::app::errors::AppError;
+use crate::app::runs::errors::RunsRepositoryError;
 use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext, TaskRunContext};
 use sqlx::{Row, SqlitePool};
+
+trait RunsSqlxResultExt<T> {
+    fn runs_db(self, operation: &'static str) -> Result<T, RunsRepositoryError>;
+}
+
+impl<T> RunsSqlxResultExt<T> for Result<T, sqlx::Error> {
+    fn runs_db(self, operation: &'static str) -> Result<T, RunsRepositoryError> {
+        self.map_err(|source| RunsRepositoryError::database(operation, source))
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct RunsRepository {
@@ -25,7 +36,8 @@ impl RunsRepository {
         )
             .bind(task_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .runs_db("loading task run context")?;
 
         Ok(row.map(|row| TaskRunContext {
             project_id: row.get("project_id"),
@@ -50,7 +62,8 @@ impl RunsRepository {
         )
         .bind(run_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .runs_db("loading run initial prompt context")?;
 
         Ok(row.map(|row| RunInitialPromptContext {
             run_id: row.get("run_id"),
@@ -71,7 +84,8 @@ impl RunsRepository {
         )
         .bind(run_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .runs_db("loading run repository path")?;
 
         Ok(row.map(|row| row.get("repository_path")))
     }
@@ -106,11 +120,15 @@ impl RunsRepository {
         .bind(&input.model_id)
         .bind(&input.source_branch)
         .execute(&self.pool)
-        .await?;
+        .await
+        .runs_db("creating run")?;
 
-        self.get_run(&input.id)
-            .await?
-            .ok_or_else(|| AppError::not_found("run not found after create"))
+        self.get_run(&input.id).await?.ok_or_else(|| {
+            RunsRepositoryError::RunMissingAfterCreate {
+                run_id: input.id.clone(),
+            }
+            .into()
+        })
     }
 
     pub async fn list_task_runs(&self, task_id: &str) -> Result<Vec<Run>, AppError> {
@@ -149,7 +167,8 @@ impl RunsRepository {
         )
         .bind(task_id)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .runs_db("listing task runs")?;
 
         Ok(rows.into_iter().map(Self::map_row_to_run).collect())
     }
@@ -189,7 +208,8 @@ impl RunsRepository {
         )
         .bind(run_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .runs_db("loading run by id")?;
 
         Ok(row.map(Self::map_row_to_run))
     }
@@ -235,7 +255,8 @@ impl RunsRepository {
         )
         .bind(task_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .runs_db("loading latest active run")?;
 
         Ok(row.map(Self::map_row_to_run))
     }
@@ -244,7 +265,8 @@ impl RunsRepository {
         let result = sqlx::query("DELETE FROM runs WHERE id = ?")
             .bind(run_id)
             .execute(&self.pool)
-            .await?;
+            .await
+            .runs_db("deleting run")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -254,7 +276,11 @@ impl RunsRepository {
         run_id: &str,
         started_at: &str,
     ) -> Result<bool, AppError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .runs_db("starting transition transaction")?;
 
         let run_update = sqlx::query(
             "UPDATE runs
@@ -266,10 +292,13 @@ impl RunsRepository {
         .bind(started_at)
         .bind(run_id)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .runs_db("transitioning run to running")?;
 
         if run_update.rows_affected() == 0 {
-            tx.commit().await?;
+            tx.commit()
+                .await
+                .runs_db("committing transition transaction")?;
             return Ok(false);
         }
 
@@ -283,9 +312,12 @@ impl RunsRepository {
         .bind(started_at)
         .bind(run_id)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .runs_db("marking task as doing for running transition")?;
 
-        tx.commit().await?;
+        tx.commit()
+            .await
+            .runs_db("committing transition transaction")?;
         Ok(true)
     }
 
@@ -303,7 +335,8 @@ impl RunsRepository {
         .bind(opencode_session_id)
         .bind(run_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .runs_db("setting opencode session id")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -326,7 +359,8 @@ impl RunsRepository {
         .bind(claim_request_id)
         .bind(run_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .runs_db("claiming initial prompt send")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -352,7 +386,8 @@ impl RunsRepository {
         .bind(run_id)
         .bind(claim_request_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .runs_db("finalizing initial prompt send")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -373,7 +408,8 @@ impl RunsRepository {
         .bind(run_id)
         .bind(claim_request_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .runs_db("releasing initial prompt claim")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -393,7 +429,8 @@ impl RunsRepository {
         .bind(started_at)
         .bind(run_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .runs_db("marking setup running")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -414,7 +451,8 @@ impl RunsRepository {
         .bind(finished_at)
         .bind(run_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .runs_db("marking setup succeeded")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -437,7 +475,8 @@ impl RunsRepository {
         .bind(error_message)
         .bind(run_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .runs_db("marking setup failed")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -456,7 +495,8 @@ impl RunsRepository {
         .bind(started_at)
         .bind(run_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .runs_db("marking cleanup running")?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -475,7 +515,8 @@ impl RunsRepository {
         .bind(finished_at)
         .bind(run_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .runs_db("marking cleanup succeeded")?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -496,7 +537,8 @@ impl RunsRepository {
         .bind(error_message)
         .bind(run_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .runs_db("marking cleanup failed")?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -505,7 +547,11 @@ impl RunsRepository {
         run_id: &str,
         finished_at: &str,
     ) -> Result<bool, AppError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .runs_db("starting completion transaction")?;
 
         let run_update = sqlx::query(
             "UPDATE runs
@@ -517,7 +563,8 @@ impl RunsRepository {
         .bind(finished_at)
         .bind(run_id)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .runs_db("marking run completed")?;
 
         let task_update = sqlx::query(
             "UPDATE tasks
@@ -529,9 +576,12 @@ impl RunsRepository {
         .bind(finished_at)
         .bind(run_id)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .runs_db("marking task done")?;
 
-        tx.commit().await?;
+        tx.commit()
+            .await
+            .runs_db("committing completion transaction")?;
 
         Ok(run_update.rows_affected() > 0 || task_update.rows_affected() > 0)
     }
@@ -559,7 +609,8 @@ impl RunsRepository {
         .bind(run_id)
         .bind(opencode_session_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .runs_db("transitioning task to review on session idle")?;
 
         Ok(result.rows_affected() > 0)
     }
