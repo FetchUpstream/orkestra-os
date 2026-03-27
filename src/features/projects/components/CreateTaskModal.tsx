@@ -149,7 +149,7 @@ const CreateTaskModal: Component<Props> = (props) => (
             </button>
             <button
               type="submit"
-              class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
+              class="task-create-action-btn btn btn-sm rounded-none border px-4 text-xs font-semibold"
               disabled={props.isSubmittingTask()}
             >
               {props.isSubmittingTask() ? "Creating..." : "Create task"}

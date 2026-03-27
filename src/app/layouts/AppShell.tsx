@@ -435,7 +435,7 @@ const AppShell: Component<AppShellProps> = (props) => {
                       <div class="flex items-center gap-2">
                         <button
                           type="button"
-                          class="btn btn-sm rounded-none border border-amber-500/35 bg-amber-500 px-4 text-xs font-semibold text-black hover:bg-amber-500"
+                          class="task-create-action-btn btn btn-sm rounded-none border px-4 text-xs font-semibold"
                           onClick={() => void config.onRequestCreateTask()}
                           disabled={config.isSubmitting}
                         >
@@ -607,7 +607,7 @@ const AppShell: Component<AppShellProps> = (props) => {
                 <>
                   <button
                     type="button"
-                    class="btn btn-sm rounded-none border border-amber-500/35 bg-amber-500 px-4 text-xs font-semibold text-black hover:bg-amber-500"
+                    class="task-create-action-btn btn btn-sm rounded-none border px-4 text-xs font-semibold"
                     onClick={() => {
                       if (boardProjectId()) {
                         navigate(
