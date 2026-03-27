@@ -15,6 +15,7 @@ import type { TaskStatus } from "../lib/tasks";
 import MainContent from "../../components/layout/MainContent";
 import SidebarNav from "../../components/layout/SidebarNav";
 import Topbar from "../../components/layout/Topbar";
+import AlphaNoticeModal from "../../components/layout/AlphaNoticeModal";
 import { AppIcon } from "../../components/ui/icons";
 import { formatStatus } from "../../features/tasks/utils/taskDetail";
 
@@ -651,6 +652,7 @@ const AppShell: Component<AppShellProps> = (props) => {
           </div>
         </div>
       </div>
+      <AlphaNoticeModal />
     </div>
   );
 };
