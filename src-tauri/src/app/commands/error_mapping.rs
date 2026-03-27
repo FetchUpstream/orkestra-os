@@ -1,10 +1,20 @@
 use crate::app::errors::AppError;
 
 pub fn map_app_error(error: AppError) -> String {
+    maybe_capture_handled_error(&error);
+
     match error {
         AppError::Validation(message) => message,
         AppError::NotFound(message) => message,
-        AppError::Database(_) => "internal database error".to_string(),
+        AppError::Conflict(message) => message,
+        AppError::Database(_) => "Unable to complete this request right now.".to_string(),
+        AppError::Infrastructure(_) => "Something went wrong. Please try again.".to_string(),
+    }
+}
+
+fn maybe_capture_handled_error(error: &AppError) {
+    if !error.is_user_safe() {
+        crate::app::errors::sentry::capture_handled_error(error);
     }
 }
 
@@ -42,9 +52,32 @@ mod tests {
 
         let mapped = map_app_error(error);
 
-        assert_eq!(mapped, "internal database error");
+        assert_eq!(mapped, "Unable to complete this request right now.");
         assert!(!mapped.contains("secret_table"));
         assert!(!mapped.contains("syntax error"));
+    }
+
+    #[test]
+    fn maps_conflict_to_exact_message() {
+        let error = AppError::Conflict("project key already exists".to_string());
+
+        let mapped = map_app_error(error);
+
+        assert_eq!(mapped, "project key already exists");
+    }
+
+    #[test]
+    fn maps_infrastructure_to_generic_message_without_leaking_details() {
+        let error = AppError::infrastructure(
+            "filesystem",
+            "permission_denied",
+            "failed to write /home/louis/private/project/.env",
+        );
+
+        let mapped = map_app_error(error);
+
+        assert_eq!(mapped, "Something went wrong. Please try again.");
+        assert!(!mapped.contains("/home/louis/private/project/.env"));
     }
 
     #[test]
