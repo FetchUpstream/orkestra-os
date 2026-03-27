@@ -201,7 +201,9 @@ const NewRunDetailScreen: Component = () => {
   const model = useRunDetailModel();
   const [overlayState, setOverlayState] = createSignal<OverlayState>("none");
   const [overlaySize, setOverlaySize] = createSignal<OverlaySize>("normal");
-  const [isDiffSideBySide, setIsDiffSideBySide] = createSignal(true);
+  const [isDiffSideBySide, setIsDiffSideBySide] = createSignal(false);
+  const [hasManualDiffLayoutOverride, setHasManualDiffLayoutOverride] =
+    createSignal(false);
   const [isCommitModalOpen, setIsCommitModalOpen] = createSignal(false);
   const [commitPromptDraft, setCommitPromptDraft] = createSignal("");
   const [isCommitPrefillLoading, setIsCommitPrefillLoading] =
@@ -750,6 +752,26 @@ const NewRunDetailScreen: Component = () => {
     model.setIsDiffTabActive(overlayState() === "drawer-diff");
   });
 
+  createEffect((previousOverlayState: OverlayState | undefined) => {
+    const currentOverlayState = overlayState();
+    if (
+      currentOverlayState === "drawer-diff" &&
+      previousOverlayState !== "drawer-diff"
+    ) {
+      setHasManualDiffLayoutOverride(false);
+    }
+
+    return currentOverlayState;
+  });
+
+  createEffect(() => {
+    if (overlayState() !== "drawer-diff" || hasManualDiffLayoutOverride()) {
+      return;
+    }
+
+    setIsDiffSideBySide(overlaySize() === "maximized");
+  });
+
   createEffect((wasLogsDrawerOpen = false) => {
     const isOpen = isLogsDrawerOpen();
     if (!isOpen || wasLogsDrawerOpen) {
@@ -1083,7 +1105,10 @@ const NewRunDetailScreen: Component = () => {
                             aria-label="Unified diff layout"
                             title="Unified diff layout"
                             aria-pressed={!isDiffSideBySide()}
-                            onClick={() => setIsDiffSideBySide(false)}
+                            onClick={() => {
+                              setHasManualDiffLayoutOverride(true);
+                              setIsDiffSideBySide(false);
+                            }}
                           >
                             <svg viewBox="0 0 16 16" aria-hidden="true">
                               <path d="M3 2.5A1.5 1.5 0 0 1 4.5 1h7A1.5 1.5 0 0 1 13 2.5v11a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 13.5v-11Zm1.5 0v11h7v-11h-7Zm1 2.25a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Z" />
@@ -1095,7 +1120,10 @@ const NewRunDetailScreen: Component = () => {
                             aria-label="Side-by-side diff layout"
                             title="Side-by-side diff layout"
                             aria-pressed={isDiffSideBySide()}
-                            onClick={() => setIsDiffSideBySide(true)}
+                            onClick={() => {
+                              setHasManualDiffLayoutOverride(true);
+                              setIsDiffSideBySide(true);
+                            }}
                           >
                             <svg viewBox="0 0 16 16" aria-hidden="true">
                               <path d="M2.5 1A1.5 1.5 0 0 0 1 2.5v11A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 13.5 1h-11Zm0 1.5h5v11h-5v-11Zm6.5 0h4.5v11H9v-11Zm1 2.25a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm-7 0a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 3 7.75Zm0-3a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 3 4.75Z" />

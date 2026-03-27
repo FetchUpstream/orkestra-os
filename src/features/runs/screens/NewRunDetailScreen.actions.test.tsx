@@ -44,7 +44,14 @@ vi.mock("../components/NewRunChatWorkspace", () => ({
 }));
 
 vi.mock("../components/RunDiffDrawerPanel", () => ({
-  default: () => <div>diff panel</div>,
+  default: (props: { isSideBySide: boolean }) => (
+    <div>
+      <span>diff panel</span>
+      <span data-testid="review-layout-mode">
+        {props.isSideBySide ? "side-by-side" : "unified"}
+      </span>
+    </div>
+  ),
 }));
 
 vi.mock("../components/RunTerminal", () => ({
@@ -658,6 +665,81 @@ describe("NewRunDetailScreen git actions", () => {
         "draft-2",
       ]);
       expect(screen.queryByText("diff panel")).toBeNull();
+    });
+
+    topbar.cleanup();
+  });
+
+  it("defaults review layout to unified in normal drawer and side-by-side when maximized", async () => {
+    modelFactoryMock.mockReturnValue(createModelStub());
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+
+    await topbar.invokeAction("Review");
+
+    await waitFor(() => {
+      expect(
+        screen
+          .getByRole("button", { name: "Unified diff layout" })
+          .getAttribute("aria-pressed"),
+      ).toBe("true");
+      expect(screen.getByTestId("review-layout-mode").textContent).toBe(
+        "unified",
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Maximize panel" }));
+
+    await waitFor(() => {
+      expect(
+        screen
+          .getByRole("button", { name: "Side-by-side diff layout" })
+          .getAttribute("aria-pressed"),
+      ).toBe("true");
+      expect(screen.getByTestId("review-layout-mode").textContent).toBe(
+        "side-by-side",
+      );
+    });
+
+    topbar.cleanup();
+  });
+
+  it("preserves manual review layout toggle after defaults are applied", async () => {
+    modelFactoryMock.mockReturnValue(createModelStub());
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+
+    await topbar.invokeAction("Review");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Side-by-side diff layout" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen
+          .getByRole("button", { name: "Side-by-side diff layout" })
+          .getAttribute("aria-pressed"),
+      ).toBe("true");
+      expect(screen.getByTestId("review-layout-mode").textContent).toBe(
+        "side-by-side",
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Maximize panel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore panel" }));
+
+    await waitFor(() => {
+      expect(
+        screen
+          .getByRole("button", { name: "Side-by-side diff layout" })
+          .getAttribute("aria-pressed"),
+      ).toBe("true");
+      expect(screen.getByTestId("review-layout-mode").textContent).toBe(
+        "side-by-side",
+      );
     });
 
     topbar.cleanup();
