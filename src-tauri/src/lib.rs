@@ -7,16 +7,16 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let app_data_dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&app_data_dir)?;
-            let db_path = app_data_dir.join("orkestra.db");
+            let startup_paths = app::bootstrap::paths::resolve_startup_paths(app)?;
+            app::bootstrap::logging::init(&startup_paths.log_dir);
+            let db_path = startup_paths.db_path();
 
             let app_state = tauri::async_runtime::block_on(async {
                 let pool = app::db::connection::connect(&db_path).await?;
                 app::db::migrations::run_migrations(&pool).await?;
                 Ok::<app::state::AppState, app::errors::AppError>(app::state::AppState::new(
                     pool,
-                    app_data_dir,
+                    startup_paths.app_data_dir,
                 ))
             })?;
 
