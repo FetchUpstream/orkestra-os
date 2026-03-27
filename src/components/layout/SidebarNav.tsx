@@ -166,12 +166,17 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
             </nav>
             <div class="mt-auto flex w-full flex-col items-center gap-2 pb-1">
               <div class="border-base-content/10 h-px w-8" />
-              <div
-                class="text-base-content/40 max-w-full truncate px-1 text-center text-[10px] font-medium tracking-[0.14em] tabular-nums"
-                title={versionLabel()}
-                aria-label="Application version"
-              >
-                {versionLabel()}
+              <div class="flex w-full flex-col items-center gap-1">
+                <div
+                  class="text-base-content/40 max-w-full truncate px-1 text-center text-[10px] font-medium tracking-[0.14em] tabular-nums"
+                  title={versionLabel()}
+                  aria-label="Application version"
+                >
+                  {versionLabel()}
+                </div>
+                <div class="text-base-content/28 text-center text-[8px] font-semibold tracking-[0.24em] uppercase">
+                  ALPHA
+                </div>
               </div>
             </div>
           </div>
@@ -181,12 +186,17 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
             <div class="badge badge-outline badge-sm border-primary/20 text-primary/80 w-full justify-center rounded-none py-3 text-[11px] tracking-[0.2em] uppercase">
               Dark workspace
             </div>
-            <div
-              class="text-base-content/45 mt-2 text-center text-[11px] font-medium tracking-[0.12em] tabular-nums"
-              title={versionLabel()}
-              aria-label="Application version"
-            >
-              {versionLabel()}
+            <div class="mt-2 flex flex-col items-center gap-1">
+              <div
+                class="text-base-content/45 text-center text-[11px] font-medium tracking-[0.12em] tabular-nums"
+                title={versionLabel()}
+                aria-label="Application version"
+              >
+                {versionLabel()}
+              </div>
+              <div class="text-base-content/30 text-center text-[9px] font-semibold tracking-[0.2em] uppercase">
+                ALPHA
+              </div>
             </div>
           </div>
         ) : null}
