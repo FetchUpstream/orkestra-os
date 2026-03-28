@@ -18,7 +18,11 @@ import {
   type Task,
   type TaskStatus,
 } from "../../../app/lib/tasks";
-import { listTaskRuns } from "../../../app/lib/runs";
+import {
+  createRun,
+  listTaskRuns,
+  startRunOpenCode,
+} from "../../../app/lib/runs";
 import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
 import {
   getRunSelectionOptionsWithCache,
@@ -490,20 +494,13 @@ export const useBoardModel = () => {
   const moveTaskToStatus = async (
     taskId: string,
     targetStatus: TaskStatus,
-    options?: {
-      runDefaults?: {
-        agentId?: string;
-        providerId?: string;
-        modelId?: string;
-      };
-    },
-  ): Promise<void> => {
-    if (isTaskStatusUpdating(taskId)) return;
+  ): Promise<boolean> => {
+    if (isTaskStatusUpdating(taskId)) return false;
 
     const currentTasks = tasks();
     const taskToMove = currentTasks.find((task) => task.id === taskId);
-    if (!taskToMove || taskToMove.status === targetStatus) return;
-    if (!canTransitionStatus(taskToMove.status, targetStatus)) return;
+    if (!taskToMove || taskToMove.status === targetStatus) return false;
+    if (!canTransitionStatus(taskToMove.status, targetStatus)) return false;
     const previousStatus = taskToMove.status;
     const previousMiniCard = taskRunMiniCards()[taskId];
 
@@ -531,7 +528,6 @@ export const useBoardModel = () => {
       const updatedTask = await setTaskStatus(taskId, {
         status: targetStatus,
         sourceAction: "board_manual_move",
-        runDefaults: options?.runDefaults,
       });
       setTasks((currentTasks) =>
         currentTasks.map((task) =>
@@ -577,9 +573,12 @@ export const useBoardModel = () => {
         return next;
       });
       setError("Failed to update task status. Please try again.");
+      return false;
     } finally {
       setUpdatingTaskIds((current) => current.filter((id) => id !== taskId));
     }
+
+    return true;
   };
 
   const onRequestMoveTaskToInProgress = (taskId: string) => {
@@ -603,13 +602,19 @@ export const useBoardModel = () => {
   const onConfirmMoveTaskToInProgress = async () => {
     const taskId = pendingInProgressTaskId();
     if (!taskId || isTaskStatusUpdating(taskId)) return;
-    await moveTaskToStatus(taskId, "doing", {
-      runDefaults: {
-        agentId: selectedRunAgentId().trim() || undefined,
-        providerId: selectedRunProviderId().trim() || undefined,
-        modelId: selectedRunModelId().trim() || undefined,
-      },
-    });
+    const statusUpdated = await moveTaskToStatus(taskId, "doing");
+    if (statusUpdated) {
+      try {
+        const createdRun = await createRun(taskId, {
+          agentId: selectedRunAgentId().trim() || undefined,
+          providerId: selectedRunProviderId().trim() || undefined,
+          modelId: selectedRunModelId().trim() || undefined,
+        });
+        await startRunOpenCode(createdRun.id);
+      } catch {
+        setError("Task moved, but failed to create run. Please try again.");
+      }
+    }
     setIsRunSettingsModalOpen(false);
     setPendingInProgressTaskId("");
   };

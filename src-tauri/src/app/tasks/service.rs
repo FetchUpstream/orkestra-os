@@ -1,7 +1,5 @@
 use crate::app::db::repositories::tasks::TasksRepository;
 use crate::app::errors::AppError;
-use crate::app::runs::opencode_service::RunsOpenCodeService;
-use crate::app::runs::service::RunsService;
 use crate::app::tasks::dto::{
     AddTaskDependencyRequest, CreateTaskRequest, DeleteTaskResponse, MoveTaskRequest,
     RemoveTaskDependencyRequest, RemoveTaskDependencyResponse, SetTaskStatusRequest,
@@ -13,40 +11,18 @@ use crate::app::tasks::models::{
 };
 use crate::app::tasks::search_service::TaskSearchService;
 use chrono::Utc;
-use tracing::warn;
 
 #[derive(Clone, Debug)]
 pub struct TasksService {
     repository: TasksRepository,
     search_service: TaskSearchService,
-    runs_service: Option<RunsService>,
-    runs_opencode_service: Option<RunsOpenCodeService>,
 }
 
 impl TasksService {
-    const SOURCE_ACTION_BOARD_MANUAL_MOVE: &'static str = "board_manual_move";
-
-    #[cfg(test)]
     pub fn new(repository: TasksRepository, search_service: TaskSearchService) -> Self {
         Self {
             repository,
             search_service,
-            runs_service: None,
-            runs_opencode_service: None,
-        }
-    }
-
-    pub fn new_with_run_auto_start(
-        repository: TasksRepository,
-        search_service: TaskSearchService,
-        runs_service: RunsService,
-        runs_opencode_service: RunsOpenCodeService,
-    ) -> Self {
-        Self {
-            repository,
-            search_service,
-            runs_service: Some(runs_service),
-            runs_opencode_service: Some(runs_opencode_service),
         }
     }
 
@@ -187,10 +163,6 @@ impl TasksService {
         mut input: SetTaskStatusRequest,
     ) -> Result<TaskDto, AppError> {
         input.status = input.status.trim().to_string();
-        let selected_agent_id = input.agent_id.take();
-        let selected_provider_id = input.provider_id.take();
-        let selected_model_id = input.model_id.take();
-        let source_action = Self::parse_source_action(input.source_action.take());
         Self::validate_status(&input.status)?;
 
         let existing_task = self
@@ -204,7 +176,7 @@ impl TasksService {
             return Err(AppError::validation("invalid task status transition"));
         }
 
-        let (updated_task, status_changed) = self
+        let (updated_task, _) = self
             .repository
             .update_task_status(
                 id,
@@ -217,69 +189,7 @@ impl TasksService {
             .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?;
         let updated = updated_task.ok_or_else(|| AppError::not_found("task not found"))?;
 
-        let should_auto_start_run = source_action.as_deref()
-            == Some(Self::SOURCE_ACTION_BOARD_MANUAL_MOVE)
-            && status_changed
-            && existing_task.status != "doing"
-            && updated.status == "doing"
-            && !updated.is_blocked;
-
-        if should_auto_start_run {
-            if let Err(err) = self
-                .auto_start_task_run_for_board_move(
-                    &updated.id,
-                    selected_agent_id.as_deref(),
-                    selected_provider_id.as_deref(),
-                    selected_model_id.as_deref(),
-                )
-                .await
-            {
-                warn!(
-                    task_id = updated.id.as_str(),
-                    error = %err,
-                    "Task status was persisted but automatic run start failed"
-                );
-            }
-        }
-
         Ok(Self::to_dto(updated))
-    }
-
-    async fn auto_start_task_run_for_board_move(
-        &self,
-        task_id: &str,
-        agent_id: Option<&str>,
-        provider_id: Option<&str>,
-        model_id: Option<&str>,
-    ) -> Result<(), AppError> {
-        let Some(runs_service) = self.runs_service.as_ref() else {
-            return Ok(());
-        };
-        let Some(runs_opencode_service) = self.runs_opencode_service.as_ref() else {
-            return Ok(());
-        };
-
-        let run = runs_service
-            .create_or_reuse_active_run_with_defaults(task_id, agent_id, provider_id, model_id)
-            .await
-            .map_err(|source| {
-                TaskServiceError::RunAutoStart {
-                    operation: "create_or_reuse_active_run_with_defaults",
-                    source,
-                }
-                .into_app_error()
-            })?;
-        let _ = runs_opencode_service
-            .start_run_opencode(&run.id)
-            .await
-            .map_err(|source| {
-                TaskServiceError::RunAutoStart {
-                    operation: "start_run_opencode",
-                    source,
-                }
-                .into_app_error()
-            })?;
-        Ok(())
     }
 
     pub async fn move_task(
@@ -542,31 +452,14 @@ impl TasksService {
         Self::next_status(from) == Some(to)
     }
 
-    fn parse_source_action(source_action: Option<String>) -> Option<&'static str> {
-        let normalized = source_action
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())?;
-
-        match normalized {
-            Self::SOURCE_ACTION_BOARD_MANUAL_MOVE => Some(Self::SOURCE_ACTION_BOARD_MANUAL_MOVE),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::db::migrations::run_migrations;
-    use crate::app::db::repositories::runs::RunsRepository;
     use crate::app::db::repositories::task_search::TaskSearchRepository;
-    use crate::app::runs::opencode_service::RunsOpenCodeService;
-    use crate::app::worktrees::service::WorktreesService;
     use sqlx::SqlitePool;
-    use std::fs;
-    use std::path::{Path, PathBuf};
-    use uuid::Uuid;
 
     async fn setup_service() -> (TasksService, SqlitePool) {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -577,56 +470,6 @@ mod tests {
         (TasksService::new(repository, search_service), pool)
     }
 
-    async fn setup_service_with_run_auto_start() -> (TasksService, SqlitePool, TempDir) {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        run_migrations(&pool).await.unwrap();
-        let tasks_repository = TasksRepository::new(pool.clone());
-        let search_service = TaskSearchService::new(
-            tasks_repository.clone(),
-            TaskSearchRepository::new(pool.clone()),
-        );
-        let runs_repository = RunsRepository::new(pool.clone());
-        let temp_dir = TempDir::new();
-        let worktrees_service = WorktreesService::new(temp_dir.path().join("app-data"));
-        let runs_service = RunsService::new(runs_repository, worktrees_service);
-        let runs_opencode_service =
-            RunsOpenCodeService::new(runs_service.clone(), temp_dir.path().join("app-data"));
-
-        (
-            TasksService::new_with_run_auto_start(
-                tasks_repository,
-                search_service,
-                runs_service,
-                runs_opencode_service,
-            ),
-            pool,
-            temp_dir,
-        )
-    }
-
-    #[derive(Debug)]
-    struct TempDir {
-        path: PathBuf,
-    }
-
-    impl TempDir {
-        fn new() -> Self {
-            let path =
-                std::env::temp_dir().join(format!("orkestra-tasks-tests-{}", Uuid::new_v4()));
-            fs::create_dir_all(&path).unwrap();
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
 
     async fn seed_project_and_repository(pool: &SqlitePool) {
         let project_id = "project-1";
@@ -953,8 +796,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_task_status_persists_status_when_auto_start_fails() {
-        let (service, pool, _temp_dir) = setup_service_with_run_auto_start().await;
+    async fn set_task_status_with_board_source_action_updates_status_without_creating_run() {
+        let (service, pool) = setup_service().await;
         seed_task(&pool, "todo").await;
 
         let result = service
@@ -963,9 +806,9 @@ mod tests {
                 SetTaskStatusRequest {
                     status: "doing".to_string(),
                     source_action: Some("board_manual_move".to_string()),
-                    agent_id: None,
-                    provider_id: None,
-                    model_id: None,
+                    agent_id: Some("agent-a".to_string()),
+                    provider_id: Some("provider-a".to_string()),
+                    model_id: Some("model-a".to_string()),
                 },
             )
             .await
@@ -978,106 +821,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(persisted_status, "doing");
-    }
 
-    #[tokio::test]
-    async fn set_task_status_ignores_unknown_source_action_for_auto_start() {
-        let (service, pool, _temp_dir) = setup_service_with_run_auto_start().await;
-        seed_task(&pool, "todo").await;
-
-        let result = service
-            .set_task_status(
-                "task-1",
-                SetTaskStatusRequest {
-                    status: "doing".to_string(),
-                    source_action: Some("unknown_action".to_string()),
-                    agent_id: None,
-                    provider_id: None,
-                    model_id: None,
-                },
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(result.status, "doing");
         let run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE task_id = ?")
             .bind("task-1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(run_count, 0);
-    }
-
-    #[tokio::test]
-    async fn set_task_status_board_move_does_not_auto_start_when_task_blocked() {
-        let (service, pool, _temp_dir) = setup_service_with_run_auto_start().await;
-        seed_project_and_repository(&pool).await;
-
-        sqlx::query(
-            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind("task-parent")
-        .bind("project-1")
-        .bind("repo-1")
-        .bind(1)
-        .bind("Parent")
-        .bind(Option::<String>::None)
-        .bind("doing")
-        .bind("2024-01-01T00:00:00Z")
-        .bind("2024-01-01T00:00:00Z")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind("task-child")
-        .bind("project-1")
-        .bind("repo-1")
-        .bind(2)
-        .bind("Child")
-        .bind(Option::<String>::None)
-        .bind("todo")
-        .bind("2024-01-01T00:00:00Z")
-        .bind("2024-01-01T00:00:00Z")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "INSERT INTO task_dependencies (project_id, parent_task_id, child_task_id, created_at)
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind("project-1")
-        .bind("task-parent")
-        .bind("task-child")
-        .bind("2024-01-01T00:00:00Z")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        let result = service
-            .set_task_status(
-                "task-child",
-                SetTaskStatusRequest {
-                    status: "doing".to_string(),
-                    source_action: Some("board_manual_move".to_string()),
-                    agent_id: None,
-                    provider_id: None,
-                    model_id: None,
-                },
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(result.status, "doing");
-        assert!(result.is_blocked);
-
-        let run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE task_id = ?")
-            .bind("task-child")
             .fetch_one(&pool)
             .await
             .unwrap();

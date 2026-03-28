@@ -1164,6 +1164,24 @@ describe("app routing and shell", () => {
         ]);
       }
       if (command === "set_task_status") return statusUpdatePromise;
+      if (command === "create_run") {
+        return Promise.resolve({
+          id: "run-task-1",
+          task_id: "task-1",
+          project_id: "p-1",
+          status: "queued",
+          display_key: "RUN-1",
+          triggered_by: "user",
+          created_at: "2026-01-02T00:00:00.000Z",
+        });
+      }
+      if (command === "start_run_opencode") {
+        return Promise.resolve({
+          state: "accepted",
+          queued_at: "2026-01-02T00:00:01.000Z",
+          client_request_id: "req-1",
+        });
+      }
       if (command === "list_run_opencode_agents") {
         return Promise.resolve({
           agents: [{ id: "agent-a", name: "Agent A" }],
@@ -1248,25 +1266,27 @@ describe("app routing and shell", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
 
-    expect(invokeMock).toHaveBeenCalledWith(
-      "set_task_status",
-      expect.objectContaining({
-        id: "task-1",
-        input: expect.objectContaining({
-          status: "doing",
-          source_action: "board_manual_move",
-          agent_id: "agent-a",
-          provider_id: "provider-a",
-          model_id: "model-a",
-        }),
-      }),
-    );
+    expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
+      id: "task-1",
+      input: { status: "doing", source_action: "board_manual_move" },
+    });
 
     resolveStatusUpdate?.({
       id: "task-1",
       title: "Draft onboarding flow",
       status: "doing",
       display_key: "ALP-1",
+    });
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("create_run", {
+        request: {
+          taskId: "task-1",
+          agentId: "agent-a",
+          providerId: "provider-a",
+          modelId: "model-a",
+        },
+      });
     });
 
     await waitFor(() => {
@@ -1308,6 +1328,24 @@ describe("app routing and shell", () => {
         ]);
       }
       if (command === "set_task_status") return statusUpdatePromise;
+      if (command === "create_run") {
+        return Promise.resolve({
+          id: "run-task-optimistic-mini-card",
+          task_id: "task-optimistic-mini-card",
+          project_id: "p-1",
+          status: "queued",
+          display_key: "RUN-31",
+          triggered_by: "user",
+          created_at: "2026-01-02T00:00:00.000Z",
+        });
+      }
+      if (command === "start_run_opencode") {
+        return Promise.resolve({
+          state: "accepted",
+          queued_at: "2026-01-02T00:00:01.000Z",
+          client_request_id: "req-31",
+        });
+      }
       if (command === "list_task_runs") {
         return Promise.resolve([
           {
@@ -1440,6 +1478,24 @@ describe("app routing and shell", () => {
           display_key: "ALP-1",
         });
       }
+      if (command === "create_run") {
+        return Promise.resolve({
+          id: "run-task-1",
+          task_id: "task-1",
+          project_id: "p-1",
+          status: "queued",
+          display_key: "RUN-1",
+          triggered_by: "user",
+          created_at: "2026-01-02T00:00:00.000Z",
+        });
+      }
+      if (command === "start_run_opencode") {
+        return Promise.resolve({
+          state: "accepted",
+          queued_at: "2026-01-02T00:00:01.000Z",
+          client_request_id: "req-1",
+        });
+      }
       return Promise.resolve(null);
     });
 
@@ -1526,6 +1582,24 @@ describe("app routing and shell", () => {
           title: "Review to in progress",
           status: "doing",
           display_key: "ALP-11",
+        });
+      }
+      if (command === "create_run") {
+        return Promise.resolve({
+          id: "run-task-review-doing",
+          task_id: "task-review-doing",
+          project_id: "p-1",
+          status: "queued",
+          display_key: "RUN-11",
+          triggered_by: "user",
+          created_at: "2026-01-02T00:00:00.000Z",
+        });
+      }
+      if (command === "start_run_opencode") {
+        return Promise.resolve({
+          state: "accepted",
+          queued_at: "2026-01-02T00:00:01.000Z",
+          client_request_id: "req-11",
         });
       }
       return Promise.resolve(null);

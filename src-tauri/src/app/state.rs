@@ -47,12 +47,7 @@ impl AppState {
         let runs_opencode_service =
             RunsOpenCodeService::new(runs_service.clone(), app_data_dir.clone());
         let terminal_service = TerminalService::new(runs_service.clone(), app_data_dir);
-        let tasks_service = TasksService::new_with_run_auto_start(
-            tasks_repository,
-            task_search_service,
-            runs_service.clone(),
-            runs_opencode_service.clone(),
-        );
+        let tasks_service = TasksService::new(tasks_repository, task_search_service);
         Self {
             projects_service,
             runs_service,
