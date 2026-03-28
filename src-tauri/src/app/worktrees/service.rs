@@ -49,9 +49,11 @@ impl WorktreesService {
         info!(
             subsystem = "worktrees",
             operation = "create",
+            phase = "start",
             project_key = input.project_key.as_str(),
+            repo_path = input.repo_path.as_str(),
             branch_title = input.branch_title.as_str(),
-            "Creating worktree"
+            "Worktree creation started"
         );
 
         let repo = Repository::open(&input.repo_path).map_err(|source| {
@@ -151,11 +153,14 @@ impl WorktreesService {
                     info!(
                         subsystem = "worktrees",
                         operation = "create",
+                        phase = "success",
                         project_key = input.project_key.as_str(),
+                        repo_path = input.repo_path.as_str(),
                         worktree_id = worktree_id.as_str(),
+                        worktree_path = %worktree_path.display(),
                         branch_name = branch_name.as_str(),
                         source_branch = source_branch.as_deref().unwrap_or("<none>"),
-                        "Created worktree"
+                        "Worktree creation succeeded"
                     );
                     return Ok(CreateWorktreeResponse {
                         worktree_id,
@@ -227,8 +232,10 @@ impl WorktreesService {
         info!(
             subsystem = "worktrees",
             operation = "remove",
+            phase = "start",
+            repo_path = input.repo_path.as_str(),
             worktree_id = input.worktree_id.as_str(),
-            "Removing worktree"
+            "Worktree cleanup started"
         );
 
         let repo = Repository::open(&input.repo_path).map_err(|source| {
@@ -256,8 +263,10 @@ impl WorktreesService {
         info!(
             subsystem = "worktrees",
             operation = "remove",
+            phase = "success",
+            repo_path = input.repo_path.as_str(),
             worktree_id = input.worktree_id.as_str(),
-            "Removed worktree"
+            "Worktree cleanup succeeded"
         );
 
         Ok(())
@@ -667,14 +676,15 @@ fn rollback_failed_worktree_add_attempt(
         }
     }
 
-    debug!(
+    info!(
         subsystem = "worktrees",
         operation = "create_rollback",
+        phase = "success",
         worktree_id,
         branch_name,
         metadata_found_after = metadata_path.exists(),
         worktree_dir_exists_after = worktree_path.exists(),
-        "Completed rollback after worktree add conflict"
+        "Worktree rollback cleanup completed"
     );
 
     Ok(())
