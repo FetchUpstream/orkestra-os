@@ -12,6 +12,7 @@ use git2::{
 };
 use std::io::ErrorKind;
 use std::path::PathBuf;
+use std::process::Command;
 use tracing::{debug, info, warn};
 
 const CREATE_WORKTREE_MAX_RETRIES: usize = 8;
@@ -366,6 +367,73 @@ fn cleanup_newly_created_branch(repo: &Repository, branch_name: &str) -> Result<
     }
 }
 
+fn run_git_worktree_cleanup(repo: &Repository, worktree_path: &PathBuf) -> Result<(), Error> {
+    let Some(repo_root) = repo.workdir() else {
+        return Err(Error::from_str(
+            "failed to cleanup linked worktree: repository workdir unavailable",
+        ));
+    };
+
+    let remove_output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .arg("worktree")
+        .arg("remove")
+        .arg("--force")
+        .arg("--force")
+        .arg(worktree_path)
+        .output()
+        .map_err(|err| {
+            Error::from_str(&format!(
+                "failed to execute git worktree remove for '{}': {}",
+                worktree_path.display(),
+                err
+            ))
+        })?;
+
+    if !remove_output.status.success() {
+        let stderr = String::from_utf8_lossy(&remove_output.stderr);
+        let stdout = String::from_utf8_lossy(&remove_output.stdout);
+        return Err(Error::from_str(&format!(
+            "git worktree remove failed for '{}': status={} stdout='{}' stderr='{}'",
+            worktree_path.display(),
+            remove_output.status,
+            stdout.trim(),
+            stderr.trim()
+        )));
+    }
+
+    let prune_output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .arg("worktree")
+        .arg("prune")
+        .arg("--expire")
+        .arg("now")
+        .output()
+        .map_err(|err| {
+            Error::from_str(&format!(
+                "failed to execute git worktree prune after removing '{}': {}",
+                worktree_path.display(),
+                err
+            ))
+        })?;
+
+    if !prune_output.status.success() {
+        let stderr = String::from_utf8_lossy(&prune_output.stderr);
+        let stdout = String::from_utf8_lossy(&prune_output.stdout);
+        return Err(Error::from_str(&format!(
+            "git worktree prune failed after removing '{}': status={} stdout='{}' stderr='{}'",
+            worktree_path.display(),
+            prune_output.status,
+            stdout.trim(),
+            stderr.trim()
+        )));
+    }
+
+    Ok(())
+}
+
 fn rollback_failed_worktree_add_attempt(
     repo: &Repository,
     worktree_id: &str,
@@ -389,6 +457,63 @@ fn rollback_failed_worktree_add_attempt(
         branch_created_in_attempt,
         "Starting rollback after worktree add conflict"
     );
+
+    let linked_git_dir_path = worktree_path.join(".git");
+    let linked_repo_exists_by_path = Repository::open(worktree_path).is_ok();
+    debug!(
+        subsystem = "worktrees",
+        operation = "create_rollback",
+        worktree_id,
+        branch_name,
+        candidate_path = %worktree_path.display(),
+        linked_git_dir_path = %linked_git_dir_path.display(),
+        linked_git_dir_exists = linked_git_dir_path.exists(),
+        linked_repo_exists_by_path,
+        "Inspected rollback candidate path before linked-worktree cleanup"
+    );
+
+    if linked_repo_exists_by_path || linked_git_dir_path.exists() {
+        if let Ok(linked_repo) = Repository::open(worktree_path) {
+            let linked_head = linked_repo
+                .head()
+                .ok()
+                .and_then(|head| head.shorthand().map(str::to_string))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            debug!(
+                subsystem = "worktrees",
+                operation = "create_rollback",
+                worktree_id,
+                branch_name,
+                candidate_path = %worktree_path.display(),
+                linked_head = linked_head.as_str(),
+                "Opened linked repository via attempted path"
+            );
+        }
+
+        debug!(
+            subsystem = "worktrees",
+            operation = "create_rollback",
+            worktree_id,
+            branch_name,
+            candidate_path = %worktree_path.display(),
+            "Detaching linked worktree via git worktree remove"
+        );
+        run_git_worktree_cleanup(repo, worktree_path).map_err(|err| {
+            Error::from_str(&format!(
+                "failed to detach linked worktree at '{}' before branch cleanup: {}",
+                worktree_path.display(),
+                err.message()
+            ))
+        })?;
+        debug!(
+            subsystem = "worktrees",
+            operation = "create_rollback",
+            worktree_id,
+            branch_name,
+            candidate_path = %worktree_path.display(),
+            "Detached linked worktree via path-aware git cleanup"
+        );
+    }
 
     if let Ok(worktree) = repo.find_worktree(worktree_id) {
         debug!(
@@ -708,6 +833,64 @@ mod tests {
 
         assert!(repo.find_worktree(worktree_id).is_err());
         assert!(repo.find_branch(worktree_id, BranchType::Local).is_err());
+        assert!(!worktree_path.exists());
+
+        let _ = fs::remove_dir_all(&temp_root);
+    }
+
+    #[test]
+    fn rollback_detaches_linked_repo_by_path_before_branch_delete() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "orkestra-worktrees-path-rollback-tests-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp_root).unwrap();
+
+        let repo_root = temp_root.join("repo");
+        let repo = Repository::init(&repo_root).unwrap();
+
+        fs::write(repo_root.join("README.md"), "seed\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("README.md")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let signature = Signature::now("orkestra", "orkestra@example.com").unwrap();
+        let commit_id = repo
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                "initial commit",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        let commit = repo.find_commit(commit_id).unwrap();
+
+        let actual_worktree_id = "ALP/path-rollback-test";
+        let rollback_lookup_id = "ALP/path-rollback-test-wrong-id";
+        let worktree_path = temp_root.join("linked").join(actual_worktree_id);
+        fs::create_dir_all(worktree_path.parent().unwrap()).unwrap();
+        let branch = repo.branch(actual_worktree_id, &commit, false).unwrap();
+
+        let mut options = git2::WorktreeAddOptions::new();
+        options.reference(Some(branch.get()));
+        repo.worktree(actual_worktree_id, &worktree_path, Some(&mut options))
+            .unwrap();
+
+        super::rollback_failed_worktree_add_attempt(
+            &repo,
+            rollback_lookup_id,
+            &worktree_path,
+            actual_worktree_id,
+            true,
+        )
+        .unwrap();
+
+        assert!(repo
+            .find_branch(actual_worktree_id, BranchType::Local)
+            .is_err());
         assert!(!worktree_path.exists());
 
         let _ = fs::remove_dir_all(&temp_root);
