@@ -10,6 +10,7 @@ use crate::app::worktrees::pathing::{
 use git2::{
     BranchType, Error, ErrorClass, ErrorCode, Repository, WorktreeAddOptions, WorktreePruneOptions,
 };
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use tracing::{info, warn};
 
@@ -102,7 +103,7 @@ impl WorktreesService {
                             branch_created_in_attempt = true;
                             branch
                         }
-                        Err(source) if is_retryable_worktree_conflict(&source) => {
+                        Err(source) if is_retryable_branch_create_conflict(&source) => {
                             warn!(
                                 subsystem = "worktrees",
                                 operation = "create",
@@ -162,21 +163,21 @@ impl WorktreesService {
                         path: worktree_path.to_string_lossy().to_string(),
                     });
                 }
-                Err(source) if is_retryable_worktree_conflict(&source) => {
-                    if branch_created_in_attempt {
-                        if let Err(cleanup_err) = cleanup_newly_created_branch(&repo, &branch_name)
-                        {
-                            warn!(
-                                subsystem = "worktrees",
-                                operation = "create",
-                                project_key = input.project_key.as_str(),
-                                worktree_id = worktree_id.as_str(),
-                                branch_name = branch_name.as_str(),
-                                attempt = attempt + 1,
-                                error = cleanup_err.message(),
-                                "Failed to clean up newly created branch after retryable worktree conflict"
-                            );
-                        }
+                Err(source) if is_retryable_worktree_add_conflict(&source) => {
+                    if let Err(rollback_err) = rollback_failed_worktree_add_attempt(
+                        &repo,
+                        &worktree_id,
+                        &worktree_path,
+                        &branch_name,
+                        branch_created_in_attempt,
+                    ) {
+                        return Err(WorktreesServiceError::CreateWorktree {
+                            worktree_id,
+                            source: Error::from_str(&format!(
+                                "worktree creation rollback failed after conflict: {}",
+                                rollback_err.message()
+                            )),
+                        });
                     }
                     warn!(
                         subsystem = "worktrees",
@@ -334,13 +335,21 @@ impl WorktreesService {
     }
 }
 
-fn is_retryable_worktree_conflict(err: &Error) -> bool {
-    if err.code() == ErrorCode::Exists {
-        return true;
-    }
+fn is_retryable_branch_create_conflict(err: &Error) -> bool {
+    err.code() == ErrorCode::Exists
+}
 
+fn is_retryable_worktree_add_conflict(err: &Error) -> bool {
     if err.class() != ErrorClass::Worktree {
         return false;
+    }
+
+    if err.code() == ErrorCode::Exists {
+        let message = err.message().to_ascii_lowercase();
+        return message.contains("already checked out")
+            || message.contains("already exists")
+            || message.contains("is already used")
+            || message.contains("already registered");
     }
 
     let message = err.message().to_ascii_lowercase();
@@ -357,13 +366,59 @@ fn cleanup_newly_created_branch(repo: &Repository, branch_name: &str) -> Result<
     }
 }
 
+fn rollback_failed_worktree_add_attempt(
+    repo: &Repository,
+    worktree_id: &str,
+    worktree_path: &PathBuf,
+    branch_name: &str,
+    branch_created_in_attempt: bool,
+) -> Result<(), Error> {
+    if let Ok(worktree) = repo.find_worktree(worktree_id) {
+        let mut prune_options = WorktreePruneOptions::new();
+        prune_options.working_tree(true).valid(true).locked(true);
+        worktree.prune(Some(&mut prune_options))?;
+    }
+
+    if worktree_path.exists() {
+        std::fs::remove_dir_all(worktree_path).map_err(|err| {
+            Error::from_str(&format!(
+                "failed to remove worktree directory '{}': {}",
+                worktree_path.display(),
+                err
+            ))
+        })?;
+    }
+
+    if branch_created_in_attempt {
+        cleanup_newly_created_branch(repo, branch_name)?;
+    }
+
+    if let Some(parent) = worktree_path.parent() {
+        match std::fs::remove_dir(parent) {
+            Ok(_) => {}
+            Err(err)
+                if err.kind() == ErrorKind::NotFound
+                    || err.kind() == ErrorKind::DirectoryNotEmpty => {}
+            Err(err) => {
+                return Err(Error::from_str(&format!(
+                    "failed to remove worktree parent directory '{}': {}",
+                    parent.display(),
+                    err
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::WorktreesService;
     use crate::app::errors::AppError;
     use crate::app::worktrees::dto::CreateWorktreeRequest;
     use crate::app::worktrees::pathing::{compose_worktree_id, sanitize_branch_segment};
-    use git2::{BranchType, Repository, Signature};
+    use git2::{BranchType, ErrorClass, ErrorCode, Repository, Signature};
     use std::fs;
     use std::path::{Path, PathBuf};
     use uuid::Uuid;
@@ -438,5 +493,24 @@ mod tests {
         assert!(repo.find_branch("ALP/branch-b", BranchType::Local).is_ok());
 
         let _ = fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn worktree_add_retry_classifier_is_not_blanket_exists() {
+        let non_worktree_exists = git2::Error::new(
+            ErrorCode::Exists,
+            ErrorClass::Reference,
+            "reference already exists",
+        );
+        assert!(!super::is_retryable_worktree_add_conflict(
+            &non_worktree_exists
+        ));
+
+        let worktree_exists = git2::Error::new(
+            ErrorCode::Exists,
+            ErrorClass::Worktree,
+            "worktree already exists",
+        );
+        assert!(super::is_retryable_worktree_add_conflict(&worktree_exists));
     }
 }
