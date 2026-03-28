@@ -7,9 +7,7 @@ use crate::app::worktrees::pathing::{
     choose_unique_worktree_id, parse_worktree_id_typed, sanitize_branch_segment,
     validate_project_key_segment_typed,
 };
-use git2::{
-    BranchType, Error, ErrorClass, ErrorCode, Repository, WorktreeAddOptions, WorktreePruneOptions,
-};
+use git2::{BranchType, Error, ErrorCode, Repository, WorktreePruneOptions};
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::process::Command;
@@ -77,6 +75,7 @@ impl WorktreesService {
         let head_commit = head
             .peel_to_commit()
             .map_err(|source| WorktreesServiceError::ResolveHeadCommit { source })?;
+        let start_point = head_commit.id().to_string();
 
         let branch_slug = sanitize_branch_segment(&input.branch_title);
         for attempt in 0..CREATE_WORKTREE_MAX_RETRIES {
@@ -97,59 +96,27 @@ impl WorktreesService {
                 source,
             })?;
 
-            let mut branch_created_in_attempt = false;
-            let branch = match repo.find_branch(&branch_name, BranchType::Local) {
-                Ok(branch) => branch,
-                Err(err) if err.code() == ErrorCode::NotFound => {
-                    match repo.branch(&branch_name, &head_commit, false) {
-                        Ok(branch) => {
-                            branch_created_in_attempt = true;
-                            branch
-                        }
-                        Err(source) if is_retryable_branch_create_conflict(&source) => {
-                            warn!(
-                                subsystem = "worktrees",
-                                operation = "create",
-                                project_key = input.project_key.as_str(),
-                                branch_name = branch_name.as_str(),
-                                attempt = attempt + 1,
-                                "Retrying worktree create after branch conflict"
-                            );
-                            continue;
-                        }
-                        Err(source) => {
-                            return Err(WorktreesServiceError::CreateBranch {
-                                branch_name: branch_name.clone(),
-                                source,
-                            });
-                        }
-                    }
-                }
-                Err(err) => {
-                    return Err(WorktreesServiceError::LookupBranch {
-                        branch_name: branch_name.clone(),
-                        source: err,
-                    });
-                }
-            };
-
-            let mut options = WorktreeAddOptions::new();
-            options.reference(Some(branch.get()));
-
-            let metadata_parent = repo.path().join("worktrees").join(
-                PathBuf::from(&worktree_id)
-                    .parent()
-                    .ok_or(WorktreesServiceError::InvalidWorktreeId)?,
+            debug!(
+                subsystem = "worktrees",
+                operation = "create",
+                phase = "attempt",
+                project_key = input.project_key.as_str(),
+                repo_path = input.repo_path.as_str(),
+                worktree_id = worktree_id.as_str(),
+                worktree_path = %worktree_path.display(),
+                branch_name = branch_name.as_str(),
+                start_point = start_point.as_str(),
+                attempt = attempt + 1,
+                "Creating worktree via git worktree add -b"
             );
-            std::fs::create_dir_all(&metadata_parent).map_err(|source| {
-                WorktreesServiceError::PrepareWorktreeMetadataDir {
-                    path: metadata_parent.display().to_string(),
-                    source,
-                }
-            })?;
 
-            match repo.worktree(&worktree_id, &worktree_path, Some(&mut options)) {
-                Ok(_) => {
+            match run_git_worktree_add_with_new_branch(
+                &repo,
+                &worktree_id,
+                &worktree_path,
+                &start_point,
+            ) {
+                Ok(()) => {
                     info!(
                         subsystem = "worktrees",
                         operation = "create",
@@ -169,33 +136,54 @@ impl WorktreesService {
                         path: worktree_path.to_string_lossy().to_string(),
                     });
                 }
-                Err(source) if is_retryable_worktree_add_conflict(&source) => {
-                    if let Err(rollback_err) = rollback_failed_worktree_add_attempt(
-                        &repo,
-                        &worktree_id,
-                        &worktree_path,
-                        &branch_name,
-                        branch_created_in_attempt,
-                    ) {
-                        return Err(WorktreesServiceError::CreateWorktree {
-                            worktree_id,
-                            source: Error::from_str(&format!(
-                                "worktree creation rollback failed after conflict: {}",
-                                rollback_err.message()
-                            )),
-                        });
+                Err(source) if is_retryable_git_worktree_add_conflict(&source) => {
+                    if worktree_path.exists() || repo.find_worktree(&worktree_id).is_ok() {
+                        debug!(
+                            subsystem = "worktrees",
+                            operation = "create",
+                            phase = "rollback",
+                            project_key = input.project_key.as_str(),
+                            worktree_id = worktree_id.as_str(),
+                            attempt = attempt + 1,
+                            "Retryable conflict left artifacts; attempting cleanup"
+                        );
+                        if let Err(rollback_err) = rollback_failed_worktree_add_attempt(
+                            &repo,
+                            &worktree_id,
+                            &worktree_path,
+                            &branch_name,
+                            false,
+                        ) {
+                            return Err(WorktreesServiceError::CreateWorktree {
+                                worktree_id,
+                                source: Error::from_str(&format!(
+                                    "worktree creation rollback failed after conflict: {}",
+                                    rollback_err.message()
+                                )),
+                            });
+                        }
                     }
                     warn!(
                         subsystem = "worktrees",
                         operation = "create",
                         project_key = input.project_key.as_str(),
                         worktree_id = worktree_id.as_str(),
+                        source = source.message(),
                         attempt = attempt + 1,
                         "Retrying worktree create after metadata conflict"
                     );
                     continue;
                 }
                 Err(source) => {
+                    warn!(
+                        subsystem = "worktrees",
+                        operation = "create",
+                        phase = "failed",
+                        project_key = input.project_key.as_str(),
+                        worktree_id = worktree_id.as_str(),
+                        source = source.message(),
+                        "Worktree creation failed"
+                    );
                     return Err(WorktreesServiceError::CreateWorktree {
                         worktree_id,
                         source,
@@ -345,27 +333,66 @@ impl WorktreesService {
     }
 }
 
-fn is_retryable_branch_create_conflict(err: &Error) -> bool {
-    err.code() == ErrorCode::Exists
+fn run_git_worktree_add_with_new_branch(
+    repo: &Repository,
+    worktree_id: &str,
+    worktree_path: &PathBuf,
+    start_point: &str,
+) -> Result<(), Error> {
+    let Some(repo_root) = repo.workdir() else {
+        return Err(Error::from_str(
+            "failed to create linked worktree: repository workdir unavailable",
+        ));
+    };
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .arg("worktree")
+        .arg("add")
+        .arg("-b")
+        .arg(worktree_id)
+        .arg(worktree_path)
+        .arg(start_point)
+        .output()
+        .map_err(|err| {
+            Error::from_str(&format!(
+                "failed to execute git worktree add -b for '{}' at '{}': {}",
+                worktree_id,
+                worktree_path.display(),
+                err
+            ))
+        })?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Err(Error::from_str(&format!(
+        "git worktree add -b failed for '{}' at '{}': status={} stdout='{}' stderr='{}'",
+        worktree_id,
+        worktree_path.display(),
+        output.status,
+        stdout.trim(),
+        stderr.trim()
+    )))
 }
 
-fn is_retryable_worktree_add_conflict(err: &Error) -> bool {
-    if err.class() != ErrorClass::Worktree {
+fn is_retryable_git_worktree_add_conflict(err: &Error) -> bool {
+    if err.code() != ErrorCode::GenericError {
         return false;
     }
 
-    if err.code() == ErrorCode::Exists {
-        let message = err.message().to_ascii_lowercase();
-        return message.contains("already checked out")
-            || message.contains("already exists")
-            || message.contains("is already used")
-            || message.contains("already registered");
-    }
-
     let message = err.message().to_ascii_lowercase();
-    message.contains("already checked out")
-        || message.contains("already exists")
+    message.contains("already exists")
+        || message.contains("already checked out")
         || message.contains("is already used")
+        || message.contains("already registered")
+        || message.contains("reference already exists")
+        || message.contains("a branch named")
+        || message.contains("could not lock ref")
 }
 
 fn cleanup_newly_created_branch(repo: &Repository, branch_name: &str) -> Result<(), Error> {
@@ -780,16 +807,18 @@ mod tests {
             ErrorClass::Reference,
             "reference already exists",
         );
-        assert!(!super::is_retryable_worktree_add_conflict(
+        assert!(!super::is_retryable_git_worktree_add_conflict(
             &non_worktree_exists
         ));
 
         let worktree_exists = git2::Error::new(
-            ErrorCode::Exists,
-            ErrorClass::Worktree,
-            "worktree already exists",
+            ErrorCode::GenericError,
+            ErrorClass::None,
+            "git worktree add -b failed: fatal: a branch named 'ALP/x' already exists",
         );
-        assert!(super::is_retryable_worktree_add_conflict(&worktree_exists));
+        assert!(super::is_retryable_git_worktree_add_conflict(
+            &worktree_exists
+        ));
     }
 
     #[test]
