@@ -18,9 +18,9 @@ impl StartupPaths {
 }
 
 pub fn resolve_startup_paths<R: tauri::Runtime>(
-    app: &tauri::App<R>,
+    app_handle: &tauri::AppHandle<R>,
 ) -> Result<StartupPaths, AppError> {
-    let app_data_dir = app.path().app_data_dir().map_err(|err| {
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|err| {
         AppError::infrastructure_with_source(
             "bootstrap",
             "resolve_app_data_dir",
@@ -40,7 +40,7 @@ pub fn resolve_startup_paths<R: tauri::Runtime>(
         )
     })?;
 
-    let log_dir = resolve_log_dir(app)?;
+    let log_dir = resolve_log_dir(app_handle)?;
     std::fs::create_dir_all(&log_dir).map_err(|err| {
         AppError::infrastructure_with_source(
             "bootstrap",
@@ -56,10 +56,12 @@ pub fn resolve_startup_paths<R: tauri::Runtime>(
     })
 }
 
-pub fn resolve_log_dir<R: tauri::Runtime>(app: &tauri::App<R>) -> Result<PathBuf, AppError> {
+pub fn resolve_log_dir<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> Result<PathBuf, AppError> {
     #[cfg(target_os = "linux")]
     {
-        let identifier = app.config().identifier.trim();
+        let identifier = app_handle.config().identifier.trim();
         return linux_log_dir(
             identifier,
             std::env::var_os("XDG_STATE_HOME"),
@@ -69,7 +71,7 @@ pub fn resolve_log_dir<R: tauri::Runtime>(app: &tauri::App<R>) -> Result<PathBuf
 
     #[cfg(not(target_os = "linux"))]
     {
-        app.path().app_log_dir().map_err(|err| {
+        app_handle.path().app_log_dir().map_err(|err| {
             AppError::infrastructure_with_source(
                 "bootstrap",
                 "resolve_log_dir",

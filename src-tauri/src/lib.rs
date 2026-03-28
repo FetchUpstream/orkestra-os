@@ -7,7 +7,7 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let startup_paths = app::bootstrap::paths::resolve_startup_paths(app)?;
+            let startup_paths = app::bootstrap::paths::resolve_startup_paths(app.handle())?;
             app::bootstrap::logging::init(&startup_paths.log_dir);
             let db_path = startup_paths.db_path();
 
