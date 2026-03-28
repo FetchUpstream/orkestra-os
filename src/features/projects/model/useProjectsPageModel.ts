@@ -1,5 +1,6 @@
 import { useNavigate } from "@solidjs/router";
 import { createMemo, createSignal, onMount, type JSX } from "solid-js";
+import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
 import {
   cloneProject,
   createProject,
@@ -9,6 +10,10 @@ import {
   updateProject,
   type Project,
 } from "../../../app/lib/projects";
+import {
+  getRunSelectionOptionsWithCache,
+  readRunSelectionOptionsCache,
+} from "../../../app/lib/runSelectionOptionsCache";
 import {
   normalizeProjectKey,
   recommendProjectKey,
@@ -35,7 +40,17 @@ export const useProjectsPageModel = () => {
   ]);
   const [defaultRepoIndex, setDefaultRepoIndex] = createSignal(0);
   const [error, setError] = createSignal("");
+  const [runDefaultsError, setRunDefaultsError] = createSignal("");
   const [isSubmitting, setIsSubmitting] = createSignal(false);
+  const [isLoadingRunDefaults, setIsLoadingRunDefaults] = createSignal(false);
+  const [runProviderOptions, setRunProviderOptions] = createSignal<
+    RunSelectionOption[]
+  >([]);
+  const [runModelOptions, setRunModelOptions] = createSignal<RunModelOption[]>(
+    [],
+  );
+  const [defaultRunProvider, setDefaultRunProvider] = createSignal("");
+  const [defaultRunModel, setDefaultRunModelSignal] = createSignal("");
   const [isLoadingProjectForEdit, setIsLoadingProjectForEdit] =
     createSignal(false);
   const [isKeyEdited, setIsKeyEdited] = createSignal(false);
@@ -67,7 +82,81 @@ export const useProjectsPageModel = () => {
     setProjects(nextProjects);
   };
 
-  onMount(loadProjects);
+  const visibleRunModelOptions = createMemo(() => {
+    const providerId = defaultRunProvider().trim();
+    if (!providerId) return runModelOptions();
+    return runModelOptions().filter(
+      (option) => !option.providerId || option.providerId === providerId,
+    );
+  });
+
+  const doesModelMatchProvider = (modelId: string, providerId: string) => {
+    if (!modelId || !providerId) return true;
+    const selectedModel = runModelOptions().find((option) => option.id === modelId);
+    if (!selectedModel?.providerId) return true;
+    return selectedModel.providerId === providerId;
+  };
+
+  const hasRunSelectionOptions = createMemo(
+    () => runProviderOptions().length > 0 || runModelOptions().length > 0,
+  );
+
+  const runDefaultsValidationError = createMemo(() => {
+    if (!defaultRunProvider().trim()) return "Default provider is required.";
+    if (!defaultRunModel().trim()) return "Default model is required.";
+    if (
+      !visibleRunModelOptions().some((option) => option.id === defaultRunModel().trim())
+    ) {
+      return "Selected model is unavailable for the selected provider. Please reselect.";
+    }
+    return "";
+  });
+
+  const setDefaultRunModel = (modelId: string) => {
+    setDefaultRunModelSignal(modelId);
+    if (!modelId) return;
+    const selectedModel = runModelOptions().find((option) => option.id === modelId);
+    const providerId = selectedModel?.providerId?.trim() || "";
+    if (providerId && providerId !== defaultRunProvider().trim()) {
+      setDefaultRunProvider(providerId);
+    }
+  };
+
+  const setDefaultRunProviderAndValidate = (providerId: string) => {
+    setDefaultRunProvider(providerId);
+    const modelId = defaultRunModel().trim();
+    if (modelId && !doesModelMatchProvider(modelId, providerId.trim())) {
+      setDefaultRunModelSignal("");
+    }
+  };
+
+  const loadRunSelectionOptions = async () => {
+    const cachedOptions = readRunSelectionOptionsCache();
+    if (cachedOptions) {
+      setRunProviderOptions(cachedOptions.providers);
+      setRunModelOptions(cachedOptions.models);
+      setRunDefaultsError("");
+      return;
+    }
+
+    setIsLoadingRunDefaults(true);
+    setRunDefaultsError("");
+    try {
+      const options = await getRunSelectionOptionsWithCache();
+      setRunProviderOptions(options.providers);
+      setRunModelOptions(options.models);
+    } catch {
+      setRunProviderOptions([]);
+      setRunModelOptions([]);
+      setRunDefaultsError("Failed to load run defaults.");
+    } finally {
+      setIsLoadingRunDefaults(false);
+    }
+  };
+
+  onMount(() => {
+    void Promise.all([loadProjects(), loadRunSelectionOptions()]);
+  });
 
   const projectKeyError = createProjectKeyError(key, touched);
   const cloneProjectKeyError = createProjectKeyError(
@@ -95,6 +184,8 @@ export const useProjectsPageModel = () => {
     setDescription("");
     setRepositories([emptyRepo()]);
     setDefaultRepoIndex(0);
+    setDefaultRunProvider("");
+    setDefaultRunModelSignal("");
     setIsKeyEdited(false);
     setTouched({});
     setError("");
@@ -177,12 +268,19 @@ export const useProjectsPageModel = () => {
       return;
     }
 
+    if (runDefaultsValidationError()) {
+      setError(runDefaultsValidationError());
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const payload = {
         name: name().trim(),
         key: normalizeProjectKey(key()),
         description: description().trim() || undefined,
+        defaultRunProvider: defaultRunProvider().trim(),
+        defaultRunModel: defaultRunModel().trim(),
         repositories: normalizedRepositories.map((repo, index) => ({
           id: repo.id,
           path: repo.path,
@@ -244,6 +342,8 @@ export const useProjectsPageModel = () => {
       setRepositories(
         nextRepositories.length > 0 ? nextRepositories : [emptyRepo()],
       );
+      setDefaultRunProvider(projectDetails.defaultRunProvider?.trim() || "");
+      setDefaultRunModelSignal(projectDetails.defaultRunModel?.trim() || "");
       const defaultRepositoryIndex = projectDetails.repositories.findIndex(
         (repository) => repository.is_default,
       );
@@ -406,7 +506,16 @@ export const useProjectsPageModel = () => {
     repositories,
     defaultRepoIndex,
     error,
+    runDefaultsError,
     isSubmitting,
+    isLoadingRunDefaults,
+    runProviderOptions,
+    runModelOptions,
+    visibleRunModelOptions,
+    hasRunSelectionOptions,
+    defaultRunProvider,
+    defaultRunModel,
+    runDefaultsValidationError,
     isLoadingProjectForEdit,
     isCloneModalOpen,
     touched,
@@ -428,6 +537,8 @@ export const useProjectsPageModel = () => {
     cloneRepositoryDestinationError,
     setDescription,
     setTouched,
+    setDefaultRunProvider: setDefaultRunProviderAndValidate,
+    setDefaultRunModel,
     setCloneTouched,
     setDefaultRepoIndex,
     setCloneRepositoryDestination,

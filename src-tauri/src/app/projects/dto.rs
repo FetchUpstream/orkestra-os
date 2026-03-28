@@ -7,6 +7,8 @@ pub struct ProjectDto {
     pub name: String,
     pub description: Option<String>,
     pub default_repo_id: Option<String>,
+    pub default_run_provider: Option<String>,
+    pub default_run_model: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -16,6 +18,8 @@ pub struct CreateProjectRequest {
     pub name: String,
     pub description: Option<String>,
     pub key: String,
+    pub default_run_provider: String,
+    pub default_run_model: String,
     pub repositories: Vec<CreateProjectRepositoryRequest>,
 }
 
@@ -24,6 +28,8 @@ pub struct UpdateProjectRequest {
     pub name: String,
     pub description: Option<String>,
     pub key: String,
+    pub default_run_provider: String,
+    pub default_run_model: String,
     pub repositories: Vec<CreateProjectRepositoryRequest>,
 }
 

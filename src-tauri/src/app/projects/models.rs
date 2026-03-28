@@ -5,6 +5,8 @@ pub struct Project {
     pub name: String,
     pub description: Option<String>,
     pub default_repo_id: Option<String>,
+    pub default_run_provider: Option<String>,
+    pub default_run_model: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -53,6 +55,8 @@ pub struct NewProject {
     pub key: String,
     pub description: Option<String>,
     pub default_repo_id: Option<String>,
+    pub default_run_provider: Option<String>,
+    pub default_run_model: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub repositories: Vec<NewProjectRepository>,

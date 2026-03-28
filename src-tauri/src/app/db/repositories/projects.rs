@@ -23,7 +23,7 @@ impl ProjectsRepository {
 
     pub async fn list_projects(&self) -> Result<Vec<Project>, ProjectsRepositoryError> {
         let rows = sqlx::query(
-            "SELECT id, key, name, description, default_repo_id, created_at, updated_at
+            "SELECT id, key, name, description, default_repo_id, default_run_provider, default_run_model, created_at, updated_at
             FROM projects
             ORDER BY created_at DESC",
         )
@@ -39,6 +39,8 @@ impl ProjectsRepository {
                 name: row.get("name"),
                 description: row.get("description"),
                 default_repo_id: row.get("default_repo_id"),
+                default_run_provider: row.get("default_run_provider"),
+                default_run_model: row.get("default_run_model"),
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
             })
@@ -52,7 +54,7 @@ impl ProjectsRepository {
         id: &str,
     ) -> Result<Option<ProjectDetails>, ProjectsRepositoryError> {
         let maybe_project = sqlx::query(
-            "SELECT id, key, name, description, default_repo_id, created_at, updated_at
+            "SELECT id, key, name, description, default_repo_id, default_run_provider, default_run_model, created_at, updated_at
             FROM projects
             WHERE id = ?",
         )
@@ -71,6 +73,8 @@ impl ProjectsRepository {
             name: project_row.get("name"),
             description: project_row.get("description"),
             default_repo_id: project_row.get("default_repo_id"),
+            default_run_provider: project_row.get("default_run_provider"),
+            default_run_model: project_row.get("default_run_model"),
             created_at: project_row.get("created_at"),
             updated_at: project_row.get("updated_at"),
         };
@@ -142,14 +146,16 @@ impl ProjectsRepository {
         })?;
 
         sqlx::query(
-            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO projects (id, name, key, description, default_repo_id, default_run_provider, default_run_model, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&input.id)
         .bind(&input.name)
         .bind(&input.key)
         .bind(&input.description)
         .bind(&input.default_repo_id)
+        .bind(&input.default_run_provider)
+        .bind(&input.default_run_model)
         .bind(&input.created_at)
         .bind(&input.updated_at)
         .execute(&mut *tx)
@@ -214,6 +220,8 @@ impl ProjectsRepository {
                 name: input.name,
                 description: input.description,
                 default_repo_id: selected_default_repo_id,
+                default_run_provider: input.default_run_provider,
+                default_run_model: input.default_run_model,
                 created_at: input.created_at,
                 updated_at: input.updated_at,
             },
@@ -227,6 +235,8 @@ impl ProjectsRepository {
         name: &str,
         key: &str,
         description: &Option<String>,
+        default_run_provider: &str,
+        default_run_model: &str,
         updated_at: &str,
         repositories: &[UpsertProjectRepository],
     ) -> Result<Option<ProjectDetails>, ProjectsRepositoryError> {
@@ -249,11 +259,13 @@ impl ProjectsRepository {
         }
 
         sqlx::query(
-            "UPDATE projects SET name = ?, key = ?, description = ?, updated_at = ? WHERE id = ?",
+            "UPDATE projects SET name = ?, key = ?, description = ?, default_run_provider = ?, default_run_model = ?, updated_at = ? WHERE id = ?",
         )
         .bind(name)
         .bind(key)
         .bind(description)
+        .bind(default_run_provider)
+        .bind(default_run_model)
         .bind(updated_at)
         .bind(project_id)
         .execute(&mut *tx)
@@ -395,7 +407,9 @@ impl ProjectsRepository {
         })?;
 
         let source_project_row =
-            sqlx::query("SELECT id, description FROM projects WHERE id = ? LIMIT 1")
+            sqlx::query(
+                "SELECT id, description, default_run_provider, default_run_model FROM projects WHERE id = ? LIMIT 1",
+            )
                 .bind(source_project_id)
                 .fetch_optional(&mut *tx)
                 .await
@@ -438,14 +452,26 @@ impl ProjectsRepository {
         }
 
         sqlx::query(
-            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO projects (id, name, key, description, default_repo_id, default_run_provider, default_run_model, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(new_project_id)
         .bind(new_name)
         .bind(new_key)
         .bind(&source_description)
         .bind(Option::<String>::None)
+        .bind(
+            source_project_row
+                .try_get::<Option<String>, _>("default_run_provider")
+                .ok()
+                .flatten(),
+        )
+        .bind(
+            source_project_row
+                .try_get::<Option<String>, _>("default_run_model")
+                .ok()
+                .flatten(),
+        )
         .bind(now)
         .bind(now)
         .execute(&mut *tx)

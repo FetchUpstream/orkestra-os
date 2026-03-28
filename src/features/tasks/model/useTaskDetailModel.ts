@@ -127,6 +127,7 @@ export const useTaskDetailModel = () => {
     createSignal("");
   const [isLoadingRunSelectionOptions, setIsLoadingRunSelectionOptions] =
     createSignal(false);
+  const [projectRunDefaultsError, setProjectRunDefaultsError] = createSignal("");
   const [selectedRunAgentId, setSelectedRunAgentId] = createSignal("");
   const [selectedRunProviderId, setSelectedRunProviderIdSignal] =
     createSignal("");
@@ -368,6 +369,25 @@ export const useTaskDetailModel = () => {
     }
   });
 
+  createEffect(() => {
+    const modelId = selectedRunModelId().trim();
+    if (!modelId) {
+      setProjectRunDefaultsError("");
+      return;
+    }
+
+    const selectedModel = runModelOptions().find((option) => option.id === modelId);
+    if (selectedModel) {
+      setProjectRunDefaultsError("");
+      return;
+    }
+
+    setSelectedRunModelIdSignal("");
+    setProjectRunDefaultsError(
+      "Project default model is no longer available. Please reselect before creating a run.",
+    );
+  });
+
   const setSelectedRunProviderId = (providerId: string) => {
     setSelectedRunProviderIdSignal(providerId);
   };
@@ -577,12 +597,16 @@ export const useTaskDetailModel = () => {
       setDefaultProjectRepositoryId(
         defaultRepository?.id || repositories[0]?.id || "",
       );
+      setSelectedRunProviderIdSignal(project.defaultRunProvider?.trim() || "");
+      setSelectedRunModelIdSignal(project.defaultRunModel?.trim() || "");
     } catch {
       setProjectName(null);
       setProjectKey(null);
       setProjectRepositories([]);
       setMoveRepositoryId("");
       setDefaultProjectRepositoryId("");
+      setSelectedRunProviderIdSignal("");
+      setSelectedRunModelIdSignal("");
     }
   };
 
@@ -996,6 +1020,7 @@ export const useTaskDetailModel = () => {
     runModelOptions,
     visibleRunModelOptions,
     runSelectionOptionsError,
+    projectRunDefaultsError,
     isLoadingRunSelectionOptions,
     hasRunSelectionOptions,
     selectedRunAgentId,

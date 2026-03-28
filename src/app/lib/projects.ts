@@ -14,6 +14,8 @@ export type Project = {
   name: string;
   key: string;
   description?: string | null;
+  defaultRunProvider?: string | null;
+  defaultRunModel?: string | null;
   repositories: ProjectRepository[];
 };
 
@@ -21,6 +23,8 @@ export type CreateProjectInput = {
   name: string;
   key: string;
   description?: string;
+  defaultRunProvider: string;
+  defaultRunModel: string;
   repositories: Array<{
     id?: string;
     path: string;
@@ -45,6 +49,8 @@ type ProjectDetailsResponse = {
     name: string;
     key: string;
     description?: string | null;
+    default_run_provider?: string | null;
+    default_run_model?: string | null;
   };
   repositories: Array<{
     id: string;
@@ -80,6 +86,8 @@ export const createProject = async (
     name: response.project.name,
     key: response.project.key,
     description: response.project.description,
+    defaultRunProvider: response.project.default_run_provider,
+    defaultRunModel: response.project.default_run_model,
     repositories: response.repositories.map((repository) => ({
       id: repository.id,
       path: repository.repo_path,
@@ -117,6 +125,8 @@ export const updateProject = async (
     name: response.project.name,
     key: response.project.key,
     description: response.project.description,
+    defaultRunProvider: response.project.default_run_provider,
+    defaultRunModel: response.project.default_run_model,
     repositories: response.repositories.map((repository) => ({
       id: repository.id,
       path: repository.repo_path,
@@ -136,6 +146,8 @@ type ProjectResponse =
         name: string;
         key: string;
         description?: string | null;
+        default_run_provider?: string | null;
+        default_run_model?: string | null;
       };
       repositories: Array<{
         id?: string;
@@ -155,6 +167,8 @@ const normalizeProject = (response: ProjectResponse): Project => {
       name: response.project.name,
       key: response.project.key,
       description: response.project.description,
+      defaultRunProvider: response.project.default_run_provider,
+      defaultRunModel: response.project.default_run_model,
       repositories: response.repositories.map((repository) => ({
         id: repository.id,
         path: repository.path ?? repository.repo_path ?? "",
@@ -187,6 +201,8 @@ export const cloneProject = async (
     name: response.project.name,
     key: response.project.key,
     description: response.project.description,
+    defaultRunProvider: response.project.default_run_provider,
+    defaultRunModel: response.project.default_run_model,
     repositories: response.repositories.map((repository) => ({
       id: repository.id,
       path: repository.repo_path,

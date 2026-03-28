@@ -120,6 +120,7 @@ const TaskDetailScreen: Component = () => {
     runProviderOptions,
     visibleRunModelOptions,
     runSelectionOptionsError,
+    projectRunDefaultsError,
     isLoadingRunSelectionOptions,
     hasRunSelectionOptions,
     selectedRunAgentId,
@@ -1247,7 +1248,9 @@ const TaskDetailScreen: Component = () => {
         isSubmitting={isCreatingRun}
         hasRunSelectionOptions={hasRunSelectionOptions}
         isLoadingRunSelectionOptions={isLoadingRunSelectionOptions}
-        runSelectionOptionsError={runSelectionOptionsError}
+        runSelectionOptionsError={() =>
+          projectRunDefaultsError() || runSelectionOptionsError()
+        }
         runAgentOptions={runAgentOptions}
         runProviderOptions={runProviderOptions}
         visibleRunModelOptions={visibleRunModelOptions}

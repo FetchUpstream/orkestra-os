@@ -35,6 +35,8 @@ describe("projects contract", () => {
     const input: CreateProjectInput = {
       name: "Orkestra",
       key: "ORK",
+      defaultRunProvider: "provider-a",
+      defaultRunModel: "model-a",
       repositories: [{ path: "/repo/main", is_default: true }],
     };
 
@@ -45,6 +47,8 @@ describe("projects contract", () => {
         name: "Orkestra",
         key: "ORK",
         description: undefined,
+        defaultRunProvider: "provider-a",
+        defaultRunModel: "model-a",
         repositories: [
           {
             repo_path: "/repo/main",

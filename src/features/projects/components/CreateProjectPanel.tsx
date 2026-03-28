@@ -1,4 +1,5 @@
-import { Index, Show, type Component, type JSX } from "solid-js";
+import { For, Index, Show, type Component, type JSX } from "solid-js";
+import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
 import type { RepoInput } from "../utils/projectForm";
 
 type Props = {
@@ -9,13 +10,23 @@ type Props = {
   repositories: () => RepoInput[];
   defaultRepoIndex: () => number;
   error: () => string;
+  runDefaultsError: () => string;
   isSubmitting: () => boolean;
+  isLoadingRunDefaults: () => boolean;
+  hasRunSelectionOptions: () => boolean;
   projectKeyError: () => string;
+  defaultRunProvider: () => string;
+  defaultRunModel: () => string;
+  runProviderOptions: () => RunSelectionOption[];
+  visibleRunModelOptions: () => RunModelOption[];
+  runDefaultsValidationError: () => string;
   setDescription: (value: string) => void;
   setTouched: (
     next: (prev: Record<string, boolean>) => Record<string, boolean>,
   ) => void;
   setDefaultRepoIndex: (index: number) => void;
+  setDefaultRunProvider: (value: string) => void;
+  setDefaultRunModel: (value: string) => void;
   updateName: (value: string) => void;
   updateKey: (value: string) => void;
   addRepository: () => void;
@@ -109,6 +120,83 @@ const CreateProjectPanel: Component<Props> = (props) => (
             rows={3}
           />
         </label>
+      </div>
+      <div class="form-section">
+        <div>
+          <h3 class="form-section-title">Default Run Configuration</h3>
+          <p class="form-section-subtitle">
+            These provider/model defaults are used for future runs in this
+            project.
+          </p>
+        </div>
+        <Show when={props.hasRunSelectionOptions()}>
+          <div class="task-runs-defaults-grid">
+            <label class="projects-field task-runs-default-field">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                <span class="field-label-text">Provider</span>
+              </span>
+              <select
+                class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
+                value={props.defaultRunProvider()}
+                onChange={(event) =>
+                  props.setDefaultRunProvider(event.currentTarget.value)
+                }
+                disabled={props.isSubmitting()}
+                aria-label="Project default run provider"
+                required
+              >
+                <option value="">Select provider</option>
+                <For each={props.runProviderOptions()}>
+                  {(option) => <option value={option.id}>{option.label}</option>}
+                </For>
+              </select>
+            </label>
+            <label class="projects-field task-runs-default-field">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                <span class="field-label-text">Model</span>
+              </span>
+              <select
+                class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
+                value={props.defaultRunModel()}
+                onChange={(event) =>
+                  props.setDefaultRunModel(event.currentTarget.value)
+                }
+                disabled={props.isSubmitting()}
+                aria-label="Project default run model"
+                required
+              >
+                <option value="">Select model</option>
+                <For each={props.visibleRunModelOptions()}>
+                  {(option) => <option value={option.id}>{option.label}</option>}
+                </For>
+              </select>
+            </label>
+          </div>
+        </Show>
+        <Show when={!props.hasRunSelectionOptions() && props.isLoadingRunDefaults()}>
+          <p class="project-placeholder-text text-sm">Loading run defaults...</p>
+        </Show>
+        <Show
+          when={
+            !props.hasRunSelectionOptions() &&
+            !props.isLoadingRunDefaults() &&
+            !props.runDefaultsError()
+          }
+        >
+          <p class="project-placeholder-text text-sm">
+            Run defaults are unavailable right now.
+          </p>
+        </Show>
+        <Show when={props.runDefaultsError()}>
+          {(message) => (
+            <p class="projects-error border-error/35 bg-error/10 m-0 text-sm">
+              {message()}
+            </p>
+          )}
+        </Show>
+        <Show when={props.runDefaultsValidationError()}>
+          {(message) => <p class="field-error">{message()}</p>}
+        </Show>
       </div>
       <div class="form-section">
         <div class="projects-repos-block border-base-content/15 bg-base-100 rounded-none border">
