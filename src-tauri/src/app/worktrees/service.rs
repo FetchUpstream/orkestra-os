@@ -12,7 +12,7 @@ use git2::{
 };
 use std::io::ErrorKind;
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 const CREATE_WORKTREE_MAX_RETRIES: usize = 8;
 
@@ -373,10 +373,56 @@ fn rollback_failed_worktree_add_attempt(
     branch_name: &str,
     branch_created_in_attempt: bool,
 ) -> Result<(), Error> {
+    let metadata_path = repo.path().join("worktrees").join(worktree_id);
+    let metadata_found_before = metadata_path.exists();
+    let worktree_dir_existed_before = worktree_path.exists();
+
+    debug!(
+        subsystem = "worktrees",
+        operation = "create_rollback",
+        worktree_id,
+        branch_name,
+        candidate_path = %worktree_path.display(),
+        metadata_path = %metadata_path.display(),
+        metadata_found_before,
+        worktree_dir_existed_before,
+        branch_created_in_attempt,
+        "Starting rollback after worktree add conflict"
+    );
+
     if let Ok(worktree) = repo.find_worktree(worktree_id) {
+        debug!(
+            subsystem = "worktrees",
+            operation = "create_rollback",
+            worktree_id,
+            branch_name,
+            "Found linked worktree metadata via repository handle"
+        );
         let mut prune_options = WorktreePruneOptions::new();
         prune_options.working_tree(true).valid(true).locked(true);
-        worktree.prune(Some(&mut prune_options))?;
+        worktree.prune(Some(&mut prune_options)).map_err(|err| {
+            Error::from_str(&format!(
+                "failed to prune linked worktree metadata for '{}' at '{}': {}",
+                worktree_id,
+                worktree_path.display(),
+                err
+            ))
+        })?;
+        debug!(
+            subsystem = "worktrees",
+            operation = "create_rollback",
+            worktree_id,
+            branch_name,
+            "Pruned linked worktree through repository handle"
+        );
+    } else {
+        debug!(
+            subsystem = "worktrees",
+            operation = "create_rollback",
+            worktree_id,
+            branch_name,
+            "No linked worktree found through repository handle"
+        );
     }
 
     if worktree_path.exists() {
@@ -387,10 +433,97 @@ fn rollback_failed_worktree_add_attempt(
                 err
             ))
         })?;
+        debug!(
+            subsystem = "worktrees",
+            operation = "create_rollback",
+            worktree_id,
+            branch_name,
+            candidate_path = %worktree_path.display(),
+            "Removed worktree directory"
+        );
+    } else {
+        debug!(
+            subsystem = "worktrees",
+            operation = "create_rollback",
+            worktree_id,
+            branch_name,
+            candidate_path = %worktree_path.display(),
+            "Worktree directory did not exist during rollback"
+        );
+    }
+
+    if metadata_path.exists() {
+        std::fs::remove_dir_all(&metadata_path).map_err(|err| {
+            Error::from_str(&format!(
+                "failed to remove worktree metadata directory '{}': {}",
+                metadata_path.display(),
+                err
+            ))
+        })?;
+        debug!(
+            subsystem = "worktrees",
+            operation = "create_rollback",
+            worktree_id,
+            branch_name,
+            metadata_path = %metadata_path.display(),
+            "Removed worktree metadata directory"
+        );
+    } else {
+        debug!(
+            subsystem = "worktrees",
+            operation = "create_rollback",
+            worktree_id,
+            branch_name,
+            metadata_path = %metadata_path.display(),
+            "Worktree metadata directory did not exist during rollback"
+        );
+    }
+
+    if let Ok(worktree) = repo.find_worktree(worktree_id) {
+        let mut prune_options = WorktreePruneOptions::new();
+        prune_options.working_tree(true).valid(true).locked(true);
+        worktree.prune(Some(&mut prune_options)).map_err(|err| {
+            Error::from_str(&format!(
+                "failed to prune linked worktree metadata after filesystem cleanup for '{}' at '{}': {}",
+                worktree_id,
+                worktree_path.display(),
+                err
+            ))
+        })?;
+        debug!(
+            subsystem = "worktrees",
+            operation = "create_rollback",
+            worktree_id,
+            branch_name,
+            "Pruned linked worktree metadata after filesystem cleanup"
+        );
     }
 
     if branch_created_in_attempt {
-        cleanup_newly_created_branch(repo, branch_name)?;
+        cleanup_newly_created_branch(repo, branch_name).map_err(|err| {
+            Error::from_str(&format!(
+                "failed to remove rollback branch '{}' for worktree '{}' at '{}': {}",
+                branch_name,
+                worktree_id,
+                worktree_path.display(),
+                err
+            ))
+        })?;
+        info!(
+            subsystem = "worktrees",
+            operation = "create_rollback",
+            worktree_id,
+            branch_name,
+            "Removed rollback branch after linked-worktree cleanup"
+        );
+    } else {
+        debug!(
+            subsystem = "worktrees",
+            operation = "create_rollback",
+            worktree_id,
+            branch_name,
+            "Skipped branch cleanup because branch pre-existed"
+        );
     }
 
     if let Some(parent) = worktree_path.parent() {
@@ -408,6 +541,16 @@ fn rollback_failed_worktree_add_attempt(
             }
         }
     }
+
+    debug!(
+        subsystem = "worktrees",
+        operation = "create_rollback",
+        worktree_id,
+        branch_name,
+        metadata_found_after = metadata_path.exists(),
+        worktree_dir_exists_after = worktree_path.exists(),
+        "Completed rollback after worktree add conflict"
+    );
 
     Ok(())
 }
@@ -512,5 +655,61 @@ mod tests {
             "worktree already exists",
         );
         assert!(super::is_retryable_worktree_add_conflict(&worktree_exists));
+    }
+
+    #[test]
+    fn rollback_cleans_linked_worktree_before_deleting_branch() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "orkestra-worktrees-rollback-tests-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp_root).unwrap();
+
+        let repo_root = temp_root.join("repo");
+        let repo = Repository::init(&repo_root).unwrap();
+
+        fs::write(repo_root.join("README.md"), "seed\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("README.md")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let signature = Signature::now("orkestra", "orkestra@example.com").unwrap();
+        let commit_id = repo
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                "initial commit",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        let commit = repo.find_commit(commit_id).unwrap();
+
+        let worktree_id = "ALP/rollback-test";
+        let worktree_path = temp_root.join("linked").join(worktree_id);
+        fs::create_dir_all(worktree_path.parent().unwrap()).unwrap();
+        let branch = repo.branch(worktree_id, &commit, false).unwrap();
+
+        let mut options = git2::WorktreeAddOptions::new();
+        options.reference(Some(branch.get()));
+        repo.worktree(worktree_id, &worktree_path, Some(&mut options))
+            .unwrap();
+
+        super::rollback_failed_worktree_add_attempt(
+            &repo,
+            worktree_id,
+            &worktree_path,
+            worktree_id,
+            true,
+        )
+        .unwrap();
+
+        assert!(repo.find_worktree(worktree_id).is_err());
+        assert!(repo.find_branch(worktree_id, BranchType::Local).is_err());
+        assert!(!worktree_path.exists());
+
+        let _ = fs::remove_dir_all(&temp_root);
     }
 }
