@@ -70,6 +70,12 @@ pub async fn list_task_runs(
 }
 
 #[tauri::command]
+pub async fn list_active_runs(state: tauri::State<'_, AppState>) -> Result<Vec<RunDto>, String> {
+    let service = context::runs_service(&state);
+    map_result(service.list_active_runs().await)
+}
+
+#[tauri::command]
 pub async fn get_run(state: tauri::State<'_, AppState>, run_id: String) -> Result<RunDto, String> {
     let service = context::runs_service(&state);
     map_result(service.get_run(&run_id).await)

@@ -207,6 +207,11 @@ impl RunsService {
         Ok(runs.into_iter().map(Self::to_dto).collect())
     }
 
+    pub async fn list_active_runs(&self) -> Result<Vec<RunDto>, AppError> {
+        let runs = self.repository.list_active_runs().await?;
+        Ok(runs.into_iter().map(Self::to_dto).collect())
+    }
+
     pub async fn get_run(&self, run_id: &str) -> Result<RunDto, AppError> {
         let run_id = run_id.trim();
         if run_id.is_empty() {
@@ -1005,6 +1010,112 @@ mod tests {
             Err(AppError::Validation(message)) => assert_eq!(message, "task_id is required"),
             _ => panic!("expected validation error"),
         }
+    }
+
+    #[tokio::test]
+    async fn list_active_runs_returns_only_queued_preparing_running() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-completed")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("completed")
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-queued")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("queued")
+        .bind("user")
+        .bind("2024-01-02T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-preparing")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("preparing")
+        .bind("user")
+        .bind("2024-01-03T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-running")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("running")
+        .bind("user")
+        .bind("2024-01-04T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-failed")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("failed")
+        .bind("user")
+        .bind("2024-01-05T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-cancelled")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("cancelled")
+        .bind("user")
+        .bind("2024-01-06T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let runs = service.list_active_runs().await.unwrap();
+        let ids: Vec<&str> = runs.iter().map(|run| run.id.as_str()).collect();
+
+        assert_eq!(ids, vec!["run-running", "run-preparing", "run-queued"]);
+        assert!(runs
+            .iter()
+            .all(|run| matches!(run.status.as_str(), "queued" | "preparing" | "running")));
     }
 
     #[tokio::test]

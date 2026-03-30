@@ -21,6 +21,11 @@ pub fn run() {
             })?;
 
             app.manage(app_state);
+
+            if let Some(main_window) = app.get_webview_window("main") {
+                let _ = main_window.maximize();
+            }
+
             app.emit("app://runtime-status", "ready")?;
             Ok(())
         })
@@ -38,6 +43,7 @@ pub fn run() {
             app::commands::tasks::create_task,
             app::commands::runs::create_run,
             app::commands::runs::list_task_runs,
+            app::commands::runs::list_active_runs,
             app::commands::runs::get_run,
             app::commands::runs::delete_run,
             app::commands::runs::list_run_diff_files,

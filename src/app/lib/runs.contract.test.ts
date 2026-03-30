@@ -5,6 +5,7 @@ import {
   getRun,
   getRunSelectionOptions,
   getRunGitMergeStatus,
+  listActiveRuns,
   listTaskRuns,
   mergeRunWorktreeIntoSource,
   rebaseRunWorktreeOntoSource,
@@ -249,6 +250,43 @@ describe("runs contract", () => {
     expect(run.errorMessage).toBe("oops");
   });
 
+  it("invokes list_active_runs and normalizes response", async () => {
+    invokeMock.mockResolvedValue([
+      {
+        id: "run-active",
+        task_id: "task-1",
+        project_id: "project-1",
+        status: "running" satisfies RunStatus,
+        triggered_by: "user",
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const runs = await listActiveRuns();
+
+    expect(invokeMock).toHaveBeenCalledWith("list_active_runs");
+    expect(runs).toEqual([
+      {
+        id: "run-active",
+        taskId: "task-1",
+        projectId: "project-1",
+        targetRepoId: undefined,
+        status: "running",
+        triggeredBy: "user",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        startedAt: undefined,
+        finishedAt: undefined,
+        summary: undefined,
+        errorMessage: undefined,
+        worktreeId: undefined,
+        agentId: undefined,
+        providerId: undefined,
+        modelId: undefined,
+        sourceBranch: undefined,
+      },
+    ] satisfies Run[]);
+  });
+
   it("invokes bootstrap_run_opencode with runId argument", async () => {
     invokeMock.mockResolvedValue({
       state: "running",
@@ -290,6 +328,7 @@ describe("runs contract", () => {
 
     expect(result).toEqual({
       state: "starting",
+      chatMode: "interactive",
       reason: "warming",
       bufferedEvents: [
         {
@@ -327,6 +366,7 @@ describe("runs contract", () => {
 
     expect(result).toEqual({
       state: "idle",
+      chatMode: "interactive",
       reason: undefined,
       bufferedEvents: [
         {

@@ -1249,6 +1249,11 @@ export const listTaskRuns = async (taskId: string): Promise<Run[]> => {
   return response.map(toRun);
 };
 
+export const listActiveRuns = async (): Promise<Run[]> => {
+  const response = await invoke<RunResponse[]>("list_active_runs");
+  return response.map(toRun);
+};
+
 export const getRun = async (runId: string): Promise<Run> => {
   const response = await invoke<RunResponse>("get_run", { runId });
   return toRun(response);

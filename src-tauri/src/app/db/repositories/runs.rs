@@ -261,6 +261,47 @@ impl RunsRepository {
         Ok(row.map(Self::map_row_to_run))
     }
 
+    pub async fn list_active_runs(&self) -> Result<Vec<Run>, AppError> {
+        let rows = sqlx::query(
+            "SELECT
+                id,
+                task_id,
+                project_id,
+                target_repo_id,
+                status,
+                triggered_by,
+                created_at,
+                started_at,
+                finished_at,
+                summary,
+                error_message,
+                worktree_id,
+                agent_id,
+                provider_id,
+                model_id,
+                source_branch,
+                opencode_session_id,
+                initial_prompt_sent_at,
+                initial_prompt_client_request_id,
+                setup_state,
+                setup_started_at,
+                setup_finished_at,
+                setup_error_message,
+                cleanup_state,
+                cleanup_started_at,
+                cleanup_finished_at,
+                cleanup_error_message
+             FROM runs
+             WHERE status IN ('queued', 'preparing', 'running')
+             ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .runs_db("listing active runs")?;
+
+        Ok(rows.into_iter().map(Self::map_row_to_run).collect())
+    }
+
     pub async fn delete_run(&self, run_id: &str) -> Result<bool, AppError> {
         let result = sqlx::query("DELETE FROM runs WHERE id = ?")
             .bind(run_id)
@@ -645,5 +686,104 @@ impl RunsRepository {
             cleanup_finished_at: row.get("cleanup_finished_at"),
             cleanup_error_message: row.get("cleanup_error_message"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::db::migrations::run_migrations;
+
+    async fn setup_repository() -> RunsRepository {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        RunsRepository::new(pool)
+    }
+
+    async fn seed_project_task_and_repository(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("project-1")
+        .bind("Project")
+        .bind("PRJ")
+        .bind(Option::<String>::None)
+        .bind("repo-1")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("repo-1")
+        .bind("project-1")
+        .bind("Main")
+        .bind("/repo/main")
+        .bind(1)
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind(1)
+        .bind("Task")
+        .bind(Option::<String>::None)
+        .bind("todo")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_run(pool: &SqlitePool, run_id: &str, status: &str, created_at: &str) {
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(run_id)
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind(status)
+        .bind("user")
+        .bind(created_at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_active_runs_returns_only_active_statuses_newest_first() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        seed_run(&pool, "run-completed", "completed", "2024-01-01T00:00:00Z").await;
+        seed_run(&pool, "run-queued", "queued", "2024-01-02T00:00:00Z").await;
+        seed_run(&pool, "run-failed", "failed", "2024-01-03T00:00:00Z").await;
+        seed_run(&pool, "run-preparing", "preparing", "2024-01-04T00:00:00Z").await;
+        seed_run(&pool, "run-running", "running", "2024-01-05T00:00:00Z").await;
+        seed_run(&pool, "run-cancelled", "cancelled", "2024-01-06T00:00:00Z").await;
+
+        let active_runs = repository.list_active_runs().await.unwrap();
+
+        let ids: Vec<&str> = active_runs.iter().map(|run| run.id.as_str()).collect();
+        assert_eq!(ids, vec!["run-running", "run-preparing", "run-queued"]);
+        assert!(active_runs
+            .iter()
+            .all(|run| matches!(run.status.as_str(), "queued" | "preparing" | "running")));
     }
 }
