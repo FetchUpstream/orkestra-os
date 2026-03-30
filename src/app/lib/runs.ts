@@ -1206,40 +1206,43 @@ export const createRun = async (
   return toRun(response);
 };
 
-export const getRunSelectionOptions =
-  async (): Promise<RunSelectionOptions> => {
-    const [agentsResponse, providersResponse] = await Promise.all([
-      invoke<unknown>("list_run_opencode_agents"),
-      invoke<unknown>("list_run_opencode_providers"),
-    ]);
+export const getRunSelectionOptions = async (
+  projectId: string,
+): Promise<RunSelectionOptions> => {
+  const selectionCatalog = await invoke<unknown>(
+    "get_project_opencode_selection_catalog",
+    {
+      projectId,
+    },
+  );
 
-    const agentsPayload = toSelectionList(agentsResponse, "agents");
-    const providersPayload = toSelectionList(providersResponse, "providers");
+  const agentsPayload = toSelectionList(selectionCatalog, "agents");
+  const providersPayload = toSelectionList(selectionCatalog, "providers");
 
-    const providers = toSelectionOptions(providersPayload, "Provider");
-    const models = toModelSelectionOptions(
-      Array.isArray(providersPayload)
-        ? providersPayload.flatMap((provider) => {
-            if (!provider || typeof provider !== "object") return [];
-            const providerRecord = provider as {
-              id?: string;
-              models?: unknown[];
-            };
-            if (!Array.isArray(providerRecord.models)) return [];
-            return providerRecord.models.map((model) => ({
-              ...(model && typeof model === "object" ? model : {}),
-              providerId: providerRecord.id,
-            }));
-          })
-        : [],
-    );
+  const providers = toSelectionOptions(providersPayload, "Provider");
+  const models = toModelSelectionOptions(
+    Array.isArray(providersPayload)
+      ? providersPayload.flatMap((provider) => {
+          if (!provider || typeof provider !== "object") return [];
+          const providerRecord = provider as {
+            id?: string;
+            models?: unknown[];
+          };
+          if (!Array.isArray(providerRecord.models)) return [];
+          return providerRecord.models.map((model) => ({
+            ...(model && typeof model === "object" ? model : {}),
+            providerId: providerRecord.id,
+          }));
+        })
+      : [],
+  );
 
-    return toRunSelectionOptions({
-      agents: agentsPayload,
-      providers,
-      models,
-    });
-  };
+  return toRunSelectionOptions({
+    agents: agentsPayload,
+    providers,
+    models,
+  });
+};
 
 export const listTaskRuns = async (taskId: string): Promise<Run[]> => {
   const response = await invoke<RunResponse[]>("list_task_runs", { taskId });

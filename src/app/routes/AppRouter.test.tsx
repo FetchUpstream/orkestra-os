@@ -90,10 +90,14 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 vi.mock("@tauri-apps/api/app", () => ({
-  getName: vi.fn(async () => "orkestraos"),
-  getVersion: vi.fn(async () => "0.0.0-test"),
-  getTauriVersion: vi.fn(async () => "2.0.0"),
-  getIdentifier: vi.fn(async () => "com.fetchupstream.orkestraos"),
+  getName: vi.fn().mockResolvedValue("OrkestraOS"),
+  getVersion: vi.fn().mockResolvedValue("0.0.0-test"),
+  getTauriVersion: vi.fn().mockResolvedValue("2.0.0-test"),
+  getIdentifier: vi.fn().mockResolvedValue("com.test.orkestraos"),
+}));
+
+vi.mock("../../components/layout/AlphaNoticeModal", () => ({
+  default: () => null,
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -127,6 +131,25 @@ vi.mock("../../components/ui/TaskMarkdownEditor", () => ({
   ),
 }));
 
+vi.mock("../../components/ui/TaskImplementationGuideCrepeEditor", () => ({
+  default: (props: {
+    value: string;
+    onChange: (next: string) => void;
+    ariaLabel?: string;
+    onBlur?: () => void;
+    disabled?: boolean;
+  }) => (
+    <textarea
+      role="textbox"
+      aria-label={props.ariaLabel || "Task editor"}
+      value={props.value}
+      disabled={props.disabled}
+      onInput={(event) => props.onChange(event.currentTarget.value)}
+      onBlur={() => props.onBlur?.()}
+    />
+  ),
+}));
+
 vi.mock("../../components/CodeMirrorDiffEditor", () => ({
   default: () => <div data-testid="codemirror-diff-editor" />,
 }));
@@ -138,6 +161,14 @@ vi.mock("/src/components/CodeMirrorDiffEditor", () => ({
 const renderAt = (path: string) => {
   window.history.pushState({}, "", path);
   return render(() => <AppRouter />);
+};
+
+const renderCreateTaskPage = async (path = "/projects/p-1/tasks/new") => {
+  renderAt(path);
+  await waitFor(() => {
+    expect(screen.getByText("Create task")).toBeTruthy();
+    expect(screen.getByLabelText("Task title")).toBeTruthy();
+  });
 };
 
 let activeRunsResponse: unknown[] = [];
@@ -594,6 +625,131 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/board");
+    });
+  });
+
+  it("closes pristine create page immediately without warning", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    await renderCreateTaskPage();
+
+    expect(
+      (
+        screen.getByRole("combobox", {
+          name: /target repository/i,
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe("r-1");
+
+    await fireEvent.click(
+      screen.getByRole("link", { name: "Back to project" }),
+    );
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/projects/p-1");
+    });
+
+    expect(
+      screen.queryByRole("dialog", { name: "Discard changes?" }),
+    ).toBeNull();
+    expect(confirmSpy).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it.each([
+    {
+      name: "title",
+      edit: async () => {
+        await fireEvent.input(screen.getByLabelText("Task title"), {
+          target: { value: "Draft onboarding" },
+        });
+      },
+    },
+    {
+      name: "description",
+      edit: async () => {
+        await fireEvent.input(screen.getByLabelText("Task description"), {
+          target: { value: "Describe the rollout" },
+        });
+      },
+    },
+    {
+      name: "implementation guide",
+      edit: async () => {
+        await fireEvent.input(
+          screen.getByLabelText("Task implementation guide"),
+          {
+            target: { value: "Ship behind a flag" },
+          },
+        );
+      },
+    },
+    {
+      name: "status",
+      edit: async () => {
+        await fireEvent.change(screen.getByLabelText("Task status"), {
+          target: { value: "doing" },
+        });
+      },
+    },
+  ])("shows discard modal after editing $name", async ({ edit }) => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    await renderCreateTaskPage();
+    await edit();
+    await fireEvent.click(
+      screen.getByRole("link", { name: "Back to project" }),
+    );
+
+    expect(
+      screen.getByRole("dialog", { name: "Discard changes?" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Discard changes?")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "You have unsaved changes on this new task. Leave without saving?",
+      ),
+    ).toBeTruthy();
+    expect(window.location.pathname).toBe("/projects/p-1/tasks/new");
+    expect(confirmSpy).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it("keeps edits intact when discard is cancelled", async () => {
+    await renderCreateTaskPage();
+
+    await fireEvent.input(screen.getByLabelText("Task title"), {
+      target: { value: "Keep this draft" },
+    });
+    await fireEvent.click(
+      screen.getByRole("link", { name: "Back to project" }),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+
+    expect(
+      screen.queryByRole("dialog", { name: "Discard changes?" }),
+    ).toBeNull();
+    expect(
+      (screen.getByLabelText("Task title") as HTMLInputElement).value,
+    ).toBe("Keep this draft");
+    expect(window.location.pathname).toBe("/projects/p-1/tasks/new");
+  });
+
+  it("navigates away when discard is confirmed", async () => {
+    await renderCreateTaskPage();
+
+    await fireEvent.input(screen.getByLabelText("Task title"), {
+      target: { value: "Discard this draft" },
+    });
+    await fireEvent.click(
+      screen.getByRole("link", { name: "Back to project" }),
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Discard changes" }),
+    );
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/projects/p-1");
     });
   });
 

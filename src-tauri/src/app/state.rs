@@ -44,8 +44,11 @@ impl AppState {
         let runs_service = RunsService::new(runs_repository, worktrees_service.clone());
         let runs_diff_service = RunsDiffService::new(runs_service.clone(), app_data_dir.clone());
         let runs_merge_service = RunsMergeService::new(runs_service.clone(), app_data_dir.clone());
-        let runs_opencode_service =
-            RunsOpenCodeService::new(runs_service.clone(), app_data_dir.clone());
+        let runs_opencode_service = RunsOpenCodeService::new(
+            runs_service.clone(),
+            projects_service.clone(),
+            app_data_dir.clone(),
+        );
         let terminal_service = TerminalService::new(runs_service.clone(), app_data_dir);
         let tasks_service = TasksService::new(tasks_repository, task_search_service);
         Self {

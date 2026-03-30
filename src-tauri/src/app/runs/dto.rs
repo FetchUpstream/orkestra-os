@@ -68,6 +68,13 @@ pub struct RunAgentsResponseDto {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunSelectionCatalogResponseDto {
+    pub agents: Vec<RunAgentDto>,
+    pub providers: Vec<RunProviderDto>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunDiffFileDto {
     pub path: String,
     pub additions: usize,

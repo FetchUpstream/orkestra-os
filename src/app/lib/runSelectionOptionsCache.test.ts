@@ -27,12 +27,13 @@ describe("runSelectionOptionsCache", () => {
       models: [{ id: "model-1", label: "Model", providerId: "provider-1" }],
     });
 
-    const first = await getRunSelectionOptionsWithCache();
-    const second = await getRunSelectionOptionsWithCache();
+    const first = await getRunSelectionOptionsWithCache("project-1");
+    const second = await getRunSelectionOptionsWithCache("project-1");
 
     expect(first.providers).toEqual([{ id: "provider-1", label: "Provider" }]);
     expect(second.providers).toEqual([{ id: "provider-1", label: "Provider" }]);
     expect(getRunSelectionOptionsMock).toHaveBeenCalledTimes(1);
+    expect(getRunSelectionOptionsMock).toHaveBeenCalledWith("project-1");
   });
 
   it("supports startup warmup and cache read", async () => {
@@ -42,11 +43,11 @@ describe("runSelectionOptionsCache", () => {
       models: [],
     });
 
-    primeRunSelectionOptionsCache();
+    primeRunSelectionOptionsCache("project-1");
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(readRunSelectionOptionsCache()).toEqual({
+    expect(readRunSelectionOptionsCache("project-1")).toEqual({
       agents: [],
       providers: [{ id: "provider-1", label: "Provider" }],
       models: [],

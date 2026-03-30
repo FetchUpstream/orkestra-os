@@ -185,7 +185,16 @@ export const useProjectsPageModel = () => {
   };
 
   const loadRunSelectionOptions = async () => {
-    const cachedOptions = readRunSelectionOptionsCache();
+    const projectId = editingProjectId()?.trim() || "";
+    if (!projectId) {
+      setRunAgentOptions([]);
+      setRunProviderOptions([]);
+      setRunModelOptions([]);
+      setRunDefaultsError("");
+      return;
+    }
+
+    const cachedOptions = readRunSelectionOptionsCache(projectId);
     if (cachedOptions) {
       setRunProviderOptions(cachedOptions.providers);
       setRunAgentOptions(cachedOptions.agents);
@@ -202,7 +211,7 @@ export const useProjectsPageModel = () => {
     setIsLoadingRunDefaults(true);
     setRunDefaultsError("");
     try {
-      const options = await getRunSelectionOptionsWithCache();
+      const options = await getRunSelectionOptionsWithCache(projectId);
       setRunProviderOptions(options.providers);
       setRunAgentOptions(options.agents);
       setRunModelOptions(options.models);
@@ -393,6 +402,7 @@ export const useProjectsPageModel = () => {
     setIsLoadingProjectForEdit(true);
     setEditingProjectId(projectId);
     try {
+      await loadRunSelectionOptions();
       const projectDetails = await getProject(projectId);
       const nextRepositories = projectDetails.repositories.map(
         (repository) => ({

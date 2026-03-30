@@ -77,11 +77,7 @@ describe("runs contract", () => {
 
   it("normalizes run selection options payload", async () => {
     invokeMock.mockResolvedValueOnce({
-      data: {
-        agents: [{ agentId: "agent-1", display_name: "Planner" }],
-      },
-    });
-    invokeMock.mockResolvedValueOnce({
+      agents: [{ agentId: "agent-1", display_name: "Planner" }],
       providers: [
         {
           id: "provider-1",
@@ -91,7 +87,12 @@ describe("runs contract", () => {
       ],
     });
 
-    const options = await getRunSelectionOptions();
+    const options = await getRunSelectionOptions("project-1");
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      "get_project_opencode_selection_catalog",
+      { projectId: "project-1" },
+    );
 
     expect(options).toEqual({
       agents: [{ id: "agent-1", label: "Planner" }],
@@ -101,8 +102,8 @@ describe("runs contract", () => {
   });
 
   it("normalizes model labels across backend name shapes", async () => {
-    invokeMock.mockResolvedValueOnce({ agents: [] });
     invokeMock.mockResolvedValueOnce({
+      agents: [],
       providers: [
         {
           id: "provider-1",
@@ -117,7 +118,7 @@ describe("runs contract", () => {
       ],
     });
 
-    const options = await getRunSelectionOptions();
+    const options = await getRunSelectionOptions("project-1");
 
     expect(options.models).toEqual([
       { id: "model-a", label: "GPT-4.1", providerId: "provider-1" },
@@ -342,6 +343,7 @@ describe("runs contract", () => {
       sessionId: "session-1",
       streamConnected: true,
       readyPhase: "hydrated",
+      chatMode: "interactive",
     } satisfies BootstrapRunOpenCodeResult);
   });
 
@@ -379,6 +381,7 @@ describe("runs contract", () => {
       sessionId: undefined,
       streamConnected: false,
       readyPhase: undefined,
+      chatMode: "interactive",
     } satisfies BootstrapRunOpenCodeResult);
   });
 
