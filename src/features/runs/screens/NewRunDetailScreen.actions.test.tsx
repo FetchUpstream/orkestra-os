@@ -436,8 +436,12 @@ describe("NewRunDetailScreen git actions", () => {
       expect((textarea as HTMLTextAreaElement).value).toContain(
         "There are still uncommited changes, please attomically commit the following changes",
       );
-      expect((textarea as HTMLTextAreaElement).value).toContain("- src/foo.ts");
-      expect((textarea as HTMLTextAreaElement).value).toContain("- src/bar.ts");
+      expect((textarea as HTMLTextAreaElement).value).toContain(
+        "- `src/foo.ts`",
+      );
+      expect((textarea as HTMLTextAreaElement).value).toContain(
+        "- `src/bar.ts`",
+      );
     });
 
     fireEvent.input(textarea, { target: { value: "commit these files" } });

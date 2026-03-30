@@ -317,7 +317,7 @@ const NewRunDetailScreen: Component = () => {
     const fileList = changedFilePaths();
     const renderedFiles =
       fileList.length > 0
-        ? fileList.map((path) => `- ${path}`).join("\n")
+        ? fileList.map((path) => `- \`${path}\``).join("\n")
         : "- (Unable to determine changed files)";
     return `There are still uncommited changes, please attomically commit the following changes\n${renderedFiles}`;
   });
