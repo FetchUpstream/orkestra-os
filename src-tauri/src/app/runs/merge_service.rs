@@ -544,7 +544,7 @@ impl RunsMergeService {
 
         if has_dirty_changes {
             Ok(Some(
-                "worktree has staged or unstaged changes; clean the worktree before rebasing or merging"
+                "Conflicts Detected! We have sent the details of the conflicts to your agent to be resolved"
                     .to_string(),
             ))
         } else {
