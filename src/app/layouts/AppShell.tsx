@@ -16,6 +16,7 @@ import MainContent from "../../components/layout/MainContent";
 import SidebarNav from "../../components/layout/SidebarNav";
 import Topbar from "../../components/layout/Topbar";
 import AlphaNoticeModal from "../../components/layout/AlphaNoticeModal";
+import AboutModal from "../../components/layout/AboutModal";
 import { AppIcon } from "../../components/ui/icons";
 import { formatStatus } from "../../features/tasks/utils/taskDetail";
 
@@ -83,6 +84,7 @@ const AppShell: Component<AppShellProps> = (props) => {
     createSignal<TaskDetailTopbarConfig | null>(null);
   const [runDetailTopbarConfig, setRunDetailTopbarConfig] =
     createSignal<RunDetailTopbarConfig | null>(null);
+  const [aboutModalOpen, setAboutModalOpen] = createSignal(false);
 
   const isSidebarVisible = () => (isMobile() ? mobileSidebarOpen() : true);
 
@@ -220,6 +222,14 @@ const AppShell: Component<AppShellProps> = (props) => {
 
   const onMobileClose = () => {
     setMobileSidebarOpen(false);
+  };
+
+  const onOpenSettings = () => {
+    setAboutModalOpen(true);
+  };
+
+  const onCloseSettings = () => {
+    setAboutModalOpen(false);
   };
 
   const dispatchBoardSearchQuery = (query: string) => {
@@ -383,6 +393,7 @@ const AppShell: Component<AppShellProps> = (props) => {
             isMobile
             isVisible={isSidebarVisible}
             onNavigate={onMobileClose}
+            onOpenSettings={onOpenSettings}
           />
         </>
       ) : (
@@ -390,6 +401,7 @@ const AppShell: Component<AppShellProps> = (props) => {
           projects={projects}
           isMobile={false}
           isVisible={() => true}
+          onOpenSettings={onOpenSettings}
         />
       )}
       <div class="shell-main min-w-0 overflow-hidden">
@@ -652,6 +664,7 @@ const AppShell: Component<AppShellProps> = (props) => {
           </div>
         </div>
       </div>
+      <AboutModal isOpen={aboutModalOpen} onClose={onCloseSettings} />
       <AlphaNoticeModal />
     </div>
   );

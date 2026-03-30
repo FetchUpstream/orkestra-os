@@ -1,5 +1,6 @@
 import { A, useLocation } from "@solidjs/router";
 import { getVersion } from "@tauri-apps/api/app";
+import { AppIcon } from "../ui/icons";
 import {
   createMemo,
   createResource,
@@ -15,6 +16,7 @@ type SidebarNavProps = {
   isMobile?: boolean;
   onNavigate?: () => void;
   isVisible?: Accessor<boolean>;
+  onOpenSettings?: () => void;
 };
 
 const SidebarNav: Component<SidebarNavProps> = (props) => {
@@ -116,6 +118,22 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
                 ))}
               </nav>
             </div>
+            <div class="border-base-content/10 border-t px-3 pt-2 pb-1">
+              <button
+                type="button"
+                class="text-base-content/70 hover:border-base-content/10 hover:bg-base-100/60 hover:text-base-content flex min-h-11 w-full items-center gap-3 border border-transparent px-3 py-2 text-sm transition-colors"
+                onClick={() => {
+                  props.onOpenSettings?.();
+                  props.onNavigate?.();
+                }}
+                aria-label="Open settings"
+              >
+                <span class="border-base-content/10 bg-base-100 text-base-content/75 inline-flex h-8 min-w-8 items-center justify-center border px-2 transition-colors">
+                  <AppIcon name="project.settings" size={15} stroke={1.75} />
+                </span>
+                <span class="min-w-0 truncate">Settings</span>
+              </button>
+            </div>
           </>
         ) : (
           <div class="flex h-full flex-col items-center gap-3 p-2">
@@ -166,6 +184,15 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
             </nav>
             <div class="mt-auto flex w-full flex-col items-center gap-2 pb-1">
               <div class="border-base-content/10 h-px w-8" />
+              <button
+                type="button"
+                class="text-base-content/55 hover:border-base-content/10 hover:bg-base-100 hover:text-base-content flex h-10 w-10 items-center justify-center border border-transparent transition-colors"
+                aria-label="Settings"
+                title="Settings"
+                onClick={() => props.onOpenSettings?.()}
+              >
+                <AppIcon name="project.settings" size={16} stroke={1.75} />
+              </button>
               <div class="flex w-full flex-col items-center gap-1">
                 <div
                   class="text-base-content/40 max-w-full truncate px-1 text-center text-[10px] font-medium tracking-[0.14em] tabular-nums"
