@@ -35,6 +35,7 @@ import {
   getRunSelectionOptionsWithCache,
   readRunSelectionOptionsCache,
 } from "../../../app/lib/runSelectionOptionsCache";
+import { getProject } from "../../../app/lib/projects";
 import { getTask, type Task } from "../../../app/lib/tasks";
 import {
   createEmptyAgentStore,
@@ -150,6 +151,12 @@ export const useRunDetailModel = () => {
     [],
   );
   const [runSelectionOptionsError, setRunSelectionOptionsError] =
+    createSignal("");
+  const [projectDefaultRunAgentId, setProjectDefaultRunAgentId] =
+    createSignal("");
+  const [projectDefaultRunProviderId, setProjectDefaultRunProviderId] =
+    createSignal("");
+  const [projectDefaultRunModelId, setProjectDefaultRunModelId] =
     createSignal("");
   const [isReplyingPermission, setIsReplyingPermission] = createSignal(false);
   const [permissionReplyError, setPermissionReplyError] = createSignal("");
@@ -1318,6 +1325,43 @@ export const useRunDetailModel = () => {
       return;
     }
     setRun(loadedRun);
+
+    const projectId = loadedRun.projectId?.trim() || "";
+    if (!projectId) {
+      setProjectDefaultRunAgentId("");
+      setProjectDefaultRunProviderId("");
+      setProjectDefaultRunModelId("");
+    } else {
+      try {
+        const loadedProject = await getProject(projectId);
+        if (
+          params.runId !== runId ||
+          refreshVersion !== activeRunRefreshVersion
+        ) {
+          return;
+        }
+        setProjectDefaultRunAgentId(
+          loadedProject.defaultRunAgent?.trim() || "",
+        );
+        setProjectDefaultRunProviderId(
+          loadedProject.defaultRunProvider?.trim() || "",
+        );
+        setProjectDefaultRunModelId(
+          loadedProject.defaultRunModel?.trim() || "",
+        );
+      } catch {
+        if (
+          params.runId !== runId ||
+          refreshVersion !== activeRunRefreshVersion
+        ) {
+          return;
+        }
+        setProjectDefaultRunAgentId("");
+        setProjectDefaultRunProviderId("");
+        setProjectDefaultRunModelId("");
+      }
+    }
+
     try {
       const loadedTask = await getTask(loadedRun.taskId);
       if (
@@ -1536,6 +1580,9 @@ export const useRunDetailModel = () => {
       setIsLoading(false);
       setRun(null);
       setTask(null);
+      setProjectDefaultRunAgentId("");
+      setProjectDefaultRunProviderId("");
+      setProjectDefaultRunModelId("");
       return;
     }
 
@@ -1544,6 +1591,9 @@ export const useRunDetailModel = () => {
       setError("");
       setRun(null);
       setTask(null);
+      setProjectDefaultRunAgentId("");
+      setProjectDefaultRunProviderId("");
+      setProjectDefaultRunModelId("");
       try {
         await refreshRunDetails(runId);
         if (
@@ -1563,6 +1613,9 @@ export const useRunDetailModel = () => {
           setError("");
           setRun(null);
           setTask(null);
+          setProjectDefaultRunAgentId("");
+          setProjectDefaultRunProviderId("");
+          setProjectDefaultRunModelId("");
           return;
         }
         setError("Failed to load run details.");
@@ -2692,6 +2745,9 @@ export const useRunDetailModel = () => {
       runModelOptions,
       visibleRunModelOptions,
       runSelectionOptionsError,
+      projectDefaultRunAgentId,
+      projectDefaultRunProviderId,
+      projectDefaultRunModelId,
       isReplyingPermission,
       permissionReplyError,
       submitPrompt,

@@ -398,6 +398,24 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const runSelectionOptionsError = createMemo(
     () => props.model.agent.runSelectionOptionsError?.() ?? "",
   );
+  const projectDefaultAgentId = createMemo(
+    () => props.model.agent.projectDefaultRunAgentId?.().trim() || "",
+  );
+  const projectDefaultProviderId = createMemo(
+    () => props.model.agent.projectDefaultRunProviderId?.().trim() || "",
+  );
+  const projectDefaultModelId = createMemo(
+    () => props.model.agent.projectDefaultRunModelId?.().trim() || "",
+  );
+  const runDefaultAgentId = createMemo(
+    () => props.model.run()?.agentId?.trim() || projectDefaultAgentId(),
+  );
+  const runDefaultProviderId = createMemo(
+    () => props.model.run()?.providerId?.trim() || projectDefaultProviderId(),
+  );
+  const runDefaultModelId = createMemo(
+    () => props.model.run()?.modelId?.trim() || projectDefaultModelId(),
+  );
   const hasRunSelectionOptions = createMemo(() => {
     return (
       runAgentOptions().length > 0 ||
@@ -405,12 +423,59 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       runModelOptions().length > 0
     );
   });
-  const effectiveProviderForModel = createMemo(() => {
-    const override = overrideProviderId().trim();
-    if (override) {
-      return override;
+  const inferredProviderIdFromModel = (modelId: string): string => {
+    if (!modelId) {
+      return "";
     }
-    return props.model.run()?.providerId?.trim() || "";
+    const selectedModel = runModelOptions().find(
+      (option) => option.id === modelId,
+    );
+    return selectedModel?.providerId?.trim() || "";
+  };
+  const selectedProviderId = createMemo(() => {
+    const explicitProvider = overrideProviderId().trim();
+    if (explicitProvider) {
+      const exists = runProviderOptions().some(
+        (option) => option.id === explicitProvider,
+      );
+      if (exists) {
+        return explicitProvider;
+      }
+    }
+
+    const explicitModelProvider = inferredProviderIdFromModel(
+      overrideModelId().trim(),
+    );
+    if (
+      explicitModelProvider &&
+      runProviderOptions().some((option) => option.id === explicitModelProvider)
+    ) {
+      return explicitModelProvider;
+    }
+
+    const persistedProvider = runDefaultProviderId();
+    if (
+      persistedProvider &&
+      runProviderOptions().some((option) => option.id === persistedProvider)
+    ) {
+      return persistedProvider;
+    }
+
+    const persistedModelProvider =
+      inferredProviderIdFromModel(runDefaultModelId());
+    if (
+      persistedModelProvider &&
+      runProviderOptions().some(
+        (option) => option.id === persistedModelProvider,
+      )
+    ) {
+      return persistedModelProvider;
+    }
+
+    return runProviderOptions()[0]?.id || "";
+  });
+  const effectiveProviderForModel = createMemo(() => {
+    return selectedProviderId();
   });
   const visibleRunModelOptions = createMemo(() => {
     const providerId = effectiveProviderForModel();
@@ -438,6 +503,45 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
 
     return selectedModel.providerId === providerId;
   };
+  const selectedModelId = createMemo(() => {
+    const explicitModelId = overrideModelId().trim();
+    if (
+      explicitModelId &&
+      doesModelMatchProvider(explicitModelId, effectiveProviderForModel())
+    ) {
+      return explicitModelId;
+    }
+
+    const persistedModelId = runDefaultModelId();
+    if (
+      persistedModelId &&
+      doesModelMatchProvider(persistedModelId, effectiveProviderForModel()) &&
+      visibleRunModelOptions().some((option) => option.id === persistedModelId)
+    ) {
+      return persistedModelId;
+    }
+
+    return visibleRunModelOptions()[0]?.id || "";
+  });
+  const selectedAgentId = createMemo(() => {
+    const explicitAgent = overrideAgentId().trim();
+    if (
+      explicitAgent &&
+      runAgentOptions().some((option) => option.id === explicitAgent)
+    ) {
+      return explicitAgent;
+    }
+
+    const persistedAgent = runDefaultAgentId();
+    if (
+      persistedAgent &&
+      runAgentOptions().some((option) => option.id === persistedAgent)
+    ) {
+      return persistedAgent;
+    }
+
+    return runAgentOptions()[0]?.id || "";
+  });
   const pendingPermissionRequests = createMemo(() => {
     const byId = props.model.agent.store().pendingPermissionsById;
     return Object.values(byId);
@@ -1205,10 +1309,10 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               onSubmit={(value) => {
                 void (async () => {
                   const success = await props.model.agent.submitPrompt(value, {
-                    agentId: overrideAgentId().trim() || undefined,
-                    providerId: overrideProviderId().trim() || undefined,
+                    agentId: selectedAgentId() || undefined,
+                    providerId: selectedProviderId() || undefined,
                     modelId: (() => {
-                      const modelId = overrideModelId().trim();
+                      const modelId = selectedModelId();
                       if (!modelId) {
                         return undefined;
                       }
@@ -1220,9 +1324,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                   });
                   if (success) {
                     setComposerValue("");
-                    setOverrideAgentId("");
-                    setOverrideProviderId("");
-                    setOverrideModelId("");
                   }
                 })();
               }}
@@ -1246,13 +1347,20 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 </span>
                 <select
                   class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
-                  value={overrideProviderId()}
-                  onChange={(event) =>
-                    setOverrideProviderId(event.currentTarget.value)
-                  }
+                  value={selectedProviderId()}
+                  onChange={(event) => {
+                    const nextProviderId = event.currentTarget.value;
+                    setOverrideProviderId(nextProviderId);
+                    const currentModelId = selectedModelId();
+                    if (
+                      currentModelId &&
+                      !doesModelMatchProvider(currentModelId, nextProviderId)
+                    ) {
+                      setOverrideModelId("");
+                    }
+                  }}
                   aria-label="Prompt override provider"
                 >
-                  <option value="">Use run default</option>
                   <For each={runProviderOptions()}>
                     {(option: { id: string; label: string }) => (
                       <option value={option.id}>{option.label}</option>
@@ -1266,7 +1374,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 </span>
                 <select
                   class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
-                  value={overrideModelId()}
+                  value={selectedModelId()}
                   onChange={(event) => {
                     const selectedModelId = event.currentTarget.value;
                     setOverrideModelId(selectedModelId);
@@ -1286,7 +1394,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                   }}
                   aria-label="Prompt override model"
                 >
-                  <option value="">Use run default</option>
                   <For each={visibleRunModelOptions()}>
                     {(option: { id: string; label: string }) => (
                       <option value={option.id}>{option.label}</option>
@@ -1300,15 +1407,12 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 </span>
                 <select
                   class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
-                  value={overrideAgentId()}
+                  value={selectedAgentId()}
                   onChange={(event) => {
                     setOverrideAgentId(event.currentTarget.value);
-                    setOverrideProviderId("");
-                    setOverrideModelId("");
                   }}
                   aria-label="Prompt override agent"
                 >
-                  <option value="">Use run default</option>
                   <For each={runAgentOptions()}>
                     {(option: { id: string; label: string }) => (
                       <option value={option.id}>{option.label}</option>

@@ -30,6 +30,7 @@ const {
   writeRunTerminalMock,
   getRunMock,
   getTaskMock,
+  getProjectMock,
 } = vi.hoisted(() => ({
   routeState: { runId: "run-1" },
   navigateMock: vi.fn(),
@@ -48,6 +49,7 @@ const {
   writeRunTerminalMock: vi.fn(),
   getRunMock: vi.fn(),
   getTaskMock: vi.fn(),
+  getProjectMock: vi.fn(),
 }));
 
 vi.mock("@solidjs/router", () => ({
@@ -99,6 +101,10 @@ vi.mock("../../../../app/lib/tasks", () => ({
   getTask: getTaskMock,
 }));
 
+vi.mock("../../../../app/lib/projects", () => ({
+  getProject: getProjectMock,
+}));
+
 describe("useRunDetailModel startup ownership", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -119,6 +125,7 @@ describe("useRunDetailModel startup ownership", () => {
     writeRunTerminalMock.mockReset();
     getRunMock.mockReset();
     getTaskMock.mockReset();
+    getProjectMock.mockReset();
 
     bootstrapRunOpenCodeMock.mockResolvedValue({
       state: "running",
@@ -170,6 +177,15 @@ describe("useRunDetailModel startup ownership", () => {
       implementationGuide: "Guide",
       status: "doing",
       projectId: "project-1",
+    });
+    getProjectMock.mockResolvedValue({
+      id: "project-1",
+      name: "Project",
+      key: "PROJ",
+      defaultRunAgent: "agent-1",
+      defaultRunProvider: "provider-1",
+      defaultRunModel: "model-1",
+      repositories: [],
     });
     readRunSelectionOptionsCacheMock.mockReturnValue(null);
     getRunSelectionOptionsWithCacheMock.mockResolvedValue({
@@ -282,6 +298,21 @@ describe("useRunDetailModel startup ownership", () => {
     });
 
     expect(getRunSelectionOptionsWithCacheMock).not.toHaveBeenCalled();
+  });
+
+  it("loads project defaults for composer fallback selection", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(modelRef!.agent.projectDefaultRunAgentId()).toBe("agent-1");
+      expect(modelRef!.agent.projectDefaultRunProviderId()).toBe("provider-1");
+      expect(modelRef!.agent.projectDefaultRunModelId()).toBe("model-1");
+    });
   });
 
   it("sends conflict summary into chat once per fingerprint", async () => {

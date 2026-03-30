@@ -43,6 +43,9 @@ const createModelStub = (
       runModelOptions: () => [
         { id: "model-1", label: "GPT-5", providerId: "provider-1" },
       ],
+      projectDefaultRunAgentId: () => "agent-1",
+      projectDefaultRunProviderId: () => "provider-1",
+      projectDefaultRunModelId: () => "model-1",
       runSelectionOptionsError: () => "",
       replyPermission: vi.fn(async () => true),
     },
@@ -175,7 +178,33 @@ describe("NewRunChatWorkspace", () => {
     });
   });
 
-  it("resets one-shot overrides after successful submit", async () => {
+  it("shows concrete default selections and no run-default option", () => {
+    const { model } = createModelStub("running", false, {
+      agentId: "agent-1",
+      providerId: "provider-1",
+      modelId: "model-1",
+    });
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(
+      (screen.getByLabelText("Prompt override agent") as HTMLSelectElement)
+        .value,
+    ).toBe("agent-1");
+    expect(
+      (screen.getByLabelText("Prompt override provider") as HTMLSelectElement)
+        .value,
+    ).toBe("provider-1");
+    expect(
+      (screen.getByLabelText("Prompt override model") as HTMLSelectElement)
+        .value,
+    ).toBe("model-1");
+
+    expect(
+      screen.queryByRole("option", { name: "Use run default" }),
+    ).toBeNull();
+  });
+
+  it("preserves selected overrides after successful submit", async () => {
     const submitPromptMock = vi.fn(async () => true);
     const { model } = createModelStub("running");
     model.agent.submitPrompt = submitPromptMock;
@@ -211,13 +240,13 @@ describe("NewRunChatWorkspace", () => {
       modelId: "model-1",
     });
     expect(submitPromptMock).toHaveBeenNthCalledWith(2, "Second", {
-      agentId: undefined,
-      providerId: undefined,
-      modelId: undefined,
+      agentId: "agent-1",
+      providerId: "provider-1",
+      modelId: "model-1",
     });
   });
 
-  it("clears stale override model and prevents mismatch submission", async () => {
+  it("repairs stale override model to a valid model for selected provider", async () => {
     const submitPromptMock = vi.fn(async () => true);
     const { model } = createModelStub("running");
     model.agent.submitPrompt = submitPromptMock;
@@ -246,7 +275,7 @@ describe("NewRunChatWorkspace", () => {
       expect(
         (screen.getByLabelText("Prompt override model") as HTMLSelectElement)
           .value,
-      ).toBe("");
+      ).toBe("model-2");
     });
 
     await fireEvent.input(screen.getByLabelText("Message agent"), {
@@ -255,13 +284,13 @@ describe("NewRunChatWorkspace", () => {
     await fireEvent.submit(screen.getByLabelText("Chat composer"));
 
     expect(submitPromptMock).toHaveBeenCalledWith("Hello", {
-      agentId: undefined,
+      agentId: "agent-1",
       providerId: "provider-2",
-      modelId: undefined,
+      modelId: "model-2",
     });
   });
 
-  it("auto-selects provider override when selecting a model", async () => {
+  it("keeps provider/model alignment when selecting model after provider change", async () => {
     const submitPromptMock = vi.fn(async () => true);
     const { model } = createModelStub("running");
     model.agent.submitPrompt = submitPromptMock;
@@ -276,6 +305,9 @@ describe("NewRunChatWorkspace", () => {
 
     render(() => <NewRunChatWorkspace model={model} />);
 
+    await fireEvent.change(screen.getByLabelText("Prompt override provider"), {
+      target: { value: "provider-2" },
+    });
     await fireEvent.change(screen.getByLabelText("Prompt override model"), {
       target: { value: "model-2" },
     });
@@ -293,7 +325,7 @@ describe("NewRunChatWorkspace", () => {
     await fireEvent.submit(screen.getByLabelText("Chat composer"));
 
     expect(submitPromptMock).toHaveBeenCalledWith("Hello", {
-      agentId: undefined,
+      agentId: "agent-1",
       providerId: "provider-2",
       modelId: "model-2",
     });
@@ -331,11 +363,11 @@ describe("NewRunChatWorkspace", () => {
     expect(
       (screen.getByLabelText("Prompt override provider") as HTMLSelectElement)
         .value,
-    ).toBe("");
+    ).toBe("provider-1");
     expect(
       (screen.getByLabelText("Prompt override model") as HTMLSelectElement)
         .value,
-    ).toBe("");
+    ).toBe("model-1");
 
     await fireEvent.input(screen.getByLabelText("Message agent"), {
       target: { value: "Hello" },
@@ -344,8 +376,8 @@ describe("NewRunChatWorkspace", () => {
 
     expect(submitPromptMock).toHaveBeenCalledWith("Hello", {
       agentId: "agent-2",
-      providerId: undefined,
-      modelId: undefined,
+      providerId: "provider-1",
+      modelId: "model-1",
     });
     expect(
       (screen.getByLabelText("Message agent") as HTMLTextAreaElement).value,
