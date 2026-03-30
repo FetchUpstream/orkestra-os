@@ -4520,14 +4520,17 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("create_project", {
-        input: {
+        input: expect.objectContaining({
           name: "Demo Project",
           key: "DEM",
           description: undefined,
+          default_run_agent: undefined,
+          default_run_provider: expect.any(String),
+          default_run_model: expect.any(String),
           repositories: [
             { repo_path: "/repo/demo", name: "/repo/demo", is_default: true },
           ],
-        },
+        }),
       });
     });
   });
@@ -4660,6 +4663,9 @@ describe("app routing and shell", () => {
           name: "Alpha",
           key: "ALP",
           description: "Original description",
+          default_run_agent: "agent-a",
+          default_run_provider: "provider-a",
+          default_run_model: "model-a",
           repositories: [
             {
               id: "r-1",
@@ -4698,6 +4704,9 @@ describe("app routing and shell", () => {
           name: "Alpha Updated",
           key: "ALP",
           description: "Original description",
+          default_run_agent: "agent-a",
+          default_run_provider: "provider-a",
+          default_run_model: "model-a",
           repositories: [
             {
               id: "r-1",
