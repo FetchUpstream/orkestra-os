@@ -15,7 +15,11 @@ const RunChatMessage: Component<RunChatMessageProps> = (props) => {
       class={`run-chat-message run-chat-message--${props.role} ${props.class ?? ""}`.trim()}
       aria-label={props.ariaLabel ?? `${props.role} message`}
     >
-      <div class="run-chat-message__body">{props.children}</div>
+      <div
+        class={`run-chat-message__body run-chat-message__body--${props.role}`}
+      >
+        {props.children}
+      </div>
     </article>
   );
 };

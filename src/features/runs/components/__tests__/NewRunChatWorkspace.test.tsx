@@ -440,4 +440,66 @@ describe("NewRunChatWorkspace", () => {
     expect(screen.queryByText("should-not-show - should-not-show")).toBeNull();
     expect(screen.queryByText("should-not-show")).toBeNull();
   });
+
+  it("renders user and assistant message wrappers for readable bubble width styling", () => {
+    const { model } = createModelStub("running");
+    model.agent.store = () => ({
+      sessionId: "session-1",
+      status: "idle",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["assistant-1", "user-1"],
+      messagesById: {
+        "assistant-1": {
+          id: "assistant-1",
+          sessionId: "session-1",
+          role: "assistant",
+          attribution: {},
+          partsById: {
+            "part-1": {
+              id: "part-1",
+              kind: "text",
+              type: "text",
+              text: "Assistant response",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-1"],
+        },
+        "user-1": {
+          id: "user-1",
+          sessionId: "session-1",
+          role: "user",
+          attribution: {},
+          partsById: {
+            "part-2": {
+              id: "part-2",
+              kind: "text",
+              type: "text",
+              text: "User prompt",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-2"],
+        },
+      },
+      pendingPermissionsById: {},
+      pendingQuestionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    const assistantMessage = container.querySelector(
+      ".run-chat-message--assistant .run-chat-message__body--assistant",
+    );
+    const userBubble = container.querySelector(
+      ".run-chat-message--user .run-chat-user-message__bubble",
+    );
+
+    expect(assistantMessage).toBeTruthy();
+    expect(userBubble).toBeTruthy();
+  });
 });

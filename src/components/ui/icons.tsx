@@ -31,6 +31,7 @@ const iconRegistry = {
   "run.review": IconGitCompare,
   "run.git": IconGitBranch,
   "status.loading": IconLoader2,
+  "status.error": IconX,
   "project.settings": IconSettings,
 } as const;
 

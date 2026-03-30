@@ -4634,6 +4634,7 @@ textarea::placeholder {
   display: grid;
   gap: 10px;
   min-width: 0;
+  --run-chat-bubble-min-width: clamp(17rem, 34vw, 24rem);
 }
 
 .run-chat-only-workspace,
@@ -4694,6 +4695,7 @@ textarea::placeholder {
 .run-chat-message--assistant .run-chat-message__body {
   width: 100%;
   max-width: var(--run-chat-prose-max);
+  min-width: min(100%, var(--run-chat-bubble-min-width));
 }
 
 .run-chat-assistant-message,
@@ -4713,6 +4715,7 @@ textarea::placeholder {
 
 .run-chat-user-message__bubble {
   width: fit-content;
+  min-width: min(100%, var(--run-chat-bubble-min-width));
   max-width: min(82%, 540px);
   display: inline-block;
   background: color-mix(in srgb, var(--accent) 14%, var(--surface-alt));
@@ -4721,6 +4724,20 @@ textarea::placeholder {
   padding: 9px 12px;
   color: var(--text);
   box-shadow: none;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.run-chat-assistant-message__content,
+.run-chat-user-message__bubble .run-chat-markdown {
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.run-chat-assistant-message__content a,
+.run-chat-user-message__bubble .run-chat-markdown a,
+.run-chat-assistant-message__content code,
+.run-chat-user-message__bubble .run-chat-markdown code {
   overflow-wrap: anywhere;
 }
 
@@ -5042,6 +5059,10 @@ textarea::placeholder {
   font-size: 0.72rem;
   line-height: 1;
   font-weight: 600;
+}
+
+.run-chat-tool-rail__status-icon--error {
+  color: var(--danger);
 }
 
 .run-chat-tool-rail__details {
@@ -5695,6 +5716,7 @@ textarea::placeholder {
   }
 
   .run-chat-user-message__bubble {
+    min-width: min(100%, clamp(15rem, 46vw, 21rem));
     max-width: min(88%, 520px);
   }
 
@@ -5898,6 +5920,10 @@ textarea::placeholder {
   .run-chat-system-message__row {
     max-width: 100%;
     width: 100%;
+  }
+
+  .run-chat-message {
+    --run-chat-bubble-min-width: 100%;
   }
 
   .run-chat-message--user {

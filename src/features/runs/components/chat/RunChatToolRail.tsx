@@ -1,4 +1,5 @@
 import { For, Show, type Component } from "solid-js";
+import { AppIcon } from "../../../../components/ui/icons";
 
 export type RunChatToolRailItem = {
   id: string;
@@ -108,10 +109,25 @@ const RunChatToolRail: Component<RunChatToolRailProps> = (props) => {
                             <span class="sr-only">{item.status}</span>
                           </span>
                         </Show>
+                        <Show when={statusModifier === "failed"}>
+                          <span
+                            class="run-chat-tool-rail__status-slot"
+                            aria-label={item.status}
+                          >
+                            <AppIcon
+                              name="status.error"
+                              class="run-chat-tool-rail__status-icon run-chat-tool-rail__status-icon--error"
+                              aria-hidden="true"
+                              size={14}
+                            />
+                            <span class="sr-only">{item.status}</span>
+                          </span>
+                        </Show>
                         <Show
                           when={
                             statusModifier !== "running" &&
-                            statusModifier !== "completed"
+                            statusModifier !== "completed" &&
+                            statusModifier !== "failed"
                           }
                         >
                           {item.status}
