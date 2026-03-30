@@ -465,6 +465,11 @@ export const useTaskDetailModel = () => {
     setSelectedRunProviderIdSignal(providerId);
   };
 
+  const setSelectedRunAgentIdForSelection = (agentId: string) => {
+    setPendingRunSettingsDefaultsInitialization(false);
+    setSelectedRunAgentId(agentId);
+  };
+
   const setSelectedRunModelId = (modelId: string) => {
     setPendingRunSettingsDefaultsInitialization(false);
     setSelectedRunModelIdSignal(modelId);
@@ -1166,7 +1171,7 @@ export const useTaskDetailModel = () => {
     refreshRuns,
     setActionError,
     setIsTransitionMenuOpen,
-    setSelectedRunAgentId,
+    setSelectedRunAgentId: setSelectedRunAgentIdForSelection,
     setSelectedRunProviderId,
     setSelectedRunModelId,
     setEditImplementationGuide,

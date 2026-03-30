@@ -7,6 +7,7 @@ const paramsState = createMutable({ projectId: "project-1", taskId: "task-1" });
 
 const {
   navigateMock,
+  getProjectMock,
   getTaskMock,
   listTaskRunsMock,
   startRunOpenCodeMock,
@@ -16,6 +17,7 @@ const {
   readRunSelectionOptionsCacheMock,
 } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
+  getProjectMock: vi.fn(),
   getTaskMock: vi.fn(),
   listTaskRunsMock: vi.fn(),
   startRunOpenCodeMock: vi.fn(),
@@ -32,11 +34,7 @@ vi.mock("@solidjs/router", () => ({
 }));
 
 vi.mock("../../../../app/lib/projects", () => ({
-  getProject: vi.fn(async () => ({
-    name: "Project",
-    key: "PRJ",
-    repositories: [],
-  })),
+  getProject: getProjectMock,
 }));
 
 vi.mock("../../../../app/lib/tasks", () => ({
@@ -70,6 +68,7 @@ describe("useTaskDetailModel start run", () => {
     paramsState.taskId = "task-1";
     navigateMock.mockReset();
     getTaskMock.mockReset();
+    getProjectMock.mockReset();
     listTaskRunsMock.mockReset();
     startRunOpenCodeMock.mockReset();
     createRunMock.mockReset();
@@ -88,6 +87,11 @@ describe("useTaskDetailModel start run", () => {
       blockedByCount: 0,
     });
     listTaskDependenciesMock.mockResolvedValue({ parents: [], children: [] });
+    getProjectMock.mockResolvedValue({
+      name: "Project",
+      key: "PRJ",
+      repositories: [],
+    });
     listTaskRunsMock.mockResolvedValue([
       {
         id: "run-1",
@@ -115,8 +119,8 @@ describe("useTaskDetailModel start run", () => {
     readRunSelectionOptionsCacheMock.mockReturnValue(null);
     getRunSelectionOptionsWithCacheMock.mockResolvedValue({
       agents: [],
-      providers: [],
-      models: [],
+      providers: [{ id: "provider-1", label: "OpenAI" }],
+      models: [{ id: "model-1", label: "GPT-5", providerId: "provider-1" }],
     });
   });
 
@@ -195,8 +199,8 @@ describe("useTaskDetailModel start run", () => {
 
     expect(createRunMock).toHaveBeenCalledWith("task-1", {
       agentId: undefined,
-      providerId: undefined,
-      modelId: undefined,
+      providerId: "provider-1",
+      modelId: "model-1",
     });
     expect(startRunOpenCodeMock).toHaveBeenCalledWith("run-created");
   });
@@ -574,8 +578,8 @@ describe("useTaskDetailModel start run", () => {
     expect(ref.current?.isBlockedRunWarningOpen()).toBe(false);
     expect(createRunMock).toHaveBeenCalledWith("task-1", {
       agentId: undefined,
-      providerId: undefined,
-      modelId: undefined,
+      providerId: "provider-1",
+      modelId: "model-1",
     });
   });
 
@@ -624,8 +628,8 @@ describe("useTaskDetailModel start run", () => {
     expect(ref.current?.isBlockedRunWarningOpen()).toBe(false);
     expect(createRunMock).toHaveBeenCalledWith("task-1", {
       agentId: undefined,
-      providerId: undefined,
-      modelId: undefined,
+      providerId: "provider-1",
+      modelId: "model-1",
     });
   });
 
@@ -674,8 +678,8 @@ describe("useTaskDetailModel start run", () => {
     expect(ref.current?.isBlockedRunWarningOpen()).toBe(false);
     expect(createRunMock).toHaveBeenCalledWith("task-1", {
       agentId: undefined,
-      providerId: undefined,
-      modelId: undefined,
+      providerId: "provider-1",
+      modelId: "model-1",
     });
   });
 
@@ -699,8 +703,8 @@ describe("useTaskDetailModel start run", () => {
     expect(ref.current?.isBlockedRunWarningOpen()).toBe(false);
     expect(createRunMock).toHaveBeenCalledWith("task-1", {
       agentId: undefined,
-      providerId: undefined,
-      modelId: undefined,
+      providerId: "provider-1",
+      modelId: "model-1",
     });
   });
 
@@ -758,6 +762,74 @@ describe("useTaskDetailModel start run", () => {
     ref.current?.setSelectedRunProviderId("");
     ref.current?.setSelectedRunModelId("model-1");
 
+    expect(ref.current?.selectedRunProviderId()).toBe("provider-1");
+    expect(ref.current?.selectedRunModelId()).toBe("model-1");
+  });
+
+  it("preselects project defaults when opening run settings modal", async () => {
+    getProjectMock.mockResolvedValue({
+      name: "Project",
+      key: "PRJ",
+      repositories: [],
+      defaultRunAgent: "agent-1",
+      defaultRunProvider: "provider-1",
+      defaultRunModel: "model-1",
+    });
+    getRunSelectionOptionsWithCacheMock.mockResolvedValue({
+      agents: [{ id: "agent-1", label: "Planner" }],
+      providers: [{ id: "provider-1", label: "OpenAI" }],
+      models: [{ id: "model-1", label: "GPT-5", providerId: "provider-1" }],
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    ref.current?.onOpenRunSettingsModal();
+
+    expect(ref.current?.selectedRunAgentId()).toBe("agent-1");
+    expect(ref.current?.selectedRunProviderId()).toBe("provider-1");
+    expect(ref.current?.selectedRunModelId()).toBe("model-1");
+  });
+
+  it("falls back gracefully when project default agent is unavailable", async () => {
+    getProjectMock.mockResolvedValue({
+      name: "Project",
+      key: "PRJ",
+      repositories: [],
+      defaultRunAgent: "agent-missing",
+      defaultRunProvider: "provider-1",
+      defaultRunModel: "model-1",
+    });
+    getRunSelectionOptionsWithCacheMock.mockResolvedValue({
+      agents: [{ id: "agent-1", label: "Planner" }],
+      providers: [{ id: "provider-1", label: "OpenAI" }],
+      models: [{ id: "model-1", label: "GPT-5", providerId: "provider-1" }],
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    ref.current?.onOpenRunSettingsModal();
+
+    expect(ref.current?.selectedRunAgentId()).toBe("");
     expect(ref.current?.selectedRunProviderId()).toBe("provider-1");
     expect(ref.current?.selectedRunModelId()).toBe("model-1");
   });

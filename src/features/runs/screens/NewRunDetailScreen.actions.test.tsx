@@ -324,8 +324,10 @@ describe("NewRunDetailScreen git actions", () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         gitStatus: {
+          state: "mergeable",
           sourceBranch: { name: "main", ahead: 0, behind: 1 },
           worktreeBranch: { name: "feature/redesign", ahead: 2, behind: 0 },
+          isWorktreeClean: true,
         },
       }),
     );
@@ -338,10 +340,10 @@ describe("NewRunDetailScreen git actions", () => {
       expect(
         screen.getByRole("heading", { name: "Source Control" }),
       ).toBeTruthy();
-      expect(screen.getByText("Source")).toBeTruthy();
-      expect(screen.getByText("Current")).toBeTruthy();
-      expect(screen.getByText("Repository status")).toBeTruthy();
-      expect(screen.getByText("Working tree status")).toBeTruthy();
+      expect(screen.getAllByText("Source")).toHaveLength(2);
+      expect(screen.getAllByText("Current")).toHaveLength(2);
+      expect(screen.getByText("Source Dirty")).toBeTruthy();
+      expect(screen.getByText("Current Clean")).toBeTruthy();
       expect(screen.getByText("+0")).toBeTruthy();
       expect(screen.getByText("-1")).toBeTruthy();
       expect(screen.getByText("+2")).toBeTruthy();

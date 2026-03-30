@@ -190,6 +190,10 @@ export const useBoardModel = () => {
   const [selectedRunProviderId, setSelectedRunProviderIdSignal] =
     createSignal("");
   const [selectedRunModelId, setSelectedRunModelIdSignal] = createSignal("");
+  const [
+    pendingRunSettingsDefaultsInitialization,
+    setPendingRunSettingsDefaultsInitialization,
+  ] = createSignal(false);
   let activeTasksRequestVersion = 0;
   let activeProjectDetailRequestVersion = 0;
   let activeTaskRunsRequestVersion = 0;
@@ -247,6 +251,7 @@ export const useBoardModel = () => {
   };
 
   const setSelectedRunProviderId = (providerId: string) => {
+    setPendingRunSettingsDefaultsInitialization(false);
     setSelectedRunProviderIdSignal(providerId);
     const modelId = selectedRunModelId().trim();
     if (modelId && !doesModelMatchProvider(modelId, providerId.trim())) {
@@ -255,6 +260,7 @@ export const useBoardModel = () => {
   };
 
   const setSelectedRunModelId = (modelId: string) => {
+    setPendingRunSettingsDefaultsInitialization(false);
     setSelectedRunModelIdSignal(modelId);
     if (!modelId) {
       return;
@@ -269,18 +275,33 @@ export const useBoardModel = () => {
     }
   };
 
+  const setSelectedRunAgentIdForSelection = (agentId: string) => {
+    setPendingRunSettingsDefaultsInitialization(false);
+    setSelectedRunAgentId(agentId);
+  };
+
   const applyProjectRunDefaults = (project: Project | null) => {
     if (!project) {
       setSelectedRunAgentId("");
-      setSelectedRunProviderId("");
-      setSelectedRunModelId("");
+      setSelectedRunProviderIdSignal("");
+      setSelectedRunModelIdSignal("");
       return;
     }
 
-    setSelectedRunAgentId(project.defaultRunAgent?.trim() || "");
+    const defaultAgentId = project.defaultRunAgent?.trim() || "";
+    if (runAgentOptions().length === 0) {
+      setSelectedRunAgentId(defaultAgentId);
+    } else {
+      setSelectedRunAgentId(
+        defaultAgentId &&
+          runAgentOptions().some((option) => option.id === defaultAgentId)
+          ? defaultAgentId
+          : "",
+      );
+    }
     if (runProviderOptions().length === 0 && runModelOptions().length === 0) {
-      setSelectedRunProviderId(project.defaultRunProvider?.trim() || "");
-      setSelectedRunModelId(project.defaultRunModel?.trim() || "");
+      setSelectedRunProviderIdSignal(project.defaultRunProvider?.trim() || "");
+      setSelectedRunModelIdSignal(project.defaultRunModel?.trim() || "");
       setRunSelectionOptionsError("");
       return;
     }
@@ -293,8 +314,8 @@ export const useBoardModel = () => {
       providers: runProviderOptions(),
       models: runModelOptions(),
     });
-    setSelectedRunProviderId(resolved.providerId);
-    setSelectedRunModelId(resolved.modelId);
+    setSelectedRunProviderIdSignal(resolved.providerId);
+    setSelectedRunModelIdSignal(resolved.modelId);
     setRunSelectionOptionsError(
       resolved.requiresUserAction
         ? "Run defaults are incomplete. Select a provider and model before starting a run."
@@ -311,7 +332,10 @@ export const useBoardModel = () => {
       setRunAgentOptions(cachedOptions.agents);
       setRunProviderOptions(cachedOptions.providers);
       setRunModelOptions(cachedOptions.models);
-      applyProjectRunDefaults(selectedProjectDetail());
+      if (pendingRunSettingsDefaultsInitialization()) {
+        applyProjectRunDefaults(selectedProjectDetail());
+        setPendingRunSettingsDefaultsInitialization(false);
+      }
       return;
     }
 
@@ -325,7 +349,10 @@ export const useBoardModel = () => {
       setRunAgentOptions(options.agents);
       setRunProviderOptions(options.providers);
       setRunModelOptions(options.models);
-      applyProjectRunDefaults(selectedProjectDetail());
+      if (pendingRunSettingsDefaultsInitialization()) {
+        applyProjectRunDefaults(selectedProjectDetail());
+        setPendingRunSettingsDefaultsInitialization(false);
+      }
     } catch {
       if (requestVersion !== runSelectionOptionsRequestVersion) {
         return;
@@ -354,7 +381,10 @@ export const useBoardModel = () => {
         return;
       }
       setSelectedProjectDetail(loadedProject);
-      applyProjectRunDefaults(loadedProject);
+      if (pendingRunSettingsDefaultsInitialization()) {
+        applyProjectRunDefaults(loadedProject);
+        setPendingRunSettingsDefaultsInitialization(false);
+      }
     } catch {
       if (
         requestVersion !== activeProjectDetailRequestVersion ||
@@ -363,7 +393,10 @@ export const useBoardModel = () => {
         return;
       }
       setSelectedProjectDetail(null);
-      applyProjectRunDefaults(null);
+      if (pendingRunSettingsDefaultsInitialization()) {
+        applyProjectRunDefaults(null);
+        setPendingRunSettingsDefaultsInitialization(false);
+      }
     }
   };
 
@@ -622,6 +655,7 @@ export const useBoardModel = () => {
   const onRequestMoveTaskToInProgress = (taskId: string) => {
     if (isTaskStatusUpdating(taskId)) return;
     if (!canTaskTransitionToStatus(taskId, "doing")) return;
+    setPendingRunSettingsDefaultsInitialization(!hasRunSelectionOptions());
     applyProjectRunDefaults(selectedProjectDetail());
     setPendingInProgressTaskId(taskId);
     setRunSelectionOptionsError("");
@@ -770,7 +804,7 @@ export const useBoardModel = () => {
     canTaskTransitionToStatus,
     moveTaskToStatus,
     setSearchQuery,
-    setSelectedRunAgentId,
+    setSelectedRunAgentId: setSelectedRunAgentIdForSelection,
     setSelectedRunProviderId,
     setSelectedRunModelId,
     onRequestMoveTaskToInProgress,

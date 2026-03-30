@@ -11,7 +11,6 @@ import {
 } from "solid-js";
 import NewRunChatWorkspace from "../components/NewRunChatWorkspace";
 import RunDiffDrawerPanel from "../components/RunDiffDrawerPanel";
-import { formatGitStateLabel } from "./gitStateLabels";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 
 const RunTerminal = lazy(() => import("../components/RunTerminal"));
@@ -146,6 +145,30 @@ const formatLogTimestamp = (ts: string | number | null): string => {
   }
 
   return ts;
+};
+
+const formatSourceStatusLabel = (state: string): string => {
+  if (state === "clean") {
+    return "Source Clean";
+  }
+
+  if (state === "unknown") {
+    return "Source Unknown";
+  }
+
+  return "Source Dirty";
+};
+
+const formatCurrentStatusLabel = (isWorktreeClean?: boolean | null): string => {
+  if (isWorktreeClean === true) {
+    return "Current Clean";
+  }
+
+  if (isWorktreeClean === false) {
+    return "Current Dirty";
+  }
+
+  return "Current Unknown";
 };
 
 const formatCompactLogTimestamp = (ts: string | number | null): string => {
@@ -1339,25 +1362,20 @@ const NewRunDetailScreen: Component = () => {
                               </div>
                               <p class="run-chat-git-drawer__state-row">
                                 <span class="run-chat-git-drawer__state-label">
-                                  Repository status
+                                  Source
                                 </span>
                                 <span class="run-chat-git-drawer__state-value">
-                                  {formatGitStateLabel(
-                                    status().state,
-                                    status().rawState,
-                                  )}
+                                  {formatSourceStatusLabel(status().state)}
                                 </span>
                               </p>
                               <p class="run-chat-git-drawer__state-row">
                                 <span class="run-chat-git-drawer__state-label">
-                                  Working tree status
+                                  Current
                                 </span>
                                 <span class="run-chat-git-drawer__state-value">
-                                  {status().isWorktreeClean === true
-                                    ? "Clean"
-                                    : status().isWorktreeClean === false
-                                      ? "Changes detected"
-                                      : "Unknown"}
+                                  {formatCurrentStatusLabel(
+                                    status().isWorktreeClean,
+                                  )}
                                 </span>
                               </p>
                               <Show

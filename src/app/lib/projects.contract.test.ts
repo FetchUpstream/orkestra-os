@@ -118,6 +118,7 @@ describe("projects contract", () => {
           name: "Path Project",
           key: "PAT",
           description: null,
+          default_run_agent: "agent-a",
         },
         repositories: [
           {
@@ -134,6 +135,7 @@ describe("projects contract", () => {
           name: "Repo Path Project",
           key: "RPP",
           description: null,
+          default_run_agent: "agent-b",
         },
         repositories: [
           {
@@ -153,6 +155,7 @@ describe("projects contract", () => {
       name: "Path Project",
       key: "PAT",
       description: null,
+      defaultRunAgent: "agent-a",
       repositories: [
         {
           id: "repo-path",
@@ -167,6 +170,7 @@ describe("projects contract", () => {
       name: "Repo Path Project",
       key: "RPP",
       description: null,
+      defaultRunAgent: "agent-b",
       repositories: [
         {
           id: "repo-repo-path",
