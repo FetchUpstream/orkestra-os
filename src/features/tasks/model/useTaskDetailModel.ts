@@ -30,6 +30,10 @@ import {
   readRunSelectionOptionsCache,
 } from "../../../app/lib/runSelectionOptionsCache";
 import {
+  filterModelsForProvider,
+  resolveProjectRunDefaults,
+} from "../../../app/lib/projectRunDefaults";
+import {
   filterDependencyCandidates,
   getActionErrorMessage,
   getValidTransitionTargets,
@@ -338,14 +342,47 @@ export const useTaskDetailModel = () => {
     return dependencyBadgeState(taskValue);
   });
   const visibleRunModelOptions = createMemo(() => {
-    const providerId = selectedRunProviderId().trim();
-    if (!providerId) {
-      return runModelOptions();
-    }
-    return runModelOptions().filter(
-      (option) => !option.providerId || option.providerId === providerId,
+    return filterModelsForProvider(
+      runModelOptions(),
+      selectedRunProviderId().trim(),
     );
   });
+
+  const resolveRunDefaultsForProject = () =>
+    resolveProjectRunDefaults({
+      persisted: {
+        providerId: projectDefaultRunProviderId(),
+        modelId: projectDefaultRunModelId(),
+      },
+      providers: runProviderOptions(),
+      models: runModelOptions(),
+    });
+
+  const applyResolvedProjectRunDefaults = () => {
+    if (runProviderOptions().length === 0 && runModelOptions().length === 0) {
+      setSelectedRunProviderIdSignal(projectDefaultRunProviderId());
+      setSelectedRunModelIdSignal(projectDefaultRunModelId());
+      setProjectRunDefaultsError("");
+      return;
+    }
+
+    const resolved = resolveRunDefaultsForProject();
+    setSelectedRunProviderIdSignal(resolved.providerId);
+    setSelectedRunModelIdSignal(resolved.modelId);
+    if (!resolved.validAsIs) {
+      if (resolved.requiresUserAction) {
+        setProjectRunDefaultsError(
+          "Project run defaults are incomplete. Select a provider and model before creating a run.",
+        );
+      } else {
+        setProjectRunDefaultsError(
+          "Project run defaults were repaired to available options.",
+        );
+      }
+    } else {
+      setProjectRunDefaultsError("");
+    }
+  };
 
   const doesModelMatchProvider = (
     modelId: string,
@@ -545,6 +582,7 @@ export const useTaskDetailModel = () => {
       ) {
         setSelectedRunModelIdSignal(defaultModelId);
       }
+      applyResolvedProjectRunDefaults();
       return;
     }
 
@@ -585,6 +623,7 @@ export const useTaskDetailModel = () => {
       ) {
         setSelectedRunModelIdSignal(defaultModelId);
       }
+      applyResolvedProjectRunDefaults();
     } catch {
       if (
         requestVersion !== runSelectionOptionsRequestVersion ||
@@ -668,8 +707,7 @@ export const useTaskDetailModel = () => {
       setProjectDefaultRunProviderId(defaultRunProviderId);
       setProjectDefaultRunModelId(defaultRunModelId);
       setSelectedRunAgentId(defaultRunAgentId);
-      setSelectedRunProviderIdSignal(defaultRunProviderId);
-      setSelectedRunModelIdSignal(defaultRunModelId);
+      applyResolvedProjectRunDefaults();
     } catch {
       setProjectName(null);
       setProjectKey(null);
@@ -947,13 +985,26 @@ export const useTaskDetailModel = () => {
       setIsBlockedRunWarningOpen(true);
       return null;
     }
+
+    const resolvedDefaults = resolveRunDefaultsForProject();
+    if (resolvedDefaults.requiresUserAction) {
+      setActionError(
+        "Run defaults are unavailable. Select a valid provider and model before creating a run.",
+      );
+      return null;
+    }
+
     setActionError("");
     setIsCreatingRun(true);
     try {
       const createdRun = await createRun(taskValue.id, {
         agentId: selectedRunAgentId().trim() || undefined,
-        providerId: selectedRunProviderId().trim() || undefined,
-        modelId: selectedRunModelId().trim() || undefined,
+        providerId:
+          selectedRunProviderId().trim() ||
+          resolvedDefaults.providerId ||
+          undefined,
+        modelId:
+          selectedRunModelId().trim() || resolvedDefaults.modelId || undefined,
       });
       await refreshRuns(taskValue.id);
       return createdRun;
@@ -971,8 +1022,7 @@ export const useTaskDetailModel = () => {
     if (isCreatingRun()) return;
     setActionError("");
     setSelectedRunAgentId(projectDefaultRunAgentId());
-    setSelectedRunProviderIdSignal(projectDefaultRunProviderId());
-    setSelectedRunModelIdSignal(projectDefaultRunModelId());
+    applyResolvedProjectRunDefaults();
     setIsRunSettingsModalOpen(true);
   };
 

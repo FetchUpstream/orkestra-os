@@ -28,6 +28,10 @@ import {
   getRunSelectionOptionsWithCache,
   readRunSelectionOptionsCache,
 } from "../../../app/lib/runSelectionOptionsCache";
+import {
+  filterModelsForProvider,
+  resolveProjectRunDefaults,
+} from "../../../app/lib/projectRunDefaults";
 import { canTransitionStatus } from "../../tasks/utils/taskDetail";
 import { groupTasksByStatus } from "../utils/board";
 import { isRunCommitPending } from "../../runs/model/commitUiState";
@@ -211,12 +215,9 @@ export const useBoardModel = () => {
   const groupedTasks = createMemo(() => groupTasksByStatus(visibleTasks()));
   const searchMatchCount = createMemo(() => visibleTasks().length);
   const visibleRunModelOptions = createMemo(() => {
-    const providerId = selectedRunProviderId().trim();
-    if (!providerId) {
-      return runModelOptions();
-    }
-    return runModelOptions().filter(
-      (option) => !option.providerId || option.providerId === providerId,
+    return filterModelsForProvider(
+      runModelOptions(),
+      selectedRunProviderId().trim(),
     );
   });
   const hasRunSelectionOptions = createMemo(() => {
@@ -277,8 +278,28 @@ export const useBoardModel = () => {
     }
 
     setSelectedRunAgentId(project.defaultRunAgent?.trim() || "");
-    setSelectedRunProviderId(project.defaultRunProvider?.trim() || "");
-    setSelectedRunModelId(project.defaultRunModel?.trim() || "");
+    if (runProviderOptions().length === 0 && runModelOptions().length === 0) {
+      setSelectedRunProviderId(project.defaultRunProvider?.trim() || "");
+      setSelectedRunModelId(project.defaultRunModel?.trim() || "");
+      setRunSelectionOptionsError("");
+      return;
+    }
+
+    const resolved = resolveProjectRunDefaults({
+      persisted: {
+        providerId: project.defaultRunProvider,
+        modelId: project.defaultRunModel,
+      },
+      providers: runProviderOptions(),
+      models: runModelOptions(),
+    });
+    setSelectedRunProviderId(resolved.providerId);
+    setSelectedRunModelId(resolved.modelId);
+    setRunSelectionOptionsError(
+      resolved.requiresUserAction
+        ? "Run defaults are incomplete. Select a provider and model before starting a run."
+        : "",
+    );
   };
 
   const refreshRunSelectionOptions = async () => {
@@ -290,6 +311,7 @@ export const useBoardModel = () => {
       setRunAgentOptions(cachedOptions.agents);
       setRunProviderOptions(cachedOptions.providers);
       setRunModelOptions(cachedOptions.models);
+      applyProjectRunDefaults(selectedProjectDetail());
       return;
     }
 
@@ -303,6 +325,7 @@ export const useBoardModel = () => {
       setRunAgentOptions(options.agents);
       setRunProviderOptions(options.providers);
       setRunModelOptions(options.models);
+      applyProjectRunDefaults(selectedProjectDetail());
     } catch {
       if (requestVersion !== runSelectionOptionsRequestVersion) {
         return;
@@ -621,10 +644,25 @@ export const useBoardModel = () => {
     const statusUpdated = await moveTaskToStatus(taskId, "doing");
     if (statusUpdated) {
       try {
+        const resolved = resolveProjectRunDefaults({
+          persisted: {
+            providerId: selectedRunProviderId(),
+            modelId: selectedRunModelId(),
+          },
+          providers: runProviderOptions(),
+          models: runModelOptions(),
+        });
+        if (resolved.requiresUserAction) {
+          setError(
+            "Task moved, but no runnable provider/model is available. Update run settings and try again.",
+          );
+          return;
+        }
         const createdRun = await createRun(taskId, {
           agentId: selectedRunAgentId().trim() || undefined,
-          providerId: selectedRunProviderId().trim() || undefined,
-          modelId: selectedRunModelId().trim() || undefined,
+          providerId:
+            selectedRunProviderId().trim() || resolved.providerId || undefined,
+          modelId: selectedRunModelId().trim() || resolved.modelId || undefined,
         });
         await startRunOpenCode(createdRun.id);
       } catch {

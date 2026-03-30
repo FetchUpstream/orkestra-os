@@ -15,6 +15,10 @@ import {
   readRunSelectionOptionsCache,
 } from "../../../app/lib/runSelectionOptionsCache";
 import {
+  filterModelsForProvider,
+  resolveProjectRunDefaults,
+} from "../../../app/lib/projectRunDefaults";
+import {
   normalizeProjectKey,
   recommendProjectKey,
 } from "../../../app/lib/projectKey";
@@ -83,16 +87,17 @@ export const useProjectsPageModel = () => {
   };
 
   const visibleRunModelOptions = createMemo(() => {
-    const providerId = defaultRunProvider().trim();
-    if (!providerId) return runModelOptions();
-    return runModelOptions().filter(
-      (option) => !option.providerId || option.providerId === providerId,
+    return filterModelsForProvider(
+      runModelOptions(),
+      defaultRunProvider().trim(),
     );
   });
 
   const doesModelMatchProvider = (modelId: string, providerId: string) => {
     if (!modelId || !providerId) return true;
-    const selectedModel = runModelOptions().find((option) => option.id === modelId);
+    const selectedModel = runModelOptions().find(
+      (option) => option.id === modelId,
+    );
     if (!selectedModel?.providerId) return true;
     return selectedModel.providerId === providerId;
   };
@@ -102,10 +107,18 @@ export const useProjectsPageModel = () => {
   );
 
   const runDefaultsValidationError = createMemo(() => {
+    if (runProviderOptions().length === 0) {
+      return "No run providers are available. Configure providers before saving.";
+    }
     if (!defaultRunProvider().trim()) return "Default provider is required.";
+    if (visibleRunModelOptions().length === 0) {
+      return "No models are available for the selected provider.";
+    }
     if (!defaultRunModel().trim()) return "Default model is required.";
     if (
-      !visibleRunModelOptions().some((option) => option.id === defaultRunModel().trim())
+      !visibleRunModelOptions().some(
+        (option) => option.id === defaultRunModel().trim(),
+      )
     ) {
       return "Selected model is unavailable for the selected provider. Please reselect.";
     }
@@ -115,7 +128,9 @@ export const useProjectsPageModel = () => {
   const setDefaultRunModel = (modelId: string) => {
     setDefaultRunModelSignal(modelId);
     if (!modelId) return;
-    const selectedModel = runModelOptions().find((option) => option.id === modelId);
+    const selectedModel = runModelOptions().find(
+      (option) => option.id === modelId,
+    );
     const providerId = selectedModel?.providerId?.trim() || "";
     if (providerId && providerId !== defaultRunProvider().trim()) {
       setDefaultRunProvider(providerId);
@@ -130,11 +145,34 @@ export const useProjectsPageModel = () => {
     }
   };
 
+  const applyResolvedRunDefaults = (persisted: {
+    providerId?: string | null;
+    modelId?: string | null;
+  }) => {
+    if (runProviderOptions().length === 0 && runModelOptions().length === 0) {
+      setDefaultRunProvider(persisted.providerId?.trim() || "");
+      setDefaultRunModelSignal(persisted.modelId?.trim() || "");
+      return;
+    }
+
+    const resolved = resolveProjectRunDefaults({
+      persisted,
+      providers: runProviderOptions(),
+      models: runModelOptions(),
+    });
+    setDefaultRunProvider(resolved.providerId);
+    setDefaultRunModelSignal(resolved.modelId);
+  };
+
   const loadRunSelectionOptions = async () => {
     const cachedOptions = readRunSelectionOptionsCache();
     if (cachedOptions) {
       setRunProviderOptions(cachedOptions.providers);
       setRunModelOptions(cachedOptions.models);
+      applyResolvedRunDefaults({
+        providerId: defaultRunProvider(),
+        modelId: defaultRunModel(),
+      });
       setRunDefaultsError("");
       return;
     }
@@ -145,6 +183,10 @@ export const useProjectsPageModel = () => {
       const options = await getRunSelectionOptionsWithCache();
       setRunProviderOptions(options.providers);
       setRunModelOptions(options.models);
+      applyResolvedRunDefaults({
+        providerId: defaultRunProvider(),
+        modelId: defaultRunModel(),
+      });
     } catch {
       setRunProviderOptions([]);
       setRunModelOptions([]);
@@ -342,8 +384,10 @@ export const useProjectsPageModel = () => {
       setRepositories(
         nextRepositories.length > 0 ? nextRepositories : [emptyRepo()],
       );
-      setDefaultRunProvider(projectDetails.defaultRunProvider?.trim() || "");
-      setDefaultRunModelSignal(projectDetails.defaultRunModel?.trim() || "");
+      applyResolvedRunDefaults({
+        providerId: projectDetails.defaultRunProvider,
+        modelId: projectDetails.defaultRunModel,
+      });
       const defaultRepositoryIndex = projectDetails.repositories.findIndex(
         (repository) => repository.is_default,
       );
