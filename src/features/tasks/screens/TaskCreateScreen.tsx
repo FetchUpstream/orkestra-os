@@ -80,6 +80,56 @@ const TaskCreateScreen: Component = () => {
               </div>
             </div>
           </div>
+          <Show when={model.isDiscardModalOpen()}>
+            <div
+              class="projects-modal-backdrop"
+              role="presentation"
+              onClick={model.onCancelDiscard}
+            >
+              <section
+                class="projects-modal task-delete-modal border-base-content/15 bg-base-200 rounded-none border"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="task-create-discard-modal-title"
+                aria-describedby="task-create-discard-modal-copy"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div class="border-base-content/10 border-b pb-3">
+                  <h2
+                    id="task-create-discard-modal-title"
+                    class="task-delete-modal-title"
+                  >
+                    Discard changes?
+                  </h2>
+                </div>
+                <p
+                  id="task-create-discard-modal-copy"
+                  class="project-placeholder-text task-delete-modal-copy"
+                >
+                  You have unsaved changes on this new task. Leave without
+                  saving?
+                </p>
+                <div class="task-delete-modal-actions">
+                  <button
+                    type="button"
+                    class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+                    onClick={model.onCancelDiscard}
+                    disabled={model.isSubmitting()}
+                  >
+                    Keep editing
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm border-error/25 bg-error/10 text-error hover:bg-error/15 rounded-none border px-4 text-xs font-medium"
+                    onClick={model.onConfirmDiscard}
+                    disabled={model.isSubmitting()}
+                  >
+                    Discard changes
+                  </button>
+                </div>
+              </section>
+            </div>
+          </Show>
         </Show>
       </Show>
     </div>

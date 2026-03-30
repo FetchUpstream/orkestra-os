@@ -9,6 +9,14 @@ type FieldErrors = {
   targetRepositoryId?: string;
 };
 
+type CreateTaskFormSnapshot = {
+  title: string;
+  description: string;
+  implementationGuide: string;
+  status: TaskStatus;
+  targetRepositoryId: string;
+};
+
 export const useTaskCreateModel = () => {
   const params = useParams();
   const location = useLocation();
@@ -29,6 +37,9 @@ export const useTaskCreateModel = () => {
   const [isLoading, setIsLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal("");
   const [hasSubmitted, setHasSubmitted] = createSignal(false);
+  const [initialSnapshot, setInitialSnapshot] =
+    createSignal<CreateTaskFormSnapshot | null>(null);
+  const [isDiscardModalOpen, setIsDiscardModalOpen] = createSignal(false);
 
   const origin = createMemo(() => {
     const searchParams = new URLSearchParams(location.search);
@@ -45,14 +56,27 @@ export const useTaskCreateModel = () => {
     return params.projectId ? "project" : "projects";
   });
 
-  const isDirty = createMemo(
-    () =>
-      Boolean(title().trim()) ||
-      Boolean(description().trim()) ||
-      Boolean(implementationGuide().trim()) ||
-      status() !== "todo" ||
-      Boolean(targetRepositoryId()),
-  );
+  const currentSnapshot = (): CreateTaskFormSnapshot => ({
+    title: title(),
+    description: description(),
+    implementationGuide: implementationGuide(),
+    status: status(),
+    targetRepositoryId: targetRepositoryId(),
+  });
+
+  const isDirty = createMemo(() => {
+    const baseline = initialSnapshot();
+    if (!baseline) return false;
+
+    const current = currentSnapshot();
+    return (
+      current.title !== baseline.title ||
+      current.description !== baseline.description ||
+      current.implementationGuide !== baseline.implementationGuide ||
+      current.status !== baseline.status ||
+      current.targetRepositoryId !== baseline.targetRepositoryId
+    );
+  });
 
   const validate = () => {
     const nextErrors: FieldErrors = {};
@@ -74,9 +98,21 @@ export const useTaskCreateModel = () => {
 
   const onClose = () => {
     if (isSubmitting()) return;
-    if (isDirty() && !window.confirm("Discard unsaved changes?")) {
+    if (isDirty()) {
+      setIsDiscardModalOpen(true);
       return;
     }
+    navigate(backHref());
+  };
+
+  const onCancelDiscard = () => {
+    if (isSubmitting()) return;
+    setIsDiscardModalOpen(false);
+  };
+
+  const onConfirmDiscard = () => {
+    if (isSubmitting()) return;
+    setIsDiscardModalOpen(false);
     navigate(backHref());
   };
 
@@ -147,11 +183,21 @@ export const useTaskCreateModel = () => {
         }));
       setRepositories(repositories.map(({ id, name }) => ({ id, name })));
       const defaultRepository = repositories.find((item) => item.isDefault);
-      setTargetRepositoryId(defaultRepository?.id || repositories[0]?.id || "");
+      const initialTargetRepositoryId =
+        defaultRepository?.id || repositories[0]?.id || "";
+      setTargetRepositoryId(initialTargetRepositoryId);
+      setInitialSnapshot({
+        title: "",
+        description: "",
+        implementationGuide: "",
+        status: "todo",
+        targetRepositoryId: initialTargetRepositoryId,
+      });
     } catch {
       setLoadError("Failed to load project. Please try again.");
       setRepositories([]);
       setTargetRepositoryId("");
+      setInitialSnapshot(null);
     } finally {
       setIsLoading(false);
     }
@@ -184,6 +230,7 @@ export const useTaskCreateModel = () => {
     backHref,
     backLabel,
     isDirty,
+    isDiscardModalOpen,
     setTitle,
     setDescription,
     setImplementationGuide,
@@ -192,6 +239,8 @@ export const useTaskCreateModel = () => {
     loadProjectContext,
     onSubmit,
     onClose,
+    onCancelDiscard,
+    onConfirmDiscard,
     onTitleBlur,
     onTargetRepositoryBlur,
   };
