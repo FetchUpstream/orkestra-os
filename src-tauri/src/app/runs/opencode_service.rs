@@ -550,11 +550,24 @@ impl RunsOpenCodeService {
         prompt_agent: Option<&str>,
         prompt_provider_id: Option<&str>,
         prompt_model_id: Option<&str>,
-    ) -> PromptSelection {
+    ) -> Result<PromptSelection, AppError> {
+        let prompt_agent = to_nonempty_trimmed_string(prompt_agent);
         let prompt_provider = to_nonempty_trimmed_string(prompt_provider_id);
         let prompt_model = to_nonempty_trimmed_string(prompt_model_id);
         let run_provider = to_nonempty_trimmed_string(run_defaults_provider_id);
         let run_model = to_nonempty_trimmed_string(run_defaults_model_id);
+
+        if prompt_provider.is_some() ^ prompt_model.is_some() {
+            return Err(AppError::validation(
+                "prompt provider and model must be provided together",
+            ));
+        }
+
+        if prompt_agent.is_some() && prompt_provider.is_none() {
+            return Err(AppError::validation(
+                "prompt agent override requires provider and model overrides",
+            ));
+        }
 
         let (provider_id, model_id) =
             if let (Some(provider_id), Some(model_id)) = (prompt_provider, prompt_model) {
@@ -565,15 +578,15 @@ impl RunsOpenCodeService {
                 ("kimi-for-coding".to_string(), "k2p5".to_string())
             };
 
-        let agent = to_nonempty_trimmed_string(prompt_agent)
+        let agent = prompt_agent
             .or_else(|| to_nonempty_trimmed_string(run_defaults_agent))
             .unwrap_or_else(|| "build".to_string());
 
-        PromptSelection {
+        Ok(PromptSelection {
             agent,
             provider_id,
             model_id,
-        }
+        })
     }
 
     async fn event_matches_current_run_session(
@@ -1697,14 +1710,21 @@ impl RunsOpenCodeService {
         };
 
         let run_defaults = self.runs_service.get_run_model(run_id).await?;
-        let selected = Self::resolve_prompt_selection(
+        let selected = match Self::resolve_prompt_selection(
             run_defaults.agent_id.as_deref(),
             run_defaults.provider_id.as_deref(),
             run_defaults.model_id.as_deref(),
             agent.as_deref(),
             provider_id.as_deref(),
             model_id.as_deref(),
-        );
+        ) {
+            Ok(selected) => selected,
+            Err(err) => {
+                self.release_initial_seed_claim_if_claimant(run_id, claimed_initial_seed_request_id)
+                    .await?;
+                return Err(err);
+            }
+        };
 
         let mut request = RequestOptions::default().with_path("id", session_id);
         if let Some(request_id) = client_request_id.as_ref() {
@@ -2593,7 +2613,6 @@ mod tests {
     use crate::app::db::repositories::runs::RunsRepository;
     use crate::app::runs::service::RunsService;
     use crate::app::worktrees::service::WorktreesService;
-    use anyhow::Context;
     use opencode::{
         create_opencode_client, create_opencode_server, OpencodeClientConfig, OpencodeServerOptions,
     };
@@ -2739,7 +2758,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_prompt_selection_prefers_prompt_override_then_run_defaults_then_backend_defaults() {
+    fn resolve_prompt_selection_prefers_complete_prompt_override_then_run_defaults_then_backend_defaults() {
         let selected = RunsOpenCodeService::resolve_prompt_selection(
             Some("run-agent"),
             Some("run-provider"),
@@ -2747,7 +2766,8 @@ mod tests {
             Some("prompt-agent"),
             Some("prompt-provider"),
             Some("prompt-model"),
-        );
+        )
+        .expect("complete prompt override should resolve");
         assert_eq!(
             selected,
             super::PromptSelection {
@@ -2762,11 +2782,11 @@ mod tests {
             Some("run-provider"),
             Some("run-model"),
             None,
-            Some("prompt-provider"),
+            None,
             None,
         );
         assert_eq!(
-            selected,
+            selected.expect("run defaults should resolve"),
             super::PromptSelection {
                 agent: "run-agent".to_string(),
                 provider_id: "run-provider".to_string(),
@@ -2781,7 +2801,8 @@ mod tests {
             Some("  "),
             None,
             None,
-        );
+        )
+        .expect("backend defaults should resolve");
         assert_eq!(
             selected,
             super::PromptSelection {
@@ -2790,6 +2811,29 @@ mod tests {
                 model_id: "k2p5".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn resolve_prompt_selection_rejects_partial_or_agent_only_overrides() {
+        let partial = RunsOpenCodeService::resolve_prompt_selection(
+            Some("run-agent"),
+            Some("run-provider"),
+            Some("run-model"),
+            None,
+            Some("prompt-provider"),
+            None,
+        );
+        assert!(partial.is_err());
+
+        let agent_only = RunsOpenCodeService::resolve_prompt_selection(
+            Some("run-agent"),
+            Some("run-provider"),
+            Some("run-model"),
+            Some("prompt-agent"),
+            None,
+            None,
+        );
+        assert!(agent_only.is_err());
     }
 
     #[test]

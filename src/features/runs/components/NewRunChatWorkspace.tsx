@@ -322,6 +322,10 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const [overrideAgentId, setOverrideAgentId] = createSignal("");
   const [overrideProviderId, setOverrideProviderId] = createSignal("");
   const [overrideModelId, setOverrideModelId] = createSignal("");
+  const [
+    composerSelectionValidationError,
+    setComposerSelectionValidationError,
+  ] = createSignal("");
 
   let transcriptScrollRef: HTMLDivElement | undefined;
   let transcriptBottomRef: HTMLDivElement | undefined;
@@ -431,6 +435,72 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       (option) => option.id === modelId,
     );
     return selectedModel?.providerId?.trim() || "";
+  };
+  const resolveProviderModelSelection = (preferences: {
+    providerId?: string;
+    modelId?: string;
+  }): { providerId: string; modelId: string } => {
+    const providers = runProviderOptions();
+    const models = runModelOptions();
+    const preferredProviderId = preferences.providerId?.trim() || "";
+    const preferredModelId = preferences.modelId?.trim() || "";
+    const preferredModel = preferredModelId
+      ? models.find((option) => option.id === preferredModelId)
+      : undefined;
+
+    if (preferredProviderId && preferredModelId) {
+      if (
+        doesModelMatchProvider(preferredModelId, preferredProviderId) &&
+        providers.some((option) => option.id === preferredProviderId) &&
+        models.some((option) => option.id === preferredModelId)
+      ) {
+        return { providerId: preferredProviderId, modelId: preferredModelId };
+      }
+    }
+
+    if (preferredProviderId) {
+      const providerExists = providers.some(
+        (option) => option.id === preferredProviderId,
+      );
+      if (providerExists) {
+        const providerModel = models.find(
+          (option) =>
+            !option.providerId || option.providerId === preferredProviderId,
+        );
+        if (providerModel) {
+          return { providerId: preferredProviderId, modelId: providerModel.id };
+        }
+      }
+    }
+
+    if (preferredModel && preferredModel.id) {
+      const modelProviderId = preferredModel.providerId?.trim() || "";
+      if (
+        !modelProviderId ||
+        providers.some((option) => option.id === modelProviderId)
+      ) {
+        return { providerId: modelProviderId, modelId: preferredModel.id };
+      }
+    }
+
+    for (const provider of providers) {
+      const providerModel = models.find(
+        (option) => !option.providerId || option.providerId === provider.id,
+      );
+      if (providerModel) {
+        return { providerId: provider.id, modelId: providerModel.id };
+      }
+    }
+
+    const firstModel = models[0];
+    if (firstModel) {
+      return {
+        providerId: firstModel.providerId?.trim() || "",
+        modelId: firstModel.id,
+      };
+    }
+
+    return { providerId: "", modelId: "" };
   };
   const selectedProviderId = createMemo(() => {
     const explicitProvider = overrideProviderId().trim();
@@ -1308,19 +1378,27 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               onInput={setComposerValue}
               onSubmit={(value) => {
                 void (async () => {
+                  const agentId = selectedAgentId();
+                  const providerId = selectedProviderId();
+                  const modelId = selectedModelId();
+                  const hasValidSelection =
+                    !!agentId &&
+                    !!providerId &&
+                    !!modelId &&
+                    doesModelMatchProvider(modelId, providerId);
+
+                  if (!hasValidSelection) {
+                    setComposerSelectionValidationError(
+                      "Select a valid agent, provider, and model before sending.",
+                    );
+                    return;
+                  }
+
+                  setComposerSelectionValidationError("");
                   const success = await props.model.agent.submitPrompt(value, {
-                    agentId: selectedAgentId() || undefined,
-                    providerId: selectedProviderId() || undefined,
-                    modelId: (() => {
-                      const modelId = selectedModelId();
-                      if (!modelId) {
-                        return undefined;
-                      }
-                      const providerId = effectiveProviderForModel();
-                      return doesModelMatchProvider(modelId, providerId)
-                        ? modelId
-                        : undefined;
-                    })(),
+                    agentId,
+                    providerId,
+                    modelId,
                   });
                   if (success) {
                     setComposerValue("");
@@ -1351,6 +1429,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                   onChange={(event) => {
                     const nextProviderId = event.currentTarget.value;
                     setOverrideProviderId(nextProviderId);
+                    setComposerSelectionValidationError("");
                     const currentModelId = selectedModelId();
                     if (
                       currentModelId &&
@@ -1378,6 +1457,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                   onChange={(event) => {
                     const selectedModelId = event.currentTarget.value;
                     setOverrideModelId(selectedModelId);
+                    setComposerSelectionValidationError("");
 
                     if (!selectedModelId) {
                       return;
@@ -1409,7 +1489,25 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                   class="select select-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 rounded-none px-3 text-xs font-medium"
                   value={selectedAgentId()}
                   onChange={(event) => {
-                    setOverrideAgentId(event.currentTarget.value);
+                    const nextAgentId = event.currentTarget.value;
+                    setOverrideAgentId(nextAgentId);
+                    setComposerSelectionValidationError("");
+
+                    const resolvedFromProject = resolveProviderModelSelection({
+                      providerId: projectDefaultProviderId(),
+                      modelId: projectDefaultModelId(),
+                    });
+                    const resolved =
+                      resolvedFromProject.providerId &&
+                      resolvedFromProject.modelId
+                        ? resolvedFromProject
+                        : resolveProviderModelSelection({
+                            providerId: runDefaultProviderId(),
+                            modelId: runDefaultModelId(),
+                          });
+
+                    setOverrideProviderId(resolved.providerId);
+                    setOverrideModelId(resolved.modelId);
                   }}
                   aria-label="Prompt override agent"
                 >
@@ -1427,6 +1525,15 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           >
             <p class="project-placeholder-text" aria-live="polite">
               {runSelectionOptionsError()}
+            </p>
+          </Show>
+          <Show
+            when={
+              !isRunCompleted() && composerSelectionValidationError().length > 0
+            }
+          >
+            <p class="projects-error" aria-live="polite">
+              {composerSelectionValidationError()}
             </p>
           </Show>
           <Show when={hasPendingPermission()}>

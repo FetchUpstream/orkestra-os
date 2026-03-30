@@ -331,7 +331,7 @@ describe("NewRunChatWorkspace", () => {
     });
   });
 
-  it("clears provider/model overrides when agent changes so submit still succeeds", async () => {
+  it("re-resolves provider/model when agent changes before submit", async () => {
     const submitPromptMock = vi.fn(async () => true);
     const { model } = createModelStub("running");
     model.agent.submitPrompt = submitPromptMock;
@@ -347,6 +347,8 @@ describe("NewRunChatWorkspace", () => {
       { id: "model-1", label: "GPT-5", providerId: "provider-1" },
       { id: "model-2", label: "Claude", providerId: "provider-2" },
     ];
+    model.agent.projectDefaultRunProviderId = () => "provider-2";
+    model.agent.projectDefaultRunModelId = () => "model-2";
 
     render(() => <NewRunChatWorkspace model={model} />);
 
@@ -360,14 +362,16 @@ describe("NewRunChatWorkspace", () => {
       target: { value: "agent-2" },
     });
 
-    expect(
-      (screen.getByLabelText("Prompt override provider") as HTMLSelectElement)
-        .value,
-    ).toBe("provider-1");
-    expect(
-      (screen.getByLabelText("Prompt override model") as HTMLSelectElement)
-        .value,
-    ).toBe("model-1");
+    await waitFor(() => {
+      expect(
+        (screen.getByLabelText("Prompt override provider") as HTMLSelectElement)
+          .value,
+      ).toBe("provider-2");
+      expect(
+        (screen.getByLabelText("Prompt override model") as HTMLSelectElement)
+          .value,
+      ).toBe("model-2");
+    });
 
     await fireEvent.input(screen.getByLabelText("Message agent"), {
       target: { value: "Hello" },
@@ -376,12 +380,33 @@ describe("NewRunChatWorkspace", () => {
 
     expect(submitPromptMock).toHaveBeenCalledWith("Hello", {
       agentId: "agent-2",
-      providerId: "provider-1",
-      modelId: "model-1",
+      providerId: "provider-2",
+      modelId: "model-2",
     });
     expect(
       (screen.getByLabelText("Message agent") as HTMLTextAreaElement).value,
     ).toBe("");
+  });
+
+  it("blocks submit with validation error when no valid provider/model can be resolved", async () => {
+    const submitPromptMock = vi.fn(async () => true);
+    const { model } = createModelStub("running");
+    model.agent.submitPrompt = submitPromptMock;
+    model.agent.runModelOptions = () => [];
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.input(screen.getByLabelText("Message agent"), {
+      target: { value: "Hello" },
+    });
+    await fireEvent.submit(screen.getByLabelText("Chat composer"));
+
+    expect(submitPromptMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(
+        "Select a valid agent, provider, and model before sending.",
+      ),
+    ).toBeTruthy();
   });
 
   it("renders assistant attribution subtitle only for assistant messages", () => {
