@@ -38,6 +38,7 @@ pub fn compose_worktree_id(project_key: &str, branch_segment: &str) -> String {
     format!("{project_key}/{branch_segment}")
 }
 
+#[allow(dead_code)]
 pub fn validate_project_key_segment(project_key: &str) -> Result<(), AppError> {
     validate_project_key_segment_typed(project_key).map_err(|err| err.to_app_error())
 }
@@ -62,6 +63,7 @@ pub fn validate_project_key_segment_typed(project_key: &str) -> Result<(), Workt
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn validate_branch_segment(branch_segment: &str) -> Result<(), AppError> {
     validate_branch_segment_typed(branch_segment).map_err(|err| err.to_app_error())
 }
@@ -81,6 +83,7 @@ pub fn validate_branch_segment_typed(branch_segment: &str) -> Result<(), Worktre
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn parse_worktree_id(worktree_id: &str) -> Result<(&str, &str), AppError> {
     parse_worktree_id_typed(worktree_id).map_err(|err| err.to_app_error())
 }

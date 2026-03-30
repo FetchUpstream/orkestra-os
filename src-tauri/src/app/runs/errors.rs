@@ -71,6 +71,7 @@ impl From<RunsDiffError> for AppError {
 }
 
 #[derive(Debug, Error)]
+#[allow(dead_code)]
 pub enum RunsMergeError {
     #[error("{0}")]
     Validation(String),
@@ -90,6 +91,7 @@ pub enum RunsMergeError {
     },
 }
 
+#[allow(dead_code)]
 impl RunsMergeError {
     pub fn validation(message: impl Into<String>) -> Self {
         Self::Validation(message.into())

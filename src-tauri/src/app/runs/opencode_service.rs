@@ -34,6 +34,7 @@ enum OpenCodeServiceError {
     #[error("failed to lock {resource}")]
     LockPoisoned { resource: &'static str },
 
+    #[allow(dead_code)]
     #[error("OpenCode run handle not found")]
     MissingRunHandle,
 

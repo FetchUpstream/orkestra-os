@@ -78,7 +78,6 @@ const RunTerminal: Component<RunTerminalProps> = (props) => {
     terminal = new Terminal({
       cursorBlink: true,
       disableStdin: !props.isInputEnabled,
-      fontFamily: "var(--font-sans)",
       fontSize: 13,
       lineHeight: 1.4,
       scrollback: 5000,

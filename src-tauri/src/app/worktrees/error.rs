@@ -78,20 +78,24 @@ pub enum WorktreesServiceError {
         #[source]
         source: std::io::Error,
     },
+    #[allow(dead_code)]
     #[error("failed to create branch '{branch_name}'")]
     CreateBranch {
         branch_name: String,
         #[source]
         source: git2::Error,
     },
+    #[allow(dead_code)]
     #[error("failed to lookup branch '{branch_name}'")]
     LookupBranch {
         branch_name: String,
         #[source]
         source: git2::Error,
     },
+    #[allow(dead_code)]
     #[error("invalid worktree id")]
     InvalidWorktreeId,
+    #[allow(dead_code)]
     #[error("failed to prepare worktree metadata directory '{path}'")]
     PrepareWorktreeMetadataDir {
         path: String,

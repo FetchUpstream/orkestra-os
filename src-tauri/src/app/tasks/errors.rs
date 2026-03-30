@@ -75,6 +75,7 @@ impl TaskSearchError {
 }
 
 #[derive(Debug, Error)]
+#[allow(dead_code)]
 pub enum TaskServiceError {
     #[error("{0}")]
     Validation(String),
@@ -98,6 +99,7 @@ pub enum TaskServiceError {
     },
 }
 
+#[allow(dead_code)]
 impl TaskServiceError {
     pub fn validation(message: impl Into<String>) -> Self {
         Self::Validation(message.into())

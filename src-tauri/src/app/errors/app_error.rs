@@ -7,6 +7,7 @@ pub enum AppError {
     #[error("{0}")]
     NotFound(String),
     #[error("{0}")]
+    #[allow(dead_code)]
     Conflict(String),
     #[error("database error: {0}")]
     Database(#[source] sqlx::Error),
@@ -24,6 +25,7 @@ pub struct InfrastructureError {
     pub source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
+#[allow(dead_code)]
 impl AppError {
     pub fn validation(message: impl Into<String>) -> Self {
         Self::Validation(message.into())
