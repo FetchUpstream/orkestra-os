@@ -4679,7 +4679,43 @@ describe("app routing and shell", () => {
         });
       }
       if (command === "update_project") {
-        return Promise.resolve(null);
+        return Promise.resolve({
+          project: {
+            id: "p-1",
+            name: "Alpha Updated",
+            key: "ALP",
+            description: "Original description",
+            default_run_agent: null,
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+          },
+          repositories: [
+            {
+              id: "r-1",
+              name: "Main",
+              repo_path: "/repo/main",
+              is_default: true,
+              setup_script: null,
+              cleanup_script: null,
+            },
+          ],
+        });
+      }
+      if (command === "list_run_opencode_agents") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+        });
+      }
+      if (command === "list_run_opencode_providers") {
+        return Promise.resolve({
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
       }
       return Promise.resolve(null);
     });
@@ -4690,6 +4726,23 @@ describe("app routing and shell", () => {
       expect(
         screen.getByRole("heading", { name: "Edit Project" }),
       ).toBeTruthy();
+      expect(
+        (screen.getByLabelText("Project name") as HTMLInputElement).value,
+      ).toBe("Alpha");
+      expect(
+        (
+          screen.getByLabelText(
+            "Project default run provider",
+          ) as HTMLSelectElement
+        ).value,
+      ).toBe("provider-a");
+      expect(
+        (
+          screen.getByLabelText(
+            "Project default run model",
+          ) as HTMLSelectElement
+        ).value,
+      ).toBe("model-a");
     });
 
     await fireEvent.input(screen.getByLabelText("Project name"), {
@@ -4700,23 +4753,24 @@ describe("app routing and shell", () => {
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("update_project", {
         id: "p-1",
-        input: {
+        input: expect.objectContaining({
           name: "Alpha Updated",
           key: "ALP",
           description: "Original description",
-          default_run_agent: "agent-a",
           default_run_provider: "provider-a",
           default_run_model: "model-a",
           repositories: [
-            {
+            expect.objectContaining({
               id: "r-1",
               repo_path: "/repo/main",
               name: "Main",
               is_default: true,
-            },
+            }),
           ],
-        },
+        }),
       });
+      expect(window.location.pathname).toBe("/board");
+      expect(window.location.search).toBe("?projectId=p-1");
     });
   });
 

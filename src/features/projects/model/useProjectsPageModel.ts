@@ -364,7 +364,7 @@ export const useProjectsPageModel = () => {
       if (mode() === "edit" && activeEditProjectId) {
         await updateProject(activeEditProjectId, payload);
         await loadProjects();
-        await onEditProject(activeEditProjectId);
+        navigate(`/board?projectId=${encodeURIComponent(activeEditProjectId)}`);
         return;
       }
 
