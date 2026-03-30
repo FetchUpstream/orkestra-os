@@ -85,6 +85,7 @@ impl ProjectsService {
                 name: project.name,
                 description: project.description,
                 default_repo_id: project.default_repo_id,
+                default_run_agent: project.default_run_agent,
                 default_run_provider: project.default_run_provider,
                 default_run_model: project.default_run_model,
                 created_at: project.created_at,
@@ -109,6 +110,7 @@ impl ProjectsService {
                 name: details.project.name,
                 description: details.project.description,
                 default_repo_id: details.project.default_repo_id,
+                default_run_agent: details.project.default_run_agent,
                 default_run_provider: details.project.default_run_provider,
                 default_run_model: details.project.default_run_model,
                 created_at: details.project.created_at,
@@ -136,6 +138,11 @@ impl ProjectsService {
         mut input: CreateProjectRequest,
     ) -> Result<ProjectDetailsDto, AppError> {
         input.key = input.key.trim().to_string();
+        let default_run_agent = input
+            .default_run_agent
+            .take()
+            .map(|agent| agent.trim().to_string())
+            .filter(|agent| !agent.is_empty());
         input.default_run_provider = input.default_run_provider.trim().to_string();
         input.default_run_model = input.default_run_model.trim().to_string();
         self.validate_key(&input.key).map_err(AppError::from)?;
@@ -165,6 +172,7 @@ impl ProjectsService {
                 .description
                 .map(|description| description.trim().to_string()),
             default_repo_id: None,
+            default_run_agent,
             default_run_provider: Some(input.default_run_provider),
             default_run_model: Some(input.default_run_model),
             created_at: now.clone(),
@@ -202,6 +210,7 @@ impl ProjectsService {
                 name: created.project.name,
                 description: created.project.description,
                 default_repo_id: created.project.default_repo_id,
+                default_run_agent: created.project.default_run_agent,
                 default_run_provider: created.project.default_run_provider,
                 default_run_model: created.project.default_run_model,
                 created_at: created.project.created_at,
@@ -230,6 +239,11 @@ impl ProjectsService {
         mut input: UpdateProjectRequest,
     ) -> Result<ProjectDetailsDto, AppError> {
         input.key = input.key.trim().to_string();
+        let default_run_agent = input
+            .default_run_agent
+            .take()
+            .map(|agent| agent.trim().to_string())
+            .filter(|agent| !agent.is_empty());
         input.default_run_provider = input.default_run_provider.trim().to_string();
         input.default_run_model = input.default_run_model.trim().to_string();
         self.validate_key(&input.key).map_err(AppError::from)?;
@@ -281,6 +295,7 @@ impl ProjectsService {
                 &normalized_name,
                 &input.key,
                 &normalized_description,
+                &default_run_agent,
                 &input.default_run_provider,
                 &input.default_run_model,
                 &now,
@@ -298,6 +313,7 @@ impl ProjectsService {
                 name: updated.project.name,
                 description: updated.project.description,
                 default_repo_id: updated.project.default_repo_id,
+                default_run_agent: updated.project.default_run_agent,
                 default_run_provider: updated.project.default_run_provider,
                 default_run_model: updated.project.default_run_model,
                 created_at: updated.project.created_at,
@@ -391,6 +407,7 @@ impl ProjectsService {
                 name: cloned.project.name,
                 description: cloned.project.description,
                 default_repo_id: cloned.project.default_repo_id,
+                default_run_agent: cloned.project.default_run_agent,
                 default_run_provider: cloned.project.default_run_provider,
                 default_run_model: cloned.project.default_run_model,
                 created_at: cloned.project.created_at,
@@ -542,6 +559,7 @@ mod tests {
                 name: "Source".to_string(),
                 description: None,
                 key: "SRC".to_string(),
+                default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 repositories: vec![
@@ -593,6 +611,7 @@ mod tests {
                 name: "Source".to_string(),
                 description: None,
                 key: "SRZ".to_string(),
+                default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
@@ -614,6 +633,7 @@ mod tests {
                 &source.project.name,
                 &source.project.key,
                 &source.project.description,
+                &source.project.default_run_agent,
                 source.project.default_run_provider.as_deref().unwrap_or(""),
                 source.project.default_run_model.as_deref().unwrap_or(""),
                 "2024-01-02T00:00:00Z",
@@ -650,6 +670,7 @@ mod tests {
                 name: "Source".to_string(),
                 description: None,
                 key: "SRC".to_string(),
+                default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
@@ -688,6 +709,7 @@ mod tests {
                 name: "Source".to_string(),
                 description: None,
                 key: "SCR".to_string(),
+                default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
@@ -722,6 +744,7 @@ mod tests {
                 name: "Delete Me".to_string(),
                 description: None,
                 key: "DEL".to_string(),
+                default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
@@ -810,6 +833,7 @@ mod tests {
                 name: "Rename Me".to_string(),
                 description: None,
                 key: "OLD".to_string(),
+                default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
@@ -831,6 +855,7 @@ mod tests {
                     name: "Rename Me".to_string(),
                     description: None,
                     key: "NEW".to_string(),
+                    default_run_agent: None,
                     default_run_provider: "provider-a".to_string(),
                     default_run_model: "model-a".to_string(),
                     repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
@@ -908,6 +933,7 @@ mod tests {
                 name: "First".to_string(),
                 description: None,
                 key: "FST".to_string(),
+                default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
@@ -927,6 +953,7 @@ mod tests {
                 name: "Second".to_string(),
                 description: None,
                 key: "SCD".to_string(),
+                default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {

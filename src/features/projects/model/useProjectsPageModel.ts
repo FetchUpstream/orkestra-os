@@ -50,10 +50,14 @@ export const useProjectsPageModel = () => {
   const [runProviderOptions, setRunProviderOptions] = createSignal<
     RunSelectionOption[]
   >([]);
+  const [runAgentOptions, setRunAgentOptions] = createSignal<
+    RunSelectionOption[]
+  >([]);
   const [runModelOptions, setRunModelOptions] = createSignal<RunModelOption[]>(
     [],
   );
   const [defaultRunProvider, setDefaultRunProvider] = createSignal("");
+  const [defaultRunAgent, setDefaultRunAgent] = createSignal("");
   const [defaultRunModel, setDefaultRunModelSignal] = createSignal("");
   const [isLoadingProjectForEdit, setIsLoadingProjectForEdit] =
     createSignal(false);
@@ -103,7 +107,10 @@ export const useProjectsPageModel = () => {
   };
 
   const hasRunSelectionOptions = createMemo(
-    () => runProviderOptions().length > 0 || runModelOptions().length > 0,
+    () =>
+      runAgentOptions().length > 0 ||
+      runProviderOptions().length > 0 ||
+      runModelOptions().length > 0,
   );
 
   const runDefaultsValidationError = createMemo(() => {
@@ -146,9 +153,22 @@ export const useProjectsPageModel = () => {
   };
 
   const applyResolvedRunDefaults = (persisted: {
+    agentId?: string | null;
     providerId?: string | null;
     modelId?: string | null;
   }) => {
+    const normalizedPersistedAgentId = persisted.agentId?.trim() || "";
+    if (runAgentOptions().length === 0) {
+      setDefaultRunAgent(normalizedPersistedAgentId);
+    } else {
+      const persistedAgentExists = runAgentOptions().some(
+        (option) => option.id === normalizedPersistedAgentId,
+      );
+      setDefaultRunAgent(
+        persistedAgentExists ? normalizedPersistedAgentId : "",
+      );
+    }
+
     if (runProviderOptions().length === 0 && runModelOptions().length === 0) {
       setDefaultRunProvider(persisted.providerId?.trim() || "");
       setDefaultRunModelSignal(persisted.modelId?.trim() || "");
@@ -168,8 +188,10 @@ export const useProjectsPageModel = () => {
     const cachedOptions = readRunSelectionOptionsCache();
     if (cachedOptions) {
       setRunProviderOptions(cachedOptions.providers);
+      setRunAgentOptions(cachedOptions.agents);
       setRunModelOptions(cachedOptions.models);
       applyResolvedRunDefaults({
+        agentId: defaultRunAgent(),
         providerId: defaultRunProvider(),
         modelId: defaultRunModel(),
       });
@@ -182,12 +204,15 @@ export const useProjectsPageModel = () => {
     try {
       const options = await getRunSelectionOptionsWithCache();
       setRunProviderOptions(options.providers);
+      setRunAgentOptions(options.agents);
       setRunModelOptions(options.models);
       applyResolvedRunDefaults({
+        agentId: defaultRunAgent(),
         providerId: defaultRunProvider(),
         modelId: defaultRunModel(),
       });
     } catch {
+      setRunAgentOptions([]);
       setRunProviderOptions([]);
       setRunModelOptions([]);
       setRunDefaultsError("Failed to load run defaults.");
@@ -227,6 +252,7 @@ export const useProjectsPageModel = () => {
     setRepositories([emptyRepo()]);
     setDefaultRepoIndex(0);
     setDefaultRunProvider("");
+    setDefaultRunAgent("");
     setDefaultRunModelSignal("");
     setIsKeyEdited(false);
     setTouched({});
@@ -323,6 +349,7 @@ export const useProjectsPageModel = () => {
         description: description().trim() || undefined,
         defaultRunProvider: defaultRunProvider().trim(),
         defaultRunModel: defaultRunModel().trim(),
+        defaultRunAgent: defaultRunAgent().trim() || undefined,
         repositories: normalizedRepositories.map((repo, index) => ({
           id: repo.id,
           path: repo.path,
@@ -385,6 +412,7 @@ export const useProjectsPageModel = () => {
         nextRepositories.length > 0 ? nextRepositories : [emptyRepo()],
       );
       applyResolvedRunDefaults({
+        agentId: projectDetails.defaultRunAgent,
         providerId: projectDetails.defaultRunProvider,
         modelId: projectDetails.defaultRunModel,
       });
@@ -554,10 +582,12 @@ export const useProjectsPageModel = () => {
     isSubmitting,
     isLoadingRunDefaults,
     runProviderOptions,
+    runAgentOptions,
     runModelOptions,
     visibleRunModelOptions,
     hasRunSelectionOptions,
     defaultRunProvider,
+    defaultRunAgent,
     defaultRunModel,
     runDefaultsValidationError,
     isLoadingProjectForEdit,
@@ -582,6 +612,7 @@ export const useProjectsPageModel = () => {
     setDescription,
     setTouched,
     setDefaultRunProvider: setDefaultRunProviderAndValidate,
+    setDefaultRunAgent,
     setDefaultRunModel,
     setCloneTouched,
     setDefaultRepoIndex,

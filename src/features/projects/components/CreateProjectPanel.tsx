@@ -16,7 +16,9 @@ type Props = {
   hasRunSelectionOptions: () => boolean;
   projectKeyError: () => string;
   defaultRunProvider: () => string;
+  defaultRunAgent: () => string;
   defaultRunModel: () => string;
+  runAgentOptions: () => RunSelectionOption[];
   runProviderOptions: () => RunSelectionOption[];
   visibleRunModelOptions: () => RunModelOption[];
   runDefaultsValidationError: () => string;
@@ -26,6 +28,7 @@ type Props = {
   ) => void;
   setDefaultRepoIndex: (index: number) => void;
   setDefaultRunProvider: (value: string) => void;
+  setDefaultRunAgent: (value: string) => void;
   setDefaultRunModel: (value: string) => void;
   updateName: (value: string) => void;
   updateKey: (value: string) => void;
@@ -125,12 +128,34 @@ const CreateProjectPanel: Component<Props> = (props) => (
         <div>
           <h3 class="form-section-title">Default Run Configuration</h3>
           <p class="form-section-subtitle">
-            These provider/model defaults are used for future runs in this
+            These agent/provider/model defaults are used for future runs in this
             project.
           </p>
         </div>
         <Show when={props.hasRunSelectionOptions()}>
           <div class="task-runs-defaults-grid">
+            <label class="projects-field task-runs-default-field">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                <span class="field-label-text">Agent</span>
+                <span class="field-optional">optional</span>
+              </span>
+              <select
+                class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
+                value={props.defaultRunAgent()}
+                onChange={(event) =>
+                  props.setDefaultRunAgent(event.currentTarget.value)
+                }
+                disabled={props.isSubmitting()}
+                aria-label="Project default run agent"
+              >
+                <option value="">System default agent</option>
+                <For each={props.runAgentOptions()}>
+                  {(option) => (
+                    <option value={option.id}>{option.label}</option>
+                  )}
+                </For>
+              </select>
+            </label>
             <label class="projects-field task-runs-default-field">
               <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                 <span class="field-label-text">Provider</span>
@@ -147,7 +172,9 @@ const CreateProjectPanel: Component<Props> = (props) => (
               >
                 <option value="">Select provider</option>
                 <For each={props.runProviderOptions()}>
-                  {(option) => <option value={option.id}>{option.label}</option>}
+                  {(option) => (
+                    <option value={option.id}>{option.label}</option>
+                  )}
                 </For>
               </select>
             </label>
@@ -167,14 +194,20 @@ const CreateProjectPanel: Component<Props> = (props) => (
               >
                 <option value="">Select model</option>
                 <For each={props.visibleRunModelOptions()}>
-                  {(option) => <option value={option.id}>{option.label}</option>}
+                  {(option) => (
+                    <option value={option.id}>{option.label}</option>
+                  )}
                 </For>
               </select>
             </label>
           </div>
         </Show>
-        <Show when={!props.hasRunSelectionOptions() && props.isLoadingRunDefaults()}>
-          <p class="project-placeholder-text text-sm">Loading run defaults...</p>
+        <Show
+          when={!props.hasRunSelectionOptions() && props.isLoadingRunDefaults()}
+        >
+          <p class="project-placeholder-text text-sm">
+            Loading run defaults...
+          </p>
         </Show>
         <Show
           when={

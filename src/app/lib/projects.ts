@@ -24,6 +24,7 @@ export type CreateProjectInput = {
   name: string;
   key: string;
   description?: string;
+  defaultRunAgent?: string;
   defaultRunProvider: string;
   defaultRunModel: string;
   repositories: Array<{
@@ -70,7 +71,12 @@ export const createProject = async (
   input: CreateProjectInput,
 ): Promise<Project> => {
   const payload = {
-    ...input,
+    name: input.name,
+    key: input.key,
+    description: input.description,
+    default_run_agent: input.defaultRunAgent?.trim() || undefined,
+    default_run_provider: input.defaultRunProvider,
+    default_run_model: input.defaultRunModel,
     repositories: input.repositories.map((repository) => ({
       repo_path: repository.path,
       name: repository.name ?? repository.path,
@@ -107,7 +113,12 @@ export const updateProject = async (
   input: UpdateProjectInput,
 ): Promise<Project> => {
   const payload = {
-    ...input,
+    name: input.name,
+    key: input.key,
+    description: input.description,
+    default_run_agent: input.defaultRunAgent?.trim() || undefined,
+    default_run_provider: input.defaultRunProvider,
+    default_run_model: input.defaultRunModel,
     repositories: input.repositories.map((repository) => ({
       id: repository.id,
       repo_path: repository.path,
@@ -128,6 +139,7 @@ export const updateProject = async (
     name: response.project.name,
     key: response.project.key,
     description: response.project.description,
+    defaultRunAgent: response.project.default_run_agent,
     defaultRunProvider: response.project.default_run_provider,
     defaultRunModel: response.project.default_run_model,
     repositories: response.repositories.map((repository) => ({

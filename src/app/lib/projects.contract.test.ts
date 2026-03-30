@@ -4,6 +4,7 @@ import {
   createProject,
   deleteProject,
   getProject,
+  updateProject,
   type CreateProjectInput,
   type Project,
 } from "./projects";
@@ -19,7 +20,7 @@ describe("projects contract", () => {
     invokeMock.mockReset();
   });
 
-  it("sends repo_path in create_project repository payload", async () => {
+  it("sends snake_case fields in create_project payload", async () => {
     invokeMock.mockResolvedValue({
       project: { id: "project-1", name: "Orkestra", key: "ORK" },
       repositories: [
@@ -35,6 +36,7 @@ describe("projects contract", () => {
     const input: CreateProjectInput = {
       name: "Orkestra",
       key: "ORK",
+      defaultRunAgent: "agent-a",
       defaultRunProvider: "provider-a",
       defaultRunModel: "model-a",
       repositories: [{ path: "/repo/main", is_default: true }],
@@ -47,10 +49,56 @@ describe("projects contract", () => {
         name: "Orkestra",
         key: "ORK",
         description: undefined,
-        defaultRunProvider: "provider-a",
-        defaultRunModel: "model-a",
+        default_run_agent: "agent-a",
+        default_run_provider: "provider-a",
+        default_run_model: "model-a",
         repositories: [
           {
+            repo_path: "/repo/main",
+            name: "/repo/main",
+            is_default: true,
+            setup_script: undefined,
+            cleanup_script: undefined,
+          },
+        ],
+      },
+    });
+  });
+
+  it("sends snake_case fields in update_project payload", async () => {
+    invokeMock.mockResolvedValue({
+      project: { id: "project-1", name: "Orkestra", key: "ORK" },
+      repositories: [
+        {
+          id: "repo-1",
+          name: "Main",
+          repo_path: "/repo/main",
+          is_default: true,
+        },
+      ],
+    });
+
+    await updateProject("project-1", {
+      name: "Orkestra",
+      key: "ORK",
+      defaultRunAgent: "agent-a",
+      defaultRunProvider: "provider-a",
+      defaultRunModel: "model-a",
+      repositories: [{ id: "repo-1", path: "/repo/main", is_default: true }],
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("update_project", {
+      id: "project-1",
+      input: {
+        name: "Orkestra",
+        key: "ORK",
+        description: undefined,
+        default_run_agent: "agent-a",
+        default_run_provider: "provider-a",
+        default_run_model: "model-a",
+        repositories: [
+          {
+            id: "repo-1",
             repo_path: "/repo/main",
             name: "/repo/main",
             is_default: true,

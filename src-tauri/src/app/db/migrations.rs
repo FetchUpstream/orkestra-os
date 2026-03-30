@@ -165,6 +165,19 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
             .await?;
     }
 
+    let project_columns = sqlx::query("PRAGMA table_info(projects)")
+        .fetch_all(pool)
+        .await?;
+    let has_default_run_agent = project_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "default_run_agent");
+
+    if !has_default_run_agent {
+        sqlx::query("ALTER TABLE projects ADD COLUMN default_run_agent TEXT")
+            .execute(pool)
+            .await?;
+    }
+
     let run_columns = sqlx::query("PRAGMA table_info(runs)")
         .fetch_all(pool)
         .await?;

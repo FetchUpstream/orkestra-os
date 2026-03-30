@@ -41,7 +41,9 @@ const ProjectsScreen: Component = () => {
           hasRunSelectionOptions={model.hasRunSelectionOptions}
           projectKeyError={model.projectKeyError}
           defaultRunProvider={model.defaultRunProvider}
+          defaultRunAgent={model.defaultRunAgent}
           defaultRunModel={model.defaultRunModel}
+          runAgentOptions={model.runAgentOptions}
           runProviderOptions={model.runProviderOptions}
           visibleRunModelOptions={model.visibleRunModelOptions}
           runDefaultsValidationError={model.runDefaultsValidationError}
@@ -49,6 +51,7 @@ const ProjectsScreen: Component = () => {
           setTouched={model.setTouched}
           setDefaultRepoIndex={model.setDefaultRepoIndex}
           setDefaultRunProvider={model.setDefaultRunProvider}
+          setDefaultRunAgent={model.setDefaultRunAgent}
           setDefaultRunModel={model.setDefaultRunModel}
           updateName={model.updateName}
           updateKey={model.updateKey}
