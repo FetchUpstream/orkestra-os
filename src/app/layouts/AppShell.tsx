@@ -9,14 +9,17 @@ import {
   type Component,
   type JSX,
 } from "solid-js";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listProjects, type Project } from "../lib/projects";
 import { primeRunSelectionOptionsCache } from "../lib/runSelectionOptionsCache";
+import { listActiveRuns } from "../lib/runs";
 import type { TaskStatus } from "../lib/tasks";
 import MainContent from "../../components/layout/MainContent";
 import SidebarNav from "../../components/layout/SidebarNav";
 import Topbar from "../../components/layout/Topbar";
 import AlphaNoticeModal from "../../components/layout/AlphaNoticeModal";
 import AboutModal from "../../components/layout/AboutModal";
+import CloseWhileRunsActiveModal from "../../components/layout/CloseWhileRunsActiveModal";
 import { AppIcon } from "../../components/ui/icons";
 import { formatStatus } from "../../features/tasks/utils/taskDetail";
 
@@ -85,6 +88,10 @@ const AppShell: Component<AppShellProps> = (props) => {
   const [runDetailTopbarConfig, setRunDetailTopbarConfig] =
     createSignal<RunDetailTopbarConfig | null>(null);
   const [aboutModalOpen, setAboutModalOpen] = createSignal(false);
+  const [closeWarningOpen, setCloseWarningOpen] = createSignal(false);
+  const [closeWarningRunCount, setCloseWarningRunCount] = createSignal(0);
+  const [confirmedCloseInProgress, setConfirmedCloseInProgress] =
+    createSignal(false);
 
   const isSidebarVisible = () => (isMobile() ? mobileSidebarOpen() : true);
 
@@ -168,6 +175,36 @@ const AppShell: Component<AppShellProps> = (props) => {
         onRunDetailTopbarClear,
       );
     });
+
+    try {
+      const appWindow = getCurrentWindow();
+      const unlistenCloseRequested = await appWindow.onCloseRequested(
+        async (event) => {
+          if (confirmedCloseInProgress()) {
+            return;
+          }
+
+          try {
+            const activeRuns = await listActiveRuns();
+            if (activeRuns.length === 0) {
+              return;
+            }
+
+            event.preventDefault();
+            setCloseWarningRunCount(activeRuns.length);
+            setCloseWarningOpen(true);
+          } catch (error) {
+            console.warn("Failed to check active runs before close", error);
+          }
+        },
+      );
+
+      onCleanup(() => {
+        unlistenCloseRequested();
+      });
+    } catch (error) {
+      console.warn("Failed to register app close interceptor", error);
+    }
   });
 
   createEffect(() => {
@@ -230,6 +267,22 @@ const AppShell: Component<AppShellProps> = (props) => {
 
   const onCloseSettings = () => {
     setAboutModalOpen(false);
+  };
+
+  const onCancelCloseWarning = () => {
+    setCloseWarningOpen(false);
+    setCloseWarningRunCount(0);
+  };
+
+  const onConfirmCloseWarning = async () => {
+    setConfirmedCloseInProgress(true);
+    setCloseWarningOpen(false);
+    try {
+      await getCurrentWindow().destroy();
+    } catch (error) {
+      setConfirmedCloseInProgress(false);
+      console.warn("Failed to close app window", error);
+    }
   };
 
   const dispatchBoardSearchQuery = (query: string) => {
@@ -665,6 +718,12 @@ const AppShell: Component<AppShellProps> = (props) => {
         </div>
       </div>
       <AboutModal isOpen={aboutModalOpen} onClose={onCloseSettings} />
+      <CloseWhileRunsActiveModal
+        isOpen={closeWarningOpen}
+        activeRunCount={closeWarningRunCount}
+        onCancel={onCancelCloseWarning}
+        onConfirm={() => void onConfirmCloseWarning()}
+      />
       <AlphaNoticeModal />
     </div>
   );

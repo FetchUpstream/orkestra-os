@@ -9,11 +9,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import AppRouter from "../../router";
 import { resetRunSelectionOptionsCacheForTests } from "../lib/runSelectionOptionsCache";
 
-const { invokeMock, listenMock, emitTauriEvent } = vi.hoisted(() => {
+const {
+  invokeMock,
+  listenMock,
+  emitTauriEvent,
+  onCloseRequestedMock,
+  closeWindowMock,
+  destroyWindowMock,
+  emitCloseRequested,
+  resetCloseRequestedHandler,
+} = vi.hoisted(() => {
   const listeners = new Map<
     string,
     Set<(event: { payload: unknown }) => void>
   >();
+  let closeRequestedHandler:
+    | ((event: { preventDefault: () => void }) => void | Promise<void>)
+    | null = null;
   return {
     invokeMock: vi.fn(),
     listenMock: vi.fn(
@@ -40,6 +52,32 @@ const { invokeMock, listenMock, emitTauriEvent } = vi.hoisted(() => {
         handler({ payload });
       }
     },
+    onCloseRequestedMock: vi.fn(
+      async (handler: (event: { preventDefault: () => void }) => void) => {
+        closeRequestedHandler = handler;
+        return () => {
+          if (closeRequestedHandler === handler) {
+            closeRequestedHandler = null;
+          }
+        };
+      },
+    ),
+    closeWindowMock: vi.fn(async () => {}),
+    destroyWindowMock: vi.fn(async () => {}),
+    emitCloseRequested: async () => {
+      let prevented = false;
+      if (closeRequestedHandler) {
+        await closeRequestedHandler({
+          preventDefault: () => {
+            prevented = true;
+          },
+        });
+      }
+      return { prevented };
+    },
+    resetCloseRequestedHandler: () => {
+      closeRequestedHandler = null;
+    },
   };
 });
 
@@ -49,6 +87,21 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: listenMock,
+}));
+
+vi.mock("@tauri-apps/api/app", () => ({
+  getName: vi.fn(async () => "orkestraos"),
+  getVersion: vi.fn(async () => "0.0.0-test"),
+  getTauriVersion: vi.fn(async () => "2.0.0"),
+  getIdentifier: vi.fn(async () => "com.fetchupstream.orkestraos"),
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    onCloseRequested: onCloseRequestedMock,
+    close: closeWindowMock,
+    destroy: destroyWindowMock,
+  }),
 }));
 
 vi.mock("../../components/ui/TaskMarkdownEditor", () => ({
@@ -86,6 +139,8 @@ const renderAt = (path: string) => {
   window.history.pushState({}, "", path);
   return render(() => <AppRouter />);
 };
+
+let activeRunsResponse: unknown[] = [];
 
 const setViewportMobile = (isMobile: boolean) => {
   Object.defineProperty(window, "matchMedia", {
@@ -129,6 +184,11 @@ describe("app routing and shell", () => {
     resetLocalStorageMock();
     invokeMock.mockReset();
     listenMock.mockClear();
+    onCloseRequestedMock.mockClear();
+    closeWindowMock.mockClear();
+    destroyWindowMock.mockClear();
+    resetCloseRequestedHandler();
+    activeRunsResponse = [];
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects")
         return Promise.resolve([
@@ -181,6 +241,8 @@ describe("app routing and shell", () => {
           ],
         });
       if (command === "list_task_runs") return Promise.resolve([]);
+      if (command === "list_active_runs")
+        return Promise.resolve(activeRunsResponse);
       if (command === "create_run")
         return Promise.resolve({
           id: "run-new",
@@ -5111,5 +5173,118 @@ describe("app routing and shell", () => {
         screen.getByText("Failed to create task. Please try again."),
       ).toBeTruthy();
     });
+  });
+
+  it("allows app close immediately when no runs are active", async () => {
+    activeRunsResponse = [];
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(onCloseRequestedMock).toHaveBeenCalledTimes(1);
+    });
+
+    const closeAttempt = await emitCloseRequested();
+
+    expect(closeAttempt.prevented).toBe(false);
+    expect(
+      screen.queryByRole("heading", {
+        name: "Close app while runs are in progress?",
+      }),
+    ).toBeNull();
+    expect(closeWindowMock).not.toHaveBeenCalled();
+    expect(destroyWindowMock).not.toHaveBeenCalled();
+  });
+
+  it("shows close warning modal when runs are active", async () => {
+    activeRunsResponse = [
+      {
+        id: "run-active",
+        task_id: "task-1",
+        project_id: "p-1",
+        status: "running",
+        triggered_by: "user",
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+    ];
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(onCloseRequestedMock).toHaveBeenCalledTimes(1);
+    });
+
+    const closeAttempt = await emitCloseRequested();
+    expect(closeAttempt.prevented).toBe(true);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Close app while runs are in progress?",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/There is still 1 run in progress\./i),
+    ).toBeTruthy();
+  });
+
+  it("keeps app open when close warning is canceled", async () => {
+    activeRunsResponse = [
+      {
+        id: "run-active",
+        task_id: "task-1",
+        project_id: "p-1",
+        status: "queued",
+        triggered_by: "user",
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+    ];
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(onCloseRequestedMock).toHaveBeenCalledTimes(1);
+    });
+
+    await emitCloseRequested();
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Keep app open" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", {
+          name: "Close app while runs are in progress?",
+        }),
+      ).toBeNull();
+    });
+    expect(closeWindowMock).not.toHaveBeenCalled();
+    expect(destroyWindowMock).not.toHaveBeenCalled();
+  });
+
+  it("closes app when user explicitly confirms despite active runs", async () => {
+    activeRunsResponse = [
+      {
+        id: "run-active",
+        task_id: "task-1",
+        project_id: "p-1",
+        status: "preparing",
+        triggered_by: "user",
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+    ];
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(onCloseRequestedMock).toHaveBeenCalledTimes(1);
+    });
+
+    await emitCloseRequested();
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Close app anyway" }),
+    );
+
+    await waitFor(() => {
+      expect(destroyWindowMock).toHaveBeenCalledTimes(1);
+    });
+
+    const nextCloseAttempt = await emitCloseRequested();
+    expect(nextCloseAttempt.prevented).toBe(false);
   });
 });
