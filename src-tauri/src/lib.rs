@@ -34,6 +34,7 @@ pub fn run() {
             app::commands::projects::clone_project,
             app::commands::projects::delete_project,
             app::commands::projects::search_project_files,
+            app::commands::projects::get_project_opencode_selection_catalog,
             app::commands::tasks::create_task,
             app::commands::runs::create_run,
             app::commands::runs::list_task_runs,

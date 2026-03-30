@@ -576,8 +576,18 @@ export const useTaskDetailModel = () => {
   };
 
   const refreshRunSelectionOptions = async (activeTaskId: string) => {
+    const resolvedProjectId = projectId()?.trim() || "";
+    if (!resolvedProjectId) {
+      setRunSelectionOptionsError("Missing project context for run options.");
+      setRunAgentOptions([]);
+      setRunProviderOptions([]);
+      setRunModelOptions([]);
+      setIsLoadingRunSelectionOptions(false);
+      return;
+    }
+
     const requestVersion = ++runSelectionOptionsRequestVersion;
-    const cachedOptions = readRunSelectionOptionsCache();
+    const cachedOptions = readRunSelectionOptionsCache(resolvedProjectId);
     if (cachedOptions) {
       setRunSelectionOptionsError("");
       setIsLoadingRunSelectionOptions(false);
@@ -594,7 +604,7 @@ export const useTaskDetailModel = () => {
     setIsLoadingRunSelectionOptions(true);
     setRunSelectionOptionsError("");
     try {
-      const options = await getRunSelectionOptionsWithCache();
+      const options = await getRunSelectionOptionsWithCache(resolvedProjectId);
       if (
         requestVersion !== runSelectionOptionsRequestVersion ||
         params.taskId !== activeTaskId

@@ -324,8 +324,17 @@ export const useBoardModel = () => {
   };
 
   const refreshRunSelectionOptions = async () => {
+    const projectId = selectedProjectId().trim();
+    if (!projectId) {
+      setRunAgentOptions([]);
+      setRunProviderOptions([]);
+      setRunModelOptions([]);
+      setRunSelectionOptionsError("Select a project to load run options.");
+      return;
+    }
+
     const requestVersion = ++runSelectionOptionsRequestVersion;
-    const cachedOptions = readRunSelectionOptionsCache();
+    const cachedOptions = readRunSelectionOptionsCache(projectId);
     if (cachedOptions) {
       setRunSelectionOptionsError("");
       setIsLoadingRunSelectionOptions(false);
@@ -342,7 +351,7 @@ export const useBoardModel = () => {
     setIsLoadingRunSelectionOptions(true);
     setRunSelectionOptionsError("");
     try {
-      const options = await getRunSelectionOptionsWithCache();
+      const options = await getRunSelectionOptionsWithCache(projectId);
       if (requestVersion !== runSelectionOptionsRequestVersion) {
         return;
       }

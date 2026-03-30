@@ -1,7 +1,13 @@
 import { getRunSelectionOptions, type RunSelectionOptions } from "./runs";
 
-let cachedRunSelectionOptions: RunSelectionOptions | null = null;
-let inflightRunSelectionOptions: Promise<RunSelectionOptions> | null = null;
+const cachedRunSelectionOptionsByProject = new Map<
+  string,
+  RunSelectionOptions
+>();
+const inflightRunSelectionOptionsByProject = new Map<
+  string,
+  Promise<RunSelectionOptions>
+>();
 
 const cloneSelectionOptions = (
   options: RunSelectionOptions,
@@ -11,41 +17,72 @@ const cloneSelectionOptions = (
   models: [...options.models],
 });
 
-const loadRunSelectionOptions = async (): Promise<RunSelectionOptions> => {
-  const next = await getRunSelectionOptions();
-  cachedRunSelectionOptions = cloneSelectionOptions(next);
+const loadRunSelectionOptions = async (
+  projectId: string,
+): Promise<RunSelectionOptions> => {
+  const next = await getRunSelectionOptions(projectId);
+  cachedRunSelectionOptionsByProject.set(
+    projectId,
+    cloneSelectionOptions(next),
+  );
   return cloneSelectionOptions(next);
 };
 
-export const readRunSelectionOptionsCache = (): RunSelectionOptions | null => {
-  if (!cachedRunSelectionOptions) {
+export const readRunSelectionOptionsCache = (
+  projectId: string,
+): RunSelectionOptions | null => {
+  const cached = cachedRunSelectionOptionsByProject.get(projectId);
+  if (!cached) {
     return null;
   }
-  return cloneSelectionOptions(cachedRunSelectionOptions);
+  return cloneSelectionOptions(cached);
 };
 
-export const getRunSelectionOptionsWithCache =
-  async (): Promise<RunSelectionOptions> => {
-    if (cachedRunSelectionOptions) {
-      return cloneSelectionOptions(cachedRunSelectionOptions);
-    }
+export const getRunSelectionOptionsWithCache = async (
+  projectId: string,
+  options?: { refresh?: boolean },
+): Promise<RunSelectionOptions> => {
+  if (options?.refresh) {
+    cachedRunSelectionOptionsByProject.delete(projectId);
+  }
 
-    if (!inflightRunSelectionOptions) {
-      inflightRunSelectionOptions = loadRunSelectionOptions().finally(() => {
-        inflightRunSelectionOptions = null;
-      });
-    }
+  const cached = cachedRunSelectionOptionsByProject.get(projectId);
+  if (cached) {
+    return cloneSelectionOptions(cached);
+  }
 
-    return inflightRunSelectionOptions;
-  };
+  const inflight = inflightRunSelectionOptionsByProject.get(projectId);
+  if (inflight) {
+    return inflight;
+  }
 
-export const primeRunSelectionOptionsCache = (): void => {
-  void getRunSelectionOptionsWithCache().catch(() => {
+  const nextInflight = loadRunSelectionOptions(projectId).finally(() => {
+    inflightRunSelectionOptionsByProject.delete(projectId);
+  });
+  inflightRunSelectionOptionsByProject.set(projectId, nextInflight);
+
+  return nextInflight;
+};
+
+export const primeRunSelectionOptionsCache = (projectId: string): void => {
+  void getRunSelectionOptionsWithCache(projectId).catch(() => {
     // Startup cache warmup failures are handled by local feature fallbacks.
   });
 };
 
+export const invalidateRunSelectionOptionsCache = (
+  projectId?: string,
+): void => {
+  if (!projectId) {
+    cachedRunSelectionOptionsByProject.clear();
+    inflightRunSelectionOptionsByProject.clear();
+    return;
+  }
+
+  cachedRunSelectionOptionsByProject.delete(projectId);
+  inflightRunSelectionOptionsByProject.delete(projectId);
+};
+
 export const resetRunSelectionOptionsCacheForTests = (): void => {
-  cachedRunSelectionOptions = null;
-  inflightRunSelectionOptions = null;
+  invalidateRunSelectionOptionsCache();
 };

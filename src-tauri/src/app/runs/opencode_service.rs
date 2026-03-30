@@ -1,10 +1,11 @@
 use crate::app::errors::AppError;
+use crate::app::projects::service::ProjectsService;
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent,
     ReplyRunOpenCodePermissionResponse, RunAgentDto, RunAgentsResponseDto, RunDto,
     RunModelSelectionDto, RunOpenCodeChatModeDto, RunOpenCodeSessionMessageDto,
-    RunOpenCodeSessionTodoDto, RunProviderDto, RunProvidersResponseDto, StartRunOpenCodeResponse,
-    SubmitRunOpenCodePromptResponse,
+    RunOpenCodeSessionTodoDto, RunProviderDto, RunProvidersResponseDto,
+    RunSelectionCatalogResponseDto, StartRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::service::RunsService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
@@ -14,6 +15,7 @@ use opencode::{
     create_opencode_client, create_opencode_server, types::PartInput, OpencodeClient,
     OpencodeClientConfig, OpencodeServer, OpencodeServerOptions, RequestOptions,
 };
+use git2::Repository;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -490,6 +492,7 @@ const STREAM_MAX_RECONNECT_ATTEMPTS: u32 = 8;
 #[derive(Clone)]
 pub struct RunsOpenCodeService {
     runs_service: RunsService,
+    projects_service: ProjectsService,
     worktrees_root: PathBuf,
     handles: Arc<RwLock<HashMap<String, Arc<RunOpenCodeHandle>>>>,
     init_locks: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
@@ -1257,9 +1260,10 @@ impl RunsOpenCodeService {
         let _ = event_tx.send(agent_event);
     }
 
-    pub fn new(runs_service: RunsService, app_data_dir: PathBuf) -> Self {
+    pub fn new(runs_service: RunsService, projects_service: ProjectsService, app_data_dir: PathBuf) -> Self {
         Self {
             runs_service,
+            projects_service,
             worktrees_root: app_data_dir.join("worktrees"),
             handles: Arc::new(RwLock::new(HashMap::new())),
             init_locks: Arc::new(RwLock::new(HashMap::new())),
@@ -1267,7 +1271,7 @@ impl RunsOpenCodeService {
         }
     }
 
-    async fn with_ephemeral_client<T, F>(&self, op: F) -> Result<T, AppError>
+    async fn with_ephemeral_client<T, F>(&self, cwd: PathBuf, op: F) -> Result<T, AppError>
     where
         F: for<'a> FnOnce(
             &'a OpencodeClient,
@@ -1276,7 +1280,7 @@ impl RunsOpenCodeService {
         >,
     {
         let mut options = OpencodeServerOptions {
-            cwd: Some(self.worktrees_root.clone()),
+            cwd: Some(cwd),
             ..Default::default()
         };
         options.port = 0;
@@ -1299,76 +1303,180 @@ impl RunsOpenCodeService {
         op(&client).await
     }
 
-    pub async fn list_run_opencode_providers(&self) -> Result<RunProvidersResponseDto, AppError> {
-        self.with_ephemeral_client(|client| {
-            Box::pin(async move {
-                let provider_list_response = client
-                    .provider()
-                    .list(RequestOptions::default())
-                    .await
-                    .map_err(|err| {
-                        AppError::validation(format!("failed to list OpenCode providers: {err}"))
-                    })?;
+    async fn resolve_project_repo_root(&self, project_id: &str) -> Result<PathBuf, AppError> {
+        let project = self.projects_service.get_project(project_id).await?;
+        let default_repo_id = project
+            .project
+            .default_repo_id
+            .ok_or_else(|| AppError::validation("project default repository is missing"))?;
+        let default_repo = project
+            .repositories
+            .into_iter()
+            .find(|repo| repo.id == default_repo_id)
+            .ok_or_else(|| AppError::validation("project default repository was not found"))?;
 
-                let config_providers_response = client
-                    .config()
-                    .providers(RequestOptions::default())
-                    .await
-                    .map_err(|err| {
-                        AppError::validation(format!("failed to list OpenCode providers: {err}"))
-                    })?;
+        let configured_repo_path = default_repo.repo_path.trim();
+        if configured_repo_path.is_empty() {
+            return Err(AppError::validation(
+                "project default repository path is empty",
+            ));
+        }
 
-                let config_response = client
-                    .config()
-                    .get(RequestOptions::default())
-                    .await
-                    .map_err(|err| {
-                        AppError::validation(format!("failed to load OpenCode config: {err}"))
-                    })?;
+        let configured_path = PathBuf::from(configured_repo_path);
+        let canonical_configured_path = std::fs::canonicalize(&configured_path).map_err(|error| {
+            AppError::validation(format!(
+                "project default repository path is invalid or stale: {} ({error})",
+                configured_path.display()
+            ))
+        })?;
 
-                let providers = merge_provider_options(vec![
-                    parse_providers_from_payload(&provider_list_response.data),
-                    parse_providers_from_payload(&config_providers_response.data),
-                    parse_providers_from_payload(&config_response.data),
-                ]);
+        if !canonical_configured_path.is_dir() {
+            return Err(AppError::validation(format!(
+                "project default repository path is not a directory: {}",
+                canonical_configured_path.display()
+            )));
+        }
 
-                Ok(RunProvidersResponseDto { providers })
+        let repo = Repository::discover(&canonical_configured_path).map_err(|error| {
+            AppError::validation(format!(
+                "project default repository path is not inside a git repository: {} ({error})",
+                canonical_configured_path.display()
+            ))
+        })?;
+
+        let git_root = repo.workdir().ok_or_else(|| {
+            AppError::validation("project default repository must resolve to a non-bare git workdir")
+        })?;
+        let canonical_git_root = std::fs::canonicalize(git_root).map_err(|error| {
+            AppError::validation(format!(
+                "failed to canonicalize project git repository root: {} ({error})",
+                git_root.display()
+            ))
+        })?;
+
+        info!(
+            target: "opencode.discovery",
+            marker = "resolve_root",
+            project_id,
+            configured_repo_path = configured_path.display().to_string(),
+            resolved_git_root = canonical_git_root.display().to_string(),
+            "Resolved OpenCode canonical project repository root"
+        );
+
+        Ok(canonical_git_root)
+    }
+
+    async fn detect_opencode_selection_catalog(
+        &self,
+        project_id: &str,
+    ) -> Result<RunSelectionCatalogResponseDto, AppError> {
+        let canonical_repo_root = self.resolve_project_repo_root(project_id).await?;
+        info!(
+            target: "opencode.discovery",
+            marker = "start",
+            project_id,
+            repo_root = canonical_repo_root.display().to_string(),
+            "Starting OpenCode selection discovery"
+        );
+
+        let detection_started = Instant::now();
+        let result = self
+            .with_ephemeral_client(canonical_repo_root.clone(), |client| {
+                Box::pin(async move {
+                    let provider_list_response = client
+                        .provider()
+                        .list(RequestOptions::default())
+                        .await
+                        .map_err(|err| {
+                            AppError::validation(format!("failed to list OpenCode providers: {err}"))
+                        })?;
+
+                    let config_providers_response = client
+                        .config()
+                        .providers(RequestOptions::default())
+                        .await
+                        .map_err(|err| {
+                            AppError::validation(format!("failed to list OpenCode providers: {err}"))
+                        })?;
+
+                    let config_response = client
+                        .config()
+                        .get(RequestOptions::default())
+                        .await
+                        .map_err(|err| {
+                            AppError::validation(format!("failed to load OpenCode config: {err}"))
+                        })?;
+
+                    let app_agents_response = client
+                        .app()
+                        .agents(RequestOptions::default())
+                        .await
+                        .map_err(|err| {
+                            AppError::validation(format!(
+                                "failed to list OpenCode app agents: {err}"
+                            ))
+                        })?;
+
+                    let providers = merge_provider_options(vec![
+                        parse_providers_from_payload(&provider_list_response.data),
+                        parse_providers_from_payload(&config_providers_response.data),
+                        parse_providers_from_payload(&config_response.data),
+                    ]);
+                    let agents = dedupe_agents(
+                        [
+                            parse_agents_from_config_payload(&app_agents_response.data),
+                            parse_agents_from_config_payload(&config_response.data),
+                        ]
+                        .concat(),
+                    );
+
+                    Ok(RunSelectionCatalogResponseDto { agents, providers })
+                })
             })
-        })
-        .await
+            .await;
+
+        match &result {
+            Ok(payload) => info!(
+                target: "opencode.discovery",
+                marker = "done",
+                project_id,
+                repo_root = canonical_repo_root.display().to_string(),
+                agents_count = payload.agents.len(),
+                providers_count = payload.providers.len(),
+                latency_ms = detection_started.elapsed().as_millis() as u64,
+                "OpenCode selection discovery finished"
+            ),
+            Err(error) => warn!(
+                target: "opencode.discovery",
+                marker = "failed",
+                project_id,
+                repo_root = canonical_repo_root.display().to_string(),
+                latency_ms = detection_started.elapsed().as_millis() as u64,
+                error = error.to_string(),
+                "OpenCode selection discovery failed"
+            ),
+        }
+
+        result
+    }
+
+    pub async fn get_project_opencode_selection_catalog(
+        &self,
+        project_id: &str,
+    ) -> Result<RunSelectionCatalogResponseDto, AppError> {
+        self.detect_opencode_selection_catalog(project_id).await
+    }
+
+    pub async fn list_run_opencode_providers(&self) -> Result<RunProvidersResponseDto, AppError> {
+        Err(AppError::validation(
+            "project-scoped OpenCode selection API required",
+        ))
     }
 
     pub async fn list_run_opencode_agents(&self) -> Result<RunAgentsResponseDto, AppError> {
-        self.with_ephemeral_client(|client| {
-            Box::pin(async move {
-                let app_agents_response = client
-                    .app()
-                    .agents(RequestOptions::default())
-                    .await
-                    .map_err(|err| {
-                        AppError::validation(format!("failed to list OpenCode app agents: {err}"))
-                    })?;
-
-                let config_response = client
-                    .config()
-                    .get(RequestOptions::default())
-                    .await
-                    .map_err(|err| {
-                        AppError::validation(format!("failed to list OpenCode agents: {err}"))
-                    })?;
-
-                let agents = dedupe_agents(
-                    [
-                        parse_agents_from_config_payload(&app_agents_response.data),
-                        parse_agents_from_config_payload(&config_response.data),
-                    ]
-                    .concat(),
-                );
-
-                Ok(RunAgentsResponseDto { agents })
-            })
-        })
-        .await
+        Err(AppError::validation(
+            "project-scoped OpenCode selection API required",
+        ))
     }
 
     async fn get_or_create_init_lock(&self, run_id: &str) -> Arc<tokio::sync::Mutex<()>> {
@@ -2240,7 +2348,7 @@ impl RunsOpenCodeService {
             let session_id = run.opencode_session_id.filter(|id| !id.trim().is_empty());
             let (messages, todos) = if let Some(session_id) = session_id.as_ref() {
                 let session_id_for_fetch = session_id.clone();
-                self.with_ephemeral_client(|client| {
+                self.with_ephemeral_client(self.worktrees_root.clone(), |client| {
                     Box::pin(async move {
                         Self::fetch_session_history_with_client(client, &session_id_for_fetch).await
                     })
@@ -2610,7 +2718,10 @@ impl RunsOpenCodeService {
 mod tests {
     use super::RunsOpenCodeService;
     use crate::app::db::migrations::run_migrations;
+    use crate::app::db::repositories::projects::ProjectsRepository;
     use crate::app::db::repositories::runs::RunsRepository;
+    use crate::app::projects::search_service::ProjectFileSearchService;
+    use crate::app::projects::service::ProjectsService;
     use crate::app::runs::service::RunsService;
     use crate::app::worktrees::service::WorktreesService;
     use opencode::{
@@ -2633,7 +2744,13 @@ mod tests {
         let app_data_dir = temp_dir.path().join("app-data");
         let worktrees_service = WorktreesService::new(app_data_dir.clone());
         let runs_service = RunsService::new(repository, worktrees_service);
-        let opencode_service = RunsOpenCodeService::new(runs_service.clone(), app_data_dir);
+        let projects_service = ProjectsService::new(
+            ProjectsRepository::new(pool.clone()),
+            ProjectFileSearchService::new(),
+            WorktreesService::new(app_data_dir.clone()),
+        );
+        let opencode_service =
+            RunsOpenCodeService::new(runs_service.clone(), projects_service, app_data_dir);
 
         (runs_service, opencode_service, pool, temp_dir)
     }

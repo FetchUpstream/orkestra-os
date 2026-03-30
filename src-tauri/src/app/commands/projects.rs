@@ -2,6 +2,7 @@ use crate::app::projects::dto::{
     CloneProjectRequest, CreateProjectRequest, ProjectDetailsDto, ProjectDto,
     SearchProjectFilesRequest, UpdateProjectRequest,
 };
+use crate::app::runs::dto::RunSelectionCatalogResponseDto;
 use crate::app::state::AppState;
 use crate::app::{commands::context, commands::error_mapping::map_result};
 
@@ -69,6 +70,19 @@ pub async fn search_project_files(
                 &input.query,
                 input.limit,
             )
+            .await,
+    )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_project_opencode_selection_catalog(
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+) -> Result<RunSelectionCatalogResponseDto, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(
+        service
+            .get_project_opencode_selection_catalog(&project_id)
             .await,
     )
 }

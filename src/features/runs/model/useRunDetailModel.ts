@@ -1383,7 +1383,17 @@ export const useRunDetailModel = () => {
   };
 
   const refreshRunSelectionOptions = async (): Promise<void> => {
-    const cachedOptions = readRunSelectionOptionsCache();
+    const projectId =
+      task()?.projectId?.trim() || run()?.projectId?.trim() || "";
+    if (!projectId) {
+      setRunSelectionOptionsError("Missing project context for run options.");
+      setRunAgentOptions([]);
+      setRunProviderOptions([]);
+      setRunModelOptions([]);
+      return;
+    }
+
+    const cachedOptions = readRunSelectionOptionsCache(projectId);
     if (cachedOptions) {
       setRunSelectionOptionsError("");
       setRunAgentOptions(cachedOptions.agents);
@@ -1394,7 +1404,7 @@ export const useRunDetailModel = () => {
 
     setRunSelectionOptionsError("");
     try {
-      const options = await getRunSelectionOptionsWithCache();
+      const options = await getRunSelectionOptionsWithCache(projectId);
       setRunAgentOptions(options.agents);
       setRunProviderOptions(options.providers);
       setRunModelOptions(options.models);
