@@ -127,7 +127,14 @@ export const useTaskDetailModel = () => {
     createSignal("");
   const [isLoadingRunSelectionOptions, setIsLoadingRunSelectionOptions] =
     createSignal(false);
-  const [projectRunDefaultsError, setProjectRunDefaultsError] = createSignal("");
+  const [projectRunDefaultsError, setProjectRunDefaultsError] =
+    createSignal("");
+  const [projectDefaultRunAgentId, setProjectDefaultRunAgentId] =
+    createSignal("");
+  const [projectDefaultRunProviderId, setProjectDefaultRunProviderId] =
+    createSignal("");
+  const [projectDefaultRunModelId, setProjectDefaultRunModelId] =
+    createSignal("");
   const [selectedRunAgentId, setSelectedRunAgentId] = createSignal("");
   const [selectedRunProviderId, setSelectedRunProviderIdSignal] =
     createSignal("");
@@ -371,12 +378,19 @@ export const useTaskDetailModel = () => {
 
   createEffect(() => {
     const modelId = selectedRunModelId().trim();
+    const availableModelOptions = runModelOptions();
     if (!modelId) {
       setProjectRunDefaultsError("");
       return;
     }
 
-    const selectedModel = runModelOptions().find((option) => option.id === modelId);
+    if (availableModelOptions.length === 0) {
+      return;
+    }
+
+    const selectedModel = availableModelOptions.find(
+      (option) => option.id === modelId,
+    );
     if (selectedModel) {
       setProjectRunDefaultsError("");
       return;
@@ -505,6 +519,32 @@ export const useTaskDetailModel = () => {
       setRunAgentOptions(cachedOptions.agents);
       setRunProviderOptions(cachedOptions.providers);
       setRunModelOptions(cachedOptions.models);
+      const defaultAgentId = projectDefaultRunAgentId();
+      const defaultProviderId = projectDefaultRunProviderId();
+      const defaultModelId = projectDefaultRunModelId();
+      if (
+        !selectedRunAgentId().trim() &&
+        defaultAgentId &&
+        cachedOptions.agents.some((option) => option.id === defaultAgentId)
+      ) {
+        setSelectedRunAgentId(defaultAgentId);
+      }
+      if (
+        !selectedRunProviderId().trim() &&
+        defaultProviderId &&
+        cachedOptions.providers.some(
+          (option) => option.id === defaultProviderId,
+        )
+      ) {
+        setSelectedRunProviderIdSignal(defaultProviderId);
+      }
+      if (
+        !selectedRunModelId().trim() &&
+        defaultModelId &&
+        cachedOptions.models.some((option) => option.id === defaultModelId)
+      ) {
+        setSelectedRunModelIdSignal(defaultModelId);
+      }
       return;
     }
 
@@ -521,6 +561,30 @@ export const useTaskDetailModel = () => {
       setRunAgentOptions(options.agents);
       setRunProviderOptions(options.providers);
       setRunModelOptions(options.models);
+      const defaultAgentId = projectDefaultRunAgentId();
+      const defaultProviderId = projectDefaultRunProviderId();
+      const defaultModelId = projectDefaultRunModelId();
+      if (
+        !selectedRunAgentId().trim() &&
+        defaultAgentId &&
+        options.agents.some((option) => option.id === defaultAgentId)
+      ) {
+        setSelectedRunAgentId(defaultAgentId);
+      }
+      if (
+        !selectedRunProviderId().trim() &&
+        defaultProviderId &&
+        options.providers.some((option) => option.id === defaultProviderId)
+      ) {
+        setSelectedRunProviderIdSignal(defaultProviderId);
+      }
+      if (
+        !selectedRunModelId().trim() &&
+        defaultModelId &&
+        options.models.some((option) => option.id === defaultModelId)
+      ) {
+        setSelectedRunModelIdSignal(defaultModelId);
+      }
     } catch {
       if (
         requestVersion !== runSelectionOptionsRequestVersion ||
@@ -597,14 +661,25 @@ export const useTaskDetailModel = () => {
       setDefaultProjectRepositoryId(
         defaultRepository?.id || repositories[0]?.id || "",
       );
-      setSelectedRunProviderIdSignal(project.defaultRunProvider?.trim() || "");
-      setSelectedRunModelIdSignal(project.defaultRunModel?.trim() || "");
+      const defaultRunAgentId = project.defaultRunAgent?.trim() || "";
+      const defaultRunProviderId = project.defaultRunProvider?.trim() || "";
+      const defaultRunModelId = project.defaultRunModel?.trim() || "";
+      setProjectDefaultRunAgentId(defaultRunAgentId);
+      setProjectDefaultRunProviderId(defaultRunProviderId);
+      setProjectDefaultRunModelId(defaultRunModelId);
+      setSelectedRunAgentId(defaultRunAgentId);
+      setSelectedRunProviderIdSignal(defaultRunProviderId);
+      setSelectedRunModelIdSignal(defaultRunModelId);
     } catch {
       setProjectName(null);
       setProjectKey(null);
       setProjectRepositories([]);
       setMoveRepositoryId("");
       setDefaultProjectRepositoryId("");
+      setProjectDefaultRunAgentId("");
+      setProjectDefaultRunProviderId("");
+      setProjectDefaultRunModelId("");
+      setSelectedRunAgentId("");
       setSelectedRunProviderIdSignal("");
       setSelectedRunModelIdSignal("");
     }
@@ -895,6 +970,9 @@ export const useTaskDetailModel = () => {
   const onOpenRunSettingsModal = () => {
     if (isCreatingRun()) return;
     setActionError("");
+    setSelectedRunAgentId(projectDefaultRunAgentId());
+    setSelectedRunProviderIdSignal(projectDefaultRunProviderId());
+    setSelectedRunModelIdSignal(projectDefaultRunModelId());
     setIsRunSettingsModalOpen(true);
   };
 

@@ -448,11 +448,21 @@ describe("app routing and shell", () => {
       }
       if (command === "get_project") {
         return Promise.resolve({
-          id: "p-1",
-          name: "Alpha",
-          key: "ALP",
+          project: {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            default_run_agent: "agent-a",
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+          },
           repositories: [
-            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            {
+              id: "r-1",
+              name: "Main",
+              repo_path: "/repo/main",
+              is_default: true,
+            },
           ],
         });
       }
@@ -1163,6 +1173,26 @@ describe("app routing and shell", () => {
           },
         ]);
       }
+      if (command === "get_project") {
+        return Promise.resolve({
+          project: {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            default_run_agent: "agent-a",
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+          },
+          repositories: [
+            {
+              id: "r-1",
+              name: "Main",
+              repo_path: "/repo/main",
+              is_default: true,
+            },
+          ],
+        });
+      }
       if (command === "set_task_status") return statusUpdatePromise;
       if (command === "create_run") {
         return Promise.resolve({
@@ -1173,6 +1203,22 @@ describe("app routing and shell", () => {
           display_key: "RUN-1",
           triggered_by: "user",
           created_at: "2026-01-02T00:00:00.000Z",
+        });
+      }
+      if (command === "list_run_opencode_agents") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+        });
+      }
+      if (command === "list_run_opencode_providers") {
+        return Promise.resolve({
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
         });
       }
       if (command === "start_run_opencode") {
@@ -1254,15 +1300,21 @@ describe("app routing and shell", () => {
       screen.getByRole("heading", { name: "In Progress (0)" }),
     ).toBeTruthy();
 
-    await fireEvent.change(screen.getByLabelText("Default run agent"), {
-      target: { value: "agent-a" },
+    await waitFor(() => {
+      expect(
+        (screen.getByLabelText("Default run agent") as HTMLSelectElement).value,
+      ).toBe("agent-a");
+      expect(
+        (screen.getByLabelText("Default run provider") as HTMLSelectElement)
+          .value,
+      ).toBe("provider-a");
+      expect(
+        (screen.getByLabelText("Default run model") as HTMLSelectElement).value,
+      ).toBe("model-a");
     });
-    await fireEvent.change(screen.getByLabelText("Default run provider"), {
-      target: { value: "provider-a" },
-    });
-    await fireEvent.change(screen.getByLabelText("Default run model"), {
-      target: { value: "model-a" },
-    });
+    expect(
+      screen.queryByRole("option", { name: "Use run default" }),
+    ).toBeNull();
 
     await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
 
@@ -1396,6 +1448,22 @@ describe("app routing and shell", () => {
         screen.getByRole("dialog", { name: "New run settings" }),
       ).toBeTruthy();
     });
+
+    await waitFor(() => {
+      expect(
+        (screen.getByLabelText("Default run agent") as HTMLSelectElement).value,
+      ).toBe("agent-a");
+      expect(
+        (screen.getByLabelText("Default run provider") as HTMLSelectElement)
+          .value,
+      ).toBe("provider-a");
+      expect(
+        (screen.getByLabelText("Default run model") as HTMLSelectElement).value,
+      ).toBe("model-a");
+    });
+    expect(
+      screen.queryByRole("option", { name: "Use run default" }),
+    ).toBeNull();
 
     await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
 

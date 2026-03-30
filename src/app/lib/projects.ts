@@ -14,6 +14,7 @@ export type Project = {
   name: string;
   key: string;
   description?: string | null;
+  defaultRunAgent?: string | null;
   defaultRunProvider?: string | null;
   defaultRunModel?: string | null;
   repositories: ProjectRepository[];
@@ -49,6 +50,7 @@ type ProjectDetailsResponse = {
     name: string;
     key: string;
     description?: string | null;
+    default_run_agent?: string | null;
     default_run_provider?: string | null;
     default_run_model?: string | null;
   };
@@ -86,6 +88,7 @@ export const createProject = async (
     name: response.project.name,
     key: response.project.key,
     description: response.project.description,
+    defaultRunAgent: response.project.default_run_agent,
     defaultRunProvider: response.project.default_run_provider,
     defaultRunModel: response.project.default_run_model,
     repositories: response.repositories.map((repository) => ({
@@ -146,6 +149,7 @@ type ProjectResponse =
         name: string;
         key: string;
         description?: string | null;
+        default_run_agent?: string | null;
         default_run_provider?: string | null;
         default_run_model?: string | null;
       };
@@ -167,6 +171,7 @@ const normalizeProject = (response: ProjectResponse): Project => {
       name: response.project.name,
       key: response.project.key,
       description: response.project.description,
+      defaultRunAgent: response.project.default_run_agent,
       defaultRunProvider: response.project.default_run_provider,
       defaultRunModel: response.project.default_run_model,
       repositories: response.repositories.map((repository) => ({
@@ -201,6 +206,7 @@ export const cloneProject = async (
     name: response.project.name,
     key: response.project.key,
     description: response.project.description,
+    defaultRunAgent: response.project.default_run_agent,
     defaultRunProvider: response.project.default_run_provider,
     defaultRunModel: response.project.default_run_model,
     repositories: response.repositories.map((repository) => ({

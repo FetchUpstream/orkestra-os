@@ -268,6 +268,19 @@ export const useBoardModel = () => {
     }
   };
 
+  const applyProjectRunDefaults = (project: Project | null) => {
+    if (!project) {
+      setSelectedRunAgentId("");
+      setSelectedRunProviderId("");
+      setSelectedRunModelId("");
+      return;
+    }
+
+    setSelectedRunAgentId(project.defaultRunAgent?.trim() || "");
+    setSelectedRunProviderId(project.defaultRunProvider?.trim() || "");
+    setSelectedRunModelId(project.defaultRunModel?.trim() || "");
+  };
+
   const refreshRunSelectionOptions = async () => {
     const requestVersion = ++runSelectionOptionsRequestVersion;
     const cachedOptions = readRunSelectionOptionsCache();
@@ -318,6 +331,7 @@ export const useBoardModel = () => {
         return;
       }
       setSelectedProjectDetail(loadedProject);
+      applyProjectRunDefaults(loadedProject);
     } catch {
       if (
         requestVersion !== activeProjectDetailRequestVersion ||
@@ -326,6 +340,7 @@ export const useBoardModel = () => {
         return;
       }
       setSelectedProjectDetail(null);
+      applyProjectRunDefaults(null);
     }
   };
 
@@ -584,6 +599,7 @@ export const useBoardModel = () => {
   const onRequestMoveTaskToInProgress = (taskId: string) => {
     if (isTaskStatusUpdating(taskId)) return;
     if (!canTaskTransitionToStatus(taskId, "doing")) return;
+    applyProjectRunDefaults(selectedProjectDetail());
     setPendingInProgressTaskId(taskId);
     setRunSelectionOptionsError("");
     setIsRunSettingsModalOpen(true);

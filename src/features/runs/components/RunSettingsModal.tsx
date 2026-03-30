@@ -62,7 +62,6 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
                     disabled={props.isSubmitting()}
                     aria-label="Default run agent"
                   >
-                    <option value="">Use run default</option>
                     <For each={props.runAgentOptions()}>
                       {(option) => (
                         <option value={option.id}>{option.label}</option>
@@ -83,7 +82,6 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
                     disabled={props.isSubmitting()}
                     aria-label="Default run provider"
                   >
-                    <option value="">Use run default</option>
                     <For each={props.runProviderOptions()}>
                       {(option) => (
                         <option value={option.id}>{option.label}</option>
@@ -104,7 +102,6 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
                     disabled={props.isSubmitting()}
                     aria-label="Default run model"
                   >
-                    <option value="">Use run default</option>
                     <For each={props.visibleRunModelOptions()}>
                       {(option) => (
                         <option value={option.id}>{option.label}</option>
