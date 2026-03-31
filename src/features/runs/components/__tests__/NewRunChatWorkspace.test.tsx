@@ -105,17 +105,20 @@ describe("NewRunChatWorkspace", () => {
     ).toBeTruthy();
   });
 
-  it("calls replyPermission when allow/deny is selected", async () => {
+  it("calls replyPermission when deny/once/always is selected", async () => {
     const replyPermissionMock = vi.fn(async () => true);
     const { model } = createModelStub("running", true);
     model.agent.replyPermission = replyPermissionMock;
     render(() => <NewRunChatWorkspace model={model} />);
 
-    await fireEvent.click(screen.getByRole("button", { name: "Allow" }));
-    expect(replyPermissionMock).toHaveBeenCalledWith("perm-1", "allow");
-
     await fireEvent.click(screen.getByRole("button", { name: "Deny" }));
     expect(replyPermissionMock).toHaveBeenCalledWith("perm-1", "deny");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Once" }));
+    expect(replyPermissionMock).toHaveBeenCalledWith("perm-1", "once");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Always" }));
+    expect(replyPermissionMock).toHaveBeenCalledWith("perm-1", "always");
   });
 
   it("shows in-flight and error state in permission transcript item", () => {
@@ -126,7 +129,7 @@ describe("NewRunChatWorkspace", () => {
     render(() => <NewRunChatWorkspace model={model} />);
 
     expect(screen.getAllByRole("button", { name: "Sending..." }).length).toBe(
-      2,
+      3,
     );
     expect(
       screen.getByText("Could not reply to permission request."),
@@ -215,7 +218,8 @@ describe("NewRunChatWorkspace", () => {
     expect(
       screen.getByText("Permission request expired before response."),
     ).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Always" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Once" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Deny" })).toBeNull();
     expect(screen.getByLabelText("Message agent")).toBeTruthy();
     expect(

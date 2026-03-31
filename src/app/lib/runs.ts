@@ -153,7 +153,7 @@ export type ReplyRunOpenCodePermissionParams = {
   runId: string;
   sessionId: string;
   requestId: string;
-  decision: "allow" | "deny";
+  decision: "deny" | "once" | "always";
   remember?: boolean;
 };
 

@@ -411,7 +411,7 @@ export const useRunDetailModel = () => {
 
   const applyLocalPermissionReplyAccepted = (
     requestId: string,
-    decision: "allow" | "deny",
+    decision: "deny" | "once" | "always",
     runId: string,
     sessionId: string,
     repliedAt: string,
@@ -2318,7 +2318,7 @@ export const useRunDetailModel = () => {
 
   const replyPermission = async (
     requestId: string,
-    decision: "allow" | "deny",
+    decision: "deny" | "once" | "always",
   ): Promise<boolean> => {
     const normalizedRequestId = requestId.trim();
     if (!normalizedRequestId) {

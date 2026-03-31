@@ -1192,24 +1192,45 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                       </button>
                       <button
                         type="button"
+                        class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+                        disabled={props.model.agent.isReplyingPermission()}
+                        onClick={() => {
+                          console.info("[runs] permission decision clicked", {
+                            runId: props.model.run()?.id ?? null,
+                            requestId: card.requestId,
+                            decision: "once",
+                            pendingCount: pendingPermissionCards().length,
+                          });
+                          void props.model.agent.replyPermission(
+                            card.requestId,
+                            "once",
+                          );
+                        }}
+                      >
+                        {props.model.agent.isReplyingPermission()
+                          ? "Sending..."
+                          : "Once"}
+                      </button>
+                      <button
+                        type="button"
                         class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                         disabled={props.model.agent.isReplyingPermission()}
                         onClick={() => {
                           console.info("[runs] permission decision clicked", {
                             runId: props.model.run()?.id ?? null,
                             requestId: card.requestId,
-                            decision: "allow",
+                            decision: "always",
                             pendingCount: pendingPermissionCards().length,
                           });
                           void props.model.agent.replyPermission(
                             card.requestId,
-                            "allow",
+                            "always",
                           );
                         }}
                       >
                         {props.model.agent.isReplyingPermission()
                           ? "Sending..."
-                          : "Allow"}
+                          : "Always"}
                       </button>
                     </div>
                   </li>

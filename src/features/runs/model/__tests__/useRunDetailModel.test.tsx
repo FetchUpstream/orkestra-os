@@ -1025,14 +1025,14 @@ describe("useRunDetailModel startup ownership", () => {
       expect(modelRef!.agent.store().sessionId).toBe("session-1");
     });
 
-    const accepted = await modelRef!.agent.replyPermission("perm-1", "allow");
+    const accepted = await modelRef!.agent.replyPermission("perm-1", "once");
 
     expect(accepted).toBe(true);
     expect(replyRunOpenCodePermissionMock).toHaveBeenCalledWith({
       runId: "run-1",
       sessionId: "session-1",
       requestId: "perm-1",
-      decision: "allow",
+      decision: "once",
       remember: false,
     });
     expect(
@@ -1110,7 +1110,7 @@ describe("useRunDetailModel startup ownership", () => {
 
     const accepted = await modelRef!.agent.replyPermission(
       "missing-perm",
-      "allow",
+      "always",
     );
 
     expect(accepted).toBe(false);

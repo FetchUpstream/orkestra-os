@@ -178,6 +178,24 @@ fn to_nonempty_trimmed_string(value: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn build_permission_reply_body(session_id: &str, reply: &str, remember: bool) -> serde_json::Value {
+    serde_json::json!({
+        "sessionID": session_id,
+        "reply": reply,
+        "remember": remember,
+    })
+}
+
+fn map_permission_decision_to_reply(decision: &str) -> Option<&'static str> {
+    match decision {
+        "deny" => Some("reject"),
+        "once" => Some("once"),
+        "always" => Some("always"),
+        "reject" => Some("reject"),
+        _ => None,
+    }
+}
+
 fn parse_string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
     let object = value.as_object()?;
     for key in keys {
@@ -627,6 +645,15 @@ impl RunsOpenCodeService {
         None
     }
 
+    fn parse_permission_request_id(payload: &str) -> Option<String> {
+        // Live OpenCode permission events commonly send request id in properties.id.
+        // Keep requestID/requestId first for backwards-compatibility, then fall back.
+        Self::parse_payload_property(
+            payload,
+            &["requestID", "requestId", "id", "permissionID", "permissionId"],
+        )
+    }
+
     fn parse_status_hint(payload: &str) -> Option<String> {
         let value: serde_json::Value = serde_json::from_str(payload).ok()?;
         let object = value.as_object()?;
@@ -765,8 +792,7 @@ impl RunsOpenCodeService {
                 else {
                     return Ok(());
                 };
-                let request_id_hint =
-                    Self::parse_payload_property(payload, &["requestID", "requestId"]);
+                let request_id_hint = Self::parse_permission_request_id(payload);
                 let permission_kind =
                     Self::parse_payload_property(payload, &["kind", "permission", "tool", "action"]);
                 info!(
@@ -776,6 +802,7 @@ impl RunsOpenCodeService {
                     event = "permission.asked",
                     session_id = session_id,
                     request_id = request_id_hint.as_deref().unwrap_or(""),
+                    request_id_fields = "requestID|requestId|id|permissionID|permissionId",
                     permission_type = permission_kind.as_deref().unwrap_or(""),
                     "Received OpenCode permission event"
                 );
@@ -786,8 +813,7 @@ impl RunsOpenCodeService {
                     return Ok(());
                 }
 
-                let Some(request_id) =
-                    Self::parse_payload_property(payload, &["requestID", "requestId"])
+                let Some(request_id) = Self::parse_permission_request_id(payload)
                 else {
                     return Ok(());
                 };
@@ -816,8 +842,7 @@ impl RunsOpenCodeService {
                 else {
                     return Ok(());
                 };
-                let request_id_hint =
-                    Self::parse_payload_property(payload, &["requestID", "requestId"]);
+                let request_id_hint = Self::parse_permission_request_id(payload);
                 info!(
                     target: "opencode.runtime",
                     marker = "permission_event_received",
@@ -825,6 +850,7 @@ impl RunsOpenCodeService {
                     event = runtime_event_name.as_str(),
                     session_id = session_id,
                     request_id = request_id_hint.as_deref().unwrap_or(""),
+                    request_id_fields = "requestID|requestId|id|permissionID|permissionId",
                     "Received OpenCode permission resolution event"
                 );
                 if !self
@@ -834,8 +860,7 @@ impl RunsOpenCodeService {
                     return Ok(());
                 }
 
-                let Some(request_id) =
-                    Self::parse_payload_property(payload, &["requestID", "requestId"])
+                let Some(request_id) = Self::parse_permission_request_id(payload)
                 else {
                     return Ok(());
                 };
@@ -1967,17 +1992,9 @@ impl RunsOpenCodeService {
         }
 
         let decision = decision.trim().to_lowercase();
-        let opencode_decision = match decision.as_str() {
-            "allow" => "once",
-            "deny" => "reject",
-            "once" => "once",
-            "reject" => "reject",
-            _ => {
-                return Err(AppError::validation(
-                    "decision must be one of: allow, deny, once, reject",
-                ));
-            }
-        };
+        let opencode_reply = map_permission_decision_to_reply(decision.as_str()).ok_or_else(|| {
+            AppError::validation("decision must be one of: deny, once, always, reject")
+        })?;
         info!(
             target: "opencode.runtime",
             marker = "permission_reply_command_start",
@@ -1985,7 +2002,7 @@ impl RunsOpenCodeService {
             request_id = request_id,
             session_id = session_id,
             decision = decision.as_str(),
-            mapped_decision = opencode_decision,
+            mapped_reply = opencode_reply,
             remember = remember,
             "Permission reply command started"
         );
@@ -2064,7 +2081,7 @@ impl RunsOpenCodeService {
                         request_id = request_id,
                         session_id = session_id,
                         pending_count = pending_count,
-                        mapped_decision = opencode_decision,
+                        mapped_reply = opencode_reply,
                         "Ignoring stale permission reply for missing pending permission"
                     );
                     return Ok(ReplyRunOpenCodePermissionResponse {
@@ -2082,7 +2099,7 @@ impl RunsOpenCodeService {
             run_id = run_id,
             request_id = request_id,
             session_id = session_id,
-            decision = opencode_decision,
+            reply = opencode_reply,
             remember = remember,
             "Sending permission reply to OpenCode"
         );
@@ -2091,11 +2108,7 @@ impl RunsOpenCodeService {
                 "permission.reply",
                 RequestOptions::default()
                     .with_path("requestID", request_id.to_string())
-                    .with_body(serde_json::json!({
-                        "sessionID": session_id,
-                        "decision": opencode_decision,
-                        "remember": remember,
-                    })),
+                    .with_body(build_permission_reply_body(session_id, opencode_reply, remember)),
             )
             .await;
 
@@ -2112,7 +2125,7 @@ impl RunsOpenCodeService {
                     run_id = run_id,
                     request_id = request_id,
                     session_id = session_id,
-                    decision = opencode_decision,
+                    reply = opencode_reply,
                     latency_ms = reply_start.elapsed().as_millis() as u64,
                     error = ?permission_reply_error,
                     error_chain = format_error_chain(&permission_reply_error),
@@ -2143,7 +2156,7 @@ impl RunsOpenCodeService {
             run_id = run_id,
             request_id = request_id,
             session_id = session_id,
-            decision = opencode_decision,
+            reply = opencode_reply,
             latency_ms = reply_start.elapsed().as_millis() as u64,
             response_state = response_state,
             response_reason = response_reason.as_deref(),
@@ -3027,6 +3040,29 @@ mod tests {
     }
 
     #[test]
+    fn map_permission_decision_to_reply_preserves_ui_contract() {
+        assert_eq!(super::map_permission_decision_to_reply("deny"), Some("reject"));
+        assert_eq!(super::map_permission_decision_to_reply("once"), Some("once"));
+        assert_eq!(super::map_permission_decision_to_reply("always"), Some("always"));
+        assert_eq!(super::map_permission_decision_to_reply("reject"), Some("reject"));
+        assert_eq!(super::map_permission_decision_to_reply("allow"), None);
+    }
+
+    #[test]
+    fn build_permission_reply_body_matches_opencode_contract() {
+        let body = super::build_permission_reply_body("ses_123", "once", false);
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "sessionID": "ses_123",
+                "reply": "once",
+                "remember": false,
+            })
+        );
+        assert!(body.get("decision").is_none());
+    }
+
+    #[test]
     fn resolve_prompt_selection_prefers_complete_prompt_override_then_run_defaults_then_backend_defaults() {
         let selected = RunsOpenCodeService::resolve_prompt_selection(
             Some("run-agent"),
@@ -3803,6 +3839,33 @@ mod tests {
             .unwrap();
 
         assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
+    }
+
+    #[tokio::test]
+    async fn permission_asked_tracks_request_id_from_properties_id() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"permission.asked","properties":{"id":"per_d42b2cd3e001QDIROGPkXz54d3","permission":"external_directory","patterns":["/home/louis/*"],"always":["/home/louis/*"],"metadata":{"filepath":"/home/louis","parentDir":"/home/louis"},"sessionID":"session-1","tool":{"messageID":"...","callID":"..."}}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        let guard = state.lock().unwrap();
+        assert!(guard
+            .pending_permissions
+            .contains("per_d42b2cd3e001QDIROGPkXz54d3"));
     }
 
     #[tokio::test]
