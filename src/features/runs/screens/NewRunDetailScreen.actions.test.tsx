@@ -82,6 +82,8 @@ const createModelStub = (options?: {
   gitStatus?: {
     state?: string;
     rawState?: string;
+    repositoryState?: string;
+    isRebaseInProgress?: boolean;
     sourceBranch?: { name: string; ahead: number; behind: number };
     worktreeBranch?: { name: string; ahead: number; behind: number };
     isRebaseAllowed?: boolean;
@@ -186,6 +188,8 @@ const createModelStub = (options?: {
       status: () => ({
         state: options?.gitStatus?.state ?? "clean",
         rawState: options?.gitStatus?.rawState ?? "clean",
+        repositoryState: options?.gitStatus?.repositoryState,
+        isRebaseInProgress: options?.gitStatus?.isRebaseInProgress ?? false,
         sourceBranch: options?.gitStatus?.sourceBranch ?? {
           name: "main",
           ahead: 0,
@@ -382,6 +386,39 @@ describe("NewRunDetailScreen git actions", () => {
     topbar.cleanup();
   });
 
+  it("suppresses commit flow and surfaces rebasing state when a rebase is already in progress", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        gitStatus: {
+          state: "rebase_in_progress",
+          repositoryState: "rebase_merge",
+          isRebaseInProgress: true,
+          isWorktreeClean: false,
+          isRebaseAllowed: false,
+          isMergeAllowed: false,
+          requiresRebase: false,
+        },
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    await waitFor(() => {
+      expect(screen.getByText("Rebase in progress")).toBeTruthy();
+      expect(
+        screen.getByText(
+          "Normal commit actions are unavailable until the rebase is completed or aborted.",
+        ),
+      ).toBeTruthy();
+      expect(screen.queryByText("Commit changes")).toBeNull();
+      expect(screen.queryByText("Rebase onto main")).toBeNull();
+      expect(screen.queryByText("Merge into main")).toBeNull();
+    });
+    topbar.cleanup();
+  });
+
   it("hides primary action and shows completion state after merge", async () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
@@ -555,10 +592,10 @@ describe("NewRunDetailScreen git actions", () => {
     const textarea = await screen.findByLabelText("Commit request message");
     await waitFor(() => {
       expect((textarea as HTMLTextAreaElement).value).toContain(
-        "- src/git-only.ts",
+        "- `src/git-only.ts`",
       );
       expect((textarea as HTMLTextAreaElement).value).toContain(
-        "- src/another.ts",
+        "- `src/another.ts`",
       );
     });
     topbar.cleanup();

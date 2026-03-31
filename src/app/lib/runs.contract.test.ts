@@ -407,6 +407,8 @@ describe("runs contract", () => {
     });
     expect(status).toEqual({
       state: "ready",
+      repositoryState: undefined,
+      isRebaseInProgress: false,
       sourceBranch: {
         name: "main",
         ahead: 0,
@@ -449,6 +451,8 @@ describe("runs contract", () => {
 
     expect(status).toEqual({
       state: "merge_conflict",
+      repositoryState: undefined,
+      isRebaseInProgress: false,
       sourceBranch: {
         name: "main",
         ahead: 1,
@@ -493,6 +497,7 @@ describe("runs contract", () => {
     expect(status.mergeDisabledReason).toBe("worktree must be clean");
     expect(status.isRebaseAllowed).toBe(false);
     expect(status.isMergeAllowed).toBe(false);
+    expect(status.isRebaseInProgress).toBe(false);
   });
 
   it("maps git2 ahead_count/behind_count into branch divergence and dirty flag", async () => {
@@ -529,6 +534,8 @@ describe("runs contract", () => {
     invokeMock.mockResolvedValueOnce({
       status: {
         state: "rebase-in-progress",
+        repository_state: "rebase_merge",
+        is_rebase_in_progress: true,
       },
     });
     invokeMock.mockResolvedValueOnce({
@@ -542,8 +549,23 @@ describe("runs contract", () => {
 
     expect(hyphen.state).toBe("rebase_in_progress");
     expect(hyphen.rawState).toBeUndefined();
+    expect(hyphen.repositoryState).toBe("rebase_merge");
+    expect(hyphen.isRebaseInProgress).toBe(true);
     expect(camel.state).toBe("merge_ready");
     expect(camel.rawState).toBeUndefined();
+    expect(camel.isRebaseInProgress).toBe(false);
+  });
+
+  it("falls back to merge state when rebasing flag is absent", async () => {
+    invokeMock.mockResolvedValue({
+      status: {
+        state: "rebase_in_progress",
+      },
+    });
+
+    const status = await getRunGitMergeStatus("run-1");
+
+    expect(status.isRebaseInProgress).toBe(true);
   });
 
   it("preserves raw unknown merge-state for UI fallback", async () => {

@@ -226,6 +226,8 @@ export type RunGitMergeState =
 export type RunGitMergeStatus = {
   state: RunGitMergeState;
   rawState?: string;
+  repositoryState?: string;
+  isRebaseInProgress: boolean;
   sourceBranch: RunGitBranchSync;
   worktreeBranch: RunGitBranchSync;
   isWorktreeClean?: boolean;
@@ -504,6 +506,10 @@ type RunGitBranchSyncResponse = {
 
 type RunGitMergeStatusResponse = {
   state?: string;
+  repository_state?: unknown;
+  repositoryState?: unknown;
+  is_rebase_in_progress?: unknown;
+  isRebaseInProgress?: unknown;
   source_branch?: unknown;
   sourceBranch?: unknown;
   worktree_branch?: unknown;
@@ -1026,6 +1032,12 @@ const toRunGitMergeStatus = (response: unknown): RunGitMergeStatus => {
   return {
     state,
     rawState: state === "unknown" ? rawState : undefined,
+    repositoryState: toOptionalTrimmedString(
+      pick(payload.repository_state, payload.repositoryState),
+    ),
+    isRebaseInProgress:
+      pick(payload.is_rebase_in_progress, payload.isRebaseInProgress) ===
+        true || state === "rebase_in_progress",
     sourceBranch,
     worktreeBranch,
     isWorktreeClean:

@@ -257,6 +257,8 @@ impl RunsMergeService {
 
     fn compute_status(&self, context: &MergeContext) -> Result<RunMergeStatusDto, AppError> {
         let repo_state = context.repo.state();
+        let repository_state = Self::repository_state_name(repo_state);
+        let is_rebase_in_progress = Self::is_rebase_in_progress(repo_state);
         let source_oid = Self::branch_commit_oid(&context.source_repo, &context.source_branch)?;
         let worktree_oid = Self::branch_commit_oid(&context.repo, &context.worktree_branch)?;
         let (ahead_count, behind_count) = context
@@ -275,10 +277,10 @@ impl RunsMergeService {
         let dirty_disable_reason = Self::dirty_worktree_disable_reason(&context.repo)?;
         let is_worktree_clean = dirty_disable_reason.is_none();
 
-        let mut state = if context.run_status == "completed" {
-            MergeState::Merged
-        } else if Self::is_rebase_in_progress(repo_state) {
+        let mut state = if is_rebase_in_progress {
             MergeState::RebaseInProgress
+        } else if context.run_status == "completed" {
+            MergeState::Merged
         } else if has_conflicts {
             MergeState::Conflicted
         } else if behind_count > 0 {
@@ -341,7 +343,10 @@ impl RunsMergeService {
             MergeState::Mergeable => None,
         };
 
-        if let Some(reason) = dirty_disable_reason {
+        if is_rebase_in_progress {
+            can_rebase = false;
+            can_merge = false;
+        } else if let Some(reason) = dirty_disable_reason {
             can_rebase = false;
             can_merge = false;
             disable_reason = Some(reason);
@@ -357,6 +362,8 @@ impl RunsMergeService {
             ahead_count,
             behind_count,
             is_worktree_clean,
+            repository_state,
+            is_rebase_in_progress,
             state: state.as_str().to_string(),
             can_rebase,
             can_merge,
@@ -507,9 +514,25 @@ impl RunsMergeService {
             RepositoryState::Rebase
                 | RepositoryState::RebaseInteractive
                 | RepositoryState::RebaseMerge
-                | RepositoryState::ApplyMailbox
-                | RepositoryState::ApplyMailboxOrRebase
         )
+    }
+
+    fn repository_state_name(state: RepositoryState) -> String {
+        match state {
+            RepositoryState::Clean => "clean",
+            RepositoryState::Merge => "merge",
+            RepositoryState::Revert => "revert",
+            RepositoryState::RevertSequence => "revert_sequence",
+            RepositoryState::CherryPick => "cherry_pick",
+            RepositoryState::CherryPickSequence => "cherry_pick_sequence",
+            RepositoryState::Bisect => "bisect",
+            RepositoryState::Rebase => "rebase",
+            RepositoryState::RebaseInteractive => "rebase_interactive",
+            RepositoryState::RebaseMerge => "rebase_merge",
+            RepositoryState::ApplyMailbox => "apply_mailbox",
+            RepositoryState::ApplyMailboxOrRebase => "apply_mailbox_or_rebase",
+        }
+        .to_string()
     }
 
     fn dirty_worktree_disable_reason(repo: &Repository) -> Result<Option<String>, AppError> {
@@ -953,6 +976,8 @@ mod tests {
 
         let status = merge_service.get_merge_status(&run.id).await.unwrap();
         assert_eq!(status.state, "rebase_in_progress");
+        assert_eq!(status.repository_state, "rebase_merge");
+        assert!(status.is_rebase_in_progress);
         assert!(!status.can_rebase);
         assert!(!status.can_merge);
         assert!(status

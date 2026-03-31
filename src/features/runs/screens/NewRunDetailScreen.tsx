@@ -273,6 +273,11 @@ const NewRunDetailScreen: Component = () => {
     if (!status) {
       return false;
     }
+
+    if (status.isRebaseInProgress) {
+      return false;
+    }
+
     return (
       status.state === "merged" ||
       status.state === "completing" ||
@@ -286,6 +291,14 @@ const NewRunDetailScreen: Component = () => {
       return {
         headline: "Checking repository status",
         support: "Fetching branch and working tree details.",
+      };
+    }
+
+    if (status.isRebaseInProgress) {
+      return {
+        headline: "Rebase in progress",
+        support:
+          "Normal commit actions are unavailable until the rebase is completed or aborted.",
       };
     }
 
@@ -372,6 +385,10 @@ const NewRunDetailScreen: Component = () => {
   const primaryAction = createMemo<"commit" | "rebase" | "merge" | null>(() => {
     const status = gitStatus();
     if (!status || isWorkflowCompleted()) {
+      return null;
+    }
+
+    if (status.isRebaseInProgress) {
       return null;
     }
 
@@ -716,6 +733,10 @@ const NewRunDetailScreen: Component = () => {
   };
 
   const openCommitModal = () => {
+    if (gitStatus()?.isRebaseInProgress) {
+      return;
+    }
+
     const loadingPrefill =
       "There are still uncommited changes, please attomically commit the following changes\n- Loading changed files...";
     setIsCommitPrefillLoading(true);
@@ -741,7 +762,8 @@ const NewRunDetailScreen: Component = () => {
   };
 
   const confirmCommitPrompt = async () => {
-    if (isCommitDisabled()) {
+    if (isCommitDisabled() || gitStatus()?.isRebaseInProgress) {
+      closeCommitModal();
       return;
     }
 
@@ -1008,6 +1030,12 @@ const NewRunDetailScreen: Component = () => {
       cancelAnimationFrame(frame);
       window.removeEventListener("keydown", onKeyDown);
     });
+  });
+
+  createEffect(() => {
+    if (gitStatus()?.isRebaseInProgress && isCommitModalOpen()) {
+      closeCommitModal();
+    }
   });
 
   createEffect(() => {
