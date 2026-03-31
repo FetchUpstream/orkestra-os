@@ -329,6 +329,10 @@ describe("agentReducer text/reasoning lifecycle", () => {
     });
 
     expect(cleared.pendingPermissionsById["perm-2"]).toBeUndefined();
+    expect(cleared.resolvedPermissionsById["perm-2"]).toMatchObject({
+      requestId: "perm-2",
+      status: "replied",
+    });
   });
 
   it("clears normalized permission requests on permission.rejected", () => {
@@ -353,5 +357,9 @@ describe("agentReducer text/reasoning lifecycle", () => {
     });
 
     expect(cleared.pendingPermissionsById["perm-3"]).toBeUndefined();
+    expect(cleared.resolvedPermissionsById["perm-3"]).toMatchObject({
+      requestId: "perm-3",
+      status: "rejected",
+    });
   });
 });

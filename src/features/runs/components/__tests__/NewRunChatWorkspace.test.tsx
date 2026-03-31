@@ -25,8 +25,13 @@ const createModelStub = (
       state: () => "running",
       error: () => "",
       store: () => ({
+        sessionId: "session-1",
+        status: "idle",
+        streamConnected: true,
+        lastSyncAt: Date.now(),
         messageOrder: [],
         messagesById: {},
+        pendingQuestionsById: {},
         pendingPermissionsById: withPendingPermission
           ? ((agentOverrides.pendingPermissionsById as
               | Record<string, unknown>
@@ -40,12 +45,32 @@ const createModelStub = (
               },
             })
           : {},
+        resolvedPermissionsById: {},
         failedPermissionsById: agentOverrides.failedPermissionsById ?? {},
+        todos: [],
+        diffSummary: null,
+        rawEvents: [],
       }),
       isSubmittingPrompt: () => false,
       isReplyingPermission: () => agentOverrides.isReplyingPermission ?? false,
       submitError: () => "",
       permissionReplyError: () => agentOverrides.permissionReplyError ?? "",
+      permissionState: () => {
+        const store = model.agent.store();
+        const pending = Object.values(store.pendingPermissionsById) as Array<
+          Record<string, unknown>
+        >;
+        const failed = Object.values(store.failedPermissionsById) as Array<
+          Record<string, unknown>
+        >;
+        return {
+          activeRequest:
+            (pending[0] as Record<string, unknown> | undefined) ?? null,
+          queuedRequests: pending.slice(1),
+          resolvedRequests: [],
+          failedRequests: failed,
+        };
+      },
       submitPrompt: vi.fn(async () => true),
       runAgentOptions: () => [{ id: "agent-1", label: "Planner" }],
       runProviderOptions: () => [{ id: "provider-1", label: "OpenAI" }],
@@ -114,10 +139,10 @@ describe("NewRunChatWorkspace", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Deny" }));
     expect(replyPermissionMock).toHaveBeenCalledWith("perm-1", "deny");
 
-    await fireEvent.click(screen.getByRole("button", { name: "Once" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
     expect(replyPermissionMock).toHaveBeenCalledWith("perm-1", "once");
 
-    await fireEvent.click(screen.getByRole("button", { name: "Always" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Allow" }));
     expect(replyPermissionMock).toHaveBeenCalledWith("perm-1", "always");
   });
 
@@ -128,7 +153,7 @@ describe("NewRunChatWorkspace", () => {
     });
     render(() => <NewRunChatWorkspace model={model} />);
 
-    expect(screen.getAllByRole("button", { name: "Sending..." }).length).toBe(
+    expect(screen.getAllByRole("button", { name: "Sending..." })).toHaveLength(
       3,
     );
     expect(
@@ -175,9 +200,13 @@ describe("NewRunChatWorkspace", () => {
 
     render(() => <NewRunChatWorkspace model={model} />);
 
-    expect(screen.getAllByLabelText("Permission request")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Permission request")).toHaveLength(1);
     expect(screen.getByText(/Permission required:\s*write/i)).toBeTruthy();
-    expect(screen.getByText(/Permission required:\s*bash/i)).toBeTruthy();
+    expect(
+      screen.getByText(
+        "1 more permission request queued. They will appear after this one is resolved.",
+      ),
+    ).toBeTruthy();
 
     setStore((current) => ({
       ...current,
@@ -189,6 +218,7 @@ describe("NewRunChatWorkspace", () => {
     expect(screen.getAllByLabelText("Permission request")).toHaveLength(1);
     expect(screen.queryByText(/Permission required:\s*write/i)).toBeNull();
     expect(screen.getByText(/Permission required:\s*bash/i)).toBeTruthy();
+    expect(screen.queryByText(/more permission request queued/i)).toBeNull();
 
     setStore((current) => ({
       ...current,
@@ -218,8 +248,8 @@ describe("NewRunChatWorkspace", () => {
     expect(
       screen.getByText("Permission request expired before response."),
     ).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Always" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Once" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Deny" })).toBeNull();
     expect(screen.getByLabelText("Message agent")).toBeTruthy();
     expect(
@@ -622,6 +652,7 @@ describe("NewRunChatWorkspace", () => {
         },
       },
       pendingPermissionsById: {},
+      resolvedPermissionsById: {},
       failedPermissionsById: {},
       pendingQuestionsById: {},
       todos: [],
@@ -680,6 +711,7 @@ describe("NewRunChatWorkspace", () => {
         },
       },
       pendingPermissionsById: {},
+      resolvedPermissionsById: {},
       failedPermissionsById: {},
       pendingQuestionsById: {},
       todos: [],

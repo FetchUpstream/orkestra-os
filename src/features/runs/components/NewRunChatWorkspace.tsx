@@ -650,8 +650,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     return runAgentOptions()[0]?.id || "";
   });
   const pendingPermissionRequests = createMemo(() => {
-    const byId = props.model.agent.store().pendingPermissionsById;
-    return Object.values(byId);
+    const state = props.model.agent.permissionState();
+    return state.activeRequest ? [state.activeRequest] : [];
+  });
+  const queuedPermissionRequests = createMemo(() => {
+    return props.model.agent.permissionState().queuedRequests;
   });
   const pendingPermissionCards = createMemo(() => {
     return pendingPermissionRequests().map((permission) =>
@@ -659,10 +662,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     );
   });
   const failedPermissionCards = createMemo(() => {
-    const byId = props.model.agent.store().failedPermissionsById;
-    return Object.values(byId).map((permission) =>
-      parsePermissionCardData(permission),
-    );
+    return props.model.agent
+      .permissionState()
+      .failedRequests.map((permission) => parsePermissionCardData(permission));
   });
   const hasPendingPermission = createMemo(
     () => pendingPermissionRequests().length > 0,
@@ -674,6 +676,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       runId: props.model.run()?.id ?? null,
       pendingCount: pending.length,
       requestIds: pending.map((card) => card.requestId),
+      queuedRequestIds: queuedPermissionRequests().map(
+        (item) => item.requestId,
+      ),
     });
   });
 
@@ -1152,6 +1157,14 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                         </ul>
                       </div>
                     </Show>
+                    <Show when={queuedPermissionRequests().length > 0}>
+                      <p class="run-chat-tool-rail__details">
+                        {queuedPermissionRequests().length} more permission
+                        request
+                        {queuedPermissionRequests().length === 1 ? "" : "s"}{" "}
+                        queued. They will appear after this one is resolved.
+                      </p>
+                    </Show>
                     <Show
                       when={props.model.agent.permissionReplyError().length > 0}
                     >
@@ -1200,7 +1213,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                       >
                         {props.model.agent.isReplyingPermission()
                           ? "Sending..."
-                          : "Once"}
+                          : "Allow once"}
                       </button>
                       <button
                         type="button"
@@ -1221,7 +1234,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                       >
                         {props.model.agent.isReplyingPermission()
                           ? "Sending..."
-                          : "Always"}
+                          : "Allow"}
                       </button>
                     </div>
                   </li>

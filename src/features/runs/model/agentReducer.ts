@@ -458,6 +458,7 @@ const normalizeQuestion = (value: unknown): UiQuestionRequest | null => {
 const normalizePermission = (
   value: unknown,
   fallbackSessionId?: string,
+  receivedAt?: string | number | null,
 ): UiPermissionRequest | null => {
   if (!isRecord(value)) {
     return null;
@@ -547,6 +548,9 @@ const normalizePermission = (
     kind,
     pathPatterns,
     metadata,
+    status: "pending",
+    dedupeKey: `${sessionId}:${requestId}`,
+    receivedAt: receivedAt ?? null,
     raw: value,
   };
 
@@ -619,6 +623,7 @@ export const createEmptyAgentStore = (sessionId: string | null): AgentStore => {
     messageOrder: [],
     pendingQuestionsById: {},
     pendingPermissionsById: {},
+    resolvedPermissionsById: {},
     failedPermissionsById: {},
     todos: [],
     diffSummary: null,
@@ -1128,6 +1133,7 @@ export const reduceOpenCodeEvent = (
       const normalized = normalizePermission(
         properties,
         nextState.sessionId ?? undefined,
+        event.ts,
       );
       if (!normalized) {
         console.warn("[runs] permission.asked ignored: normalization failed", {
@@ -1157,6 +1163,10 @@ export const reduceOpenCodeEvent = (
       };
       const failedPermissionsById = { ...nextState.failedPermissionsById };
       delete failedPermissionsById[normalized.requestId];
+      const resolvedPermissionsById = {
+        ...nextState.resolvedPermissionsById,
+      };
+      delete resolvedPermissionsById[normalized.requestId];
       console.info("[runs] permission added to pending state", {
         requestId: normalized.requestId,
         sessionId: normalized.sessionId,
@@ -1171,6 +1181,7 @@ export const reduceOpenCodeEvent = (
         ...nextState,
         sessionId: sessionResult.sessionId,
         pendingPermissionsById,
+        resolvedPermissionsById,
         failedPermissionsById,
       };
     }
@@ -1191,6 +1202,18 @@ export const reduceOpenCodeEvent = (
         return nextState;
       }
       const pendingPermissionsById = { ...nextState.pendingPermissionsById };
+      const resolvedStatus =
+        event.type === "permission.rejected"
+          ? ("rejected" as const)
+          : ("replied" as const);
+      const resolvedPermissionsById = {
+        ...nextState.resolvedPermissionsById,
+        [requestId]: {
+          ...nextState.pendingPermissionsById[requestId],
+          status: resolvedStatus,
+          resolvedAt: event.ts ?? null,
+        },
+      };
       delete pendingPermissionsById[requestId];
       const failedPermissionsById = { ...nextState.failedPermissionsById };
       delete failedPermissionsById[requestId];
@@ -1206,6 +1229,7 @@ export const reduceOpenCodeEvent = (
       return {
         ...nextState,
         pendingPermissionsById,
+        resolvedPermissionsById,
         failedPermissionsById,
       };
     }

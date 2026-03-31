@@ -1038,6 +1038,11 @@ describe("useRunDetailModel startup ownership", () => {
     expect(
       modelRef!.agent.store().pendingPermissionsById["perm-1"],
     ).toBeUndefined();
+    expect(modelRef!.agent.permissionState().resolvedRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ requestId: "perm-1", status: "replied" }),
+      ]),
+    );
     const latestAllowEvent = modelRef!.agent.events();
     expect(latestAllowEvent[latestAllowEvent.length - 1]?.event).toBe(
       "permission.replied",
@@ -1175,12 +1180,131 @@ describe("useRunDetailModel startup ownership", () => {
     expect(
       modelRef!.agent.store().pendingPermissionsById["perm-stale-1"],
     ).toBeUndefined();
+    expect(modelRef!.agent.permissionState().failedRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          requestId: "perm-stale-1",
+          failureMessage: "Permission request expired before response.",
+        }),
+      ]),
+    );
     expect(
       modelRef!.agent.store().failedPermissionsById["perm-stale-1"],
     ).toMatchObject({
       requestId: "perm-stale-1",
       failureMessage: "Permission request expired before response.",
     });
+  });
+
+  it("serializes multiple pending permissions into active and queued state", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "permission.asked",
+      data: {
+        requestID: "perm-1",
+        sessionID: "session-1",
+        kind: "write",
+      },
+    });
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:01.000Z",
+      event: "permission.asked",
+      data: {
+        requestID: "perm-2",
+        sessionID: "session-1",
+        kind: "bash",
+      },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.permissionState().activeRequest).toMatchObject({
+        requestId: "perm-1",
+      });
+      expect(modelRef!.agent.permissionState().queuedRequests).toEqual([
+        expect.objectContaining({ requestId: "perm-2" }),
+      ]);
+    });
+  });
+
+  it("rejects out-of-order permission replies while another request is active", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "permission.asked",
+      data: {
+        requestID: "perm-1",
+        sessionID: "session-1",
+        kind: "write",
+      },
+    });
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:01.000Z",
+      event: "permission.asked",
+      data: {
+        requestID: "perm-2",
+        sessionID: "session-1",
+        kind: "bash",
+      },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.permissionState().queuedRequests).toHaveLength(1);
+    });
+
+    const accepted = await modelRef!.agent.replyPermission("perm-2", "once");
+
+    expect(accepted).toBe(false);
+    expect(replyRunOpenCodePermissionMock).not.toHaveBeenCalled();
+    expect(modelRef!.agent.permissionReplyError()).toBe(
+      "Finish the current permission request first.",
+    );
   });
 
   it("stores and updates draft review comments in app state", async () => {

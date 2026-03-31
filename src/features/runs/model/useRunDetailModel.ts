@@ -42,7 +42,12 @@ import {
   hydrateAgentStore,
   reduceOpenCodeEvent,
 } from "./agentReducer";
-import type { AgentStore, OpenCodeBusEvent } from "./agentTypes";
+import type {
+  AgentPermissionState,
+  AgentStore,
+  OpenCodeBusEvent,
+  UiPermissionRequest,
+} from "./agentTypes";
 import { setRunCommitPending } from "./commitUiState";
 import {
   validateReviewAnchor,
@@ -357,31 +362,6 @@ export const useRunDetailModel = () => {
     );
   };
 
-  const dismissPendingPermissionRequest = (requestId: string): void => {
-    setAgentStore((current) => {
-      if (!current.pendingPermissionsById[requestId]) {
-        console.debug("[runs] pending permission dismiss skipped: not found", {
-          requestId,
-          sessionId: current.sessionId,
-          pendingCount: Object.keys(current.pendingPermissionsById).length,
-        });
-        return current;
-      }
-
-      const pendingPermissionsById = { ...current.pendingPermissionsById };
-      delete pendingPermissionsById[requestId];
-      console.info("[runs] pending permission dismissed", {
-        requestId,
-        sessionId: current.sessionId,
-        pendingCount: Object.keys(pendingPermissionsById).length,
-      });
-      return {
-        ...current,
-        pendingPermissionsById,
-      };
-    });
-  };
-
   const markPermissionRequestFailed = (
     requestId: string,
     failureMessage = "Permission request expired before response.",
@@ -398,11 +378,22 @@ export const useRunDetailModel = () => {
       return {
         ...current,
         pendingPermissionsById,
+        resolvedPermissionsById: {
+          ...current.resolvedPermissionsById,
+          [requestId]: {
+            ...pendingPermission,
+            status: "failed",
+            failureMessage,
+            resolvedAt: new Date().toISOString(),
+          },
+        },
         failedPermissionsById: {
           ...current.failedPermissionsById,
           [requestId]: {
             ...pendingPermission,
+            status: "failed",
             failureMessage,
+            resolvedAt: new Date().toISOString(),
           },
         },
       };
@@ -425,7 +416,6 @@ export const useRunDetailModel = () => {
         decision === "deny" ? "permission.rejected" : "permission.replied",
       repliedAt,
     });
-    dismissPendingPermissionRequest(requestId);
 
     const syntheticEvent: RunOpenCodeEvent = {
       runId,
@@ -448,6 +438,56 @@ export const useRunDetailModel = () => {
       decision,
     });
   };
+
+  const toSortablePermissionTimestamp = (
+    value: string | number | null | undefined,
+  ): number => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Date.parse(value);
+      if (!Number.isNaN(parsed)) {
+        return parsed;
+      }
+    }
+    return 0;
+  };
+
+  const sortPermissionRequests = (
+    requests: UiPermissionRequest[],
+    timestampField: "receivedAt" | "resolvedAt",
+  ): UiPermissionRequest[] => {
+    return [...requests].sort((left, right) => {
+      const timestampDelta =
+        toSortablePermissionTimestamp(left[timestampField]) -
+        toSortablePermissionTimestamp(right[timestampField]);
+      if (timestampDelta !== 0) {
+        return timestampDelta;
+      }
+      return left.requestId.localeCompare(right.requestId);
+    });
+  };
+
+  const permissionState = createMemo<AgentPermissionState>(() => {
+    const store = agentStore();
+    const pendingRequests = Object.values(store.pendingPermissionsById);
+    const resolvedRequests = sortPermissionRequests(
+      Object.values(store.resolvedPermissionsById),
+      "resolvedAt",
+    );
+    const failedRequests = sortPermissionRequests(
+      Object.values(store.failedPermissionsById),
+      "resolvedAt",
+    );
+
+    return {
+      activeRequest: pendingRequests[0] ?? null,
+      queuedRequests: pendingRequests.slice(1),
+      resolvedRequests,
+      failedRequests,
+    };
+  });
 
   const getDraftCommentsForFile = (
     filePath: string,
@@ -2335,7 +2375,15 @@ export const useRunDetailModel = () => {
     const requestVersion = activeAgentRequestVersion;
     const store = agentStore();
     const pending = store.pendingPermissionsById[normalizedRequestId];
+    const activePendingRequest = permissionState().activeRequest;
     const sessionId = store.sessionId?.trim() ?? "";
+    if (
+      activePendingRequest &&
+      activePendingRequest.requestId !== normalizedRequestId
+    ) {
+      setPermissionReplyError("Finish the current permission request first.");
+      return false;
+    }
     if (!pending || !sessionId || pending.sessionId !== sessionId) {
       if (pending) {
         markPermissionRequestFailed(normalizedRequestId);
@@ -2963,6 +3011,7 @@ export const useRunDetailModel = () => {
       readinessPhase: agentReadinessPhase,
       events: agentEvents,
       store: agentStore,
+      permissionState,
       error: agentError,
       isSubmittingPrompt,
       submitError,

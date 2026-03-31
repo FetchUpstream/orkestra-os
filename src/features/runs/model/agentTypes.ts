@@ -120,8 +120,19 @@ export type UiPermissionRequest = {
   kind?: string;
   pathPatterns?: string[];
   metadata?: Record<string, string>;
+  status?: "pending" | "replied" | "rejected" | "failed";
+  dedupeKey?: string;
+  receivedAt?: string | number | null;
+  resolvedAt?: string | number | null;
   failureMessage?: string;
   raw?: unknown;
+};
+
+export type AgentPermissionState = {
+  activeRequest: UiPermissionRequest | null;
+  queuedRequests: UiPermissionRequest[];
+  resolvedRequests: UiPermissionRequest[];
+  failedRequests: UiPermissionRequest[];
 };
 
 export type UiTodo = {
@@ -153,6 +164,7 @@ export type AgentStore = {
   messageOrder: string[];
   pendingQuestionsById: Record<string, UiQuestionRequest>;
   pendingPermissionsById: Record<string, UiPermissionRequest>;
+  resolvedPermissionsById: Record<string, UiPermissionRequest>;
   failedPermissionsById: Record<string, UiPermissionRequest>;
   todos: UiTodo[];
   diffSummary: UiDiffSummary | null;
