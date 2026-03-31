@@ -120,6 +120,7 @@ export type UiPermissionRequest = {
   kind?: string;
   pathPatterns?: string[];
   metadata?: Record<string, string>;
+  failureMessage?: string;
   raw?: unknown;
 };
 
@@ -152,6 +153,7 @@ export type AgentStore = {
   messageOrder: string[];
   pendingQuestionsById: Record<string, UiQuestionRequest>;
   pendingPermissionsById: Record<string, UiPermissionRequest>;
+  failedPermissionsById: Record<string, UiPermissionRequest>;
   todos: UiTodo[];
   diffSummary: UiDiffSummary | null;
   rawEvents: OpenCodeBusEvent[];

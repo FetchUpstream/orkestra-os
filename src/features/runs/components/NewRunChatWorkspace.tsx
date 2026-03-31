@@ -149,6 +149,7 @@ const parsePermissionCardData = (
   kind: string;
   pathPatterns: string[];
   metadata: Array<{ key: string; value: string }>;
+  failureMessage: string;
 } => {
   const raw = isRecord(permission.raw) ? permission.raw : {};
   const metadataRecord =
@@ -174,11 +175,46 @@ const parsePermissionCardData = (
       .filter((entry) => entry.value.length > 0),
   ];
 
+  const metadataKeys = new Set(metadata.map((entry) => entry.key));
+  const discoveredMetadataEntries: Array<{ label: string; value: unknown }> = [
+    { label: "Action", value: raw.action ?? raw.operation ?? raw.op },
+    {
+      label: "Tool",
+      value:
+        raw.tool ??
+        raw.toolName ??
+        raw.command ??
+        raw.name ??
+        raw.permissionTool,
+    },
+    {
+      label: "Reason",
+      value:
+        raw.reason ?? raw.description ?? raw.prompt ?? raw.message ?? raw.title,
+    },
+  ];
+
+  for (const entry of discoveredMetadataEntries) {
+    const key = entry.label.toLowerCase();
+    if (metadataKeys.has(key)) {
+      continue;
+    }
+    const value = toSingleLine(entry.value, 180);
+    if (!value) {
+      continue;
+    }
+    metadata.push({ key, value });
+    metadataKeys.add(key);
+  }
+
   return {
     requestId: permission.requestId,
     kind,
     pathPatterns,
     metadata,
+    failureMessage:
+      toSingleLine(permission.failureMessage, 140) ||
+      "Permission request expired before response.",
   };
 };
 
@@ -616,13 +652,42 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     const byId = props.model.agent.store().pendingPermissionsById;
     return Object.values(byId);
   });
-  const pendingPermissionCard = createMemo(() => {
-    const [first] = pendingPermissionRequests();
-    return first ? parsePermissionCardData(first) : null;
+  const pendingPermissionCards = createMemo(() => {
+    return pendingPermissionRequests().map((permission) =>
+      parsePermissionCardData(permission),
+    );
+  });
+  const failedPermissionCards = createMemo(() => {
+    const byId = props.model.agent.store().failedPermissionsById;
+    return Object.values(byId).map((permission) =>
+      parsePermissionCardData(permission),
+    );
   });
   const hasPendingPermission = createMemo(
     () => pendingPermissionRequests().length > 0,
   );
+
+  createEffect(() => {
+    const pending = pendingPermissionCards();
+    console.info("[runs] pending permission count changed", {
+      runId: props.model.run()?.id ?? null,
+      pendingCount: pending.length,
+      requestIds: pending.map((card) => card.requestId),
+    });
+  });
+
+  createEffect(() => {
+    const pending = pendingPermissionCards();
+    if (pending.length === 0) {
+      return;
+    }
+    console.debug("[runs] rendering permission transcript items", {
+      runId: props.model.run()?.id ?? null,
+      pendingCount: pending.length,
+      requestIds: pending.map((card) => card.requestId),
+      permissionTypes: pending.map((card) => card.kind),
+    });
+  });
   const setupState = createMemo(() => {
     const state = props.model.run()?.setupState?.trim().toLowerCase();
     if (state === "running" || state === "succeeded" || state === "failed") {
@@ -984,7 +1049,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       </p>
     );
 
-    return buildChatRows()
+    const messageItems = buildChatRows()
       .filter((row): row is NonNullable<typeof row> => row !== null)
       .map((row) => {
         const reasoningNode =
@@ -1043,6 +1108,177 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           </RunChatMessage>
         );
       });
+
+    const pendingPermissionItems = pendingPermissionCards().map((card) => {
+      return (
+        <RunChatMessage
+          role="assistant"
+          class="run-chat-message-item"
+          ariaLabel="Permission request"
+        >
+          <RunChatAssistantMessage
+            content=" "
+            toolRail={
+              <section
+                class="run-chat-tool-rail"
+                aria-label="Permission request tool item"
+              >
+                <ul class="run-chat-tool-rail__list">
+                  <li class="run-chat-tool-rail__item run-chat-tool-rail__item--running">
+                    <div class="run-chat-tool-rail__row">
+                      <span class="run-chat-tool-rail__line">
+                        Permission required: {card.kind}
+                      </span>
+                    </div>
+                    <Show
+                      when={card.pathPatterns.length > 0}
+                      fallback={
+                        <p class="run-chat-tool-rail__details">
+                          <strong>Paths:</strong> Any path
+                        </p>
+                      }
+                    >
+                      <div class="run-chat-tool-rail__details">
+                        <strong>Paths:</strong>
+                        <ul class="list-disc pl-5">
+                          <For each={card.pathPatterns}>
+                            {(pattern) => <li>{pattern}</li>}
+                          </For>
+                        </ul>
+                      </div>
+                    </Show>
+                    <Show when={card.metadata.length > 0}>
+                      <div class="run-chat-tool-rail__details">
+                        <strong>Details:</strong>
+                        <ul class="list-disc pl-5">
+                          <For each={card.metadata}>
+                            {(entry) => (
+                              <li>
+                                {entry.key}: {entry.value}
+                              </li>
+                            )}
+                          </For>
+                        </ul>
+                      </div>
+                    </Show>
+                    <Show
+                      when={props.model.agent.permissionReplyError().length > 0}
+                    >
+                      <p class="projects-error">
+                        {props.model.agent.permissionReplyError()}
+                      </p>
+                    </Show>
+                    <div class="mt-2 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+                        disabled={props.model.agent.isReplyingPermission()}
+                        onClick={() => {
+                          console.info("[runs] permission decision clicked", {
+                            runId: props.model.run()?.id ?? null,
+                            requestId: card.requestId,
+                            decision: "deny",
+                            pendingCount: pendingPermissionCards().length,
+                          });
+                          void props.model.agent.replyPermission(
+                            card.requestId,
+                            "deny",
+                          );
+                        }}
+                      >
+                        {props.model.agent.isReplyingPermission()
+                          ? "Sending..."
+                          : "Deny"}
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
+                        disabled={props.model.agent.isReplyingPermission()}
+                        onClick={() => {
+                          console.info("[runs] permission decision clicked", {
+                            runId: props.model.run()?.id ?? null,
+                            requestId: card.requestId,
+                            decision: "allow",
+                            pendingCount: pendingPermissionCards().length,
+                          });
+                          void props.model.agent.replyPermission(
+                            card.requestId,
+                            "allow",
+                          );
+                        }}
+                      >
+                        {props.model.agent.isReplyingPermission()
+                          ? "Sending..."
+                          : "Allow"}
+                      </button>
+                    </div>
+                  </li>
+                </ul>
+              </section>
+            }
+          />
+        </RunChatMessage>
+      );
+    });
+
+    const failedPermissionItems = failedPermissionCards().map((card) => {
+      return (
+        <RunChatMessage role="assistant">
+          <section
+            class="run-chat-tool-rail"
+            aria-label="Permission request failed tool item"
+          >
+            <ul class="run-chat-tool-rail__list">
+              <li class="run-chat-tool-rail__item run-chat-tool-rail__item--failed">
+                <div class="run-chat-tool-rail__row">
+                  <span class="run-chat-tool-rail__line">
+                    Permission required: {card.kind}
+                  </span>
+                  <span class="run-chat-tool-rail__status">
+                    <span
+                      class="run-chat-tool-rail__status-slot"
+                      aria-label="failed"
+                    >
+                      <AppIcon
+                        name="status.error"
+                        class="run-chat-tool-rail__status-icon run-chat-tool-rail__status-icon--error"
+                        aria-hidden="true"
+                        size={14}
+                      />
+                      <span class="sr-only">failed</span>
+                    </span>
+                  </span>
+                </div>
+                <p class="run-chat-tool-rail__details">{card.failureMessage}</p>
+                <Show
+                  when={card.pathPatterns.length > 0}
+                  fallback={
+                    <p class="run-chat-tool-rail__details">
+                      <strong>Paths:</strong> Any path
+                    </p>
+                  }
+                >
+                  <div class="run-chat-tool-rail__details">
+                    <strong>Paths:</strong>
+                    <ul class="list-disc pl-5">
+                      <For each={card.pathPatterns}>
+                        {(pattern) => <li>{pattern}</li>}
+                      </For>
+                    </ul>
+                  </div>
+                </Show>
+              </li>
+            </ul>
+          </section>
+        </RunChatMessage>
+      );
+    });
+
+    return [
+      ...messageItems,
+      ...pendingPermissionItems,
+      ...failedPermissionItems,
+    ];
   });
 
   createEffect(() => {
@@ -1206,85 +1442,8 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               <p>{cleanupMessage()}</p>
             </section>
           </Show>
-          <Show when={pendingPermissionCard() !== null}>
-            {(() => {
-              const card = pendingPermissionCard();
-              if (!card) {
-                return null;
-              }
-              return (
-                <section
-                  class="run-chat-permission-card"
-                  aria-live="polite"
-                  aria-label="Permission required"
-                >
-                  <h3 class="run-chat-permission-card__title">
-                    Permission required
-                  </h3>
-                  <p class="run-chat-permission-card__line">
-                    <strong>Type:</strong> {card.kind}
-                  </p>
-                  <Show
-                    when={card.pathPatterns.length > 0}
-                    fallback={
-                      <p class="run-chat-permission-card__line">
-                        <strong>Paths:</strong> Any path
-                      </p>
-                    }
-                  >
-                    <div class="run-chat-permission-card__line">
-                      <strong>Paths:</strong>
-                      <ul class="run-chat-permission-card__list">
-                        {card.pathPatterns.map((pattern: string) => (
-                          <li>{pattern}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  </Show>
-                  <Show when={card.metadata.length > 0}>
-                    <p class="run-chat-permission-card__line">
-                      <strong>Details:</strong>{" "}
-                      {card.metadata
-                        .map((entry: { key: string; value: string }) => {
-                          return `${entry.key}=${entry.value}`;
-                        })
-                        .join(" | ")}
-                    </p>
-                  </Show>
-                  <div class="run-chat-permission-card__actions">
-                    <button
-                      type="button"
-                      class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
-                      disabled={props.model.agent.isReplyingPermission()}
-                      onClick={() => {
-                        void props.model.agent.replyPermission(
-                          card.requestId,
-                          "deny",
-                        );
-                      }}
-                    >
-                      Deny
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
-                      disabled={props.model.agent.isReplyingPermission()}
-                      onClick={() => {
-                        void props.model.agent.replyPermission(
-                          card.requestId,
-                          "allow",
-                        );
-                      }}
-                    >
-                      Allow
-                    </button>
-                  </div>
-                </section>
-              );
-            })()}
-          </Show>
           <Show
-            when={transcriptMessageOrder().length > 0}
+            when={chatTranscriptItems().length > 0}
             fallback={
               <section
                 class="run-chat-transcript run-chat-transcript--empty-state"
@@ -1541,7 +1700,12 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               Prompt submission is blocked until this permission is answered.
             </p>
           </Show>
-          <Show when={props.model.agent.permissionReplyError().length > 0}>
+          <Show
+            when={
+              !hasPendingPermission() &&
+              props.model.agent.permissionReplyError().length > 0
+            }
+          >
             <p class="projects-error">
               {props.model.agent.permissionReplyError()}
             </p>

@@ -221,7 +221,7 @@ describe("useRunDetailModel startup ownership", () => {
     expect(submitRunOpenCodePromptMock).not.toHaveBeenCalled();
   });
 
-  it("hydrates read-only history without subscribing to live events", async () => {
+  it("hydrates read-only history and subscribes to permission/event updates", async () => {
     bootstrapRunOpenCodeMock.mockResolvedValueOnce({
       state: "running",
       chatMode: "read_only",
@@ -266,7 +266,7 @@ describe("useRunDetailModel startup ownership", () => {
     await waitFor(() => {
       expect(modelRef).toBeDefined();
       expect(modelRef!.agent.chatMode()).toBe("read_only");
-      expect(subscribeRunOpenCodeEventsMock).not.toHaveBeenCalled();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
       expect(modelRef!.agent.events().length).toBe(1);
     });
   });
@@ -312,6 +312,41 @@ describe("useRunDetailModel startup ownership", () => {
       expect(modelRef!.agent.projectDefaultRunAgentId()).toBe("agent-1");
       expect(modelRef!.agent.projectDefaultRunProviderId()).toBe("provider-1");
       expect(modelRef!.agent.projectDefaultRunModelId()).toBe("model-1");
+    });
+  });
+
+  it("loads run options from run project while task context is still loading", async () => {
+    const taskLoad = deferred<{
+      id: string;
+      title: string;
+      description: string;
+      implementationGuide: string;
+      status: string;
+      projectId: string;
+    }>();
+    getTaskMock.mockReturnValueOnce(taskLoad.promise);
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(getRunSelectionOptionsWithCacheMock).toHaveBeenCalledWith(
+        "project-1",
+      );
+      expect(modelRef!.agent.runSelectionOptionsError()).toBe("");
+    });
+
+    taskLoad.resolve({
+      id: "task-1",
+      title: "Task",
+      description: "Description",
+      implementationGuide: "Guide",
+      status: "doing",
+      projectId: "project-1",
     });
   });
 
@@ -999,6 +1034,152 @@ describe("useRunDetailModel startup ownership", () => {
       requestId: "perm-1",
       decision: "allow",
       remember: false,
+    });
+    expect(
+      modelRef!.agent.store().pendingPermissionsById["perm-1"],
+    ).toBeUndefined();
+    const latestAllowEvent = modelRef!.agent.events();
+    expect(latestAllowEvent[latestAllowEvent.length - 1]?.event).toBe(
+      "permission.replied",
+    );
+  });
+
+  it("records local rejected permission event after deny is accepted", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "permission.asked",
+      data: {
+        requestID: "perm-2",
+        sessionID: "session-1",
+        kind: "bash",
+      },
+    });
+
+    await waitFor(() => {
+      expect(
+        modelRef!.agent.store().pendingPermissionsById["perm-2"],
+      ).toBeTruthy();
+    });
+
+    const accepted = await modelRef!.agent.replyPermission("perm-2", "deny");
+
+    expect(accepted).toBe(true);
+    expect(
+      modelRef!.agent.store().pendingPermissionsById["perm-2"],
+    ).toBeUndefined();
+    const latestDenyEvent = modelRef!.agent.events();
+    expect(latestDenyEvent[latestDenyEvent.length - 1]?.event).toBe(
+      "permission.rejected",
+    );
+  });
+
+  it("auto-dismisses stale permission requests before backend reply", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const accepted = await modelRef!.agent.replyPermission(
+      "missing-perm",
+      "allow",
+    );
+
+    expect(accepted).toBe(false);
+    expect(replyRunOpenCodePermissionMock).not.toHaveBeenCalled();
+    expect(modelRef!.agent.permissionReplyError()).toBe("");
+    expect(
+      modelRef!.agent.store().pendingPermissionsById["missing-perm"],
+    ).toBeUndefined();
+  });
+
+  it("auto-dismisses stale permission requests on backend stale response", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "permission.asked",
+      data: {
+        requestID: "perm-stale-1",
+        sessionID: "session-1",
+        kind: "write",
+      },
+    });
+
+    await waitFor(() => {
+      expect(
+        modelRef!.agent.store().pendingPermissionsById["perm-stale-1"],
+      ).toBeTruthy();
+    });
+
+    replyRunOpenCodePermissionMock.mockRejectedValueOnce(
+      new Error("permission request is stale"),
+    );
+
+    const accepted = await modelRef!.agent.replyPermission(
+      "perm-stale-1",
+      "deny",
+    );
+
+    expect(accepted).toBe(false);
+    expect(modelRef!.agent.permissionReplyError()).toBe("");
+    expect(
+      modelRef!.agent.store().pendingPermissionsById["perm-stale-1"],
+    ).toBeUndefined();
+    expect(
+      modelRef!.agent.store().failedPermissionsById["perm-stale-1"],
+    ).toMatchObject({
+      requestId: "perm-stale-1",
+      failureMessage: "Permission request expired before response.",
     });
   });
 

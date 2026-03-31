@@ -342,6 +342,25 @@ describe("useTaskDetailModel start run", () => {
     });
   });
 
+  it("loads run options from resolved task project before project context signal is set", async () => {
+    paramsState.projectId = "";
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(getRunSelectionOptionsWithCacheMock).toHaveBeenCalledWith(
+        "project-1",
+      );
+      expect(ref.current?.runSelectionOptionsError()).toBe("");
+    });
+  });
+
   it("uses startup-cached run options when available", async () => {
     readRunSelectionOptionsCacheMock.mockReturnValueOnce({
       agents: [{ id: "agent-cached", label: "Cached Agent" }],

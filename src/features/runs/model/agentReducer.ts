@@ -455,33 +455,79 @@ const normalizeQuestion = (value: unknown): UiQuestionRequest | null => {
   };
 };
 
-const normalizePermission = (value: unknown): UiPermissionRequest | null => {
+const normalizePermission = (
+  value: unknown,
+  fallbackSessionId?: string,
+): UiPermissionRequest | null => {
   if (!isRecord(value)) {
     return null;
   }
-  const requestId = asString(value.requestID ?? value.requestId);
-  const sessionId = asString(value.sessionID ?? value.sessionId);
+  const nestedPermission = pickRecordValue(value, "permission", "request");
+  const nested = isRecord(nestedPermission) ? nestedPermission : null;
+  const requestId = asString(
+    pickRecordValue(
+      value,
+      "requestID",
+      "requestId",
+      "id",
+      "permissionID",
+      "permissionId",
+    ) ??
+      (nested
+        ? pickRecordValue(
+            nested,
+            "requestID",
+            "requestId",
+            "id",
+            "permissionID",
+            "permissionId",
+          )
+        : undefined),
+  );
+  const sessionId =
+    asString(
+      pickRecordValue(value, "sessionID", "sessionId") ??
+        (nested
+          ? pickRecordValue(nested, "sessionID", "sessionId")
+          : undefined),
+    ) ?? fallbackSessionId;
   if (!requestId || !sessionId) {
     return null;
   }
 
   const kind = asString(
-    pickRecordValue(value, "kind", "permission", "tool", "action"),
+    pickRecordValue(value, "kind", "tool", "action") ??
+      (nested
+        ? pickRecordValue(nested, "kind", "permission", "tool", "action")
+        : undefined),
   );
-  const rawPatterns = pickRecordValue(
-    value,
-    "pathPatterns",
-    "paths",
-    "patterns",
-    "path_pattern",
-    "pathPattern",
-  );
+  const rawPatterns =
+    pickRecordValue(
+      value,
+      "pathPatterns",
+      "paths",
+      "patterns",
+      "path_pattern",
+      "pathPattern",
+    ) ??
+    (nested
+      ? pickRecordValue(
+          nested,
+          "pathPatterns",
+          "paths",
+          "patterns",
+          "path_pattern",
+          "pathPattern",
+        )
+      : undefined);
   const pathPatterns = asArray(rawPatterns)
     .map((item) => asString(item))
     .filter(
       (item): item is string => typeof item === "string" && item.length > 0,
     );
-  const metadataSource = pickRecordValue(value, "metadata", "meta");
+  const metadataSource =
+    pickRecordValue(value, "metadata", "meta") ??
+    (nested ? pickRecordValue(nested, "metadata", "meta") : undefined);
   const metadata = isRecord(metadataSource)
     ? Object.entries(metadataSource).reduce<Record<string, string>>(
         (acc, [metaKey, metaValue]) => {
@@ -495,7 +541,7 @@ const normalizePermission = (value: unknown): UiPermissionRequest | null => {
       )
     : undefined;
 
-  return {
+  const normalized: UiPermissionRequest = {
     requestId,
     sessionId,
     kind,
@@ -503,6 +549,15 @@ const normalizePermission = (value: unknown): UiPermissionRequest | null => {
     metadata,
     raw: value,
   };
+
+  console.debug("[runs] permission payload normalized", {
+    requestId: normalized.requestId,
+    sessionId: normalized.sessionId,
+    permissionType: normalized.kind ?? null,
+    pathPatternCount: normalized.pathPatterns?.length ?? 0,
+  });
+
+  return normalized;
 };
 
 const normalizeDiff = (value: unknown): UiDiffSummary => {
@@ -564,6 +619,7 @@ export const createEmptyAgentStore = (sessionId: string | null): AgentStore => {
     messageOrder: [],
     pendingQuestionsById: {},
     pendingPermissionsById: {},
+    failedPermissionsById: {},
     todos: [],
     diffSummary: null,
     rawEvents: [],
@@ -1069,8 +1125,18 @@ export const reduceOpenCodeEvent = (
     }
 
     case "permission.asked": {
-      const normalized = normalizePermission(properties);
+      const normalized = normalizePermission(
+        properties,
+        nextState.sessionId ?? undefined,
+      );
       if (!normalized) {
+        console.warn("[runs] permission.asked ignored: normalization failed", {
+          eventType: event.type,
+          runId:
+            isRecord(event.raw) && typeof event.raw.runId === "string"
+              ? event.raw.runId
+              : null,
+        });
         return nextState;
       }
       const sessionResult = matchOrAdoptSession(
@@ -1078,28 +1144,69 @@ export const reduceOpenCodeEvent = (
         normalized.sessionId,
       );
       if (!sessionResult.canApply) {
+        console.warn("[runs] permission.asked ignored: session mismatch", {
+          requestId: normalized.requestId,
+          sessionId: normalized.sessionId,
+          storeSessionId: nextState.sessionId,
+        });
         return nextState;
       }
+      const pendingPermissionsById = {
+        ...nextState.pendingPermissionsById,
+        [normalized.requestId]: normalized,
+      };
+      const failedPermissionsById = { ...nextState.failedPermissionsById };
+      delete failedPermissionsById[normalized.requestId];
+      console.info("[runs] permission added to pending state", {
+        requestId: normalized.requestId,
+        sessionId: normalized.sessionId,
+        permissionType: normalized.kind ?? null,
+        pendingCount: Object.keys(pendingPermissionsById).length,
+        runId:
+          isRecord(event.raw) && typeof event.raw.runId === "string"
+            ? event.raw.runId
+            : null,
+      });
       return {
         ...nextState,
         sessionId: sessionResult.sessionId,
-        pendingPermissionsById: {
-          ...nextState.pendingPermissionsById,
-          [normalized.requestId]: normalized,
-        },
+        pendingPermissionsById,
+        failedPermissionsById,
       };
     }
 
-    case "permission.replied": {
+    case "permission.replied":
+    case "permission.rejected": {
       const requestId = asString(properties.requestID ?? properties.requestId);
       if (!requestId || !nextState.pendingPermissionsById[requestId]) {
+        console.warn("[runs] permission resolution ignored: missing pending", {
+          eventType: event.type,
+          requestId: requestId ?? null,
+          pendingCount: Object.keys(nextState.pendingPermissionsById).length,
+          runId:
+            isRecord(event.raw) && typeof event.raw.runId === "string"
+              ? event.raw.runId
+              : null,
+        });
         return nextState;
       }
       const pendingPermissionsById = { ...nextState.pendingPermissionsById };
       delete pendingPermissionsById[requestId];
+      const failedPermissionsById = { ...nextState.failedPermissionsById };
+      delete failedPermissionsById[requestId];
+      console.info("[runs] permission removed from pending state", {
+        eventType: event.type,
+        requestId,
+        pendingCount: Object.keys(pendingPermissionsById).length,
+        runId:
+          isRecord(event.raw) && typeof event.raw.runId === "string"
+            ? event.raw.runId
+            : null,
+      });
       return {
         ...nextState,
         pendingPermissionsById,
+        failedPermissionsById,
       };
     }
 

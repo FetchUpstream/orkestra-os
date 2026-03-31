@@ -277,4 +277,81 @@ describe("agentReducer text/reasoning lifecycle", () => {
       model: "k2p5",
     });
   });
+
+  it("normalizes nested permission payloads and falls back to active session", () => {
+    const base = createEmptyAgentStore("session-1");
+    const next = reduceOpenCodeEvent(base, {
+      type: "permission.asked",
+      properties: {
+        permission: {
+          id: "perm-1",
+          kind: "write",
+          paths: ["src/**/*.ts"],
+          metadata: {
+            tool: "write",
+          },
+        },
+      },
+    });
+
+    expect(next.pendingPermissionsById["perm-1"]).toEqual(
+      expect.objectContaining({
+        requestId: "perm-1",
+        sessionId: "session-1",
+        kind: "write",
+        pathPatterns: ["src/**/*.ts"],
+      }),
+    );
+    expect(next.pendingPermissionsById["perm-1"]?.metadata).toEqual({
+      tool: "write",
+    });
+  });
+
+  it("clears normalized permission requests on permission.replied", () => {
+    const withPermission = reduceOpenCodeEvent(
+      createEmptyAgentStore("session-1"),
+      {
+        type: "permission.asked",
+        properties: {
+          permission: {
+            id: "perm-2",
+            kind: "bash",
+          },
+        },
+      },
+    );
+
+    const cleared = reduceOpenCodeEvent(withPermission, {
+      type: "permission.replied",
+      properties: {
+        requestId: "perm-2",
+      },
+    });
+
+    expect(cleared.pendingPermissionsById["perm-2"]).toBeUndefined();
+  });
+
+  it("clears normalized permission requests on permission.rejected", () => {
+    const withPermission = reduceOpenCodeEvent(
+      createEmptyAgentStore("session-1"),
+      {
+        type: "permission.asked",
+        properties: {
+          permission: {
+            id: "perm-3",
+            kind: "bash",
+          },
+        },
+      },
+    );
+
+    const cleared = reduceOpenCodeEvent(withPermission, {
+      type: "permission.rejected",
+      properties: {
+        requestId: "perm-3",
+      },
+    });
+
+    expect(cleared.pendingPermissionsById["perm-3"]).toBeUndefined();
+  });
 });

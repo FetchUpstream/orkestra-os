@@ -575,8 +575,12 @@ export const useTaskDetailModel = () => {
     }
   };
 
-  const refreshRunSelectionOptions = async (activeTaskId: string) => {
-    const resolvedProjectId = projectId()?.trim() || "";
+  const refreshRunSelectionOptions = async (
+    activeTaskId: string,
+    resolvedProjectIdOverride?: string | null,
+  ) => {
+    const resolvedProjectId =
+      resolvedProjectIdOverride?.trim() || projectId()?.trim() || "";
     if (!resolvedProjectId) {
       setRunSelectionOptionsError("Missing project context for run options.");
       setRunAgentOptions([]);
@@ -869,7 +873,7 @@ export const useTaskDetailModel = () => {
         });
         clearTaskDetailsAutosaveState();
         const resolvedProjectId = detail.projectId || params.projectId || null;
-        void refreshRunSelectionOptions(activeTaskId);
+        void refreshRunSelectionOptions(activeTaskId, resolvedProjectId);
         await Promise.all([
           loadProjectContext(resolvedProjectId),
           refreshDependencies(detail.id),

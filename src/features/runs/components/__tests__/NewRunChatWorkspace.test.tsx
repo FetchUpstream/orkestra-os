@@ -8,6 +8,12 @@ const createModelStub = (
   withPendingPermission = false,
   runOverrides: Record<string, unknown> = {},
   chatMode: "interactive" | "read_only" | "unavailable" = "interactive",
+  agentOverrides: {
+    pendingPermissionsById?: Record<string, unknown>;
+    failedPermissionsById?: Record<string, unknown>;
+    isReplyingPermission?: boolean;
+    permissionReplyError?: string;
+  } = {},
 ) => {
   const [run, setRun] = createSignal({ status: runStatus, ...runOverrides });
 
@@ -22,7 +28,9 @@ const createModelStub = (
         messageOrder: [],
         messagesById: {},
         pendingPermissionsById: withPendingPermission
-          ? {
+          ? ((agentOverrides.pendingPermissionsById as
+              | Record<string, unknown>
+              | undefined) ?? {
               "perm-1": {
                 requestId: "perm-1",
                 sessionId: "session-1",
@@ -30,13 +38,14 @@ const createModelStub = (
                 pathPatterns: ["src/**/*.ts"],
                 metadata: { tool: "write" },
               },
-            }
+            })
           : {},
+        failedPermissionsById: agentOverrides.failedPermissionsById ?? {},
       }),
       isSubmittingPrompt: () => false,
-      isReplyingPermission: () => false,
+      isReplyingPermission: () => agentOverrides.isReplyingPermission ?? false,
       submitError: () => "",
-      permissionReplyError: () => "",
+      permissionReplyError: () => agentOverrides.permissionReplyError ?? "",
       submitPrompt: vi.fn(async () => true),
       runAgentOptions: () => [{ id: "agent-1", label: "Planner" }],
       runProviderOptions: () => [{ id: "provider-1", label: "OpenAI" }],
@@ -74,13 +83,17 @@ describe("NewRunChatWorkspace", () => {
     ).toBeTruthy();
   });
 
-  it("renders blocking permission card and disables composer", () => {
+  it("renders actionable permission item in transcript and disables composer", () => {
     const { model } = createModelStub("running", true);
     render(() => <NewRunChatWorkspace model={model} />);
 
-    expect(screen.getByText("Permission required")).toBeTruthy();
-    expect(screen.getByText(/Type:/)).toBeTruthy();
-    expect(screen.getByText("write")).toBeTruthy();
+    expect(screen.getByLabelText("Permission request")).toBeTruthy();
+    expect(
+      screen
+        .getByLabelText("Permission request tool item")
+        .classList.contains("run-chat-tool-rail"),
+    ).toBe(true);
+    expect(screen.getByText(/Permission required:\s*write/i)).toBeTruthy();
     expect(screen.getByText("src/**/*.ts")).toBeTruthy();
 
     const textbox = screen.getByLabelText("Message agent");
@@ -90,6 +103,126 @@ describe("NewRunChatWorkspace", () => {
         "Prompt submission is blocked until this permission is answered.",
       ),
     ).toBeTruthy();
+  });
+
+  it("calls replyPermission when allow/deny is selected", async () => {
+    const replyPermissionMock = vi.fn(async () => true);
+    const { model } = createModelStub("running", true);
+    model.agent.replyPermission = replyPermissionMock;
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    expect(replyPermissionMock).toHaveBeenCalledWith("perm-1", "allow");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    expect(replyPermissionMock).toHaveBeenCalledWith("perm-1", "deny");
+  });
+
+  it("shows in-flight and error state in permission transcript item", () => {
+    const { model } = createModelStub("running", true, {}, "interactive", {
+      isReplyingPermission: true,
+      permissionReplyError: "Could not reply to permission request.",
+    });
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getAllByRole("button", { name: "Sending..." }).length).toBe(
+      2,
+    );
+    expect(
+      screen.getByText("Could not reply to permission request."),
+    ).toBeTruthy();
+  });
+
+  it("shows queued permission count and advances when first request resolves", () => {
+    const pendingPermissions: Record<string, unknown> = {
+      "perm-1": {
+        requestId: "perm-1",
+        sessionId: "session-1",
+        kind: "write",
+        pathPatterns: ["src/**/*.ts"],
+        metadata: { tool: "write" },
+      },
+      "perm-2": {
+        requestId: "perm-2",
+        sessionId: "session-1",
+        kind: "bash",
+        pathPatterns: ["scripts/*.sh"],
+        metadata: { tool: "bash" },
+      },
+    };
+    const [store, setStore] = createSignal({
+      sessionId: "session-1",
+      status: "idle",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: [],
+      messagesById: {},
+      pendingQuestionsById: {},
+      pendingPermissionsById: pendingPermissions,
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    const { model } = createModelStub("running", true, {}, "interactive", {
+      pendingPermissionsById: pendingPermissions,
+    });
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getAllByLabelText("Permission request")).toHaveLength(2);
+    expect(screen.getByText(/Permission required:\s*write/i)).toBeTruthy();
+    expect(screen.getByText(/Permission required:\s*bash/i)).toBeTruthy();
+
+    setStore((current) => ({
+      ...current,
+      pendingPermissionsById: {
+        "perm-2": pendingPermissions["perm-2"],
+      },
+    }));
+
+    expect(screen.getAllByLabelText("Permission request")).toHaveLength(1);
+    expect(screen.queryByText(/Permission required:\s*write/i)).toBeNull();
+    expect(screen.getByText(/Permission required:\s*bash/i)).toBeTruthy();
+
+    setStore((current) => ({
+      ...current,
+      pendingPermissionsById: {},
+    }));
+
+    expect(screen.queryByLabelText("Permission request")).toBeNull();
+  });
+
+  it("renders stale permissions as failed transcript items", () => {
+    const { model } = createModelStub("running", false, {}, "interactive", {
+      failedPermissionsById: {
+        "perm-stale-1": {
+          requestId: "perm-stale-1",
+          sessionId: "session-1",
+          kind: "write",
+          pathPatterns: ["src/**/*.ts"],
+          failureMessage: "Permission request expired before response.",
+        },
+      },
+    });
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(
+      screen.getByLabelText("Permission request failed tool item"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Permission request expired before response."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Deny" })).toBeNull();
+    expect(screen.getByLabelText("Message agent")).toBeTruthy();
+    expect(
+      screen.queryByText(
+        "Prompt submission is blocked until this permission is answered.",
+      ),
+    ).toBeNull();
   });
 
   it("hides cleanup status when cleanup is pending", () => {
@@ -484,6 +617,7 @@ describe("NewRunChatWorkspace", () => {
         },
       },
       pendingPermissionsById: {},
+      failedPermissionsById: {},
       pendingQuestionsById: {},
       todos: [],
       diffSummary: null,
@@ -541,6 +675,7 @@ describe("NewRunChatWorkspace", () => {
         },
       },
       pendingPermissionsById: {},
+      failedPermissionsById: {},
       pendingQuestionsById: {},
       todos: [],
       diffSummary: null,

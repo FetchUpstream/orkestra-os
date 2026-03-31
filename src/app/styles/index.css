@@ -5106,13 +5106,11 @@ textarea::placeholder {
   background: rgba(255, 255, 255, 0.05);
 }
 
-.run-chat-permission-card {
-  margin: 0 auto 12px;
-  width: min(var(--run-chat-rail-max), calc(100% - 24px));
-  border: 1px solid rgba(251, 191, 36, 0.35);
-  border-radius: 0;
-  background: rgba(251, 191, 36, 0.08);
-  padding: 12px;
+.run-chat-permission-modal {
+  width: min(560px, calc(100% - 24px));
+  border-color: rgba(251, 191, 36, 0.45);
+  background: var(--color-base-200);
+  padding: 18px;
 }
 
 .run-setup-status-box,
@@ -5154,31 +5152,39 @@ textarea::placeholder {
   border-color: rgba(239, 68, 68, 0.5);
 }
 
-.run-chat-permission-card__title {
+.run-chat-permission-modal__title {
   margin: 0 0 8px;
   font-size: 0.88rem;
   color: #fbbf24;
 }
 
-.run-chat-permission-card__line {
+.run-chat-permission-modal__copy {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.run-chat-permission-modal__line {
   margin: 0;
   font-size: 0.8rem;
   color: var(--text);
 }
 
-.run-chat-permission-card__line + .run-chat-permission-card__line {
+.run-chat-permission-modal__line + .run-chat-permission-modal__line {
   margin-top: 6px;
 }
 
-.run-chat-permission-card__list {
+.run-chat-permission-modal__list {
   margin: 6px 0 0;
   padding-left: 16px;
 }
 
-.run-chat-permission-card__actions {
+.run-chat-permission-modal__queue-copy {
+  color: var(--text-muted);
+}
+
+.run-chat-permission-modal__error {
   margin-top: 10px;
-  display: flex;
-  gap: 8px;
 }
 
 .run-chat-composer-shell {

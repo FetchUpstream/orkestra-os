@@ -765,6 +765,20 @@ impl RunsOpenCodeService {
                 else {
                     return Ok(());
                 };
+                let request_id_hint =
+                    Self::parse_payload_property(payload, &["requestID", "requestId"]);
+                let permission_kind =
+                    Self::parse_payload_property(payload, &["kind", "permission", "tool", "action"]);
+                info!(
+                    target: "opencode.runtime",
+                    marker = "permission_event_received",
+                    run_id = run_id,
+                    event = "permission.asked",
+                    session_id = session_id,
+                    request_id = request_id_hint.as_deref().unwrap_or(""),
+                    permission_type = permission_kind.as_deref().unwrap_or(""),
+                    "Received OpenCode permission event"
+                );
                 if !self
                     .event_matches_current_run_session(run_id, &session_id)
                     .await?
@@ -780,15 +794,39 @@ impl RunsOpenCodeService {
                 let mut state = session_runtime_state
                     .lock()
                     .map_err(|_| lock_error("OpenCode session runtime state"))?;
-                state.pending_permissions.insert(request_id);
+                let was_new = state.pending_permissions.insert(request_id.clone());
+                let pending_count = state.pending_permissions.len();
+                info!(
+                    target: "opencode.runtime",
+                    marker = "permission_pending_added",
+                    run_id = run_id,
+                    event = "permission.asked",
+                    session_id = session_id,
+                    request_id = request_id,
+                    permission_type = permission_kind.as_deref().unwrap_or(""),
+                    pending_count = pending_count,
+                    was_new = was_new,
+                    "Tracked pending permission request"
+                );
                 Ok(())
             }
-            "permission.replied" => {
+            "permission.replied" | "permission.rejected" => {
                 let Some(session_id) =
                     Self::parse_payload_property(payload, &["sessionID", "sessionId"])
                 else {
                     return Ok(());
                 };
+                let request_id_hint =
+                    Self::parse_payload_property(payload, &["requestID", "requestId"]);
+                info!(
+                    target: "opencode.runtime",
+                    marker = "permission_event_received",
+                    run_id = run_id,
+                    event = runtime_event_name.as_str(),
+                    session_id = session_id,
+                    request_id = request_id_hint.as_deref().unwrap_or(""),
+                    "Received OpenCode permission resolution event"
+                );
                 if !self
                     .event_matches_current_run_session(run_id, &session_id)
                     .await?
@@ -804,7 +842,19 @@ impl RunsOpenCodeService {
                 let mut state = session_runtime_state
                     .lock()
                     .map_err(|_| lock_error("OpenCode session runtime state"))?;
-                state.pending_permissions.remove(&request_id);
+                let removed = state.pending_permissions.remove(&request_id);
+                let pending_count = state.pending_permissions.len();
+                info!(
+                    target: "opencode.runtime",
+                    marker = "permission_pending_cleared",
+                    run_id = run_id,
+                    event = runtime_event_name.as_str(),
+                    session_id = session_id,
+                    request_id = request_id,
+                    pending_count = pending_count,
+                    removed = removed,
+                    "Cleared pending permission request from runtime state"
+                );
                 Ok(())
             }
             "session.idle" => {
@@ -1917,9 +1967,28 @@ impl RunsOpenCodeService {
         }
 
         let decision = decision.trim().to_lowercase();
-        if decision != "allow" && decision != "deny" {
-            return Err(AppError::validation("decision must be allow or deny"));
-        }
+        let opencode_decision = match decision.as_str() {
+            "allow" => "once",
+            "deny" => "reject",
+            "once" => "once",
+            "reject" => "reject",
+            _ => {
+                return Err(AppError::validation(
+                    "decision must be one of: allow, deny, once, reject",
+                ));
+            }
+        };
+        info!(
+            target: "opencode.runtime",
+            marker = "permission_reply_command_start",
+            run_id = run_id,
+            request_id = request_id,
+            session_id = session_id,
+            decision = decision.as_str(),
+            mapped_decision = opencode_decision,
+            remember = remember,
+            "Permission reply command started"
+        );
 
         let run = self.runs_service.get_run_model(run_id).await?;
         let canonical_session_id = run
@@ -1928,7 +1997,20 @@ impl RunsOpenCodeService {
             .filter(|id| !id.is_empty())
             .ok_or_else(|| AppError::validation("OpenCode session not initialized for run"))?;
         if canonical_session_id != session_id {
-            return Err(AppError::validation("session mismatch for run"));
+            info!(
+                target: "opencode.runtime",
+                marker = "permission_reply_stale",
+                run_id = run_id,
+                request_id = request_id,
+                session_id = session_id,
+                canonical_session_id = canonical_session_id,
+                "Ignoring stale permission reply due to canonical session mismatch"
+            );
+            return Ok(ReplyRunOpenCodePermissionResponse {
+                state: "accepted".to_string(),
+                reason: Some("stale_permission_request".to_string()),
+                replied_at: Utc::now().to_rfc3339(),
+            });
         }
 
         let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
@@ -1950,7 +2032,20 @@ impl RunsOpenCodeService {
                 .clone();
             if let Some(in_memory_session_id) = in_memory_session_id {
                 if in_memory_session_id.trim() != session_id {
-                    return Err(AppError::validation("stale session for permission reply"));
+                    info!(
+                        target: "opencode.runtime",
+                        marker = "permission_reply_stale",
+                        run_id = run_id,
+                        request_id = request_id,
+                        session_id = session_id,
+                        in_memory_session_id = in_memory_session_id,
+                        "Ignoring stale permission reply due to in-memory session mismatch"
+                    );
+                    return Ok(ReplyRunOpenCodePermissionResponse {
+                        state: "accepted".to_string(),
+                        reason: Some("stale_permission_request".to_string()),
+                        replied_at: Utc::now().to_rfc3339(),
+                    });
                 }
             }
         }
@@ -1958,50 +2053,107 @@ impl RunsOpenCodeService {
         {
             let state = handle
                 .session_runtime_state
-                .lock()
-                .map_err(|_| lock_error("OpenCode session runtime state"))?;
-            if !state.pending_permissions.contains(request_id) {
-                return Err(AppError::validation("permission request is stale"));
+                    .lock()
+                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
+                if !state.pending_permissions.contains(request_id) {
+                    let pending_count = state.pending_permissions.len();
+                    info!(
+                        target: "opencode.runtime",
+                        marker = "permission_reply_stale",
+                        run_id = run_id,
+                        request_id = request_id,
+                        session_id = session_id,
+                        pending_count = pending_count,
+                        mapped_decision = opencode_decision,
+                        "Ignoring stale permission reply for missing pending permission"
+                    );
+                    return Ok(ReplyRunOpenCodePermissionResponse {
+                    state: "accepted".to_string(),
+                    reason: Some("stale_permission_request".to_string()),
+                    replied_at: Utc::now().to_rfc3339(),
+                });
             }
         }
 
-        let response = handle
-            .client
-            .call_operation(
+        let reply_start = Instant::now();
+        info!(
+            target: "opencode.runtime",
+            marker = "permission_reply_send_start",
+            run_id = run_id,
+            request_id = request_id,
+            session_id = session_id,
+            decision = opencode_decision,
+            remember = remember,
+            "Sending permission reply to OpenCode"
+        );
+
+        let response_result = handle.client.call_operation(
                 "permission.reply",
                 RequestOptions::default()
                     .with_path("requestID", request_id.to_string())
                     .with_body(serde_json::json!({
                         "sessionID": session_id,
-                        "decision": decision,
-                        "action": decision,
-                        "allowed": decision == "allow",
+                        "decision": opencode_decision,
                         "remember": remember,
                     })),
             )
-            .await
-            .map_err(|source| OpenCodeServiceError::PermissionReply {
-                request_id: request_id.to_string(),
-                source,
-            })
-            .context("while forwarding permission decision to OpenCode")
-            .map_err(app_error_from_anyhow)?;
+            .await;
+
+        let response = match response_result {
+            Ok(response) => response,
+            Err(source) => {
+                let permission_reply_error = OpenCodeServiceError::PermissionReply {
+                    request_id: request_id.to_string(),
+                    source,
+                };
+                error!(
+                    target: "opencode.runtime",
+                    marker = "permission_reply_send_error",
+                    run_id = run_id,
+                    request_id = request_id,
+                    session_id = session_id,
+                    decision = opencode_decision,
+                    latency_ms = reply_start.elapsed().as_millis() as u64,
+                    error = ?permission_reply_error,
+                    error_chain = format_error_chain(&permission_reply_error),
+                    "Failed to send permission reply to OpenCode"
+                );
+                return Err(app_error_from_anyhow(
+                    AnyhowError::new(permission_reply_error)
+                        .context("while forwarding permission decision to OpenCode"),
+                ));
+            }
+        };
 
         let response_state = response
             .data
             .get("state")
             .and_then(|value| value.as_str())
             .unwrap_or("accepted");
+        let response_reason = response
+            .data
+            .get("reason")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        info!(
+            target: "opencode.runtime",
+            marker = "permission_reply_send_success",
+            run_id = run_id,
+            request_id = request_id,
+            session_id = session_id,
+            decision = opencode_decision,
+            latency_ms = reply_start.elapsed().as_millis() as u64,
+            response_state = response_state,
+            response_reason = response_reason.as_deref(),
+            "Permission reply acknowledged by OpenCode"
+        );
+
         if response_state.eq_ignore_ascii_case("unsupported") {
-            let reason = response
-                .data
-                .get("reason")
-                .and_then(|value| value.as_str())
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty());
             return Ok(ReplyRunOpenCodePermissionResponse {
                 state: "unsupported".to_string(),
-                reason,
+                reason: response_reason,
                 replied_at: Utc::now().to_rfc3339(),
             });
         }

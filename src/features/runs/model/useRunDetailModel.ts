@@ -199,6 +199,7 @@ export const useRunDetailModel = () => {
   let terminalAppliedSize: { cols: number; rows: number } | null = null;
   let postMergeRedirectTimer: ReturnType<typeof setTimeout> | null = null;
   let cleanupRefreshFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
+  let runSelectionOptionsProjectId = "";
   const sentGitConflictFingerprints = new Set<string>();
 
   const clearPostMergeRedirectTimer = (): void => {
@@ -340,6 +341,112 @@ export const useRunDetailModel = () => {
     }
 
     return "";
+  };
+
+  const isStalePermissionReplyError = (message: string): boolean => {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    return (
+      normalized.includes("permission request is stale") ||
+      normalized.includes("stale session for permission reply") ||
+      normalized.includes("session mismatch for run") ||
+      normalized.includes("stale_permission_request")
+    );
+  };
+
+  const dismissPendingPermissionRequest = (requestId: string): void => {
+    setAgentStore((current) => {
+      if (!current.pendingPermissionsById[requestId]) {
+        console.debug("[runs] pending permission dismiss skipped: not found", {
+          requestId,
+          sessionId: current.sessionId,
+          pendingCount: Object.keys(current.pendingPermissionsById).length,
+        });
+        return current;
+      }
+
+      const pendingPermissionsById = { ...current.pendingPermissionsById };
+      delete pendingPermissionsById[requestId];
+      console.info("[runs] pending permission dismissed", {
+        requestId,
+        sessionId: current.sessionId,
+        pendingCount: Object.keys(pendingPermissionsById).length,
+      });
+      return {
+        ...current,
+        pendingPermissionsById,
+      };
+    });
+  };
+
+  const markPermissionRequestFailed = (
+    requestId: string,
+    failureMessage = "Permission request expired before response.",
+  ): void => {
+    setAgentStore((current) => {
+      const pendingPermission = current.pendingPermissionsById[requestId];
+      if (!pendingPermission) {
+        return current;
+      }
+
+      const pendingPermissionsById = { ...current.pendingPermissionsById };
+      delete pendingPermissionsById[requestId];
+
+      return {
+        ...current,
+        pendingPermissionsById,
+        failedPermissionsById: {
+          ...current.failedPermissionsById,
+          [requestId]: {
+            ...pendingPermission,
+            failureMessage,
+          },
+        },
+      };
+    });
+  };
+
+  const applyLocalPermissionReplyAccepted = (
+    requestId: string,
+    decision: "allow" | "deny",
+    runId: string,
+    sessionId: string,
+    repliedAt: string,
+  ): void => {
+    console.debug("[runs] running local permission accept reconciliation", {
+      runId,
+      requestId,
+      sessionId,
+      decision,
+      mappedDecision:
+        decision === "deny" ? "permission.rejected" : "permission.replied",
+      repliedAt,
+    });
+    dismissPendingPermissionRequest(requestId);
+
+    const syntheticEvent: RunOpenCodeEvent = {
+      runId,
+      ts: repliedAt,
+      event: decision === "deny" ? "permission.rejected" : "permission.replied",
+      data: {
+        requestID: requestId,
+        sessionID: sessionId,
+      },
+    };
+
+    setAgentEvents((current) => appendCappedHistory(current, syntheticEvent));
+    setAgentStore((current) => {
+      return reduceOpenCodeEvent(current, toOpenCodeBusEvent(syntheticEvent));
+    });
+    console.debug("[runs] local permission reconciliation event applied", {
+      runId,
+      requestId,
+      sessionId,
+      decision,
+    });
   };
 
   const getDraftCommentsForFile = (
@@ -1382,9 +1489,14 @@ export const useRunDetailModel = () => {
     }
   };
 
-  const refreshRunSelectionOptions = async (): Promise<void> => {
+  const refreshRunSelectionOptions = async (
+    projectIdOverride?: string | null,
+  ): Promise<void> => {
     const projectId =
-      task()?.projectId?.trim() || run()?.projectId?.trim() || "";
+      projectIdOverride?.trim() ||
+      task()?.projectId?.trim() ||
+      run()?.projectId?.trim() ||
+      "";
     if (!projectId) {
       setRunSelectionOptionsError("Missing project context for run options.");
       setRunAgentOptions([]);
@@ -1399,6 +1511,7 @@ export const useRunDetailModel = () => {
       setRunAgentOptions(cachedOptions.agents);
       setRunProviderOptions(cachedOptions.providers);
       setRunModelOptions(cachedOptions.models);
+      runSelectionOptionsProjectId = projectId;
       return;
     }
 
@@ -1408,11 +1521,13 @@ export const useRunDetailModel = () => {
       setRunAgentOptions(options.agents);
       setRunProviderOptions(options.providers);
       setRunModelOptions(options.models);
+      runSelectionOptionsProjectId = projectId;
     } catch {
       setRunSelectionOptionsError("Failed to load run options.");
       setRunAgentOptions([]);
       setRunProviderOptions([]);
       setRunModelOptions([]);
+      runSelectionOptionsProjectId = "";
     }
   };
 
@@ -1586,10 +1701,12 @@ export const useRunDetailModel = () => {
     const runId = params.runId;
     const requestVersion = ++activeRunRequestVersion;
     if (!runId) {
+      runSelectionOptionsProjectId = "";
       setError("Missing run ID.");
       setIsLoading(false);
       setRun(null);
       setTask(null);
+      runSelectionOptionsProjectId = "";
       setProjectDefaultRunAgentId("");
       setProjectDefaultRunProviderId("");
       setProjectDefaultRunModelId("");
@@ -1645,13 +1762,28 @@ export const useRunDetailModel = () => {
   createEffect(() => {
     const runId = params.runId?.trim() ?? "";
     if (!runId) {
+      runSelectionOptionsProjectId = "";
       setRunSelectionOptionsError("");
       setRunAgentOptions([]);
       setRunProviderOptions([]);
       setRunModelOptions([]);
       return;
     }
-    void refreshRunSelectionOptions();
+    const resolvedProjectId =
+      task()?.projectId?.trim() || run()?.projectId?.trim() || "";
+    if (!resolvedProjectId) {
+      if (run() && !isLoading()) {
+        setRunSelectionOptionsError("Missing project context for run options.");
+        setRunAgentOptions([]);
+        setRunProviderOptions([]);
+        setRunModelOptions([]);
+      }
+      return;
+    }
+    if (runSelectionOptionsProjectId === resolvedProjectId) {
+      return;
+    }
+    void refreshRunSelectionOptions(resolvedProjectId);
   });
 
   createEffect(() => {
@@ -2005,7 +2137,7 @@ export const useRunDetailModel = () => {
       return;
     }
 
-    if (agentChatMode() !== "interactive") {
+    if (agentChatMode() === "unavailable") {
       return;
     }
 
@@ -2205,13 +2337,29 @@ export const useRunDetailModel = () => {
     const pending = store.pendingPermissionsById[normalizedRequestId];
     const sessionId = store.sessionId?.trim() ?? "";
     if (!pending || !sessionId || pending.sessionId !== sessionId) {
-      setPermissionReplyError(
-        "Permission request is stale. Please wait for refresh.",
-      );
+      if (pending) {
+        markPermissionRequestFailed(normalizedRequestId);
+      }
+      setPermissionReplyError("");
+      console.info("[runs] dismissing stale permission request before reply", {
+        runId,
+        requestId: normalizedRequestId,
+        hasPending: Boolean(pending),
+        sessionId,
+        pendingSessionId: pending?.sessionId,
+        pendingCount: Object.keys(store.pendingPermissionsById).length,
+      });
       return false;
     }
 
+    setPermissionReplyError("");
     setIsReplyingPermission(true);
+    console.debug("[runs] sending permission reply", {
+      runId,
+      requestId: normalizedRequestId,
+      sessionId,
+      decision,
+    });
 
     try {
       const response = await replyRunOpenCodePermission({
@@ -2220,6 +2368,15 @@ export const useRunDetailModel = () => {
         requestId: normalizedRequestId,
         decision,
         remember: false,
+      });
+      console.debug("[runs] permission reply response received", {
+        runId,
+        requestId: normalizedRequestId,
+        sessionId,
+        decision,
+        status: response.status,
+        reason: response.reason?.trim() || null,
+        repliedAt: response.repliedAt?.trim() || null,
       });
 
       if (
@@ -2230,10 +2387,44 @@ export const useRunDetailModel = () => {
       }
 
       if (response.status === "accepted") {
+        console.debug("[runs] permission reply accepted", {
+          runId,
+          requestId: normalizedRequestId,
+          sessionId,
+          decision,
+          reason: response.reason?.trim() || null,
+        });
+        if (response.reason?.trim() === "stale_permission_request") {
+          console.info("[runs] stale permission auto-dismiss triggered", {
+            runId,
+            requestId: normalizedRequestId,
+            sessionId,
+            source: "reply_response_reason",
+          });
+          markPermissionRequestFailed(normalizedRequestId);
+        } else {
+          const repliedAt =
+            response.repliedAt?.trim() || new Date().toISOString();
+          applyLocalPermissionReplyAccepted(
+            normalizedRequestId,
+            decision,
+            runId,
+            sessionId,
+            repliedAt,
+          );
+        }
         setPermissionReplyError("");
         return true;
       }
 
+      console.warn("[runs] permission reply was not accepted", {
+        runId,
+        requestId: normalizedRequestId,
+        sessionId,
+        decision,
+        status: response.status,
+        reason: response.reason?.trim() || null,
+      });
       setPermissionReplyError(
         response.reason?.trim() ||
           "Permission reply is not supported for this run.",
@@ -2246,8 +2437,33 @@ export const useRunDetailModel = () => {
       ) {
         return false;
       }
+      const errorMessage = getErrorMessage(replyError);
+      if (isStalePermissionReplyError(errorMessage)) {
+        console.info("[runs] stale permission auto-dismiss triggered", {
+          runId,
+          requestId: normalizedRequestId,
+          sessionId,
+          source: "reply_error",
+        });
+        markPermissionRequestFailed(normalizedRequestId);
+        setPermissionReplyError("");
+        console.info("[runs] dismissing stale permission request after reply", {
+          runId,
+          requestId: normalizedRequestId,
+          sessionId,
+          error: errorMessage,
+        });
+        return false;
+      }
+      console.warn("[runs] permission reply failed", {
+        runId,
+        requestId: normalizedRequestId,
+        sessionId,
+        decision,
+        error: errorMessage || null,
+      });
       setPermissionReplyError(
-        getErrorMessage(replyError) || "Failed to reply to permission request.",
+        errorMessage || "Failed to reply to permission request.",
       );
       return false;
     } finally {
@@ -2295,7 +2511,7 @@ export const useRunDetailModel = () => {
         return;
       }
 
-      if (agentChatMode() !== "interactive") {
+      if (agentChatMode() === "unavailable") {
         return;
       }
 
