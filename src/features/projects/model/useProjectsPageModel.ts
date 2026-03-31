@@ -36,6 +36,7 @@ export const useProjectsPageModel = () => {
     null,
   );
   const [projects, setProjects] = createSignal<Project[]>([]);
+  const [loadedProjectName, setLoadedProjectName] = createSignal("");
   const [name, setName] = createSignal("");
   const [key, setKey] = createSignal("");
   const [description, setDescription] = createSignal("");
@@ -81,13 +82,15 @@ export const useProjectsPageModel = () => {
     null,
   );
   const [deleteProjectName, setDeleteProjectName] = createSignal("");
-  const [deleteProjectKey, setDeleteProjectKey] = createSignal("");
+  const [deleteConfirmationInput, setDeleteConfirmationInput] =
+    createSignal("");
   const [deleteError, setDeleteError] = createSignal("");
   const [isDeletingProject, setIsDeletingProject] = createSignal(false);
 
   const loadProjects = async () => {
     const nextProjects = await listProjects();
     setProjects(nextProjects);
+    return nextProjects;
   };
 
   const visibleRunModelOptions = createMemo(() => {
@@ -252,9 +255,27 @@ export const useProjectsPageModel = () => {
     return index < 0 || index >= repositories().length;
   });
 
+  const isDeleteConfirmationEnabled = createMemo(() => {
+    const projectId = deleteProjectId()?.trim() ?? "";
+    if (!projectId) return false;
+    return (
+      deleteConfirmationInput().trim() === deleteProjectName().trim() &&
+      deleteProjectName().trim().length > 0
+    );
+  });
+
+  const resetDeleteModalState = () => {
+    setIsDeleteModalOpen(false);
+    setDeleteProjectId(null);
+    setDeleteProjectName("");
+    setDeleteConfirmationInput("");
+    setDeleteError("");
+  };
+
   const resetForm = () => {
     setMode("create");
     setEditingProjectId(null);
+    setLoadedProjectName("");
     setName("");
     setKey("");
     setDescription("");
@@ -266,6 +287,7 @@ export const useProjectsPageModel = () => {
     setIsKeyEdited(false);
     setTouched({});
     setError("");
+    resetDeleteModalState();
   };
 
   const updateName = (value: string) => {
@@ -415,6 +437,7 @@ export const useProjectsPageModel = () => {
       );
 
       setMode("edit");
+      setLoadedProjectName(projectDetails.name);
       setName(projectDetails.name);
       setKey(projectDetails.key);
       setDescription(projectDetails.description ?? "");
@@ -443,6 +466,7 @@ export const useProjectsPageModel = () => {
       );
       setMode("create");
       setEditingProjectId(null);
+      setLoadedProjectName("");
     } finally {
       setIsLoadingProjectForEdit(false);
     }
@@ -519,24 +543,30 @@ export const useProjectsPageModel = () => {
 
   const closeDeleteModal = () => {
     if (isDeletingProject()) return;
-    setIsDeleteModalOpen(false);
-    setDeleteProjectId(null);
-    setDeleteProjectName("");
-    setDeleteProjectKey("");
-    setDeleteError("");
+    resetDeleteModalState();
   };
 
-  const onOpenDeleteModal = (project: Project) => {
+  const onOpenDeleteModal = (project: Pick<Project, "id" | "name">) => {
     setDeleteProjectId(project.id);
     setDeleteProjectName(project.name);
-    setDeleteProjectKey(project.key);
+    setDeleteConfirmationInput("");
     setDeleteError("");
     setIsDeleteModalOpen(true);
   };
 
+  const onOpenDeleteCurrentProject = () => {
+    const projectId = editingProjectId()?.trim() ?? "";
+    if (!projectId || mode() !== "edit") return;
+
+    onOpenDeleteModal({
+      id: projectId,
+      name: loadedProjectName().trim() || name().trim(),
+    });
+  };
+
   const onConfirmDeleteProject = async () => {
     const projectId = deleteProjectId();
-    if (!projectId) return;
+    if (!projectId || !isDeleteConfirmationEnabled()) return;
 
     setDeleteError("");
     setIsDeletingProject(true);
@@ -554,7 +584,24 @@ export const useProjectsPageModel = () => {
       }
 
       try {
-        await loadProjects();
+        const nextProjects = await loadProjects();
+        window.dispatchEvent(
+          new CustomEvent("projects:updated", { detail: nextProjects }),
+        );
+
+        if (editingProjectId() === projectId) {
+          resetForm();
+        } else {
+          resetDeleteModalState();
+        }
+
+        const nextProject = nextProjects[0];
+        if (nextProject) {
+          navigate(`/board?projectId=${encodeURIComponent(nextProject.id)}`);
+          return;
+        }
+
+        navigate("/projects");
       } catch (refreshError) {
         const backendMessage = getCreateProjectErrorMessage(refreshError);
         setDeleteError(
@@ -564,15 +611,6 @@ export const useProjectsPageModel = () => {
         );
         return;
       }
-
-      if (editingProjectId() === projectId) {
-        resetForm();
-      }
-      setIsDeleteModalOpen(false);
-      setDeleteProjectId(null);
-      setDeleteProjectName("");
-      setDeleteProjectKey("");
-      setDeleteError("");
     } finally {
       setIsDeletingProject(false);
     }
@@ -613,9 +651,10 @@ export const useProjectsPageModel = () => {
     isDeleteModalOpen,
     deleteProjectId,
     deleteProjectName,
-    deleteProjectKey,
+    deleteConfirmationInput,
     deleteError,
     isDeletingProject,
+    isDeleteConfirmationEnabled,
     projectKeyError,
     cloneProjectKeyError,
     cloneRepositoryDestinationError,
@@ -627,6 +666,7 @@ export const useProjectsPageModel = () => {
     setCloneTouched,
     setDefaultRepoIndex,
     setCloneRepositoryDestination,
+    setDeleteConfirmationInput,
     updateName,
     updateKey,
     updateCloneProjectKey,
@@ -638,6 +678,7 @@ export const useProjectsPageModel = () => {
     onOpenCloneModal,
     closeCloneModal,
     onOpenDeleteModal,
+    onOpenDeleteCurrentProject,
     closeDeleteModal,
     onConfirmDeleteProject,
     onSubmit,

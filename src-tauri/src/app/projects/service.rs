@@ -807,6 +807,12 @@ mod tests {
             .fetch_one(service.repository.pool())
             .await
             .unwrap();
+        let repository_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM project_repositories WHERE project_id = ?")
+                .bind(&created.project.id)
+                .fetch_one(service.repository.pool())
+                .await
+                .unwrap();
         let task_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE project_id = ?")
             .bind(&created.project.id)
             .fetch_one(service.repository.pool())
@@ -819,6 +825,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(project_exists, 0);
+        assert_eq!(repository_count, 0);
         assert_eq!(task_count, 0);
         assert_eq!(run_count, 0);
         assert!(!worktree_root.exists());

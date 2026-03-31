@@ -12,6 +12,7 @@ type Props = {
   error: () => string;
   runDefaultsError: () => string;
   isSubmitting: () => boolean;
+  isDeletingProject: () => boolean;
   isLoadingRunDefaults: () => boolean;
   hasRunSelectionOptions: () => boolean;
   projectKeyError: () => string;
@@ -39,6 +40,7 @@ type Props = {
     field: keyof RepoInput,
     value: string,
   ) => void;
+  onDeleteProject: () => void;
   resetToCreateMode: () => void;
   onSubmit: JSX.EventHandler<HTMLFormElement, SubmitEvent>;
 };
@@ -372,7 +374,7 @@ const CreateProjectPanel: Component<Props> = (props) => (
         <button
           type="submit"
           class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
-          disabled={props.isSubmitting()}
+          disabled={props.isSubmitting() || props.isDeletingProject()}
         >
           {props.isSubmitting()
             ? props.mode() === "edit"
@@ -383,14 +385,24 @@ const CreateProjectPanel: Component<Props> = (props) => (
               : "Create project"}
         </button>
         <Show when={props.mode() === "edit"}>
-          <button
-            type="button"
-            class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
-            onClick={props.resetToCreateMode}
-            disabled={props.isSubmitting()}
-          >
-            Cancel
-          </button>
+          <>
+            <button
+              type="button"
+              class="btn btn-sm border-error/25 bg-error/10 text-error hover:bg-error/15 rounded-none border px-4 text-xs font-medium"
+              onClick={props.onDeleteProject}
+              disabled={props.isSubmitting() || props.isDeletingProject()}
+            >
+              Delete project
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+              onClick={props.resetToCreateMode}
+              disabled={props.isSubmitting() || props.isDeletingProject()}
+            >
+              Cancel
+            </button>
+          </>
         </Show>
       </div>
     </form>

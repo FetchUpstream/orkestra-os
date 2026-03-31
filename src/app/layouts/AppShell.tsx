@@ -95,9 +95,19 @@ const AppShell: Component<AppShellProps> = (props) => {
 
   const isSidebarVisible = () => (isMobile() ? mobileSidebarOpen() : true);
 
-  onMount(async () => {
-    primeRunSelectionOptionsCache();
+  const applyProjects = (nextProjects: Project[]) => {
+    setProjects(nextProjects);
+    if (nextProjects.length === 0 && location.pathname !== "/projects") {
+      navigate("/projects", { replace: true });
+    }
+  };
 
+  const refreshProjects = async () => {
+    const nextProjects = await listProjects();
+    applyProjects(nextProjects);
+  };
+
+  onMount(async () => {
     const mediaQuery = window.matchMedia("(max-width: 900px)");
     const updateMobileMode = (matches: boolean) => {
       setIsMobile(matches);
@@ -119,10 +129,10 @@ const AppShell: Component<AppShellProps> = (props) => {
     });
 
     try {
-      const projects = await listProjects();
-      setProjects(projects);
-      if (projects.length === 0 && location.pathname !== "/projects") {
-        navigate("/projects", { replace: true });
+      await refreshProjects();
+      const projectIdToPrime = boardProjectId() || projects()[0]?.id;
+      if (projectIdToPrime) {
+        primeRunSelectionOptionsCache(projectIdToPrime);
       }
     } catch (error) {
       console.warn("Failed to load projects during startup", error);
@@ -142,6 +152,10 @@ const AppShell: Component<AppShellProps> = (props) => {
     const onRunDetailTopbarClear = () => {
       setRunDetailTopbarConfig(null);
     };
+    const onProjectsUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<Project[]>;
+      applyProjects(customEvent.detail);
+    };
 
     window.addEventListener(
       "task-detail:topbar-config",
@@ -156,6 +170,7 @@ const AppShell: Component<AppShellProps> = (props) => {
       onRunDetailTopbarConfig,
     );
     window.addEventListener("run-detail:topbar-clear", onRunDetailTopbarClear);
+    window.addEventListener("projects:updated", onProjectsUpdated);
 
     onCleanup(() => {
       window.removeEventListener(
@@ -174,6 +189,7 @@ const AppShell: Component<AppShellProps> = (props) => {
         "run-detail:topbar-clear",
         onRunDetailTopbarClear,
       );
+      window.removeEventListener("projects:updated", onProjectsUpdated);
     });
 
     try {

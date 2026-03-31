@@ -5463,6 +5463,204 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("requires typed confirmation before deleting a project and redirects to the next board", async () => {
+    let listProjectsCallCount = 0;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        listProjectsCallCount += 1;
+        if (listProjectsCallCount >= 2) {
+          return Promise.resolve([
+            {
+              id: "p-2",
+              name: "Beta",
+              key: "BET",
+              repositories: [
+                {
+                  id: "r-2",
+                  name: "Beta Main",
+                  path: "/repo/beta",
+                  is_default: true,
+                },
+              ],
+            },
+          ]);
+        }
+
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+          {
+            id: "p-2",
+            name: "Beta",
+            key: "BET",
+            repositories: [
+              {
+                id: "r-2",
+                name: "Beta Main",
+                path: "/repo/beta",
+                is_default: true,
+              },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "delete_project") return Promise.resolve(null);
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects/p-1");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Edit Project" }),
+      ).toBeTruthy();
+    });
+
+    const deleteButton = screen.getByRole("button", { name: "Delete project" });
+    expect(deleteButton.className).toContain("text-error");
+
+    await fireEvent.click(deleteButton);
+
+    const deleteDialog = await screen.findByRole("dialog", {
+      name: "Delete project?",
+    });
+    expect(
+      within(deleteDialog).getByText(
+        /All tasks and runs for this project will also be permanently removed\./i,
+      ),
+    ).toBeTruthy();
+
+    const confirmDeleteButton = within(deleteDialog).getByRole("button", {
+      name: "Delete project",
+    }) as HTMLButtonElement;
+    expect(confirmDeleteButton.disabled).toBe(true);
+
+    await fireEvent.input(
+      within(deleteDialog).getByLabelText(
+        "Type the project name to confirm deletion",
+      ),
+      {
+        target: { value: " Alpha  " },
+      },
+    );
+
+    await waitFor(() => {
+      expect(confirmDeleteButton.disabled).toBe(false);
+    });
+
+    await fireEvent.click(confirmDeleteButton);
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("delete_project", { id: "p-1" });
+      expect(window.location.pathname).toBe("/board");
+      expect(window.location.search).toBe("?projectId=p-2");
+      expect(screen.queryByRole("link", { name: "Alpha" })).toBeNull();
+      expect(screen.getByRole("link", { name: "Beta" })).toBeTruthy();
+    });
+  });
+
+  it("keeps delete confirmation disabled until the exact project name is typed and falls back to /projects when none remain", async () => {
+    let listProjectsCallCount = 0;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        listProjectsCallCount += 1;
+        return Promise.resolve(
+          listProjectsCallCount >= 2
+            ? []
+            : [
+                {
+                  id: "p-1",
+                  name: "Alpha",
+                  key: "ALP",
+                  repositories: [
+                    {
+                      id: "r-1",
+                      name: "Main",
+                      path: "/repo/main",
+                      is_default: true,
+                    },
+                  ],
+                },
+              ],
+        );
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "delete_project") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects/p-1");
+
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Delete project" }),
+    );
+
+    const deleteDialog = await screen.findByRole("dialog", {
+      name: "Delete project?",
+    });
+    const confirmDeleteButton = within(deleteDialog).getByRole("button", {
+      name: "Delete project",
+    }) as HTMLButtonElement;
+    const confirmInput = within(deleteDialog).getByLabelText(
+      "Type the project name to confirm deletion",
+    );
+
+    expect(confirmDeleteButton.disabled).toBe(true);
+
+    await fireEvent.input(confirmInput, {
+      target: { value: "alpha" },
+    });
+    expect(confirmDeleteButton.disabled).toBe(true);
+
+    await fireEvent.input(confirmInput, {
+      target: { value: "Alpha project" },
+    });
+    expect(confirmDeleteButton.disabled).toBe(true);
+
+    await fireEvent.input(confirmInput, {
+      target: { value: "Alpha" },
+    });
+
+    await waitFor(() => {
+      expect(confirmDeleteButton.disabled).toBe(false);
+    });
+
+    await fireEvent.click(confirmDeleteButton);
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("delete_project", { id: "p-1" });
+      expect(window.location.pathname).toBe("/projects");
+      expect(window.location.search).toBe("");
+      expect(screen.queryByRole("link", { name: "Alpha" })).toBeNull();
+    });
+  });
+
   it("uses display keys in task labels and does not render raw UUIDs", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") {
