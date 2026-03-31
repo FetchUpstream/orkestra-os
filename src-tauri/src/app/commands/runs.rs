@@ -1,5 +1,6 @@
 use crate::app::runs::dto::{
-    BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent,
+    BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, OpenCodeDependencyStatusDto,
+    RawAgentEvent,
     ReplyRunOpenCodePermissionResponse, RunAgentsResponseDto, RunDiffFileDto,
     RunDiffFilePayloadDto, RunDto, RunMergeResponseDto, RunMergeStatusDto,
     RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, RunProvidersResponseDto,
@@ -179,6 +180,19 @@ pub async fn ensure_run_opencode(
 ) -> Result<EnsureRunOpenCodeResponse, String> {
     let service = context::runs_opencode_service(&state);
     map_result(service.ensure_run_opencode(&run_id).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_opencode_dependency_status(
+    state: tauri::State<'_, AppState>,
+    force_refresh: Option<bool>,
+) -> Result<OpenCodeDependencyStatusDto, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(
+        service
+            .get_opencode_dependency_status(force_refresh.unwrap_or(false))
+            .await,
+    )
 }
 
 #[tauri::command(rename_all = "camelCase")]

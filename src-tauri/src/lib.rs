@@ -22,6 +22,14 @@ pub fn run() {
 
             app.manage(app_state);
 
+            let dependency_service = app
+                .state::<app::state::AppState>()
+                .runs_opencode_service
+                .clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = dependency_service.get_opencode_dependency_status(true).await;
+            });
+
             if let Some(main_window) = app.get_webview_window("main") {
                 let _ = main_window.maximize();
             }
@@ -55,6 +63,7 @@ pub fn run() {
             app::commands::runs::merge_run_into_source_branch,
             app::commands::runs::merge_run_worktree_into_source,
             app::commands::runs::set_run_diff_watch,
+            app::commands::runs::get_opencode_dependency_status,
             app::commands::runs::ensure_run_opencode,
             app::commands::runs::bootstrap_run_opencode,
             app::commands::runs::submit_run_opencode_prompt,

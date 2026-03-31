@@ -32,6 +32,7 @@ import {
   filterModelsForProvider,
   resolveProjectRunDefaults,
 } from "../../../app/lib/projectRunDefaults";
+import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
 import { canTransitionStatus } from "../../tasks/utils/taskDetail";
 import { groupTasksByStatus } from "../utils/board";
 import { isRunCommitPending } from "../../runs/model/commitUiState";
@@ -151,6 +152,7 @@ const resolveTaskRunMiniCard = (
 };
 
 export const useBoardModel = () => {
+  const openCodeDependency = useOpenCodeDependency();
   const [projects, setProjects] = createSignal<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = createSignal("");
   const [tasks, setTasks] = createSignal<Task[]>([]);
@@ -664,12 +666,30 @@ export const useBoardModel = () => {
   const onRequestMoveTaskToInProgress = (taskId: string) => {
     if (isTaskStatusUpdating(taskId)) return;
     if (!canTaskTransitionToStatus(taskId, "doing")) return;
-    setPendingRunSettingsDefaultsInitialization(!hasRunSelectionOptions());
-    applyProjectRunDefaults(selectedProjectDetail());
-    setPendingInProgressTaskId(taskId);
-    setRunSelectionOptionsError("");
-    setIsRunSettingsModalOpen(true);
-    void refreshRunSelectionOptions();
+
+    const openRunSettingsModal = () => {
+      setPendingRunSettingsDefaultsInitialization(!hasRunSelectionOptions());
+      applyProjectRunDefaults(selectedProjectDetail());
+      setPendingInProgressTaskId(taskId);
+      setRunSelectionOptionsError("");
+      setIsRunSettingsModalOpen(true);
+      void refreshRunSelectionOptions();
+    };
+
+    if (openCodeDependency.state() === "available") {
+      openRunSettingsModal();
+      return;
+    }
+
+    void (async () => {
+      const isAvailable =
+        await openCodeDependency.ensureAvailableForRequiredFlow();
+      if (!isAvailable) {
+        return;
+      }
+
+      openRunSettingsModal();
+    })();
   };
 
   const onCancelMoveTaskToInProgress = () => {
@@ -707,7 +727,22 @@ export const useBoardModel = () => {
             selectedRunProviderId().trim() || resolved.providerId || undefined,
           modelId: selectedRunModelId().trim() || resolved.modelId || undefined,
         });
-        await startRunOpenCode(createdRun.id);
+        const startResult = await startRunOpenCode(createdRun.id);
+        if (startResult.state === "unsupported") {
+          openCodeDependency.showRequiredModal();
+          setError(
+            startResult.reason?.trim() ||
+              "Task moved, but OpenCode is required before the run can start.",
+          );
+          return;
+        }
+        if (startResult.state === "error") {
+          setError(
+            startResult.reason?.trim() ||
+              "Task moved, but failed to start run. Please try again.",
+          );
+          return;
+        }
       } catch {
         setError("Task moved, but failed to create run. Please try again.");
       }
@@ -804,6 +839,8 @@ export const useBoardModel = () => {
     runProviderOptions,
     visibleRunModelOptions,
     isConfirmingMoveTaskToInProgress,
+    isOpenCodeMissing: () => openCodeDependency.state() === "missing",
+    openCodeDependencyReason: openCodeDependency.reason,
     selectedRunAgentId,
     selectedRunProviderId,
     selectedRunModelId,

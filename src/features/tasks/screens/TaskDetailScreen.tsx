@@ -125,9 +125,11 @@ const TaskDetailScreen: Component = () => {
     projectRunDefaultsError,
     isLoadingRunSelectionOptions,
     hasRunSelectionOptions,
+    isOpenCodeMissing,
     selectedRunAgentId,
     selectedRunProviderId,
     selectedRunModelId,
+    openCodeDependencyReason,
     removingDependencyKey,
     autosaveState,
     editTitle,
@@ -406,6 +408,7 @@ const TaskDetailScreen: Component = () => {
                                             runItem.status === "queued" &&
                                             !isLocallyStarting &&
                                             !isBlocked() &&
+                                            !isOpenCodeMissing() &&
                                             !isAnyRunStarting() &&
                                             deletingRunId() !== runItem.id &&
                                             !warmingRunIds()[runItem.id];
@@ -814,7 +817,9 @@ const TaskDetailScreen: Component = () => {
         isOpen={isRunSettingsModalOpen}
         isSubmitting={isCreatingRun}
         hasRunSelectionOptions={hasRunSelectionOptions}
+        isOpenCodeMissing={isOpenCodeMissing}
         isLoadingRunSelectionOptions={isLoadingRunSelectionOptions}
+        openCodeDependencyReason={openCodeDependencyReason}
         runSelectionOptionsError={() =>
           projectRunDefaultsError() || runSelectionOptionsError()
         }

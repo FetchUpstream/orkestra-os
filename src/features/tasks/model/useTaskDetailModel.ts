@@ -39,6 +39,7 @@ import {
   getValidTransitionTargets,
   isDependencyCandidateLinkable,
 } from "../utils/taskDetail";
+import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
 import {
   dependencyBadgeState,
   isTaskBlocked,
@@ -52,6 +53,7 @@ export const useTaskDetailModel = () => {
   const AUTOSAVE_MAX_WAIT_MS = 5000;
 
   const navigate = useNavigate();
+  const openCodeDependency = useOpenCodeDependency();
   const params = useParams();
   const location = useLocation();
   const [task, setTask] = createSignal<Task | null>(null);
@@ -1018,10 +1020,28 @@ export const useTaskDetailModel = () => {
 
   const onOpenRunSettingsModal = () => {
     if (isCreatingRun()) return;
-    setActionError("");
-    setPendingRunSettingsDefaultsInitialization(!hasRunSelectionOptions());
-    initializeRunSettingsSelectionsFromProjectDefaults();
-    setIsRunSettingsModalOpen(true);
+
+    const openRunSettingsModal = () => {
+      setActionError("");
+      setPendingRunSettingsDefaultsInitialization(!hasRunSelectionOptions());
+      initializeRunSettingsSelectionsFromProjectDefaults();
+      setIsRunSettingsModalOpen(true);
+    };
+
+    if (openCodeDependency.state() === "available") {
+      openRunSettingsModal();
+      return;
+    }
+
+    void (async () => {
+      const isAvailable =
+        await openCodeDependency.ensureAvailableForRequiredFlow();
+      if (!isAvailable) {
+        return;
+      }
+
+      openRunSettingsModal();
+    })();
   };
 
   const onCancelRunSettingsModal = () => {
@@ -1077,6 +1097,10 @@ export const useTaskDetailModel = () => {
       return;
     }
 
+    if (!(await openCodeDependency.ensureAvailableForRequiredFlow())) {
+      return;
+    }
+
     setActionError("");
     clearRunStartError(runId);
     setStartingRunId(runId);
@@ -1088,9 +1112,12 @@ export const useTaskDetailModel = () => {
         startResult.state === "unsupported" ||
         startResult.state === "error"
       ) {
+        if (startResult.state === "unsupported") {
+          openCodeDependency.showRequiredModal();
+        }
         setRunStartErrors((current) => ({
           ...current,
-          [runId]: "Failed to start. Try again.",
+          [runId]: startResult.reason?.trim() || "Failed to start. Try again.",
         }));
         return;
       }
@@ -1149,6 +1176,8 @@ export const useTaskDetailModel = () => {
     projectRunDefaultsError,
     isLoadingRunSelectionOptions,
     hasRunSelectionOptions,
+    isOpenCodeMissing: () => openCodeDependency.state() === "missing",
+    openCodeDependencyReason: openCodeDependency.reason,
     selectedRunAgentId,
     selectedRunProviderId,
     selectedRunModelId,

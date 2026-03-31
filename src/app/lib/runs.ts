@@ -110,6 +110,18 @@ export type EnsureRunOpenCodeResult = {
   error?: string | null;
 };
 
+export type OpenCodeDependencyStatus =
+  | "unknown"
+  | "checking"
+  | "available"
+  | "missing"
+  | "failure";
+
+export type OpenCodeDependencyStatusResult = {
+  state: Exclude<OpenCodeDependencyStatus, "unknown" | "checking">;
+  reason?: string;
+};
+
 export type SubscribeRunOpenCodeEventsParams = {
   runId: string;
   subscriberId?: string;
@@ -1380,6 +1392,23 @@ export const ensureRunOpenCode = async (
   return invoke<EnsureRunOpenCodeResult>("ensure_run_opencode", {
     runId,
   });
+};
+
+export const getOpenCodeDependencyStatus = async (
+  forceRefresh = false,
+): Promise<OpenCodeDependencyStatusResult> => {
+  const response = await invoke<{
+    state?: string | null;
+    reason?: string | null;
+  }>("get_opencode_dependency_status", { forceRefresh });
+
+  return {
+    state:
+      response.state === "missing" || response.state === "failure"
+        ? response.state
+        : "available",
+    reason: response.reason ?? undefined,
+  };
 };
 
 export const bootstrapRunOpenCode = async (

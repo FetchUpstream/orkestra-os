@@ -15,6 +15,7 @@ import { primeRunSelectionOptionsCache } from "../lib/runSelectionOptionsCache";
 import { listActiveRuns } from "../lib/runs";
 import type { TaskStatus } from "../lib/tasks";
 import MainContent from "../../components/layout/MainContent";
+import OpenCodeRequiredModal from "../../components/layout/OpenCodeRequiredModal";
 import SidebarNav from "../../components/layout/SidebarNav";
 import Topbar from "../../components/layout/Topbar";
 import AlphaNoticeModal from "../../components/layout/AlphaNoticeModal";
@@ -22,6 +23,10 @@ import AboutModal from "../../components/layout/AboutModal";
 import CloseWhileRunsActiveModal from "../../components/layout/CloseWhileRunsActiveModal";
 import { AppIcon } from "../../components/ui/icons";
 import { formatStatus } from "../../features/tasks/utils/taskDetail";
+import {
+  OpenCodeDependencyProvider,
+  useOpenCodeDependency,
+} from "../contexts/OpenCodeDependencyContext";
 
 type TaskDetailTopbarConfig =
   | {
@@ -74,8 +79,17 @@ type AppShellProps = {
 };
 
 const AppShell: Component<AppShellProps> = (props) => {
+  return (
+    <OpenCodeDependencyProvider>
+      <AppShellContent>{props.children}</AppShellContent>
+    </OpenCodeDependencyProvider>
+  );
+};
+
+const AppShellContent: Component<AppShellProps> = (props) => {
   const location = useLocation();
   const navigate = useNavigate();
+  const openCodeDependency = useOpenCodeDependency();
   let mobileMenuButtonRef: HTMLButtonElement | undefined;
   let shellRootRef: HTMLDivElement | undefined;
 
@@ -106,7 +120,6 @@ const AppShell: Component<AppShellProps> = (props) => {
     const nextProjects = await listProjects();
     applyProjects(nextProjects);
   };
-
   onMount(async () => {
     const mediaQuery = window.matchMedia("(max-width: 900px)");
     const updateMobileMode = (matches: boolean) => {
@@ -739,6 +752,14 @@ const AppShell: Component<AppShellProps> = (props) => {
         activeRunCount={closeWarningRunCount}
         onCancel={onCancelCloseWarning}
         onConfirm={() => void onConfirmCloseWarning()}
+      />
+      <OpenCodeRequiredModal
+        isOpen={openCodeDependency.isModalVisible}
+        isChecking={() => openCodeDependency.state() === "checking"}
+        reason={openCodeDependency.reason}
+        onRetry={() => {
+          void openCodeDependency.refresh(true);
+        }}
       />
       <AlphaNoticeModal />
     </div>

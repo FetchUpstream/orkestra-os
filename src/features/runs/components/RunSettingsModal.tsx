@@ -16,6 +16,8 @@ type RunSettingsModalProps = {
   setSelectedRunAgentId: (value: string) => void;
   setSelectedRunProviderId: (value: string) => void;
   setSelectedRunModelId: (value: string) => void;
+  isOpenCodeMissing?: Accessor<boolean>;
+  openCodeDependencyReason?: Accessor<string>;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
 };
@@ -139,6 +141,12 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
                 </p>
               )}
             </Show>
+            <Show when={props.isOpenCodeMissing?.()}>
+              <p class="projects-error border-error/35 bg-error/10 m-0 text-sm">
+                {props.openCodeDependencyReason?.()?.trim() ||
+                  "OpenCode is required before you can create and start a run."}
+              </p>
+            </Show>
             <div class="task-delete-modal-actions border-base-content/10 mt-1 justify-end gap-2 border-t pt-4">
               <button
                 type="button"
@@ -152,7 +160,7 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
                 type="button"
                 class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                 onClick={() => void props.onConfirm()}
-                disabled={props.isSubmitting()}
+                disabled={props.isSubmitting() || !!props.isOpenCodeMissing?.()}
               >
                 {props.isSubmitting() ? "Starting..." : "Create run"}
               </button>

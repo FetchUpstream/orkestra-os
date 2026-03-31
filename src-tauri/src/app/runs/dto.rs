@@ -117,6 +117,13 @@ pub struct EnsureRunOpenCodeResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OpenCodeDependencyStatusDto {
+    pub state: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SubmitRunOpenCodePromptResponse {
     pub state: String,
     pub reason: Option<String>,

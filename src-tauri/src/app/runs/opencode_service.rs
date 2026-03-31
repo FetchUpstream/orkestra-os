@@ -1,7 +1,8 @@
 use crate::app::errors::AppError;
 use crate::app::projects::service::ProjectsService;
 use crate::app::runs::dto::{
-    BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, RawAgentEvent,
+    BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, OpenCodeDependencyStatusDto,
+    RawAgentEvent,
     ReplyRunOpenCodePermissionResponse, RunAgentDto, RunAgentsResponseDto, RunDto,
     RunModelSelectionDto, RunOpenCodeChatModeDto, RunOpenCodeSessionMessageDto,
     RunOpenCodeSessionTodoDto, RunProviderDto, RunProvidersResponseDto,
@@ -514,6 +515,8 @@ pub struct RunsOpenCodeService {
     worktrees_root: PathBuf,
     handles: Arc<RwLock<HashMap<String, Arc<RunOpenCodeHandle>>>>,
     init_locks: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    dependency_status: Arc<RwLock<Option<OpenCodeDependencyStatusDto>>>,
+    dependency_check_lock: Arc<tokio::sync::Mutex<()>>,
     handle_generation: Arc<AtomicU64>,
 }
 
@@ -1339,8 +1342,107 @@ impl RunsOpenCodeService {
             worktrees_root: app_data_dir.join("worktrees"),
             handles: Arc::new(RwLock::new(HashMap::new())),
             init_locks: Arc::new(RwLock::new(HashMap::new())),
+            dependency_status: Arc::new(RwLock::new(None)),
+            dependency_check_lock: Arc::new(tokio::sync::Mutex::new(())),
             handle_generation: Arc::new(AtomicU64::new(1)),
         }
+    }
+
+    fn missing_dependency_reason() -> String {
+        "OpenCode is required for run and agent workflows, but it was not detected on this system. Install OpenCode and check again.".to_string()
+    }
+
+    fn failed_dependency_reason(message: &str) -> String {
+        let trimmed = message.trim();
+        if trimmed.is_empty() {
+            return "OpenCode was detected, but it could not be started.".to_string();
+        }
+
+        format!("OpenCode was detected, but it could not be started: {trimmed}")
+    }
+
+    fn dependency_status_from_error(err: &opencode::Error) -> OpenCodeDependencyStatusDto {
+        match err {
+            opencode::Error::CLINotFound(_) => OpenCodeDependencyStatusDto {
+                state: "missing".to_string(),
+                reason: Some(Self::missing_dependency_reason()),
+            },
+            _ => OpenCodeDependencyStatusDto {
+                state: "failure".to_string(),
+                reason: Some(Self::failed_dependency_reason(&err.to_string())),
+            },
+        }
+    }
+
+    async fn detect_opencode_dependency(&self) -> OpenCodeDependencyStatusDto {
+        let cwd = if self.worktrees_root.exists() {
+            self.worktrees_root.clone()
+        } else {
+            self.worktrees_root
+                .parent()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."))
+        };
+        let mut options = OpencodeServerOptions {
+            cwd: Some(cwd.clone()),
+            ..Default::default()
+        };
+        options.port = 0;
+        options.config = Some(serde_json::json!({}));
+
+        let server = match create_opencode_server(Some(options)).await {
+            Ok(server) => server,
+            Err(err) => return Self::dependency_status_from_error(&err),
+        };
+
+        let client = match create_opencode_client(Some(OpencodeClientConfig {
+            base_url: server.url.clone(),
+            directory: Some(cwd.to_string_lossy().to_string()),
+            timeout: Duration::from_secs(10),
+            ..Default::default()
+        })) {
+            Ok(client) => client,
+            Err(err) => {
+                return OpenCodeDependencyStatusDto {
+                    state: "failure".to_string(),
+                    reason: Some(Self::failed_dependency_reason(&err.to_string())),
+                };
+            }
+        };
+
+        match client.global().health(RequestOptions::default()).await {
+            Ok(_) => OpenCodeDependencyStatusDto {
+                state: "available".to_string(),
+                reason: None,
+            },
+            Err(err) => OpenCodeDependencyStatusDto {
+                state: "failure".to_string(),
+                reason: Some(Self::failed_dependency_reason(&err.to_string())),
+            },
+        }
+    }
+
+    pub async fn get_opencode_dependency_status(
+        &self,
+        force_refresh: bool,
+    ) -> Result<OpenCodeDependencyStatusDto, AppError> {
+        if !force_refresh {
+            if let Some(cached) = self.dependency_status.read().await.clone() {
+                return Ok(cached);
+            }
+        }
+
+        let _guard = self.dependency_check_lock.lock().await;
+
+        if !force_refresh {
+            if let Some(cached) = self.dependency_status.read().await.clone() {
+                return Ok(cached);
+            }
+        }
+
+        let status = self.detect_opencode_dependency().await;
+        *self.dependency_status.write().await = Some(status.clone());
+        Ok(status)
     }
 
     async fn with_ephemeral_client<T, F>(&self, cwd: PathBuf, op: F) -> Result<T, AppError>
@@ -1568,6 +1670,24 @@ impl RunsOpenCodeService {
         run_id: &str,
     ) -> Result<EnsureRunOpenCodeResponse, AppError> {
         let ensure_start = Instant::now();
+        let dependency_status = self.get_opencode_dependency_status(false).await?;
+        if dependency_status.state == "missing" {
+            let response = EnsureRunOpenCodeResponse {
+                state: "unsupported".to_string(),
+                reason: dependency_status.reason,
+            };
+            info!(
+                target: "opencode.runtime",
+                marker = "ensure",
+                run_id = run_id,
+                state = response.state.as_str(),
+                ready_phase = "dependency_missing",
+                latency_ms = ensure_start.elapsed().as_millis() as u64,
+                "OpenCode ensure finished"
+            );
+            return Ok(response);
+        }
+
         let run = self.runs_service.get_run(run_id).await?;
         if let Some(reason) = Self::unsupported_reason_for_run_status(run.status.as_str()) {
             let response = EnsureRunOpenCodeResponse {

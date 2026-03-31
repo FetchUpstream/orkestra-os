@@ -62,6 +62,17 @@ vi.mock("../../../../app/lib/runSelectionOptionsCache", () => ({
   readRunSelectionOptionsCache: readRunSelectionOptionsCacheMock,
 }));
 
+vi.mock("../../../../app/contexts/OpenCodeDependencyContext", () => ({
+  useOpenCodeDependency: () => ({
+    state: () => "available",
+    reason: () => "",
+    isModalVisible: () => false,
+    refresh: vi.fn(async () => "available"),
+    ensureAvailableForRequiredFlow: vi.fn(async () => true),
+    showRequiredModal: vi.fn(),
+  }),
+}));
+
 describe("useTaskDetailModel start run", () => {
   beforeEach(() => {
     paramsState.projectId = "project-1";
