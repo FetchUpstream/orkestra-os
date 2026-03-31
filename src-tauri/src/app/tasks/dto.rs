@@ -35,6 +35,17 @@ pub struct TaskUpdatedEventDto {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskStatusChangedEventDto {
+    pub task_id: String,
+    pub project_id: String,
+    pub run_id: Option<String>,
+    pub previous_status: String,
+    pub new_status: String,
+    pub transition_source: String,
+    pub timestamp: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MoveTaskRequest {
     pub repository_id: String,
 }

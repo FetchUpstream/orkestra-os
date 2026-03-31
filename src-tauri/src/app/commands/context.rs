@@ -5,6 +5,7 @@ use crate::app::runs::opencode_service::RunsOpenCodeService;
 use crate::app::runs::service::RunsService;
 use crate::app::state::AppState;
 use crate::app::tasks::service::TasksService;
+use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
 use crate::app::terminal::service::TerminalService;
 use crate::app::worktrees::service::WorktreesService;
 
@@ -14,6 +15,12 @@ pub fn projects_service(state: &tauri::State<'_, AppState>) -> ProjectsService {
 
 pub fn tasks_service(state: &tauri::State<'_, AppState>) -> TasksService {
     state.tasks_service.clone()
+}
+
+pub fn task_status_transition_service(
+    state: &tauri::State<'_, AppState>,
+) -> TaskStatusTransitionService {
+    state.task_status_transition_service.clone()
 }
 
 pub fn runs_service(state: &tauri::State<'_, AppState>) -> RunsService {

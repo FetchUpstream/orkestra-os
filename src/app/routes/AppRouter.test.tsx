@@ -395,9 +395,7 @@ describe("app routing and shell", () => {
     });
   });
 
-  it("refreshes board tasks when backend emits task-updated", async () => {
-    let taskStatus: "todo" | "doing" = "todo";
-
+  it("refreshes board tasks when backend emits task-status-changed", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") {
         return Promise.resolve([
@@ -416,7 +414,7 @@ describe("app routing and shell", () => {
           {
             id: "task-live-1",
             title: "Live update task",
-            status: taskStatus,
+            status: "todo",
             display_key: "ALP-101",
           },
         ]);
@@ -436,11 +434,13 @@ describe("app routing and shell", () => {
       ).toBeTruthy();
     });
 
-    taskStatus = "doing";
-    emitTauriEvent("task-updated", {
+    emitTauriEvent("task-status-changed", {
       task_id: "task-live-1",
       project_id: "p-1",
-      status: "doing",
+      previous_status: "todo",
+      new_status: "doing",
+      transition_source: "agent_idle",
+      timestamp: "2024-01-01T00:00:00Z",
     });
 
     await waitFor(() => {

@@ -2,11 +2,10 @@ use crate::app::state::AppState;
 use crate::app::tasks::dto::{
     AddTaskDependencyRequest, CreateTaskRequest, DeleteTaskResponse, MoveTaskRequest,
     RemoveTaskDependencyRequest, RemoveTaskDependencyResponse, SearchProjectTasksRequest,
-    SetTaskStatusRequest, TaskDependenciesDto, TaskDependencyEdgeDto, TaskDto, TaskUpdatedEventDto,
-    UpdateTaskRequest,
+    SetTaskStatusRequest, TaskDependenciesDto, TaskDependencyEdgeDto, TaskDto,
+    TaskStatusChangedEventDto, UpdateTaskRequest,
 };
 use crate::app::{commands::context, commands::error_mapping::map_result};
-use tauri::Emitter;
 
 #[tauri::command]
 pub async fn create_task(
@@ -57,19 +56,24 @@ pub async fn update_task(
 
 #[tauri::command]
 pub async fn set_task_status(
-    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: String,
     input: SetTaskStatusRequest,
 ) -> Result<TaskDto, String> {
     let service = context::tasks_service(&state);
+    let transition_service = context::task_status_transition_service(&state);
+    let existing = map_result(service.get_task(&id).await)?;
     let updated = map_result(service.set_task_status(&id, input).await)?;
-    let payload = TaskUpdatedEventDto {
+    let payload = TaskStatusChangedEventDto {
         task_id: updated.id.clone(),
         project_id: updated.project_id.clone(),
-        status: updated.status.clone(),
+        run_id: None,
+        previous_status: existing.status,
+        new_status: updated.status.clone(),
+        transition_source: "manual_status_change".to_string(),
+        timestamp: updated.updated_at.clone(),
     };
-    let _ = app.emit("task-updated", payload);
+    map_result(transition_service.emit_task_status_changed(&payload))?;
     Ok(updated)
 }
 

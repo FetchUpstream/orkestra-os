@@ -1,4 +1,3 @@
-import { listen } from "@tauri-apps/api/event";
 import {
   createEffect,
   createMemo,
@@ -11,6 +10,7 @@ import {
   listProjects,
   type Project,
 } from "../../../app/lib/projects";
+import { subscribeToTaskStatusChanged } from "../../../app/lib/taskStatusEvents";
 import {
   listProjectTasks,
   searchProjectTasks,
@@ -739,25 +739,23 @@ export const useBoardModel = () => {
   onMount(async () => {
     boardEventSubscriptionDisposed = false;
     void (async () => {
-      const unlisten = await listen<{
-        task_id?: string;
-        taskId?: string;
-        project_id?: string;
-        projectId?: string;
-        status?: TaskStatus;
-      }>("task-updated", (event) => {
+      const unlisten = await subscribeToTaskStatusChanged((event) => {
         if (boardEventSubscriptionDisposed) {
           return;
         }
 
-        const payloadProjectId =
-          event.payload.project_id ?? event.payload.projectId ?? "";
         const currentProjectId = selectedProjectId();
-        if (!currentProjectId || payloadProjectId !== currentProjectId) {
+        if (!currentProjectId || event.projectId !== currentProjectId) {
           return;
         }
 
-        void loadTasks(currentProjectId);
+        setTasks((current) =>
+          current.map((task) =>
+            task.id === event.taskId
+              ? { ...task, status: event.newStatus, updatedAt: event.timestamp }
+              : task,
+          ),
+        );
       });
 
       if (boardEventSubscriptionDisposed) {

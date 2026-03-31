@@ -9,6 +9,7 @@ use crate::app::runs::dto::{
     RunSelectionCatalogResponseDto, StartRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::service::RunsService;
+use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
 use anyhow::{Context, Error as AnyhowError};
 use chrono::Utc;
@@ -512,6 +513,7 @@ const STREAM_MAX_RECONNECT_ATTEMPTS: u32 = 8;
 pub struct RunsOpenCodeService {
     runs_service: RunsService,
     projects_service: ProjectsService,
+    task_status_transition_service: TaskStatusTransitionService,
     worktrees_root: PathBuf,
     handles: Arc<RwLock<HashMap<String, Arc<RunOpenCodeHandle>>>>,
     init_locks: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
@@ -561,12 +563,77 @@ impl Default for SessionRuntimeState {
             last_status_hint: None,
             pending_questions: HashSet::new(),
             pending_permissions: HashSet::new(),
-            idle_cleanup_ready: true,
+            idle_cleanup_ready: false,
         }
     }
 }
 
 impl RunsOpenCodeService {
+    async fn handle_session_idle_signal(
+        &self,
+        run_id: &str,
+        session_id: &str,
+        source_event: &str,
+        session_runtime_state: &Arc<Mutex<SessionRuntimeState>>,
+    ) -> Result<(), AppError> {
+        let should_block = {
+            let mut state = session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            if !state.pending_questions.is_empty()
+                || !state.pending_permissions.is_empty()
+                || !state.idle_cleanup_ready
+            {
+                true
+            } else {
+                state.idle_cleanup_ready = false;
+                false
+            }
+        };
+
+        if should_block {
+            return Ok(());
+        }
+
+        let run = self.runs_service.get_run_model(run_id).await?;
+        let context = self
+            .runs_service
+            .get_run_initial_prompt_context(run_id)
+            .await?;
+        let _ = self.runs_service.mark_cleanup_running(run_id).await?;
+        let cleanup_result = self
+            .run_lifecycle_script_in_worktree(run_id, context.cleanup_script.as_deref())
+            .await;
+        match cleanup_result {
+            Ok(()) => {
+                let _ = self.runs_service.mark_cleanup_succeeded(run_id).await?;
+                let _ = self
+                    .task_status_transition_service
+                    .handle_agent_turn_completed(&run.task_id, run_id, session_id, source_event)
+                    .await?;
+            }
+            Err(err) => {
+                let error_text = err.to_string();
+                let _ = self
+                    .runs_service
+                    .mark_cleanup_failed(run_id, &error_text)
+                    .await?;
+                let _ = self
+                    .submit_run_opencode_prompt(
+                        run_id,
+                        "This command produced errors. Please investigate.",
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+            }
+        }
+
+        Ok(())
+    }
+
     fn resolve_prompt_selection(
         run_defaults_agent: Option<&str>,
         run_defaults_provider_id: Option<&str>,
@@ -730,15 +797,30 @@ impl RunsOpenCodeService {
                     return Ok(());
                 }
 
-                let mut state = session_runtime_state
-                    .lock()
-                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
-                state.last_status_hint = Some(status);
-                if state.last_status_hint.as_deref() == Some("busy")
-                    || state.last_status_hint.as_deref() == Some("active")
-                {
-                    state.idle_cleanup_ready = true;
+                let should_handle_idle = {
+                    let mut state = session_runtime_state
+                        .lock()
+                        .map_err(|_| lock_error("OpenCode session runtime state"))?;
+                    state.last_status_hint = Some(status.clone());
+                    if state.last_status_hint.as_deref() == Some("busy")
+                        || state.last_status_hint.as_deref() == Some("active")
+                    {
+                        state.idle_cleanup_ready = true;
+                    }
+                    status == "idle"
+                };
+
+                if should_handle_idle {
+                    return self
+                        .handle_session_idle_signal(
+                            run_id,
+                            &session_id,
+                            "session.status=idle",
+                            session_runtime_state,
+                        )
+                        .await;
                 }
+
                 Ok(())
             }
             "question.asked" => {
@@ -899,60 +981,13 @@ impl RunsOpenCodeService {
                     return Ok(());
                 }
 
-                let should_block = {
-                    let state = session_runtime_state
-                        .lock()
-                        .map_err(|_| lock_error("OpenCode session runtime state"))?;
-                    !state.pending_questions.is_empty()
-                        || !state.pending_permissions.is_empty()
-                        || !state.idle_cleanup_ready
-                };
-
-                if should_block {
-                    return Ok(());
-                }
-
-                let context = self
-                    .runs_service
-                    .get_run_initial_prompt_context(run_id)
-                    .await?;
-                let _ = self.runs_service.mark_cleanup_running(run_id).await?;
-                let cleanup_result = self
-                    .run_lifecycle_script_in_worktree(run_id, context.cleanup_script.as_deref())
-                    .await;
-                match cleanup_result {
-                    Ok(()) => {
-                        let _ = self.runs_service.mark_cleanup_succeeded(run_id).await?;
-                        let _ = self
-                            .runs_service
-                            .transition_task_to_review_on_session_idle(run_id, &session_id)
-                            .await?;
-                    }
-                    Err(err) => {
-                        let error_text = err.to_string();
-                        let _ = self
-                            .runs_service
-                            .mark_cleanup_failed(run_id, &error_text)
-                            .await?;
-                        let _ = self
-                            .submit_run_opencode_prompt(
-                                run_id,
-                                "This command produced errors. Please investigate.",
-                                None,
-                                None,
-                                None,
-                                None,
-                            )
-                            .await;
-                    }
-                }
-
-                let mut state = session_runtime_state
-                    .lock()
-                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
-                state.idle_cleanup_ready = false;
-
-                Ok(())
+                self.handle_session_idle_signal(
+                    run_id,
+                    &session_id,
+                    "session.idle",
+                    session_runtime_state,
+                )
+                .await
             }
             _ => Ok(()),
         }
@@ -1335,10 +1370,16 @@ impl RunsOpenCodeService {
         let _ = event_tx.send(agent_event);
     }
 
-    pub fn new(runs_service: RunsService, projects_service: ProjectsService, app_data_dir: PathBuf) -> Self {
+    pub fn new(
+        runs_service: RunsService,
+        projects_service: ProjectsService,
+        task_status_transition_service: TaskStatusTransitionService,
+        app_data_dir: PathBuf,
+    ) -> Self {
         Self {
             runs_service,
             projects_service,
+            task_status_transition_service,
             worktrees_root: app_data_dir.join("worktrees"),
             handles: Arc::new(RwLock::new(HashMap::new())),
             init_locks: Arc::new(RwLock::new(HashMap::new())),
@@ -2042,6 +2083,14 @@ impl RunsOpenCodeService {
             }))],
         }));
 
+        {
+            let mut runtime_state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            runtime_state.idle_cleanup_ready = false;
+        }
+
         let send_result = handle.client.session().prompt_async(request).await;
 
         if let Err(err) = send_result {
@@ -2067,6 +2116,11 @@ impl RunsOpenCodeService {
                 )));
             }
         }
+
+        let _ = self
+            .task_status_transition_service
+            .handle_user_replied_to_agent(&run_defaults.task_id, run_id)
+            .await?;
 
         info!(
             target: "opencode.runtime",
@@ -3014,9 +3068,11 @@ mod tests {
     use crate::app::db::migrations::run_migrations;
     use crate::app::db::repositories::projects::ProjectsRepository;
     use crate::app::db::repositories::runs::RunsRepository;
+    use crate::app::db::repositories::tasks::TasksRepository;
     use crate::app::projects::search_service::ProjectFileSearchService;
     use crate::app::projects::service::ProjectsService;
     use crate::app::runs::service::RunsService;
+    use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
     use crate::app::worktrees::service::WorktreesService;
     use opencode::{
         create_opencode_client, create_opencode_server, OpencodeClientConfig, OpencodeServerOptions,
@@ -3043,8 +3099,17 @@ mod tests {
             ProjectFileSearchService::new(),
             WorktreesService::new(app_data_dir.clone()),
         );
-        let opencode_service =
-            RunsOpenCodeService::new(runs_service.clone(), projects_service, app_data_dir);
+        let task_status_transition_service = TaskStatusTransitionService::new(
+            RunsRepository::new(pool.clone()),
+            TasksRepository::new(pool.clone()),
+            None,
+        );
+        let opencode_service = RunsOpenCodeService::new(
+            runs_service.clone(),
+            projects_service,
+            task_status_transition_service,
+            app_data_dir,
+        );
 
         (runs_service, opencode_service, pool, temp_dir)
     }

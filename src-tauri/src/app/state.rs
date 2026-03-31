@@ -10,6 +10,7 @@ use crate::app::runs::opencode_service::RunsOpenCodeService;
 use crate::app::runs::service::RunsService;
 use crate::app::tasks::search_service::TaskSearchService;
 use crate::app::tasks::service::TasksService;
+use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
 use crate::app::terminal::service::TerminalService;
 use crate::app::worktrees::service::WorktreesService;
 use sqlx::SqlitePool;
@@ -23,12 +24,13 @@ pub struct AppState {
     pub runs_merge_service: RunsMergeService,
     pub runs_opencode_service: RunsOpenCodeService,
     pub tasks_service: TasksService,
+    pub task_status_transition_service: TaskStatusTransitionService,
     pub worktrees_service: WorktreesService,
     pub terminal_service: TerminalService,
 }
 
 impl AppState {
-    pub fn new(db_pool: SqlitePool, app_data_dir: PathBuf) -> Self {
+    pub fn new(db_pool: SqlitePool, app_data_dir: PathBuf, app_handle: tauri::AppHandle) -> Self {
         let repository = ProjectsRepository::new(db_pool.clone());
         let runs_repository = RunsRepository::new(db_pool.clone());
         let tasks_repository = TasksRepository::new(db_pool.clone());
@@ -41,12 +43,18 @@ impl AppState {
             ProjectFileSearchService::new(),
             worktrees_service.clone(),
         );
+        let task_status_transition_service = TaskStatusTransitionService::new(
+            RunsRepository::new(db_pool.clone()),
+            tasks_repository.clone(),
+            Some(app_handle),
+        );
         let runs_service = RunsService::new(runs_repository, worktrees_service.clone());
         let runs_diff_service = RunsDiffService::new(runs_service.clone(), app_data_dir.clone());
         let runs_merge_service = RunsMergeService::new(runs_service.clone(), app_data_dir.clone());
         let runs_opencode_service = RunsOpenCodeService::new(
             runs_service.clone(),
             projects_service.clone(),
+            task_status_transition_service.clone(),
             app_data_dir.clone(),
         );
         let terminal_service = TerminalService::new(runs_service.clone(), app_data_dir);
@@ -58,6 +66,7 @@ impl AppState {
             runs_merge_service,
             runs_opencode_service,
             tasks_service,
+            task_status_transition_service,
             worktrees_service,
             terminal_service,
         }

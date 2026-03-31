@@ -17,6 +17,7 @@ pub fn run() {
                 Ok::<app::state::AppState, app::errors::AppError>(app::state::AppState::new(
                     pool,
                     startup_paths.app_data_dir,
+                    app.handle().clone(),
                 ))
             })?;
 

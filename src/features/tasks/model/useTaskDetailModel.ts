@@ -1,6 +1,13 @@
 import { useLocation, useNavigate, useParams } from "@solidjs/router";
-import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js";
 import { getProject } from "../../../app/lib/projects";
+import { subscribeToTaskStatusChanged } from "../../../app/lib/taskStatusEvents";
 import {
   addTaskDependency,
   createTask,
@@ -159,6 +166,8 @@ export const useTaskDetailModel = () => {
   >({});
   let runSelectionOptionsRequestVersion = 0;
   let editMutationVersion = 0;
+  let removeTaskStatusSubscription: (() => void) | null = null;
+  let taskStatusSubscriptionDisposed = false;
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
   let autosaveMaxWaitTimer: ReturnType<typeof setTimeout> | null = null;
   let autosaveInFlight = false;
@@ -858,7 +867,36 @@ export const useTaskDetailModel = () => {
     })();
   });
 
+  onMount(() => {
+    void (async () => {
+      const unlisten = await subscribeToTaskStatusChanged((event) => {
+        if (taskStatusSubscriptionDisposed) {
+          return;
+        }
+
+        setTask((current) =>
+          current && current.id === event.taskId
+            ? {
+                ...current,
+                status: event.newStatus,
+                updatedAt: event.timestamp,
+              }
+            : current,
+        );
+      });
+
+      if (taskStatusSubscriptionDisposed) {
+        unlisten();
+        return;
+      }
+
+      removeTaskStatusSubscription = unlisten;
+    })();
+  });
+
   onCleanup(() => {
+    taskStatusSubscriptionDisposed = true;
+    removeTaskStatusSubscription?.();
     clearTaskDetailsAutosaveState();
     editMutationVersion += 1;
   });
