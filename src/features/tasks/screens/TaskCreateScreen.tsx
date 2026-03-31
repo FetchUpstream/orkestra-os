@@ -1,4 +1,8 @@
 import { Show, createEffect, onCleanup, type Component } from "solid-js";
+import {
+  TaskDependenciesSidebar,
+  TaskLinkDependencyModal,
+} from "../components/TaskDependenciesSidebar";
 import TaskEditorPanel from "../components/TaskEditorPanel";
 import {
   TaskDetailErrorState,
@@ -47,6 +51,17 @@ const TaskCreateScreen: Component = () => {
                 <Show when={model.actionError()}>
                   <div class="projects-error" role="alert" aria-live="polite">
                     {model.actionError()}
+                    <Show when={model.createdTaskLinkErrorHref()}>
+                      <div class="mt-3">
+                        <button
+                          type="button"
+                          class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+                          onClick={model.onOpenCreatedTaskAfterLinkFailure}
+                        >
+                          Open created task
+                        </button>
+                      </div>
+                    </Show>
                   </div>
                 </Show>
                 <TaskEditorPanel
@@ -78,8 +93,38 @@ const TaskCreateScreen: Component = () => {
                   onImplementationGuideBlur={model.onTitleBlur}
                 />
               </div>
+              <aside class="task-detail-inspector-column">
+                <section class="projects-panel task-detail-inspector-panel">
+                  <TaskDependenciesSidebar
+                    dependencies={model.dependencies}
+                    error={model.dependencyCandidatesError}
+                    isLoading={model.isLoading}
+                    onRetry={() => void model.reloadDependencyCandidates()}
+                    onOpenLinkDependencyModal={model.onOpenLinkDependencyModal}
+                    onRemoveParentDependency={model.onRemoveParentDependency}
+                    onRemoveChildDependency={model.onRemoveChildDependency}
+                    removingParentDependencyId={
+                      model.removingParentDependencyId
+                    }
+                    removingChildDependencyId={model.removingChildDependencyId}
+                  />
+                </section>
+              </aside>
             </div>
           </div>
+          <TaskLinkDependencyModal
+            isOpen={model.isLinkDependencyModalOpen}
+            linkDependencyDirection={model.linkDependencyDirection}
+            linkDependencySearch={model.linkDependencySearch}
+            showDoneLinkCandidates={model.showDoneLinkCandidates}
+            filteredLinkCandidates={model.filteredLinkCandidates}
+            isLinkingDependency={model.isLinkingDependency}
+            onCancelLinkDependency={model.onCancelLinkDependency}
+            onSetLinkDependencyDirection={model.onSetLinkDependencyDirection}
+            setLinkDependencySearch={model.setLinkDependencySearch}
+            setShowDoneLinkCandidates={model.setShowDoneLinkCandidates}
+            onLinkDependency={model.onLinkDependency}
+          />
           <Show when={model.isDiscardModalOpen()}>
             <div
               class="projects-modal-backdrop"

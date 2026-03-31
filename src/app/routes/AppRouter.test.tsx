@@ -654,6 +654,479 @@ describe("app routing and shell", () => {
     confirmSpy.mockRestore();
   });
 
+  it("shows dependencies sidebar on create page and hides runs", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-parent-1",
+            title: "Seed data",
+            status: "todo",
+            display_key: "ALP-5",
+            target_repository_name: "Main",
+          },
+        ]);
+      }
+      return Promise.resolve(null);
+    });
+
+    await renderCreateTaskPage();
+
+    expect(screen.getByRole("heading", { name: "Dependencies" })).toBeTruthy();
+    expect(screen.getByText("Blocked by · 0")).toBeTruthy();
+    expect(screen.getByText("Blocking · 0")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Runs" })).toBeNull();
+  });
+
+  it("creates parent dependencies after create_task on create page", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-parent-1",
+            title: "Seed data",
+            status: "doing",
+            display_key: "ALP-5",
+            target_repository_name: "Main",
+          },
+        ]);
+      }
+      if (command === "create_task") {
+        return Promise.resolve({
+          id: "task-new",
+          title: "Created task",
+          status: "todo",
+        });
+      }
+      if (command === "add_task_dependency") return Promise.resolve(null);
+      if (command === "get_task") {
+        return Promise.resolve({
+          id: (args as { id?: string } | undefined)?.id || "task-new",
+          title: "Created task",
+          description: "",
+          status: "todo",
+          project_id: "p-1",
+          target_repository_id: "r-1",
+          target_repository_name: "Main",
+          display_key: "ALP-11",
+        });
+      }
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-new",
+          parents: [],
+          children: [],
+        });
+      }
+      if (command === "list_task_runs") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    await renderCreateTaskPage();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Link parent dependency" }),
+    );
+    const linkDialog = await screen.findByRole("dialog", {
+      name: "Link blocking prerequisite",
+    });
+    await fireEvent.click(
+      within(linkDialog).getByRole("button", { name: /Link ALP-5/i }),
+    );
+    await fireEvent.input(screen.getByLabelText("Task title"), {
+      target: { value: "Created task" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("create_task", {
+        input: {
+          project_id: "p-1",
+          title: "Created task",
+          description: undefined,
+          implementation_guide: undefined,
+          status: "todo",
+          repository_id: "r-1",
+        },
+      });
+      expect(invokeMock).toHaveBeenCalledWith("add_task_dependency", {
+        input: { parent_task_id: "task-parent-1", child_task_id: "task-new" },
+      });
+    });
+
+    const createIndex = invokeMock.mock.calls.findIndex(
+      ([cmd]) => cmd === "create_task",
+    );
+    const linkIndex = invokeMock.mock.calls.findIndex(
+      ([cmd, callArgs]) =>
+        cmd === "add_task_dependency" &&
+        (
+          callArgs as {
+            input?: { parent_task_id?: string; child_task_id?: string };
+          }
+        ).input?.parent_task_id === "task-parent-1" &&
+        (
+          callArgs as {
+            input?: { parent_task_id?: string; child_task_id?: string };
+          }
+        ).input?.child_task_id === "task-new",
+    );
+    expect(linkIndex).toBeGreaterThan(createIndex);
+  });
+
+  it("creates child dependencies after create_task on create page", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-child-1",
+            title: "Ship UI",
+            status: "todo",
+            display_key: "ALP-9",
+            target_repository_name: "Main",
+          },
+        ]);
+      }
+      if (command === "create_task") {
+        return Promise.resolve({
+          id: "task-new",
+          title: "Created task",
+          status: "todo",
+        });
+      }
+      if (command === "add_task_dependency") return Promise.resolve(null);
+      if (command === "get_task") {
+        return Promise.resolve({
+          id: (args as { id?: string } | undefined)?.id || "task-new",
+          title: "Created task",
+          description: "",
+          status: "todo",
+          project_id: "p-1",
+          target_repository_id: "r-1",
+          target_repository_name: "Main",
+          display_key: "ALP-11",
+        });
+      }
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-new",
+          parents: [],
+          children: [],
+        });
+      }
+      if (command === "list_task_runs") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    await renderCreateTaskPage();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Link blocked task" }),
+    );
+    const linkDialog = await screen.findByRole("dialog", {
+      name: "Link blocked task",
+    });
+    await fireEvent.click(
+      within(linkDialog).getByRole("button", { name: /Link ALP-9/i }),
+    );
+    await fireEvent.input(screen.getByLabelText("Task title"), {
+      target: { value: "Created task" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("add_task_dependency", {
+        input: { parent_task_id: "task-new", child_task_id: "task-child-1" },
+      });
+    });
+
+    const createIndex = invokeMock.mock.calls.findIndex(
+      ([cmd]) => cmd === "create_task",
+    );
+    const linkIndex = invokeMock.mock.calls.findIndex(
+      ([cmd, callArgs]) =>
+        cmd === "add_task_dependency" &&
+        (
+          callArgs as {
+            input?: { parent_task_id?: string; child_task_id?: string };
+          }
+        ).input?.parent_task_id === "task-new" &&
+        (
+          callArgs as {
+            input?: { parent_task_id?: string; child_task_id?: string };
+          }
+        ).input?.child_task_id === "task-child-1",
+    );
+    expect(linkIndex).toBeGreaterThan(createIndex);
+  });
+
+  it("links both selected parent and child dependencies on create page", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-parent-1",
+            title: "Seed data",
+            status: "doing",
+            display_key: "ALP-5",
+            target_repository_name: "Main",
+          },
+          {
+            id: "task-child-1",
+            title: "Ship UI",
+            status: "todo",
+            display_key: "ALP-9",
+            target_repository_name: "Main",
+          },
+        ]);
+      }
+      if (command === "create_task") {
+        return Promise.resolve({
+          id: "task-new",
+          title: "Created task",
+          status: "todo",
+        });
+      }
+      if (command === "add_task_dependency") return Promise.resolve(null);
+      if (command === "get_task") {
+        return Promise.resolve({
+          id: (args as { id?: string } | undefined)?.id || "task-new",
+          title: "Created task",
+          description: "",
+          status: "todo",
+          project_id: "p-1",
+          target_repository_id: "r-1",
+          target_repository_name: "Main",
+          display_key: "ALP-11",
+        });
+      }
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-new",
+          parents: [],
+          children: [],
+        });
+      }
+      if (command === "list_task_runs") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    await renderCreateTaskPage();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Link parent dependency" }),
+    );
+    await fireEvent.click(
+      within(
+        await screen.findByRole("dialog", {
+          name: "Link blocking prerequisite",
+        }),
+      ).getByRole("button", { name: /Link ALP-5/i }),
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Link blocked task" }),
+    );
+    await fireEvent.click(
+      within(
+        await screen.findByRole("dialog", { name: "Link blocked task" }),
+      ).getByRole("button", { name: /Link ALP-9/i }),
+    );
+    await fireEvent.input(screen.getByLabelText("Task title"), {
+      target: { value: "Created task" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("add_task_dependency", {
+        input: { parent_task_id: "task-parent-1", child_task_id: "task-new" },
+      });
+      expect(invokeMock).toHaveBeenCalledWith("add_task_dependency", {
+        input: { parent_task_id: "task-new", child_task_id: "task-child-1" },
+      });
+    });
+  });
+
+  it("shows a clear error when dependency linking fails after task creation", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-parent-1",
+            title: "Seed data",
+            status: "doing",
+            display_key: "ALP-5",
+            target_repository_name: "Main",
+          },
+        ]);
+      }
+      if (command === "create_task") {
+        return Promise.resolve({
+          id: "task-new",
+          title: "Created task",
+          status: "todo",
+        });
+      }
+      if (command === "add_task_dependency")
+        return Promise.reject("backend unavailable");
+      if (command === "get_task") {
+        return Promise.resolve({
+          id: (args as { id?: string } | undefined)?.id || "task-new",
+          title: "Created task",
+          description: "",
+          status: "todo",
+          project_id: "p-1",
+          target_repository_id: "r-1",
+          target_repository_name: "Main",
+          display_key: "ALP-11",
+        });
+      }
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-new",
+          parents: [],
+          children: [],
+        });
+      }
+      if (command === "list_task_runs") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    await renderCreateTaskPage();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Link parent dependency" }),
+    );
+    await fireEvent.click(
+      within(
+        await screen.findByRole("dialog", {
+          name: "Link blocking prerequisite",
+        }),
+      ).getByRole("button", { name: /Link ALP-5/i }),
+    );
+    await fireEvent.input(screen.getByLabelText("Task title"), {
+      target: { value: "Created task" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Task created, but dependencies could not be linked. Open the task and retry linking. backend unavailable",
+        ),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "Open created task" }),
+      ).toBeTruthy();
+      expect(window.location.pathname).toBe("/projects/p-1/tasks/new");
+    });
+  });
+
   it.each([
     {
       name: "title",
