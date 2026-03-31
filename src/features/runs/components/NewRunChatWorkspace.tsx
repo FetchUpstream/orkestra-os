@@ -717,10 +717,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     if (cleanupState() === "running") return "Running cleanup script...";
     if (cleanupState() === "succeeded") return "Cleanup script completed.";
     if (cleanupState() === "failed") {
-      return (
-        props.model.run()?.cleanupErrorMessage?.trim() ||
-        "Cleanup script found issues. The agent has been asked to fix them."
-      );
+      return "Cleanup script failed. Please investigate.";
     }
     return "Cleanup script pending.";
   });

@@ -934,10 +934,7 @@ impl RunsOpenCodeService {
                         let _ = self
                             .submit_run_opencode_prompt(
                                 run_id,
-                                &format!(
-                                    "Cleanup script reported errors. Please fix them before continuing.\n\n{}",
-                                    error_text
-                                ),
+                                "This command produced errors. Please investigate.",
                                 None,
                                 None,
                                 None,

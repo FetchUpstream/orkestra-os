@@ -251,7 +251,7 @@ describe("NewRunChatWorkspace", () => {
     expect(screen.getByText("Cleanup script completed.")).toBeTruthy();
   });
 
-  it("prefers cleanup error detail and falls back to generic copy", () => {
+  it("shows generic cleanup failure copy without exposing error detail", () => {
     const { model, setRun } = createModelStub("running", false, {
       cleanupState: "failed",
       cleanupErrorMessage: "Cleanup failed on lockfile permissions.",
@@ -260,8 +260,11 @@ describe("NewRunChatWorkspace", () => {
 
     expect(screen.getByText("Cleanup")).toBeTruthy();
     expect(
-      screen.getByText("Cleanup failed on lockfile permissions."),
+      screen.getByText("Cleanup script failed. Please investigate."),
     ).toBeTruthy();
+    expect(
+      screen.queryByText("Cleanup failed on lockfile permissions."),
+    ).toBeNull();
 
     setRun({
       status: "running",
@@ -269,9 +272,7 @@ describe("NewRunChatWorkspace", () => {
       cleanupErrorMessage: "   ",
     });
     expect(
-      screen.getByText(
-        "Cleanup script found issues. The agent has been asked to fix them.",
-      ),
+      screen.getByText("Cleanup script failed. Please investigate."),
     ).toBeTruthy();
   });
 
