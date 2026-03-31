@@ -1155,7 +1155,7 @@ export const useTaskDetailModel = () => {
     projectRunDefaultsError,
     isLoadingRunSelectionOptions,
     hasRunSelectionOptions,
-    isOpenCodeMissing: () => openCodeDependency.state() === "missing",
+    isOpenCodeMissing: () => openCodeDependency.state() !== "available",
     openCodeDependencyReason: openCodeDependency.reason,
     selectedRunAgentId,
     selectedRunProviderId,

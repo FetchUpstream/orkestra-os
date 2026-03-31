@@ -34,6 +34,9 @@ export const OpenCodeDependencyProvider: Component<{
   const [reason, setReason] = createSignal("");
   const [isModalRequested, setIsModalRequested] = createSignal(false);
 
+  const isUnavailableState = (value: OpenCodeDependencyStatus): boolean =>
+    value === "missing" || value === "failure" || value === "checking";
+
   const refresh = async (
     forceRefresh = false,
   ): Promise<OpenCodeDependencyStatus> => {
@@ -42,7 +45,7 @@ export const OpenCodeDependencyProvider: Component<{
       const result = await getOpenCodeDependencyStatus(forceRefresh);
       setState(result.state);
       setReason(result.reason?.trim() ?? "");
-      if (result.state !== "missing") {
+      if (result.state === "available") {
         setIsModalRequested(false);
       }
       return result.state;
@@ -68,7 +71,7 @@ export const OpenCodeDependencyProvider: Component<{
       nextState = await refresh(false);
     }
 
-    if (nextState === "missing") {
+    if (nextState !== "available") {
       setIsModalRequested(true);
       return false;
     }
@@ -77,7 +80,10 @@ export const OpenCodeDependencyProvider: Component<{
   };
 
   createEffect(() => {
-    if (location.pathname.startsWith("/runs/") && state() === "missing") {
+    if (
+      location.pathname.startsWith("/runs/") &&
+      (state() === "missing" || state() === "failure")
+    ) {
       setIsModalRequested(true);
     }
   });
@@ -91,7 +97,7 @@ export const OpenCodeDependencyProvider: Component<{
       value={{
         state,
         reason,
-        isModalVisible: () => isModalRequested() && state() === "missing",
+        isModalVisible: () => isModalRequested() && isUnavailableState(state()),
         refresh,
         ensureAvailableForRequiredFlow,
         showRequiredModal: () => setIsModalRequested(true),

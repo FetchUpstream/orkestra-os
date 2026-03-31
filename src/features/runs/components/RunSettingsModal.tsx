@@ -1,5 +1,12 @@
-import { For, Show, type Accessor, type Component } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  type Accessor,
+  type Component,
+} from "solid-js";
 import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
+import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
 
 type RunSettingsModalProps = {
   isOpen: Accessor<boolean>;
@@ -23,6 +30,14 @@ type RunSettingsModalProps = {
 };
 
 const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
+  const openCodeDependency = useOpenCodeDependency();
+
+  createEffect(() => {
+    if (props.isOpen() && props.isOpenCodeMissing?.()) {
+      openCodeDependency.showRequiredModal();
+    }
+  });
+
   return (
     <Show when={props.isOpen()}>
       <div
@@ -142,10 +157,18 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
               )}
             </Show>
             <Show when={props.isOpenCodeMissing?.()}>
-              <p class="projects-error border-error/35 bg-error/10 m-0 text-sm">
-                {props.openCodeDependencyReason?.()?.trim() ||
-                  "OpenCode is required before you can create and start a run."}
-              </p>
+              <div class="projects-error border-error/35 bg-error/10 m-0 space-y-2 text-sm">
+                <p class="m-0 font-medium">
+                  Finish OpenCode setup before creating a run.
+                </p>
+                <p class="m-0 text-xs">
+                  The onboarding modal includes install, provider, model, CLI,
+                  config, and Zen setup links, plus a retry action.
+                </p>
+                <Show when={props.openCodeDependencyReason?.()?.trim()}>
+                  {(message) => <p class="m-0 text-xs">{message()}</p>}
+                </Show>
+              </div>
             </Show>
             <div class="task-delete-modal-actions border-base-content/10 mt-1 justify-end gap-2 border-t pt-4">
               <button

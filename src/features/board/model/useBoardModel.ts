@@ -824,7 +824,7 @@ export const useBoardModel = () => {
     runProviderOptions,
     visibleRunModelOptions,
     isConfirmingMoveTaskToInProgress,
-    isOpenCodeMissing: () => openCodeDependency.state() === "missing",
+    isOpenCodeMissing: () => openCodeDependency.state() !== "available",
     openCodeDependencyReason: openCodeDependency.reason,
     selectedRunAgentId,
     selectedRunProviderId,
