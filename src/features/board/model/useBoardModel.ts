@@ -30,6 +30,8 @@ import {
 } from "../../../app/lib/runSelectionOptionsCache";
 import {
   filterModelsForProvider,
+  getProjectRunDefaultsMessage,
+  initializeProjectRunDefaults,
   resolveProjectRunDefaults,
 } from "../../../app/lib/projectRunDefaults";
 import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
@@ -287,41 +289,25 @@ export const useBoardModel = () => {
       setSelectedRunAgentId("");
       setSelectedRunProviderIdSignal("");
       setSelectedRunModelIdSignal("");
-      return;
-    }
-
-    const defaultAgentId = project.defaultRunAgent?.trim() || "";
-    if (runAgentOptions().length === 0) {
-      setSelectedRunAgentId(defaultAgentId);
-    } else {
-      setSelectedRunAgentId(
-        defaultAgentId &&
-          runAgentOptions().some((option) => option.id === defaultAgentId)
-          ? defaultAgentId
-          : "",
-      );
-    }
-    if (runProviderOptions().length === 0 && runModelOptions().length === 0) {
-      setSelectedRunProviderIdSignal(project.defaultRunProvider?.trim() || "");
-      setSelectedRunModelIdSignal(project.defaultRunModel?.trim() || "");
       setRunSelectionOptionsError("");
       return;
     }
 
-    const resolved = resolveProjectRunDefaults({
+    const resolved = initializeProjectRunDefaults({
       persisted: {
+        agentId: project.defaultRunAgent,
         providerId: project.defaultRunProvider,
         modelId: project.defaultRunModel,
       },
+      agents: runAgentOptions(),
       providers: runProviderOptions(),
       models: runModelOptions(),
     });
+    setSelectedRunAgentId(resolved.agentId);
     setSelectedRunProviderIdSignal(resolved.providerId);
     setSelectedRunModelIdSignal(resolved.modelId);
     setRunSelectionOptionsError(
-      resolved.requiresUserAction
-        ? "Run defaults are incomplete. Select a provider and model before starting a run."
-        : "",
+      getProjectRunDefaultsMessage(resolved, "starting a run"),
     );
   };
 
@@ -671,7 +657,6 @@ export const useBoardModel = () => {
       setPendingRunSettingsDefaultsInitialization(!hasRunSelectionOptions());
       applyProjectRunDefaults(selectedProjectDetail());
       setPendingInProgressTaskId(taskId);
-      setRunSelectionOptionsError("");
       setIsRunSettingsModalOpen(true);
       void refreshRunSelectionOptions();
     };

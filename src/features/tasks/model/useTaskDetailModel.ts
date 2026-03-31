@@ -31,6 +31,8 @@ import {
 } from "../../../app/lib/runSelectionOptionsCache";
 import {
   filterModelsForProvider,
+  getProjectRunDefaultsMessage,
+  initializeProjectRunDefaults,
   resolveProjectRunDefaults,
 } from "../../../app/lib/projectRunDefaults";
 import {
@@ -354,57 +356,24 @@ export const useTaskDetailModel = () => {
     );
   });
 
-  const resolveRunDefaultsForProject = () =>
-    resolveProjectRunDefaults({
+  const initializeRunSettingsSelectionsFromProjectDefaults = () => {
+    const resolved = initializeProjectRunDefaults({
       persisted: {
+        agentId: projectDefaultRunAgentId(),
         providerId: projectDefaultRunProviderId(),
         modelId: projectDefaultRunModelId(),
       },
+      agents: runAgentOptions(),
       providers: runProviderOptions(),
       models: runModelOptions(),
     });
 
-  const applyResolvedProjectRunDefaults = () => {
-    if (runProviderOptions().length === 0 && runModelOptions().length === 0) {
-      setSelectedRunProviderIdSignal(projectDefaultRunProviderId());
-      setSelectedRunModelIdSignal(projectDefaultRunModelId());
-      setProjectRunDefaultsError("");
-      return;
-    }
-
-    const resolved = resolveRunDefaultsForProject();
+    setSelectedRunAgentId(resolved.agentId);
     setSelectedRunProviderIdSignal(resolved.providerId);
     setSelectedRunModelIdSignal(resolved.modelId);
-    if (!resolved.validAsIs) {
-      if (resolved.requiresUserAction) {
-        setProjectRunDefaultsError(
-          "Project run defaults are incomplete. Select a provider and model before creating a run.",
-        );
-      } else {
-        setProjectRunDefaultsError(
-          "Project run defaults were repaired to available options.",
-        );
-      }
-    } else {
-      setProjectRunDefaultsError("");
-    }
-  };
-
-  const initializeRunSettingsSelectionsFromProjectDefaults = () => {
-    const defaultAgentId = projectDefaultRunAgentId().trim();
-    const availableAgents = runAgentOptions();
-    if (availableAgents.length === 0) {
-      setSelectedRunAgentId(defaultAgentId);
-    } else {
-      setSelectedRunAgentId(
-        defaultAgentId &&
-          availableAgents.some((option) => option.id === defaultAgentId)
-          ? defaultAgentId
-          : "",
-      );
-    }
-
-    applyResolvedProjectRunDefaults();
+    setProjectRunDefaultsError(
+      getProjectRunDefaultsMessage(resolved, "creating a run"),
+    );
   };
 
   const doesModelMatchProvider = (
@@ -706,8 +675,7 @@ export const useTaskDetailModel = () => {
       setProjectDefaultRunAgentId(defaultRunAgentId);
       setProjectDefaultRunProviderId(defaultRunProviderId);
       setProjectDefaultRunModelId(defaultRunModelId);
-      setSelectedRunAgentId(defaultRunAgentId);
-      applyResolvedProjectRunDefaults();
+      initializeRunSettingsSelectionsFromProjectDefaults();
     } catch {
       setProjectName(null);
       setProjectKey(null);
@@ -986,8 +954,17 @@ export const useTaskDetailModel = () => {
       return null;
     }
 
-    const resolvedDefaults = resolveRunDefaultsForProject();
-    if (resolvedDefaults.requiresUserAction) {
+    const resolvedSelections = resolveProjectRunDefaults({
+      persisted: {
+        agentId: selectedRunAgentId(),
+        providerId: selectedRunProviderId(),
+        modelId: selectedRunModelId(),
+      },
+      agents: runAgentOptions(),
+      providers: runProviderOptions(),
+      models: runModelOptions(),
+    });
+    if (resolvedSelections.requiresUserAction) {
       setActionError(
         "Run defaults are unavailable. Select a valid provider and model before creating a run.",
       );
@@ -1001,10 +978,12 @@ export const useTaskDetailModel = () => {
         agentId: selectedRunAgentId().trim() || undefined,
         providerId:
           selectedRunProviderId().trim() ||
-          resolvedDefaults.providerId ||
+          resolvedSelections.providerId ||
           undefined,
         modelId:
-          selectedRunModelId().trim() || resolvedDefaults.modelId || undefined,
+          selectedRunModelId().trim() ||
+          resolvedSelections.modelId ||
+          undefined,
       });
       await refreshRuns(taskValue.id);
       return createdRun;
