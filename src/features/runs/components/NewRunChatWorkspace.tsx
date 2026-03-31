@@ -23,6 +23,7 @@ import type { UiPart, UiPermissionRequest } from "../model/agentTypes";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime } from "../../tasks/utils/taskDetail";
 import { AppIcon } from "../../../components/ui/icons";
+import RunInlineLoader from "../../../components/ui/RunInlineLoader";
 
 type AgentReadinessPhase =
   | "warming_backend"
@@ -1031,19 +1032,12 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
 
   const chatTranscriptItems = createMemo<JSX.Element[]>(() => {
     const waitingRow = (
-      <p
-        class="run-inline-loading-row"
+      <RunInlineLoader
+        as="p"
         role="status"
         aria-live="polite"
         aria-atomic="true"
-      >
-        <AppIcon
-          name="status.loading"
-          class="run-inline-spinner"
-          aria-hidden="true"
-        />
-        <span class="sr-only">Waiting for agent output...</span>
-      </p>
+      />
     );
 
     const messageItems = buildChatRows()
@@ -1477,19 +1471,12 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                     </p>
                   }
                 >
-                  <p
-                    class="run-inline-loading-row"
+                  <RunInlineLoader
+                    as="p"
                     role="status"
                     aria-live="polite"
                     aria-atomic="true"
-                  >
-                    <AppIcon
-                      name="status.loading"
-                      class="run-inline-spinner"
-                      aria-hidden="true"
-                    />
-                    <span class="sr-only">Waiting for agent output...</span>
-                  </p>
+                  />
                 </Show>
               </section>
             }

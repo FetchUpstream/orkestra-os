@@ -1,4 +1,5 @@
 import { For, Show, type Component } from "solid-js";
+import RunInlineLoader from "../../../../components/ui/RunInlineLoader";
 import { AppIcon } from "../../../../components/ui/icons";
 
 export type RunChatToolRailItem = {
@@ -84,16 +85,11 @@ const RunChatToolRail: Component<RunChatToolRailProps> = (props) => {
                     <Show when={item.status}>
                       <span class="run-chat-tool-rail__status">
                         <Show when={statusModifier === "running"}>
-                          <span
+                          <RunInlineLoader
                             class="run-chat-tool-rail__status-slot"
                             aria-label={item.status}
-                          >
-                            <span
-                              class="run-chat-tool-rail__status-icon run-chat-tool-rail__status-icon--spinner"
-                              aria-hidden="true"
-                            />
-                            <span class="sr-only">{item.status}</span>
-                          </span>
+                            srLabel={item.status}
+                          />
                         </Show>
                         <Show when={statusModifier === "completed"}>
                           <span

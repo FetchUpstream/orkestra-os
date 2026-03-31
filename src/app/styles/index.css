@@ -5040,13 +5040,8 @@ textarea::placeholder {
   flex: 0 0 0.85rem;
 }
 
-.run-chat-tool-rail__status-icon--spinner {
-  width: 0.8rem;
-  height: 0.8rem;
-  border: 1.5px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 999px;
-  animation: run-inline-spinner-rotate 0.8s linear infinite;
+.run-chat-tool-rail__status-slot.run-inline-loading-row {
+  gap: 0;
 }
 
 .run-chat-tool-rail__status-icon--check {

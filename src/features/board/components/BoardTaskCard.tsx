@@ -2,6 +2,7 @@ import { A } from "@solidjs/router";
 import { Show, createSignal, type Component } from "solid-js";
 import type { Project } from "../../../app/lib/projects";
 import type { Task } from "../../../app/lib/tasks";
+import RunInlineLoader from "../../../components/ui/RunInlineLoader";
 import type { BoardTaskRunMiniCard } from "../model/useBoardModel";
 import {
   dependencyBadgeState,
@@ -109,19 +110,25 @@ const BoardTaskCard: Component<Props> = (props) => {
             fallback={
               <div class="board-task-run-details" aria-label="Run Details">
                 <p class="board-task-run-details-title">Run Details</p>
-                <p class="run-inline-loading-row board-task-run-details-row">
-                  <Show
-                    when={isRunStateActive()}
-                    fallback={
+                <Show
+                  when={isRunStateActive()}
+                  fallback={
+                    <p class="run-inline-loading-row board-task-run-details-row">
                       <span class="board-task-run-warning" aria-hidden="true">
                         !
                       </span>
-                    }
+                      <span>{miniCard().label}</span>
+                    </p>
+                  }
+                >
+                  <RunInlineLoader
+                    as="p"
+                    class="board-task-run-details-row"
+                    srLabel="Run pending"
                   >
-                    <span class="run-inline-spinner" aria-hidden="true" />
-                  </Show>
-                  <span>{miniCard().label}</span>
-                </p>
+                    <span>{miniCard().label}</span>
+                  </RunInlineLoader>
+                </Show>
               </div>
             }
           >
@@ -134,19 +141,25 @@ const BoardTaskCard: Component<Props> = (props) => {
               }}
             >
               <p class="board-task-run-details-title">Run Details</p>
-              <p class="run-inline-loading-row board-task-run-details-row">
-                <Show
-                  when={isRunStateActive()}
-                  fallback={
+              <Show
+                when={isRunStateActive()}
+                fallback={
+                  <p class="run-inline-loading-row board-task-run-details-row">
                     <span class="board-task-run-warning" aria-hidden="true">
                       !
                     </span>
-                  }
+                    <span>{miniCard().label}</span>
+                  </p>
+                }
+              >
+                <RunInlineLoader
+                  as="p"
+                  class="board-task-run-details-row"
+                  srLabel="Run pending"
                 >
-                  <span class="run-inline-spinner" aria-hidden="true" />
-                </Show>
-                <span>{miniCard().label}</span>
-              </p>
+                  <span>{miniCard().label}</span>
+                </RunInlineLoader>
+              </Show>
             </A>
           </Show>
         )}

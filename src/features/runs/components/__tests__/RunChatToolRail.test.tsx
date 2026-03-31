@@ -49,7 +49,9 @@ describe("RunChatToolRail", () => {
     ));
 
     expect(
-      container.querySelector(".run-chat-tool-rail__status-icon--spinner"),
+      container.querySelector(
+        ".run-chat-tool-rail__status-slot .run-inline-spinner",
+      ),
     ).toBeTruthy();
     expect(
       container.querySelector(".run-chat-tool-rail__status-icon--check"),
