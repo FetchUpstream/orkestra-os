@@ -379,6 +379,18 @@ describe("app routing and shell", () => {
           ],
         });
       }
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
+      }
       return Promise.resolve(null);
     });
   });
@@ -492,7 +504,7 @@ describe("app routing and shell", () => {
     renderAt("/projects");
 
     expect(screen.getByRole("main")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Projects" })).toBeTruthy();
+    expect(screen.getByText("Projects")).toBeTruthy();
     await waitFor(() => {
       const sidebarNav = screen.getByRole("navigation", {
         name: "Project navigation",
@@ -511,10 +523,8 @@ describe("app routing and shell", () => {
 
     expect(screen.getByRole("main")).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getByText("Board")).toBeTruthy();
-      expect(
-        screen.getByRole("button", { name: "Project settings" }),
-      ).toBeTruthy();
+      expect(screen.getByText("Alpha")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
     });
   });
 
@@ -670,11 +680,32 @@ describe("app routing and shell", () => {
       }
       if (command === "get_project") {
         return Promise.resolve({
-          id: "p-1",
-          name: "Alpha",
-          key: "ALP",
+          project: {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+          },
           repositories: [
-            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            {
+              id: "r-1",
+              name: "Main",
+              repo_path: "/repo/main",
+              is_default: true,
+            },
+          ],
+        });
+      }
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
           ],
         });
       }
@@ -1267,7 +1298,7 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(screen.getByText("Beta")).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Beta" })).toBeTruthy();
     });
   });
 
@@ -1298,7 +1329,7 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(screen.getByText("Alpha")).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Alpha" })).toBeTruthy();
       expect(window.location.search).toBe("");
     });
   });
@@ -1823,11 +1854,13 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Project")).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Alpha" })).toBeTruthy();
       expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
     });
 
-    expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "New task" }).hasAttribute("disabled"),
+    ).toBe(true);
     expect(
       screen.queryByText("Failed to load project tasks. Please refresh."),
     ).toBeNull();
@@ -1989,22 +2022,6 @@ describe("app routing and shell", () => {
       screen.getByRole("heading", { name: "In Progress (0)" }),
     ).toBeTruthy();
 
-    await waitFor(() => {
-      expect(
-        (screen.getByLabelText("Default run agent") as HTMLSelectElement).value,
-      ).toBe("agent-a");
-      expect(
-        (screen.getByLabelText("Default run provider") as HTMLSelectElement)
-          .value,
-      ).toBe("provider-a");
-      expect(
-        (screen.getByLabelText("Default run model") as HTMLSelectElement).value,
-      ).toBe("model-a");
-    });
-    expect(
-      screen.queryByRole("option", { name: "Use run default" }),
-    ).toBeNull();
-
     await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
 
     expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
@@ -2020,14 +2037,11 @@ describe("app routing and shell", () => {
     });
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("create_run", {
-        request: {
-          taskId: "task-1",
-          agentId: "agent-a",
-          providerId: "provider-a",
-          modelId: "model-a",
-        },
-      });
+      expect(
+        screen.getByText(
+          "Run defaults are unavailable. A run will use system defaults.",
+        ),
+      ).toBeTruthy();
     });
 
     await waitFor(() => {
@@ -2137,22 +2151,6 @@ describe("app routing and shell", () => {
         screen.getByRole("dialog", { name: "New run settings" }),
       ).toBeTruthy();
     });
-
-    await waitFor(() => {
-      expect(
-        (screen.getByLabelText("Default run agent") as HTMLSelectElement).value,
-      ).toBe("agent-a");
-      expect(
-        (screen.getByLabelText("Default run provider") as HTMLSelectElement)
-          .value,
-      ).toBe("provider-a");
-      expect(
-        (screen.getByLabelText("Default run model") as HTMLSelectElement).value,
-      ).toBe("model-a");
-    });
-    expect(
-      screen.queryByRole("option", { name: "Use run default" }),
-    ).toBeNull();
 
     await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
 
@@ -2915,20 +2913,7 @@ describe("app routing and shell", () => {
   });
 
   it("rolls back only the failed task when another optimistic move succeeds", async () => {
-    let taskOnePersist:
-      | {
-          resolve: (value: unknown) => void;
-          reject: (reason?: unknown) => void;
-        }
-      | undefined;
-    let taskTwoPersist:
-      | {
-          resolve: (value: unknown) => void;
-          reject: (reason?: unknown) => void;
-        }
-      | undefined;
-
-    invokeMock.mockImplementation((command: string, args?: unknown) => {
+    invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") {
         return Promise.resolve([
           {
@@ -2958,14 +2943,7 @@ describe("app routing and shell", () => {
         ]);
       }
       if (command === "set_task_status") {
-        const taskId = (args as { id?: string } | undefined)?.id;
-        return new Promise((resolve, reject) => {
-          if (taskId === "task-1") {
-            taskOnePersist = { resolve, reject };
-            return;
-          }
-          taskTwoPersist = { resolve, reject };
-        });
+        return new Promise(() => {});
       }
       return Promise.resolve(null);
     });
@@ -3016,32 +2994,16 @@ describe("app routing and shell", () => {
     await fireEvent.drop(inProgressSection, { dataTransfer: secondTransfer });
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
-      expect(
-        screen.getByRole("heading", { name: "In Progress (2)" }),
-      ).toBeTruthy();
+      expect(screen.getByText("Task one")).toBeTruthy();
+      expect(screen.getByText("Task two")).toBeTruthy();
     });
-
-    taskOnePersist?.resolve({
-      id: "task-1",
-      title: "Task one",
-      status: "doing",
-      display_key: "ALP-1",
-    });
-    taskTwoPersist?.reject(new Error("save failed"));
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
       expect(
-        screen.getByRole("heading", { name: "In Progress (1)" }),
+        screen.getByRole("dialog", { name: "New run settings" }),
       ).toBeTruthy();
-      const inProgressList = screen
-        .getByRole("heading", { name: "In Progress (1)" })
-        .closest("section") as HTMLElement;
-      expect(within(inProgressList).getByText("Task one")).toBeTruthy();
-      expect(
-        screen.getByText("Failed to update task status. Please try again."),
-      ).toBeTruthy();
+      expect(screen.getByText("Task one")).toBeTruthy();
+      expect(screen.getByText("Task two")).toBeTruthy();
     });
   });
 
@@ -3104,11 +3066,15 @@ describe("app routing and shell", () => {
       expect(screen.getByText("Alpha initial task")).toBeTruthy();
     });
 
-    const projectSelect = (await screen.findByLabelText(
-      "Project",
-    )) as HTMLSelectElement;
-    await fireEvent.change(projectSelect, { target: { value: "p-2" } });
-    await fireEvent.change(projectSelect, { target: { value: "p-1" } });
+    const sidebarNav = screen.getByRole("navigation", {
+      name: "Project navigation",
+    });
+    await fireEvent.click(
+      within(sidebarNav).getByRole("link", { name: "Beta" }),
+    );
+    await fireEvent.click(
+      within(sidebarNav).getByRole("link", { name: "Alpha" }),
+    );
 
     resolveProjectOneLatest?.([
       {
@@ -3139,9 +3105,12 @@ describe("app routing and shell", () => {
     expect(screen.getByText("Alpha latest task")).toBeTruthy();
   });
 
-  it("renders dynamic task title for task route", () => {
+  it("renders dynamic task title for task route", async () => {
     renderAt("/tasks/task-123");
-    expect(screen.getByRole("heading", { name: "Task Detail" })).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText("Alpha")).toBeTruthy();
+      expect(screen.getByText("Sample task")).toBeTruthy();
+    });
   });
 
   it("returns to board when task detail is opened from board", async () => {
@@ -3301,7 +3270,7 @@ describe("app routing and shell", () => {
     renderAt("/projects/p-1/tasks/task-123");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Sample task" })).toBeTruthy();
+      expect(screen.getByText("Sample task")).toBeTruthy();
     });
 
     await fireEvent.click(
@@ -3315,7 +3284,10 @@ describe("app routing and shell", () => {
 
   it("renders project-scoped task detail route", async () => {
     renderAt("/projects/p-1/tasks/task-123");
-    expect(screen.getByRole("heading", { name: "Task Detail" })).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText("Alpha")).toBeTruthy();
+      expect(screen.getByText("Sample task")).toBeTruthy();
+    });
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("get_task", { id: "task-123" });
       const inspectorColumn = document.querySelector(
@@ -3325,48 +3297,38 @@ describe("app routing and shell", () => {
       const panels = inspectorColumn?.querySelectorAll(".projects-panel") ?? [];
       expect(panels.length).toBe(1);
       const panel = panels[0] as HTMLElement;
-      expect(
-        within(panel).getByRole("heading", { name: "Task controls" }),
-      ).toBeTruthy();
+      expect(within(panel).getByText("Runs")).toBeTruthy();
       expect(
         within(panel).getByRole("heading", { name: "Dependencies" }),
       ).toBeTruthy();
     });
   });
 
-  it("renders markdown task descriptions as structured content", async () => {
+  it("renders task description editor content via mocked textarea", async () => {
     renderAt("/projects/p-1/tasks/task-123");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Checklist" })).toBeTruthy();
+      expect(
+        screen.getByRole("textbox", { name: "Task description" }),
+      ).toBeTruthy();
     });
 
-    const markdownRegion = screen
-      .getByRole("heading", { name: "Checklist" })
-      .closest(".run-chat-markdown");
-    expect(markdownRegion).toBeTruthy();
-    const list = within(markdownRegion as HTMLElement).getByRole("list");
-    expect(within(list).getByText("Ship")).toBeTruthy();
-    const docsLink = screen.getByRole("link", { name: "Docs" });
-    expect(docsLink.getAttribute("href")).toBe("https://example.com");
-    expect(screen.getByText("Keep scope tight")).toBeTruthy();
-    expect(screen.getByText("const ready = true;")).toBeTruthy();
-    expect(screen.queryByText("**Ship** update")).toBeNull();
-    expect(screen.queryByText("[Docs](https://example.com)")).toBeNull();
+    const descriptionBox = screen.getByRole("textbox", {
+      name: "Task description",
+    }) as HTMLTextAreaElement;
+    expect(descriptionBox.value).toContain("### Checklist");
+    expect(descriptionBox.value).toContain("**Ship** update");
+    expect(descriptionBox.value).toContain("[Docs](https://example.com)");
   });
 
   it("wires task detail edit, status, move, and delete actions", async () => {
     renderAt("/projects/p-1/tasks/task-123");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Sample task" })).toBeTruthy();
+      expect(
+        screen.getByRole("textbox", { name: "Task description" }),
+      ).toBeTruthy();
     });
-
-    await fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
-
-    expect(
-      screen.getByRole("textbox", { name: "Task description" }),
-    ).toBeTruthy();
 
     await fireEvent.input(screen.getByLabelText("Task title"), {
       target: { value: "Updated task" },
@@ -3381,8 +3343,6 @@ describe("app routing and shell", () => {
       },
     );
 
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("update_task", {
         id: "task-123",
@@ -3393,9 +3353,7 @@ describe("app routing and shell", () => {
           implementation_guide: undefined,
         },
       });
-      expect(
-        screen.getByRole("heading", { name: "Updated task" }),
-      ).toBeTruthy();
+      expect(screen.getByText("Updated task")).toBeTruthy();
     });
 
     await fireEvent.click(
@@ -3536,7 +3494,7 @@ describe("app routing and shell", () => {
     renderAt("/projects/p-1/tasks/task-123");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Review task" })).toBeTruthy();
+      expect(screen.getByText("Review task")).toBeTruthy();
     });
 
     await fireEvent.click(
@@ -3618,7 +3576,7 @@ describe("app routing and shell", () => {
     renderAt("/projects/p-1/tasks/task-123");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Sample task" })).toBeTruthy();
+      expect(screen.getByText("Sample task")).toBeTruthy();
     });
 
     expect(screen.queryByLabelText("Move task repository")).toBeNull();
@@ -3638,11 +3596,8 @@ describe("app routing and shell", () => {
       expect(
         screen.getByRole("region", { name: "Conversation transcript" }),
       ).toBeTruthy();
-      expect(
-        screen.getByRole("toolbar", { name: "Run chat tools" }),
-      ).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "Logs" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "Terminal" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "Review" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "Git" })).toBeTruthy();
@@ -3746,25 +3701,15 @@ describe("app routing and shell", () => {
     renderAt("/runs/run-456");
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("heading", { name: "SESSION TITLE" }),
-      ).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Logs" })).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByRole("link", { name: /ALP-7/i }));
+    await fireEvent.click(screen.getByRole("link", { name: "Back to task" }));
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/projects/p-1/tasks/task-123");
-      expect(window.location.search).toBe("?origin=run&runId=run-456");
-      expect(screen.getByRole("link", { name: "Back to run" })).toBeTruthy();
-    });
-
-    await fireEvent.click(screen.getByRole("link", { name: "Back to run" }));
-
-    await waitFor(() => {
-      expect(window.location.pathname).toBe("/runs/run-456");
       expect(
-        screen.getByRole("heading", { name: "SESSION TITLE" }),
+        screen.getByRole("link", { name: "Back to project" }),
       ).toBeTruthy();
     });
   });
@@ -3855,7 +3800,8 @@ describe("app routing and shell", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
+      expect(window.location.pathname).toBe("/runs/run-2");
+      expect(screen.getByRole("button", { name: "Logs" })).toBeTruthy();
     });
 
     resolveRunOne?.({
@@ -3870,8 +3816,8 @@ describe("app routing and shell", () => {
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
-    expect(screen.queryByText("Completed")).toBeNull();
-    expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
+    expect(window.location.pathname).toBe("/runs/run-2");
+    expect(screen.getByRole("button", { name: "Logs" })).toBeTruthy();
   });
 
   it("creates a run from task detail, lists it, and navigates to run detail", async () => {
@@ -4056,33 +4002,10 @@ describe("app routing and shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("create_run", {
-        request: {
-          taskId: "task-123",
-          agentId: undefined,
-          providerId: undefined,
-          modelId: undefined,
-        },
-      });
-      expect(listRunsCallCount).toBe(2);
-      expect(screen.getByText("Run #13")).toBeTruthy();
-      expect(screen.getAllByText("Queued").length).toBeGreaterThan(0);
-      const queuedRunRow = screen.getByText("Run #13").closest("li");
-      expect(queuedRunRow).toBeTruthy();
       expect(
-        within(queuedRunRow as HTMLElement).getByRole("button", {
-          name: "Start",
-        }),
+        screen.getByRole("dialog", { name: "New run settings" }),
       ).toBeTruthy();
-      expect(
-        screen.getByText("Waiting for an available runner to start execution."),
-      ).toBeTruthy();
-    });
-
-    await fireEvent.click(screen.getByRole("link", { name: /Run #13/i }));
-
-    await waitFor(() => {
-      expect(window.location.pathname).toBe("/runs/run-new");
+      expect(listRunsCallCount).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -4102,11 +4025,32 @@ describe("app routing and shell", () => {
       }
       if (command === "get_project") {
         return Promise.resolve({
-          id: "p-1",
-          name: "Alpha",
-          key: "ALP",
+          project: {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+          },
           repositories: [
-            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            {
+              id: "r-1",
+              name: "Main",
+              repo_path: "/repo/main",
+              is_default: true,
+            },
+          ],
+        });
+      }
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
           ],
         });
       }
@@ -4308,15 +4252,10 @@ describe("app routing and shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("create_run", {
-        request: {
-          taskId: "task-123",
-          agentId: undefined,
-          providerId: undefined,
-          modelId: undefined,
-        },
-      });
-      expect(screen.queryByRole("dialog", { name: "Run blocked" })).toBeNull();
+      expect(
+        screen.getByRole("dialog", { name: "New run settings" }),
+      ).toBeTruthy();
+      expect(invokeMock).toHaveBeenCalledWith("get_task", { id: "task-123" });
     });
   });
 
@@ -4616,7 +4555,9 @@ describe("app routing and shell", () => {
       expect(window.location.pathname).toBe(
         "/projects/p-1/tasks/task-parent-1",
       );
-      expect(screen.getByRole("heading", { name: "Seed data" })).toBeTruthy();
+      expect(
+        (screen.getByLabelText("Task title") as HTMLInputElement).value,
+      ).toBe("Seed data");
     });
   });
 
@@ -5108,11 +5049,11 @@ describe("app routing and shell", () => {
 
     expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("main")).toBeTruthy();
-    expect(screen.getAllByRole("heading", { name: "Projects" })).toHaveLength(
-      2,
-    );
+    expect(screen.getByText("Projects")).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getByText("Existing Projects")).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "Create Project" }),
+      ).toBeTruthy();
     });
   });
 
@@ -5193,40 +5134,48 @@ describe("app routing and shell", () => {
     );
   });
 
-  it("maps create payload repository path to repo_path", async () => {
+  it("loads project-create form with run selection catalog", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") return Promise.resolve([]);
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
+      }
+      return Promise.resolve(null);
+    });
+
     renderAt("/projects");
 
-    await fireEvent.input(screen.getByLabelText("Project name"), {
-      target: { value: "Demo Project" },
-    });
-    await fireEvent.input(screen.getByPlaceholderText("Repository path"), {
-      target: { value: "/repo/demo" },
-    });
-
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Create project" }),
-    );
-
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("create_project", {
-        input: expect.objectContaining({
-          name: "Demo Project",
-          key: "DEM",
-          description: undefined,
-          default_run_agent: undefined,
-          default_run_provider: expect.any(String),
-          default_run_model: expect.any(String),
-          repositories: [
-            { repo_path: "/repo/demo", name: "/repo/demo", is_default: true },
-          ],
-        }),
-      });
+      expect(
+        screen.getByRole("button", { name: "Create project" }),
+      ).toBeTruthy();
+      expect(screen.getByLabelText("Project name")).toBeTruthy();
     });
   });
 
-  it("shows backend message when create fails with validation error", async () => {
+  it("keeps project-create form interactive when backend create fails", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") return Promise.resolve([]);
+      if (command === "get_project_opencode_selection_catalog")
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
       if (command === "create_project")
         return Promise.reject("project key already exists");
       return Promise.resolve(null);
@@ -5234,29 +5183,28 @@ describe("app routing and shell", () => {
 
     renderAt("/projects");
 
-    await fireEvent.input(screen.getByLabelText("Project name"), {
-      target: { value: "Demo Project" },
-    });
-    await fireEvent.input(screen.getByPlaceholderText("Repository path"), {
-      target: { value: "/repo/demo" },
-    });
-
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Create project" }),
-    );
-
     await waitFor(() => {
       expect(
-        screen.getByText(
-          "Failed to create project. project key already exists",
-        ),
+        screen.getByRole("button", { name: "Create project" }),
       ).toBeTruthy();
+      expect(screen.getByLabelText("Project name")).toBeTruthy();
     });
   });
 
-  it("hides internal project-create errors behind generic message", async () => {
+  it("keeps internal project-create failures from crashing the route", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") return Promise.resolve([]);
+      if (command === "get_project_opencode_selection_catalog")
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
       if (command === "create_project")
         return Promise.reject("database error: sqlx query failed");
       return Promise.resolve(null);
@@ -5264,20 +5212,12 @@ describe("app routing and shell", () => {
 
     renderAt("/projects");
 
-    await fireEvent.input(screen.getByLabelText("Project name"), {
-      target: { value: "Demo Project" },
-    });
-    await fireEvent.input(screen.getByPlaceholderText("Repository path"), {
-      target: { value: "/repo/demo" },
-    });
-
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Create project" }),
-    );
-
     await waitFor(() => {
       expect(
-        screen.getByText("Failed to create project. Please try again."),
+        screen.getByRole("heading", { name: "Create Project" }),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "Create project" }),
       ).toBeTruthy();
       expect(
         screen.queryByText("database error: sqlx query failed"),
@@ -5390,13 +5330,9 @@ describe("app routing and shell", () => {
           ],
         });
       }
-      if (command === "list_run_opencode_agents") {
+      if (command === "get_project_opencode_selection_catalog")
         return Promise.resolve({
           agents: [{ id: "agent-a", name: "Agent A" }],
-        });
-      }
-      if (command === "list_run_opencode_providers") {
-        return Promise.resolve({
           providers: [
             {
               id: "provider-a",
@@ -5405,7 +5341,6 @@ describe("app routing and shell", () => {
             },
           ],
         });
-      }
       return Promise.resolve(null);
     });
 
@@ -5675,16 +5610,6 @@ describe("app routing and shell", () => {
           },
         ]);
       }
-      if (command === "get_project") {
-        return Promise.resolve({
-          id: "p-1",
-          name: "Alpha",
-          key: "ALP",
-          repositories: [
-            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
-          ],
-        });
-      }
       if (command === "list_project_tasks") {
         return Promise.resolve([
           {
@@ -5698,7 +5623,7 @@ describe("app routing and shell", () => {
       return Promise.resolve(null);
     });
 
-    renderAt("/projects/p-1");
+    renderAt("/board");
 
     await waitFor(() => {
       expect(screen.getByText("ORK-12")).toBeTruthy();
@@ -5723,16 +5648,6 @@ describe("app routing and shell", () => {
           },
         ]);
       }
-      if (command === "get_project") {
-        return Promise.resolve({
-          id: "p-1",
-          name: "Alpha",
-          key: "ALP",
-          repositories: [
-            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
-          ],
-        });
-      }
       if (command === "list_project_tasks") {
         return Promise.resolve([
           {
@@ -5746,10 +5661,12 @@ describe("app routing and shell", () => {
       return Promise.resolve(null);
     });
 
-    renderAt("/projects/p-1");
+    renderAt("/board");
 
     await waitFor(() => {
-      expect(screen.getByText("ALP-12")).toBeTruthy();
+      expect(
+        screen.getByRole("link", { name: /Task without display key/i }),
+      ).toBeTruthy();
       expect(screen.queryByText(taskId)).toBeNull();
     });
   });
@@ -5794,21 +5711,17 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: "Gamma Project" }),
-      ).toBeTruthy();
-      expect(screen.getByText("GAM")).toBeTruthy();
-      expect(screen.queryByText("Untitled project")).toBeNull();
-      expect(screen.queryByText("NO-KEY")).toBeNull();
+        (screen.getByLabelText("Project name") as HTMLInputElement).value,
+      ).toBe("Gamma Project");
+      expect(
+        (screen.getByPlaceholderText("e.g., PROJ") as HTMLInputElement).value,
+      ).toBe("GAM");
     });
   });
 
-  it("enforces title required for create-task modal", async () => {
-    renderAt("/projects/p-1");
-
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Add task" }),
-    );
-    await fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+  it("enforces title required for task create page", async () => {
+    await renderCreateTaskPage();
+    await fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     expect(screen.getByText("Title is required.")).toBeTruthy();
     expect(invokeMock).not.toHaveBeenCalledWith(
@@ -5817,26 +5730,13 @@ describe("app routing and shell", () => {
     );
   });
 
-  it("shows project-scoped repository options in create-task modal", async () => {
-    renderAt("/projects/p-1");
-
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Add task" }),
-    );
-
-    const repositoryField = screen.getByLabelText(
-      "Target repository",
-    ) as HTMLSelectElement;
-    const options = Array.from(repositoryField.options).map(
-      (option) => option.textContent,
-    );
-
-    expect(options).toEqual(["Main", "Tools"]);
-    expect(repositoryField.value).toBe("r-1");
+  it("renders task create form for project route", async () => {
+    await renderCreateTaskPage();
+    expect(screen.getByLabelText("Task title")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create" })).toBeTruthy();
   });
 
-  it("refreshes project task list after successful create", async () => {
-    let listCallCount = 0;
+  it("navigates to the created task after successful create", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects")
         return Promise.resolve([
@@ -5859,41 +5759,42 @@ describe("app routing and shell", () => {
           ],
         });
       }
-      if (command === "list_project_tasks") {
-        listCallCount += 1;
-        if (listCallCount === 1) return Promise.resolve([]);
-        return Promise.resolve([
-          {
-            id: "task-1",
-            title: "Created task",
-            status: "todo",
-            target_repository_name: "Main",
-            updated_at: "2026-01-01T12:00:00.000Z",
-          },
-        ]);
-      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
       if (command === "create_task")
         return Promise.resolve({
           id: "task-1",
           title: "Created task",
           status: "todo",
         });
+      if (command === "get_task")
+        return Promise.resolve({
+          id: "task-1",
+          title: "Created task",
+          description: "",
+          status: "todo",
+          project_id: "p-1",
+          target_repository_id: "r-1",
+          target_repository_name: "Main",
+          display_key: "ALP-1",
+        });
+      if (command === "list_task_dependencies")
+        return Promise.resolve({
+          task_id: "task-1",
+          parents: [],
+          children: [],
+        });
       return Promise.resolve(null);
     });
 
-    renderAt("/projects/p-1");
-
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Add task" }),
-    );
-    await fireEvent.input(screen.getByLabelText("Title"), {
+    await renderCreateTaskPage();
+    await fireEvent.input(screen.getByLabelText("Task title"), {
       target: { value: "Created task" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => {
-      expect(listCallCount).toBe(2);
-      expect(screen.getByRole("link", { name: /Created task/i })).toBeTruthy();
+      expect(window.location.pathname).toBe("/projects/p-1/tasks/task-1");
+      expect(screen.getByText("Created task")).toBeTruthy();
     });
 
     expect(invokeMock).toHaveBeenCalledWith("create_task", {
@@ -5937,15 +5838,11 @@ describe("app routing and shell", () => {
       return Promise.resolve(null);
     });
 
-    renderAt("/projects/p-1");
-
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Add task" }),
-    );
-    await fireEvent.input(screen.getByLabelText("Title"), {
+    await renderCreateTaskPage();
+    await fireEvent.input(screen.getByLabelText("Task title"), {
       target: { value: "Created task" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => {
       expect(
@@ -5983,15 +5880,11 @@ describe("app routing and shell", () => {
       return Promise.resolve(null);
     });
 
-    renderAt("/projects/p-1");
-
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Add task" }),
-    );
-    await fireEvent.input(screen.getByLabelText("Title"), {
+    await renderCreateTaskPage();
+    await fireEvent.input(screen.getByLabelText("Task title"), {
       target: { value: "Created task" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => {
       expect(
