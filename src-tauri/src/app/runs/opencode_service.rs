@@ -570,6 +570,7 @@ pub struct RunsOpenCodeService {
     dependency_check_lock: Arc<tokio::sync::Mutex<()>>,
     handle_generation: Arc<AtomicU64>,
     cleanup_supervisor_started: Arc<std::sync::atomic::AtomicBool>,
+    shutdown_started: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl std::fmt::Debug for RunsOpenCodeService {
@@ -2188,7 +2189,40 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             dependency_check_lock: Arc::new(tokio::sync::Mutex::new(())),
             handle_generation: Arc::new(AtomicU64::new(1)),
             cleanup_supervisor_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shutdown_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    fn shutdown_in_progress_conflict() -> AppError {
+        AppError::conflict("OpenCode service is shutting down and cannot accept new work")
+    }
+
+    fn mark_app_shutdown_started(&self) -> bool {
+        !self.shutdown_started.swap(true, Ordering::SeqCst)
+    }
+
+    fn is_app_shutdown_started(&self) -> bool {
+        self.shutdown_started.load(Ordering::SeqCst)
+    }
+
+    async fn ensure_service_accepting_new_work(&self) -> Result<(), AppError> {
+        if self.is_app_shutdown_started() {
+            return Err(Self::shutdown_in_progress_conflict());
+        }
+
+        Ok(())
+    }
+
+    async fn ensure_runtime_registration_allowed(&self, run_id: &str) -> Result<(), AppError> {
+        self.ensure_service_accepting_new_work().await?;
+
+        if self.is_shutdown_requested(run_id).await {
+            return Err(AppError::conflict(
+                "OpenCode run runtime shutdown is in progress",
+            ));
+        }
+
+        Ok(())
     }
 
     fn is_terminal_run_status(status: &str) -> bool {
@@ -2324,6 +2358,16 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
     }
 
     async fn run_cleanup_pass(&self) -> Result<(), AppError> {
+        if self.is_app_shutdown_started() {
+            info!(
+                target: "opencode.runtime",
+                marker = "cleanup_pass_skipped",
+                reason = "app_shutdown",
+                "OpenCode cleanup supervisor pass skipped during app shutdown"
+            );
+            return Ok(());
+        }
+
         let handles: Vec<(String, Arc<RunOpenCodeHandle>)> = self
             .handles
             .read()
@@ -2753,6 +2797,86 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 
     async fn is_shutdown_requested(&self, run_id: &str) -> bool {
         self.shutdown_requests.read().await.contains(run_id)
+    }
+
+    pub async fn stop_all_opencode_servers(&self, reason: Option<&str>) {
+        let reason = reason
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .unwrap_or("app_shutdown")
+            .to_string();
+        let shutdown_started_now = self.mark_app_shutdown_started();
+        let handles: Vec<String> = self.handles.read().await.keys().cloned().collect();
+        let summary = self.summarize_tracked_handles().await;
+        let mut shutdown_succeeded_count = 0usize;
+        let mut shutdown_failed_count = 0usize;
+
+        info!(
+            target: "opencode.runtime",
+            marker = "app_shutdown_detected",
+            reason = reason.as_str(),
+            first_invocation = shutdown_started_now,
+            handle_count = handles.len(),
+            active_handles = summary.active_handles,
+            shutting_down_handles = summary.shutting_down_handles,
+            shutdown_requested_handles = summary.shutdown_requested_handles,
+            "OpenCode app shutdown detected"
+        );
+
+        self.log_handle_inventory("shutdown_inventory", "app_shutdown_started")
+            .await;
+
+        for run_id in handles {
+            info!(
+                target: "opencode.runtime",
+                marker = "app_shutdown_handle_requested",
+                run_id = run_id.as_str(),
+                reason = reason.as_str(),
+                "OpenCode app shutdown requested for runtime"
+            );
+
+            match self
+                .stop_run_opencode_internal(&run_id, reason.as_str(), true, false)
+                .await
+            {
+                Ok(_) => {
+                    shutdown_succeeded_count += 1;
+                    info!(
+                        target: "opencode.runtime",
+                        marker = "app_shutdown_handle_succeeded",
+                        run_id = run_id.as_str(),
+                        reason = reason.as_str(),
+                        "OpenCode app shutdown completed for runtime"
+                    );
+                }
+                Err(err) => {
+                    shutdown_failed_count += 1;
+                    warn!(
+                        target: "opencode.runtime",
+                        marker = "app_shutdown_handle_failed",
+                        run_id = run_id.as_str(),
+                        reason = reason.as_str(),
+                        error = %err,
+                        "OpenCode app shutdown failed for runtime"
+                    );
+                }
+            }
+        }
+
+        let ending_summary = self.summarize_tracked_handles().await;
+        info!(
+            target: "opencode.runtime",
+            marker = "app_shutdown_summary",
+            reason = reason.as_str(),
+            first_invocation = shutdown_started_now,
+            tracked_at_start = summary.total_handles,
+            remaining_handles = ending_summary.total_handles,
+            shutdown_succeeded_count = shutdown_succeeded_count,
+            shutdown_failed_count = shutdown_failed_count,
+            "OpenCode app shutdown summary completed"
+        );
+        self.log_handle_inventory("shutdown_inventory", "app_shutdown_completed")
+            .await;
     }
 
     async fn remove_run_handle(&self, run_id: &str) -> (Option<Arc<RunOpenCodeHandle>>, bool) {
@@ -3278,6 +3402,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         &self,
         run_id: &str,
     ) -> Result<EnsureRunOpenCodeResponse, AppError> {
+        self.ensure_service_accepting_new_work().await?;
+
         let ensure_start = Instant::now();
         let dependency_status = self.get_opencode_dependency_status(false).await?;
         if dependency_status.state == "missing" {
@@ -3343,11 +3469,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         let init_lock = self.get_or_create_init_lock(&run.id).await;
         let _guard = init_lock.lock().await;
 
-        if self.is_shutdown_requested(&run.id).await {
-            return Err(AppError::conflict(
-                "OpenCode run runtime shutdown is in progress",
-            ));
-        }
+        self.ensure_runtime_registration_allowed(&run.id).await?;
 
         if self.handles.read().await.contains_key(&run.id) {
             if let Some(handle) = self.handles.read().await.get(&run.id).cloned() {
@@ -3500,18 +3622,21 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         let buffered_events = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_BUFFERED_EVENTS)));
         let generation = self.handle_generation.fetch_add(1, Ordering::Relaxed);
 
-        if self.is_shutdown_requested(&run.id).await {
+        if let Err(err) = self.ensure_runtime_registration_allowed(&run.id).await {
+            let reason = if self.is_app_shutdown_started() {
+                "app_shutdown"
+            } else {
+                "shutdown_requested"
+            };
             info!(
                 target: "opencode.runtime",
                 marker = "ensure_cancelled",
                 run_id = run.id.as_str(),
-                reason = "shutdown_requested",
+                reason = reason,
                 "OpenCode runtime creation cancelled before registration"
             );
             self.init_locks.write().await.remove(&run.id);
-            return Err(AppError::conflict(
-                "OpenCode run runtime shutdown is in progress",
-            ));
+            return Err(err);
         }
 
         let handle = Arc::new(RunOpenCodeHandle {
@@ -3599,6 +3724,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         provider_id: Option<String>,
         model_id: Option<String>,
     ) -> Result<SubmitRunOpenCodePromptResponse, AppError> {
+        self.ensure_service_accepting_new_work().await?;
+
         let submit_start = Instant::now();
         let run_id = run_id.trim();
         if run_id.is_empty() {
@@ -3792,6 +3919,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         decision: &str,
         remember: bool,
     ) -> Result<ReplyRunOpenCodePermissionResponse, AppError> {
+        self.ensure_service_accepting_new_work().await?;
+
         let run_id = run_id.trim();
         if run_id.is_empty() {
             return Err(AppError::validation("run_id is required"));
@@ -4007,6 +4136,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         &self,
         run_id: &str,
     ) -> Result<StartRunOpenCodeResponse, AppError> {
+        self.ensure_service_accepting_new_work().await?;
+
         let run_id = run_id.trim();
         if run_id.is_empty() {
             return Err(AppError::validation("run_id is required"));
@@ -6618,6 +6749,71 @@ mod tests {
             .contains("no longer eligible for cleanup shutdown"));
         assert!(!opencode_service.is_shutdown_requested("run-1").await);
         assert!(opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn stop_all_opencode_servers_stops_all_handles_and_is_idempotent() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "idle").await;
+        seed_run(&pool, "run-2", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+        insert_running_handle(&opencode_service, "run-2", "task-1", &repo_path, None).await;
+
+        opencode_service
+            .stop_all_opencode_servers(Some("app_shutdown"))
+            .await;
+        opencode_service
+            .stop_all_opencode_servers(Some("app_shutdown"))
+            .await;
+
+        assert!(opencode_service.is_app_shutdown_started());
+        assert!(opencode_service.handles.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ensure_run_opencode_rejects_new_server_start_after_app_shutdown_begins() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "queued").await;
+
+        opencode_service
+            .stop_all_opencode_servers(Some("app_shutdown"))
+            .await;
+
+        let err = opencode_service
+            .ensure_run_opencode("run-1")
+            .await
+            .expect_err("ensure should reject new work during app shutdown");
+
+        assert!(err
+            .to_string()
+            .contains("OpenCode service is shutting down"));
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn ensure_runtime_registration_allowed_rejects_after_app_shutdown_starts() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "queued").await;
+
+        opencode_service.mark_app_shutdown_started();
+
+        let err = opencode_service
+            .ensure_runtime_registration_allowed("run-1")
+            .await
+            .expect_err("registration guard should reject once app shutdown starts");
+
+        assert!(err
+            .to_string()
+            .contains("OpenCode service is shutting down"));
     }
 
     #[tokio::test]

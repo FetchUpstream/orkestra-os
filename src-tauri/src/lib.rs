@@ -2,11 +2,12 @@ mod app;
 
 use tauri::Emitter;
 use tauri::Manager;
+use tauri::RunEvent;
 use tracing::warn;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             let startup_paths = app::bootstrap::paths::resolve_startup_paths(app.handle())?;
             app::bootstrap::logging::init(&startup_paths.log_dir);
@@ -107,6 +108,20 @@ pub fn run() {
             app::commands::tasks::add_task_dependency,
             app::commands::tasks::remove_task_dependency,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if matches!(event, RunEvent::ExitRequested { .. }) {
+            let service = app_handle
+                .state::<app::state::AppState>()
+                .runs_opencode_service
+                .clone();
+            tauri::async_runtime::block_on(async move {
+                service
+                    .stop_all_opencode_servers(Some("app_shutdown"))
+                    .await;
+            });
+        }
+    });
 }
