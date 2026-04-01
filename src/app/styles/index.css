@@ -5077,6 +5077,7 @@ textarea::placeholder {
   display: grid;
   gap: 10px;
   margin-top: 10px;
+  min-width: 0;
 }
 
 .run-chat-tool-rail__item--task {
@@ -5105,8 +5106,13 @@ textarea::placeholder {
 }
 
 .run-chat-tool-rail__subagent-panel {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.035);
+  overflow: hidden;
 }
 
 .run-chat-tool-rail__subagent-panel--running {
@@ -5141,11 +5147,13 @@ textarea::placeholder {
   display: grid;
   gap: 10px;
   padding: 12px;
+  min-width: 0;
 }
 
 .run-chat-tool-rail__subagent-message {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .run-chat-tool-rail__subagent-status-row {
@@ -5156,7 +5164,29 @@ textarea::placeholder {
 
 .run-chat-tool-rail__subagent-markdown,
 .run-chat-tool-rail__subagent-reasoning {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.run-chat-tool-rail__subagent-markdown .run-chat-markdown,
+.run-chat-tool-rail__subagent-reasoning .run-chat-markdown {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.run-chat-tool-rail__subagent-markdown
+  .run-chat-markdown
+  :is(p, li, blockquote, td, th, code, a),
+.run-chat-tool-rail__subagent-reasoning
+  .run-chat-markdown
+  :is(p, li, blockquote, td, th, code, a) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .run-chat-tool-rail__subagent-tools {
@@ -5172,10 +5202,17 @@ textarea::placeholder {
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
   padding: 8px 10px;
   background: rgba(255, 255, 255, 0.025);
   color: var(--text-subtle);
   font-size: 0.76rem;
+}
+
+.run-chat-tool-rail__subagent-tool > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .run-chat-tool-rail__meta,
