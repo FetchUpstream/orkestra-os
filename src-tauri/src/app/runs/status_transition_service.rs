@@ -247,7 +247,7 @@ impl RunStatusTransitionService {
         let changed = match next_status {
             "in_progress" => self
                 .runs_repository
-                .transition_run_to_in_progress(run_id, &timestamp)
+                .transition_run_to_in_progress_and_mark_task_doing(run_id, &timestamp)
                 .await?,
             "idle" => self
                 .runs_repository
