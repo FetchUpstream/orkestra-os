@@ -5,7 +5,8 @@ use crate::app::runs::dto::{
     RawAgentEvent, ReplyRunOpenCodePermissionResponse, RunAgentDto, RunAgentsResponseDto, RunDto,
     RunModelSelectionDto, RunOpenCodeChatModeDto, RunOpenCodeSessionMessageDto,
     RunOpenCodeSessionTodoDto, RunProviderDto, RunProvidersResponseDto,
-    RunSelectionCatalogResponseDto, StartRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
+    RunSelectionCatalogResponseDto, StartRunOpenCodeResponse, StopRunOpenCodeResponse,
+    SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::run_state_service::RunStateService;
 use crate::app::runs::service::RunsService;
@@ -562,6 +563,7 @@ pub struct RunsOpenCodeService {
     worktrees_root: PathBuf,
     handles: Arc<RwLock<HashMap<String, Arc<RunOpenCodeHandle>>>>,
     init_locks: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    shutdown_requests: Arc<RwLock<HashSet<String>>>,
     dependency_status: Arc<RwLock<Option<OpenCodeDependencyStatusDto>>>,
     dependency_check_lock: Arc<tokio::sync::Mutex<()>>,
     handle_generation: Arc<AtomicU64>,
@@ -579,6 +581,7 @@ struct RunOpenCodeHandle {
     generation: u64,
     _server: Arc<tokio::sync::Mutex<OpencodeServer>>,
     client: OpencodeClient,
+    lifecycle: Arc<Mutex<RunOpenCodeLifecycle>>,
     session_id: Arc<Mutex<Option<String>>>,
     session_init_lock: tokio::sync::Mutex<()>,
     subscribers: Arc<Mutex<HashMap<String, Channel<RawAgentEvent>>>>,
@@ -586,8 +589,102 @@ struct RunOpenCodeHandle {
     subscriber_generation: AtomicU64,
     subscriber_lifecycle_lock: tokio::sync::Mutex<()>,
     event_tx: tokio::sync::broadcast::Sender<RawAgentEvent>,
+    event_stream_task: Arc<tokio::sync::Mutex<Option<JoinHandle<()>>>>,
     buffered_events: Arc<Mutex<VecDeque<RawAgentEvent>>>,
     session_runtime_state: Arc<Mutex<SessionRuntimeState>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunOpenCodeLifecycleState {
+    Active,
+    ShuttingDown,
+    Stopped,
+}
+
+#[derive(Clone, Debug)]
+struct RunOpenCodeLifecycle {
+    run_id: String,
+    run_status: Option<String>,
+    is_read_only: bool,
+    created_at: String,
+    last_interaction_at: String,
+    last_main_session_activity_at: Option<String>,
+    shutdown_requested: bool,
+    shutdown_reason: Option<String>,
+    event_stream_task_registered: bool,
+    state: RunOpenCodeLifecycleState,
+}
+
+impl RunOpenCodeHandle {
+    fn sync_run_metadata(&self, run: &RunDto) -> Result<(), AppError> {
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        lifecycle.run_status = Some(run.status.clone());
+        lifecycle.is_read_only = matches!(run.status.as_str(), "complete" | "cancelled" | "failed");
+        Ok(())
+    }
+
+    fn lifecycle_state(&self) -> Result<RunOpenCodeLifecycleState, AppError> {
+        let lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        Ok(lifecycle.state)
+    }
+
+    fn touch_interaction(&self) -> Result<(), AppError> {
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        lifecycle.last_interaction_at = Utc::now().to_rfc3339();
+        Ok(())
+    }
+
+    fn touch_main_session_activity(&self) -> Result<(), AppError> {
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        let now = Utc::now().to_rfc3339();
+        lifecycle.last_interaction_at = now.clone();
+        lifecycle.last_main_session_activity_at = Some(now);
+        Ok(())
+    }
+
+    fn register_event_stream_task(&self) -> Result<(), AppError> {
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        lifecycle.event_stream_task_registered = true;
+        Ok(())
+    }
+
+    fn request_shutdown(&self, reason: &str) -> Result<(), AppError> {
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        lifecycle.shutdown_requested = true;
+        lifecycle.shutdown_reason = Some(reason.to_string());
+        lifecycle.state = RunOpenCodeLifecycleState::ShuttingDown;
+        lifecycle.last_interaction_at = Utc::now().to_rfc3339();
+        Ok(())
+    }
+
+    fn mark_stopped(&self) -> Result<(), AppError> {
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        lifecycle.state = RunOpenCodeLifecycleState::Stopped;
+        lifecycle.last_interaction_at = Utc::now().to_rfc3339();
+        lifecycle.event_stream_task_registered = false;
+        Ok(())
+    }
 }
 
 struct SubscriberTaskEntry {
@@ -1400,7 +1497,9 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         AppError,
     > {
         if let Some(handle) = self.handles.read().await.get(run_id).cloned() {
+            handle.touch_interaction()?;
             let run = self.runs_service.get_run(run_id).await?;
+            handle.sync_run_metadata(&run)?;
             if let Some(reason) = Self::unsupported_reason_for_run_status(run.status.as_str()) {
                 return Ok((
                     EnsureRunOpenCodeResponse {
@@ -1409,6 +1508,12 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     },
                     None,
                     "unsupported",
+                ));
+            }
+
+            if handle.lifecycle_state()? != RunOpenCodeLifecycleState::Active {
+                return Err(AppError::conflict(
+                    "OpenCode run runtime is shutting down and cannot accept new work",
                 ));
             }
 
@@ -1461,6 +1566,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let create_start = Instant::now();
+        handle.touch_interaction()?;
         let created = handle
             .client
             .session()
@@ -1573,10 +1679,189 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             worktrees_root: app_data_dir.join("worktrees"),
             handles: Arc::new(RwLock::new(HashMap::new())),
             init_locks: Arc::new(RwLock::new(HashMap::new())),
+            shutdown_requests: Arc::new(RwLock::new(HashSet::new())),
             dependency_status: Arc::new(RwLock::new(None)),
             dependency_check_lock: Arc::new(tokio::sync::Mutex::new(())),
             handle_generation: Arc::new(AtomicU64::new(1)),
         }
+    }
+
+    fn build_run_lifecycle(run: &RunDto) -> RunOpenCodeLifecycle {
+        let now = Utc::now().to_rfc3339();
+        RunOpenCodeLifecycle {
+            run_id: run.id.clone(),
+            run_status: Some(run.status.clone()),
+            is_read_only: matches!(run.status.as_str(), "complete" | "cancelled" | "failed"),
+            created_at: now.clone(),
+            last_interaction_at: now,
+            last_main_session_activity_at: None,
+            shutdown_requested: false,
+            shutdown_reason: None,
+            event_stream_task_registered: false,
+            state: RunOpenCodeLifecycleState::Active,
+        }
+    }
+
+    async fn mark_shutdown_requested(&self, run_id: &str) {
+        self.shutdown_requests
+            .write()
+            .await
+            .insert(run_id.to_string());
+    }
+
+    async fn clear_shutdown_requested(&self, run_id: &str) {
+        self.shutdown_requests.write().await.remove(run_id);
+    }
+
+    async fn is_shutdown_requested(&self, run_id: &str) -> bool {
+        self.shutdown_requests.read().await.contains(run_id)
+    }
+
+    async fn remove_run_handle(&self, run_id: &str) -> (Option<Arc<RunOpenCodeHandle>>, bool) {
+        let handle = self.handles.write().await.remove(run_id);
+        let init_lock_removed = self.init_locks.write().await.remove(run_id).is_some();
+        (handle, init_lock_removed)
+    }
+
+    async fn abort_event_stream_task(&self, run_id: &str, handle: &RunOpenCodeHandle) -> bool {
+        let event_stream_task = handle.event_stream_task.lock().await.take();
+        if let Some(task) = event_stream_task {
+            task.abort();
+            info!(
+                target: "opencode.runtime",
+                marker = "shutdown_event_stream_aborted",
+                run_id = run_id,
+                "OpenCode event stream task aborted"
+            );
+            true
+        } else {
+            false
+        }
+    }
+
+    fn abort_subscriber_tasks(
+        &self,
+        run_id: &str,
+        handle: &RunOpenCodeHandle,
+    ) -> Result<usize, AppError> {
+        let mut subscriber_tasks = handle
+            .subscriber_tasks
+            .lock()
+            .map_err(|_| lock_error("OpenCode subscriber tasks"))?;
+        let task_count = subscriber_tasks.len();
+        for (_, entry) in subscriber_tasks.drain() {
+            entry.handle.abort();
+        }
+
+        handle
+            .subscribers
+            .lock()
+            .map_err(|_| lock_error("OpenCode subscribers"))?
+            .clear();
+
+        info!(
+            target: "opencode.runtime",
+            marker = "shutdown_subscribers_aborted",
+            run_id = run_id,
+            subscriber_task_count = task_count,
+            "OpenCode subscriber tasks aborted"
+        );
+
+        Ok(task_count)
+    }
+
+    async fn stop_run_opencode_internal(
+        &self,
+        run_id: &str,
+        reason: &str,
+        abort_event_stream_task: bool,
+    ) -> Result<StopRunOpenCodeResponse, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let reason = reason.trim();
+        let reason = if reason.is_empty() {
+            "shutdown_requested"
+        } else {
+            reason
+        };
+
+        self.mark_shutdown_requested(run_id).await;
+        info!(
+            target: "opencode.runtime",
+            marker = "shutdown_requested",
+            run_id = run_id,
+            reason = reason,
+            "OpenCode runtime shutdown requested"
+        );
+
+        let stopped_at = Utc::now().to_rfc3339();
+        let (handle, init_lock_removed) = self.remove_run_handle(run_id).await;
+
+        let response = if let Some(handle) = handle {
+            handle.request_shutdown(reason)?;
+
+            if abort_event_stream_task {
+                self.abort_event_stream_task(run_id, &handle).await;
+            }
+
+            let _subscriber_count = self.abort_subscriber_tasks(run_id, &handle)?;
+            handle.mark_stopped()?;
+
+            info!(
+                target: "opencode.runtime",
+                marker = "shutdown_handle_removed",
+                run_id = run_id,
+                reason = reason,
+                init_lock_removed = init_lock_removed,
+                "OpenCode runtime handle removed"
+            );
+
+            drop(handle);
+
+            info!(
+                target: "opencode.runtime",
+                marker = "shutdown_complete",
+                run_id = run_id,
+                reason = reason,
+                "OpenCode runtime teardown completed"
+            );
+
+            StopRunOpenCodeResponse {
+                state: "stopped".to_string(),
+                reason: Some(reason.to_string()),
+                stopped_at,
+            }
+        } else {
+            info!(
+                target: "opencode.runtime",
+                marker = "shutdown_noop",
+                run_id = run_id,
+                reason = reason,
+                init_lock_removed = init_lock_removed,
+                "OpenCode runtime shutdown found no active handle"
+            );
+
+            StopRunOpenCodeResponse {
+                state: "stopped".to_string(),
+                reason: Some(reason.to_string()),
+                stopped_at,
+            }
+        };
+
+        self.clear_shutdown_requested(run_id).await;
+        Ok(response)
+    }
+
+    pub async fn stop_run_opencode(
+        &self,
+        run_id: &str,
+        reason: Option<&str>,
+    ) -> Result<StopRunOpenCodeResponse, AppError> {
+        self.stop_run_opencode_internal(run_id, reason.unwrap_or("shutdown_requested"), true)
+            .await
     }
 
     fn missing_dependency_reason() -> String {
@@ -1934,6 +2219,15 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         if self.handles.read().await.contains_key(&run.id) {
+            if let Some(handle) = self.handles.read().await.get(&run.id).cloned() {
+                handle.sync_run_metadata(&run)?;
+                handle.touch_interaction()?;
+                if handle.lifecycle_state()? != RunOpenCodeLifecycleState::Active {
+                    return Err(AppError::conflict(
+                        "OpenCode run runtime is shutting down and cannot accept new work",
+                    ));
+                }
+            }
             let response = EnsureRunOpenCodeResponse {
                 state: "running".to_string(),
                 reason: None,
@@ -1953,7 +2247,22 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         let init_lock = self.get_or_create_init_lock(&run.id).await;
         let _guard = init_lock.lock().await;
 
+        if self.is_shutdown_requested(&run.id).await {
+            return Err(AppError::conflict(
+                "OpenCode run runtime shutdown is in progress",
+            ));
+        }
+
         if self.handles.read().await.contains_key(&run.id) {
+            if let Some(handle) = self.handles.read().await.get(&run.id).cloned() {
+                handle.sync_run_metadata(&run)?;
+                handle.touch_interaction()?;
+                if handle.lifecycle_state()? != RunOpenCodeLifecycleState::Active {
+                    return Err(AppError::conflict(
+                        "OpenCode run runtime is shutting down and cannot accept new work",
+                    ));
+                }
+            }
             let response = EnsureRunOpenCodeResponse {
                 state: "running".to_string(),
                 reason: None,
@@ -2094,10 +2403,26 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         let subscriber_tasks = Arc::new(Mutex::new(HashMap::new()));
         let buffered_events = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_BUFFERED_EVENTS)));
         let generation = self.handle_generation.fetch_add(1, Ordering::Relaxed);
+
+        if self.is_shutdown_requested(&run.id).await {
+            info!(
+                target: "opencode.runtime",
+                marker = "ensure_cancelled",
+                run_id = run.id.as_str(),
+                reason = "shutdown_requested",
+                "OpenCode runtime creation cancelled before registration"
+            );
+            self.init_locks.write().await.remove(&run.id);
+            return Err(AppError::conflict(
+                "OpenCode run runtime shutdown is in progress",
+            ));
+        }
+
         let handle = Arc::new(RunOpenCodeHandle {
             generation,
             _server: Arc::new(tokio::sync::Mutex::new(server)),
             client: client.clone(),
+            lifecycle: Arc::new(Mutex::new(Self::build_run_lifecycle(&run))),
             session_id: Arc::new(Mutex::new(None)),
             session_init_lock: tokio::sync::Mutex::new(()),
             subscribers: subscribers.clone(),
@@ -2105,16 +2430,33 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             subscriber_generation: AtomicU64::new(1),
             subscriber_lifecycle_lock: tokio::sync::Mutex::new(()),
             event_tx: event_tx.clone(),
+            event_stream_task: Arc::new(tokio::sync::Mutex::new(None)),
             buffered_events: buffered_events.clone(),
             session_runtime_state: Arc::new(Mutex::new(SessionRuntimeState::default())),
         });
+
+        info!(
+            target: "opencode.runtime",
+            marker = "server_created",
+            run_id = run.id.as_str(),
+            generation = generation,
+            "OpenCode runtime server created"
+        );
 
         self.handles
             .write()
             .await
             .insert(run.id.clone(), handle.clone());
 
-        self.spawn_event_stream(
+        info!(
+            target: "opencode.runtime",
+            marker = "server_registered",
+            run_id = run.id.as_str(),
+            generation = generation,
+            "OpenCode runtime lifecycle registered"
+        );
+
+        let event_stream_task = self.spawn_event_stream(
             run.id.clone(),
             generation,
             client,
@@ -2122,6 +2464,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             buffered_events,
             handle.session_runtime_state.clone(),
         );
+        handle.register_event_stream_task()?;
+        *handle.event_stream_task.lock().await = Some(event_stream_task);
 
         if matches!(run.status.as_str(), "queued" | "preparing") {
             let _ = self
@@ -2274,6 +2618,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }));
 
         {
+            handle.touch_main_session_activity()?;
             let mut runtime_state = handle
                 .session_runtime_state
                 .lock()
@@ -2412,6 +2757,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        handle.touch_main_session_activity()?;
 
         {
             let in_memory_session_id = handle
@@ -2680,6 +3026,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        handle.touch_interaction()?;
 
         let request = RequestOptions::default().with_path("id", session_id);
         let response = handle
@@ -2719,6 +3066,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        handle.touch_interaction()?;
 
         let request = RequestOptions::default().with_path("id", session_id);
         let response = handle
@@ -2885,6 +3233,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             .get(run_id)
             .cloned()
             .ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        handle.touch_interaction()?;
 
         let buffered = handle
             .buffered_events
@@ -2973,6 +3322,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        handle.touch_interaction()?;
         let buffered_events = {
             let buffered = handle
                 .buffered_events
@@ -3071,14 +3421,30 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         event_tx: tokio::sync::broadcast::Sender<RawAgentEvent>,
         buffered_events: Arc<Mutex<VecDeque<RawAgentEvent>>>,
         session_runtime_state: Arc<Mutex<SessionRuntimeState>>,
-    ) {
+    ) -> JoinHandle<()> {
         let handles = self.handles.clone();
-        let init_locks = self.init_locks.clone();
         let runs_opencode_service = self.clone();
         tauri::async_runtime::spawn(async move {
             let mut reconnect_attempt: u32 = 0;
 
             loop {
+                let should_stop = match handles.read().await.get(&run_id).cloned() {
+                    Some(handle) if handle.generation == generation => {
+                        handle.lifecycle_state().ok() != Some(RunOpenCodeLifecycleState::Active)
+                    }
+                    _ => true,
+                };
+                if should_stop {
+                    info!(
+                        target: "opencode.runtime",
+                        marker = "stream_stop_requested",
+                        run_id = run_id.as_str(),
+                        generation = generation,
+                        "OpenCode event stream exiting due to lifecycle shutdown"
+                    );
+                    break;
+                }
+
                 let mut stream = match client.event().subscribe(RequestOptions::default()).await {
                     Ok(stream) => {
                         if reconnect_attempt > 0 {
@@ -3132,7 +3498,14 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                                 })
                                 .to_string(),
                             );
-                            break;
+                            let _ = runs_opencode_service
+                                .stop_run_opencode_internal(
+                                    &run_id,
+                                    "stream_reconnect_exhausted",
+                                    false,
+                                )
+                                .await;
+                            return;
                         }
 
                         let backoff_ms = (STREAM_RECONNECT_BASE_DELAY_MS
@@ -3226,7 +3599,10 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                         })
                         .to_string(),
                     );
-                    break;
+                    let _ = runs_opencode_service
+                        .stop_run_opencode_internal(&run_id, "stream_reconnect_exhausted", false)
+                        .await;
+                    return;
                 }
 
                 let backoff_ms = (STREAM_RECONNECT_BASE_DELAY_MS
@@ -3247,17 +3623,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 
                 sleep(Duration::from_millis(backoff_ms)).await;
             }
-
-            let mut handles_guard = handles.write().await;
-            let should_remove = handles_guard
-                .get(&run_id)
-                .map(|current| current.generation == generation)
-                .unwrap_or(false);
-            if should_remove {
-                handles_guard.remove(&run_id);
-                init_locks.write().await.remove(&run_id);
-            }
-        });
+        })
     }
 
     fn resolve_worktree_path(&self, run: &RunDto) -> Result<PathBuf, AppError> {
@@ -3421,6 +3787,84 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    async fn insert_running_handle(
+        opencode_service: &RunsOpenCodeService,
+        run_id: &str,
+        task_id: &str,
+        repo_path: &Path,
+        client_base_url: Option<String>,
+    ) {
+        let server = create_opencode_server(Some(OpencodeServerOptions {
+            cwd: Some(repo_path.to_path_buf()),
+            port: 0,
+            config: Some(serde_json::json!({})),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+
+        let client = create_opencode_client(Some(OpencodeClientConfig {
+            base_url: client_base_url.unwrap_or_else(|| server.url.clone()),
+            directory: Some(repo_path.to_string_lossy().to_string()),
+            ..Default::default()
+        }))
+        .unwrap();
+
+        let (event_tx, _rx) = tokio::sync::broadcast::channel(8);
+        let handle = Arc::new(super::RunOpenCodeHandle {
+            generation: 1,
+            _server: Arc::new(tokio::sync::Mutex::new(server)),
+            client,
+            lifecycle: Arc::new(Mutex::new(super::RunsOpenCodeService::build_run_lifecycle(
+                &super::RunDto {
+                    id: run_id.to_string(),
+                    task_id: task_id.to_string(),
+                    project_id: "project-1".to_string(),
+                    target_repo_id: None,
+                    status: "running".to_string(),
+                    run_state: None,
+                    triggered_by: "user".to_string(),
+                    created_at: "2024-01-01T00:00:00Z".to_string(),
+                    started_at: None,
+                    finished_at: None,
+                    summary: None,
+                    error_message: None,
+                    worktree_id: None,
+                    agent_id: None,
+                    provider_id: None,
+                    model_id: None,
+                    source_branch: None,
+                    initial_prompt_sent_at: None,
+                    initial_prompt_client_request_id: None,
+                    setup_state: "pending".to_string(),
+                    setup_started_at: None,
+                    setup_finished_at: None,
+                    setup_error_message: None,
+                    cleanup_state: "pending".to_string(),
+                    cleanup_started_at: None,
+                    cleanup_finished_at: None,
+                    cleanup_error_message: None,
+                },
+            ))),
+            session_id: Arc::new(Mutex::new(None)),
+            session_init_lock: tokio::sync::Mutex::new(()),
+            subscribers: Arc::new(Mutex::new(HashMap::new())),
+            subscriber_tasks: Arc::new(Mutex::new(HashMap::new())),
+            subscriber_generation: AtomicU64::new(1),
+            subscriber_lifecycle_lock: tokio::sync::Mutex::new(()),
+            event_tx,
+            event_stream_task: Arc::new(tokio::sync::Mutex::new(None)),
+            buffered_events: Arc::new(Mutex::new(VecDeque::new())),
+            session_runtime_state: Arc::new(Mutex::new(super::SessionRuntimeState::default())),
+        });
+
+        opencode_service
+            .handles
+            .write()
+            .await
+            .insert(run_id.to_string(), handle);
     }
 
     #[derive(Debug)]
@@ -3962,6 +4406,37 @@ mod tests {
             generation: 1,
             _server: Arc::new(tokio::sync::Mutex::new(server)),
             client,
+            lifecycle: Arc::new(Mutex::new(super::RunsOpenCodeService::build_run_lifecycle(
+                &super::RunDto {
+                    id: "run-1".to_string(),
+                    task_id: "task-1".to_string(),
+                    project_id: "project-1".to_string(),
+                    target_repo_id: None,
+                    status: "running".to_string(),
+                    run_state: None,
+                    triggered_by: "user".to_string(),
+                    created_at: "2024-01-01T00:00:00Z".to_string(),
+                    started_at: None,
+                    finished_at: None,
+                    summary: None,
+                    error_message: None,
+                    worktree_id: None,
+                    agent_id: None,
+                    provider_id: None,
+                    model_id: None,
+                    source_branch: None,
+                    initial_prompt_sent_at: None,
+                    initial_prompt_client_request_id: None,
+                    setup_state: "pending".to_string(),
+                    setup_started_at: None,
+                    setup_finished_at: None,
+                    setup_error_message: None,
+                    cleanup_state: "pending".to_string(),
+                    cleanup_started_at: None,
+                    cleanup_finished_at: None,
+                    cleanup_error_message: None,
+                },
+            ))),
             session_id: Arc::new(Mutex::new(None)),
             session_init_lock: tokio::sync::Mutex::new(()),
             subscribers: Arc::new(Mutex::new(HashMap::new())),
@@ -3969,6 +4444,7 @@ mod tests {
             subscriber_generation: AtomicU64::new(1),
             subscriber_lifecycle_lock: tokio::sync::Mutex::new(()),
             event_tx,
+            event_stream_task: Arc::new(tokio::sync::Mutex::new(None)),
             buffered_events: Arc::new(Mutex::new(VecDeque::new())),
             session_runtime_state: Arc::new(Mutex::new(super::SessionRuntimeState::default())),
         });
@@ -4116,6 +4592,37 @@ mod tests {
             generation: 1,
             _server: Arc::new(tokio::sync::Mutex::new(server)),
             client: invalid_client,
+            lifecycle: Arc::new(Mutex::new(super::RunsOpenCodeService::build_run_lifecycle(
+                &super::RunDto {
+                    id: "run-1".to_string(),
+                    task_id: "task-1".to_string(),
+                    project_id: "project-1".to_string(),
+                    target_repo_id: None,
+                    status: "running".to_string(),
+                    run_state: None,
+                    triggered_by: "user".to_string(),
+                    created_at: "2024-01-01T00:00:00Z".to_string(),
+                    started_at: None,
+                    finished_at: None,
+                    summary: None,
+                    error_message: None,
+                    worktree_id: None,
+                    agent_id: None,
+                    provider_id: None,
+                    model_id: None,
+                    source_branch: None,
+                    initial_prompt_sent_at: None,
+                    initial_prompt_client_request_id: None,
+                    setup_state: "pending".to_string(),
+                    setup_started_at: None,
+                    setup_finished_at: None,
+                    setup_error_message: None,
+                    cleanup_state: "pending".to_string(),
+                    cleanup_started_at: None,
+                    cleanup_finished_at: None,
+                    cleanup_error_message: None,
+                },
+            ))),
             session_id: Arc::new(Mutex::new(None)),
             session_init_lock: tokio::sync::Mutex::new(()),
             subscribers: Arc::new(Mutex::new(HashMap::new())),
@@ -4123,6 +4630,7 @@ mod tests {
             subscriber_generation: AtomicU64::new(1),
             subscriber_lifecycle_lock: tokio::sync::Mutex::new(()),
             event_tx,
+            event_stream_task: Arc::new(tokio::sync::Mutex::new(None)),
             buffered_events: Arc::new(Mutex::new(VecDeque::new())),
             session_runtime_state: Arc::new(Mutex::new(super::SessionRuntimeState::default())),
         });
@@ -4149,6 +4657,30 @@ mod tests {
             .await
             .unwrap();
         assert!(reclaimed);
+    }
+
+    #[tokio::test]
+    async fn stop_run_opencode_removes_handle_and_is_idempotent() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let first = opencode_service
+            .stop_run_opencode("run-1", Some("test_shutdown"))
+            .await
+            .unwrap();
+        assert_eq!(first.state, "stopped");
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+
+        let second = opencode_service
+            .stop_run_opencode("run-1", Some("test_shutdown_repeat"))
+            .await
+            .unwrap();
+        assert_eq!(second.state, "stopped");
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
     }
 
     async fn set_run_session_id(pool: &SqlitePool, run_id: &str, session_id: &str) {

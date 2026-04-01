@@ -174,6 +174,14 @@ pub struct StartRunOpenCodeResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StopRunOpenCodeResponse {
+    pub state: String,
+    pub reason: Option<String>,
+    pub stopped_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunOpenCodeSessionMessageDto {
     pub payload: Value,
 }

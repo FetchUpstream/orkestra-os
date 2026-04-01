@@ -3,7 +3,8 @@ use crate::app::runs::dto::{
     RawAgentEvent, ReplyRunOpenCodePermissionResponse, RunAgentsResponseDto, RunDiffFileDto,
     RunDiffFilePayloadDto, RunDto, RunMergeResponseDto, RunMergeStatusDto,
     RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, RunProvidersResponseDto,
-    RunRebaseResponseDto, StartRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
+    RunRebaseResponseDto, StartRunOpenCodeResponse, StopRunOpenCodeResponse,
+    SubmitRunOpenCodePromptResponse,
 };
 use crate::app::state::AppState;
 use crate::app::{commands::context, commands::error_mapping::map_result};
@@ -202,6 +203,16 @@ pub async fn bootstrap_run_opencode(
 ) -> Result<BootstrapRunOpenCodeResponse, String> {
     let service = context::runs_opencode_service(&state);
     map_result(service.bootstrap_run_opencode(&run_id).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn stop_run_opencode(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+    reason: Option<String>,
+) -> Result<StopRunOpenCodeResponse, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(service.stop_run_opencode(&run_id, reason.as_deref()).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]

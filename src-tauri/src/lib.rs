@@ -69,6 +69,7 @@ pub fn run() {
             app::commands::runs::get_opencode_dependency_status,
             app::commands::runs::ensure_run_opencode,
             app::commands::runs::bootstrap_run_opencode,
+            app::commands::runs::stop_run_opencode,
             app::commands::runs::submit_run_opencode_prompt,
             app::commands::runs::reply_run_opencode_permission,
             app::commands::runs::start_run_opencode,
