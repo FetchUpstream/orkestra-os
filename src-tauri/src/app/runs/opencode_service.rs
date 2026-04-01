@@ -594,6 +594,26 @@ struct RunOpenCodeHandle {
     session_runtime_state: Arc<Mutex<SessionRuntimeState>>,
 }
 
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct RunOpenCodeUsageSnapshot {
+    viewer_count: usize,
+    active_operation_count: usize,
+    last_interaction_at: String,
+}
+
+struct RunOpenCodeViewerLease {
+    lifecycle: Arc<Mutex<RunOpenCodeLifecycle>>,
+    subscriber_id: String,
+    released: bool,
+}
+
+struct RunOpenCodeActiveOperationGuard {
+    lifecycle: Arc<Mutex<RunOpenCodeLifecycle>>,
+    operation: &'static str,
+    released: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RunOpenCodeLifecycleState {
     Active,
@@ -608,7 +628,11 @@ struct RunOpenCodeLifecycle {
     is_read_only: bool,
     created_at: String,
     last_interaction_at: String,
+    last_viewer_activity_at: Option<String>,
+    last_backend_operation_at: Option<String>,
     last_main_session_activity_at: Option<String>,
+    active_viewer_ids: HashSet<String>,
+    active_operation_count: usize,
     shutdown_requested: bool,
     shutdown_reason: Option<String>,
     event_stream_task_registered: bool,
@@ -634,12 +658,35 @@ impl RunOpenCodeHandle {
         Ok(lifecycle.state)
     }
 
-    fn touch_interaction(&self) -> Result<(), AppError> {
+    #[cfg(test)]
+    fn usage_snapshot(&self) -> Result<RunOpenCodeUsageSnapshot, AppError> {
+        let lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        Ok(RunOpenCodeUsageSnapshot {
+            viewer_count: lifecycle.active_viewer_ids.len(),
+            active_operation_count: lifecycle.active_operation_count,
+            last_interaction_at: lifecycle.last_interaction_at.clone(),
+        })
+    }
+
+    fn touch_interaction(&self, source: &'static str) -> Result<(), AppError> {
         let mut lifecycle = self
             .lifecycle
             .lock()
             .map_err(|_| lock_error("OpenCode lifecycle state"))?;
         lifecycle.last_interaction_at = Utc::now().to_rfc3339();
+        info!(
+            target: "opencode.runtime",
+            marker = "interaction_touch",
+            run_id = lifecycle.run_id.as_str(),
+            source = source,
+            viewer_count = lifecycle.active_viewer_ids.len(),
+            active_operation_count = lifecycle.active_operation_count,
+            last_interaction_at = lifecycle.last_interaction_at.as_str(),
+            "OpenCode runtime interaction updated"
+        );
         Ok(())
     }
 
@@ -651,7 +698,153 @@ impl RunOpenCodeHandle {
         let now = Utc::now().to_rfc3339();
         lifecycle.last_interaction_at = now.clone();
         lifecycle.last_main_session_activity_at = Some(now);
+        info!(
+            target: "opencode.runtime",
+            marker = "interaction_touch",
+            run_id = lifecycle.run_id.as_str(),
+            source = "main_session_activity",
+            viewer_count = lifecycle.active_viewer_ids.len(),
+            active_operation_count = lifecycle.active_operation_count,
+            last_interaction_at = lifecycle.last_interaction_at.as_str(),
+            "OpenCode runtime interaction updated"
+        );
         Ok(())
+    }
+
+    fn acquire_viewer_lease(
+        &self,
+        subscriber_id: &str,
+    ) -> Result<Option<RunOpenCodeViewerLease>, AppError> {
+        let subscriber_id = subscriber_id.trim();
+        if subscriber_id.is_empty() {
+            return Ok(None);
+        }
+
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        let now = Utc::now().to_rfc3339();
+        let inserted = lifecycle.active_viewer_ids.insert(subscriber_id.to_string());
+        lifecycle.last_interaction_at = now.clone();
+        lifecycle.last_viewer_activity_at = Some(now.clone());
+        info!(
+            target: "opencode.runtime",
+            marker = if inserted { "viewer_acquired" } else { "viewer_refreshed" },
+            run_id = lifecycle.run_id.as_str(),
+            subscriber_id = subscriber_id,
+            viewer_count = lifecycle.active_viewer_ids.len(),
+            active_operation_count = lifecycle.active_operation_count,
+            last_interaction_at = lifecycle.last_interaction_at.as_str(),
+            "OpenCode viewer lease updated"
+        );
+        if inserted {
+            Ok(Some(RunOpenCodeViewerLease {
+                lifecycle: Arc::clone(&self.lifecycle),
+                subscriber_id: subscriber_id.to_string(),
+                released: false,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn acquire_active_operation_guard(
+        &self,
+        operation: &'static str,
+    ) -> Result<RunOpenCodeActiveOperationGuard, AppError> {
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        let now = Utc::now().to_rfc3339();
+        lifecycle.active_operation_count = lifecycle.active_operation_count.saturating_add(1);
+        lifecycle.last_interaction_at = now.clone();
+        lifecycle.last_backend_operation_at = Some(now);
+        info!(
+            target: "opencode.runtime",
+            marker = "operation_guard_acquired",
+            run_id = lifecycle.run_id.as_str(),
+            operation = operation,
+            viewer_count = lifecycle.active_viewer_ids.len(),
+            active_operation_count = lifecycle.active_operation_count,
+            last_interaction_at = lifecycle.last_interaction_at.as_str(),
+            "OpenCode operation guard acquired"
+        );
+        Ok(RunOpenCodeActiveOperationGuard {
+            lifecycle: Arc::clone(&self.lifecycle),
+            operation,
+            released: false,
+        })
+    }
+
+    #[cfg(test)]
+    fn release_viewer_lease(&self, subscriber_id: &str) -> Result<bool, AppError> {
+        Self::release_viewer_lease_from_lifecycle(&self.lifecycle, subscriber_id)
+    }
+
+    fn release_viewer_lease_from_lifecycle(
+        lifecycle: &Arc<Mutex<RunOpenCodeLifecycle>>,
+        subscriber_id: &str,
+    ) -> Result<bool, AppError> {
+        let subscriber_id = subscriber_id.trim();
+        if subscriber_id.is_empty() {
+            return Ok(false);
+        }
+
+        let mut lifecycle = lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        let removed = lifecycle.active_viewer_ids.remove(subscriber_id);
+        let now = Utc::now().to_rfc3339();
+        lifecycle.last_interaction_at = now.clone();
+        lifecycle.last_viewer_activity_at = Some(now);
+        info!(
+            target: "opencode.runtime",
+            marker = if removed { "viewer_released" } else { "viewer_release_missing" },
+            run_id = lifecycle.run_id.as_str(),
+            subscriber_id = subscriber_id,
+            viewer_count = lifecycle.active_viewer_ids.len(),
+            active_operation_count = lifecycle.active_operation_count,
+            last_interaction_at = lifecycle.last_interaction_at.as_str(),
+            "OpenCode viewer lease updated"
+        );
+        Ok(removed)
+    }
+
+    fn release_active_operation_guard_from_lifecycle(
+        lifecycle: &Arc<Mutex<RunOpenCodeLifecycle>>,
+        operation: &'static str,
+    ) {
+        let Ok(mut lifecycle) = lifecycle.lock() else {
+            return;
+        };
+        if lifecycle.active_operation_count == 0 {
+            warn!(
+                target: "opencode.runtime",
+                marker = "operation_guard_release_underflow",
+                run_id = lifecycle.run_id.as_str(),
+                operation = operation,
+                viewer_count = lifecycle.active_viewer_ids.len(),
+                "OpenCode operation guard release skipped because no guards were active"
+            );
+            return;
+        }
+
+        lifecycle.active_operation_count -= 1;
+        let now = Utc::now().to_rfc3339();
+        lifecycle.last_interaction_at = now.clone();
+        lifecycle.last_backend_operation_at = Some(now);
+        info!(
+            target: "opencode.runtime",
+            marker = "operation_guard_released",
+            run_id = lifecycle.run_id.as_str(),
+            operation = operation,
+            viewer_count = lifecycle.active_viewer_ids.len(),
+            active_operation_count = lifecycle.active_operation_count,
+            last_interaction_at = lifecycle.last_interaction_at.as_str(),
+            "OpenCode operation guard released"
+        );
     }
 
     fn register_event_stream_task(&self) -> Result<(), AppError> {
@@ -687,9 +880,36 @@ impl RunOpenCodeHandle {
     }
 }
 
+impl Drop for RunOpenCodeViewerLease {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        let _ = RunOpenCodeHandle::release_viewer_lease_from_lifecycle(
+            &self.lifecycle,
+            &self.subscriber_id,
+        );
+    }
+}
+
+impl Drop for RunOpenCodeActiveOperationGuard {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        RunOpenCodeHandle::release_active_operation_guard_from_lifecycle(
+            &self.lifecycle,
+            self.operation,
+        );
+    }
+}
+
 struct SubscriberTaskEntry {
     generation: u64,
     handle: JoinHandle<()>,
+    _viewer_lease: Option<RunOpenCodeViewerLease>,
 }
 
 struct SessionRuntimeState {
@@ -1497,7 +1717,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         AppError,
     > {
         if let Some(handle) = self.handles.read().await.get(run_id).cloned() {
-            handle.touch_interaction()?;
+            handle.touch_interaction("ensure_run_ready")?;
             let run = self.runs_service.get_run(run_id).await?;
             handle.sync_run_metadata(&run)?;
             if let Some(reason) = Self::unsupported_reason_for_run_status(run.status.as_str()) {
@@ -1566,7 +1786,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let create_start = Instant::now();
-        handle.touch_interaction()?;
+        handle.touch_interaction("session_create")?;
         let created = handle
             .client
             .session()
@@ -1694,7 +1914,11 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             is_read_only: matches!(run.status.as_str(), "complete" | "cancelled" | "failed"),
             created_at: now.clone(),
             last_interaction_at: now,
+            last_viewer_activity_at: None,
+            last_backend_operation_at: None,
             last_main_session_activity_at: None,
+            active_viewer_ids: HashSet::new(),
+            active_operation_count: 0,
             shutdown_requested: false,
             shutdown_reason: None,
             event_stream_task_registered: false,
@@ -2221,7 +2445,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         if self.handles.read().await.contains_key(&run.id) {
             if let Some(handle) = self.handles.read().await.get(&run.id).cloned() {
                 handle.sync_run_metadata(&run)?;
-                handle.touch_interaction()?;
+                handle.touch_interaction("ensure_run_opencode")?;
                 if handle.lifecycle_state()? != RunOpenCodeLifecycleState::Active {
                     return Err(AppError::conflict(
                         "OpenCode run runtime is shutting down and cannot accept new work",
@@ -2256,7 +2480,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         if self.handles.read().await.contains_key(&run.id) {
             if let Some(handle) = self.handles.read().await.get(&run.id).cloned() {
                 handle.sync_run_metadata(&run)?;
-                handle.touch_interaction()?;
+                handle.touch_interaction("ensure_run_opencode")?;
                 if handle.lifecycle_state()? != RunOpenCodeLifecycleState::Active {
                     return Err(AppError::conflict(
                         "OpenCode run runtime is shutting down and cannot accept new work",
@@ -2568,6 +2792,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 return Err(AppError::not_found("OpenCode run handle not found"));
             }
         };
+        let _operation_guard = handle.acquire_active_operation_guard("submit_prompt")?;
 
         let session_id = match self.get_or_create_session_id(run_id, handle.clone()).await {
             Ok(session_id) => session_id,
@@ -2757,6 +2982,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let _operation_guard = handle.acquire_active_operation_guard("reply_permission")?;
         handle.touch_main_session_activity()?;
 
         {
@@ -3026,7 +3252,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
-        handle.touch_interaction()?;
+        let _operation_guard = handle.acquire_active_operation_guard("get_session_messages")?;
+        handle.touch_interaction("get_session_messages")?;
 
         let request = RequestOptions::default().with_path("id", session_id);
         let response = handle
@@ -3066,7 +3293,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
-        handle.touch_interaction()?;
+        let _operation_guard = handle.acquire_active_operation_guard("get_session_todos")?;
+        handle.touch_interaction("get_session_todos")?;
 
         let request = RequestOptions::default().with_path("id", session_id);
         let response = handle
@@ -3105,16 +3333,9 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let _operation_guard = handle.acquire_active_operation_guard("subscribe_events")?;
 
         let _lifecycle_guard = handle.subscriber_lifecycle_lock.lock().await;
-
-        {
-            let mut subscribers = handle
-                .subscribers
-                .lock()
-                .map_err(|_| lock_error("OpenCode subscribers"))?;
-            subscribers.insert(subscriber_id.to_string(), on_output);
-        }
 
         let previous_task = {
             let mut subscriber_tasks = handle
@@ -3124,7 +3345,24 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             subscriber_tasks.remove(subscriber_id)
         };
         if let Some(previous_task) = previous_task {
-            previous_task.handle.abort();
+            let SubscriberTaskEntry {
+                generation: _,
+                handle: previous_handle,
+                _viewer_lease: previous_viewer_lease,
+            } = previous_task;
+            previous_handle.abort();
+            let _ = previous_handle.await;
+            drop(previous_viewer_lease);
+        }
+
+        let viewer_lease = handle.acquire_viewer_lease(subscriber_id)?;
+
+        {
+            let mut subscribers = handle
+                .subscribers
+                .lock()
+                .map_err(|_| lock_error("OpenCode subscribers"))?;
+            subscribers.insert(subscriber_id.to_string(), on_output);
         }
 
         let subscriber_id_owned = subscriber_id.to_string();
@@ -3215,6 +3453,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 SubscriberTaskEntry {
                     generation: subscriber_generation,
                     handle: forwarder_task,
+                    _viewer_lease: viewer_lease,
                 },
             );
         }
@@ -3233,7 +3472,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             .get(run_id)
             .cloned()
             .ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
-        handle.touch_interaction()?;
+        let _operation_guard = handle.acquire_active_operation_guard("get_buffered_events")?;
+        handle.touch_interaction("get_buffered_events")?;
 
         let buffered = handle
             .buffered_events
@@ -3322,7 +3562,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
-        handle.touch_interaction()?;
+        let _operation_guard = handle.acquire_active_operation_guard("bootstrap_run")?;
+        handle.touch_interaction("bootstrap_run")?;
         let buffered_events = {
             let buffered = handle
                 .buffered_events
@@ -3406,7 +3647,14 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             };
 
             if let Some(subscriber_task) = subscriber_task {
-                subscriber_task.handle.abort();
+                let SubscriberTaskEntry {
+                    generation: _,
+                    handle: subscriber_handle,
+                    _viewer_lease: viewer_lease,
+                } = subscriber_task;
+                subscriber_handle.abort();
+                let _ = subscriber_handle.await;
+                drop(viewer_lease);
             }
         }
 
@@ -4997,6 +5245,66 @@ mod tests {
             .unwrap();
 
         assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
+    }
+
+    #[tokio::test]
+    async fn viewer_leases_track_current_viewers_without_underflow() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get("run-1")
+            .cloned()
+            .unwrap();
+
+        let lease = handle.acquire_viewer_lease("viewer-1").unwrap();
+        let snapshot = handle.usage_snapshot().unwrap();
+        assert_eq!(snapshot.viewer_count, 1);
+        assert_eq!(snapshot.active_operation_count, 0);
+        assert!(!snapshot.last_interaction_at.is_empty());
+
+        assert!(lease.is_some());
+        assert!(!handle.release_viewer_lease("missing-viewer").unwrap());
+        assert_eq!(handle.usage_snapshot().unwrap().viewer_count, 1);
+
+        drop(lease);
+        assert_eq!(handle.usage_snapshot().unwrap().viewer_count, 0);
+    }
+
+    #[tokio::test]
+    async fn active_operation_guards_release_on_drop() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get("run-1")
+            .cloned()
+            .unwrap();
+
+        {
+            let _guard = handle.acquire_active_operation_guard("test_operation").unwrap();
+            let snapshot = handle.usage_snapshot().unwrap();
+            assert_eq!(snapshot.active_operation_count, 1);
+            assert_eq!(snapshot.viewer_count, 0);
+            assert!(!snapshot.last_interaction_at.is_empty());
+        }
+
+        let snapshot = handle.usage_snapshot().unwrap();
+        assert_eq!(snapshot.active_operation_count, 0);
     }
 
     #[tokio::test]
