@@ -181,25 +181,12 @@ impl RunStatusTransitionService {
             return Ok(None);
         }
 
-        let Some(active_run) = self.runs_repository.get_latest_active_run_for_task(task_id).await? else {
-            if run.status == next_status {
-                return Ok(None);
-            }
-            info!(subsystem = "runs", operation = "transition_run_status", transition_source, task_id, run_id, "Ignoring transition without active run");
-            return Ok(None);
-        };
-
-        if active_run.id != run_id {
-            info!(subsystem = "runs", operation = "transition_run_status", transition_source, task_id, run_id, active_run_id = active_run.id, "Ignoring stale run transition");
-            return Ok(None);
-        }
-
         if let Some(expected_session_id) = expected_session_id {
             let expected_session_id = expected_session_id.trim();
             if expected_session_id.is_empty()
-                || active_run.opencode_session_id.as_deref() != Some(expected_session_id)
+                || run.opencode_session_id.as_deref() != Some(expected_session_id)
             {
-                info!(subsystem = "runs", operation = "transition_run_status", transition_source, task_id, run_id, expected_session_id, active_session_id = active_run.opencode_session_id.as_deref().unwrap_or(""), source_event = source_event.unwrap_or(""), "Ignoring stale session transition");
+                info!(subsystem = "runs", operation = "transition_run_status", transition_source, task_id, run_id, expected_session_id, run_session_id = run.opencode_session_id.as_deref().unwrap_or(""), source_event = source_event.unwrap_or(""), "Ignoring stale session transition");
                 return Ok(None);
             }
         }

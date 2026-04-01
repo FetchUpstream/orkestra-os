@@ -52,7 +52,7 @@ pub async fn create_run(
     let service = context::runs_service(&state);
     map_result(
         service
-            .create_or_reuse_active_run_with_defaults(
+            .create_run_with_defaults(
                 &request.task_id,
                 request.agent_id.as_deref(),
                 request.provider_id.as_deref(),

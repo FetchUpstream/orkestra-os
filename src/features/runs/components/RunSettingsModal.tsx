@@ -11,6 +11,7 @@ import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyC
 type RunSettingsModalProps = {
   isOpen: Accessor<boolean>;
   isSubmitting: Accessor<boolean>;
+  actionError: Accessor<string>;
   hasRunSelectionOptions: Accessor<boolean>;
   isLoadingRunSelectionOptions: Accessor<boolean>;
   runSelectionOptionsError: Accessor<string>;
@@ -152,6 +153,17 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
             <Show when={props.runSelectionOptionsError()}>
               {(message) => (
                 <p class="projects-error border-error/35 bg-error/10 m-0 text-sm">
+                  {message()}
+                </p>
+              )}
+            </Show>
+            <Show when={props.actionError()}>
+              {(message) => (
+                <p
+                  class="projects-error border-error/35 bg-error/10 m-0 text-sm"
+                  role="alert"
+                  aria-live="polite"
+                >
                   {message()}
                 </p>
               )}

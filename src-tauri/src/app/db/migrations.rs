@@ -17,11 +17,10 @@ const MIGRATION_0010: &str =
     include_str!("../../../migrations/0010_add_runs_initial_prompt_tracking.sql");
 const MIGRATION_0011: &str =
     include_str!("../../../migrations/0011_add_runs_initial_prompt_claim_tracking.sql");
-const MIGRATION_0012: &str =
-    include_str!("../../../migrations/0012_add_runs_active_task_unique_index.sql");
 const MIGRATION_0015: &str = include_str!("../../../migrations/0015_add_task_search_fts.sql");
 const MIGRATION_0017: &str = include_str!("../../../migrations/0017_update_run_status_lifecycle.sql");
 const MIGRATION_0018: &str = include_str!("../../../migrations/0018_add_runs_run_state.sql");
+const MIGRATION_0019: &str = include_str!("../../../migrations/0019_drop_runs_single_active_index.sql");
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(MIGRATION_0001).execute(pool).await?;
@@ -133,17 +132,6 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
                 .execute(pool)
                 .await?;
         }
-    }
-
-    let has_single_active_run_index = sqlx::query(
-        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_single_active_per_task' LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await?
-    .is_some();
-
-    if !has_single_active_run_index {
-        sqlx::query(MIGRATION_0012).execute(pool).await?;
     }
 
     let repository_columns = sqlx::query("PRAGMA table_info(project_repositories)")
@@ -281,17 +269,9 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     )
     .fetch_optional(pool)
     .await?;
-    let active_run_index_sql: Option<String> = sqlx::query_scalar(
-        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_single_active_per_task' LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await?;
-
     let needs_run_status_lifecycle_migration = runs_table_sql.as_deref().is_some_and(|sql| {
         sql.contains("'running'") || sql.contains("'completed'") || !sql.contains("'idle'")
-    }) || active_run_index_sql
-        .as_deref()
-        .is_some_and(|sql| sql.contains("'running'") || sql.contains("'idle'"));
+    });
 
     if needs_run_status_lifecycle_migration {
         sqlx::query(MIGRATION_0017).execute(pool).await?;
@@ -306,6 +286,8 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     if !has_run_state {
         sqlx::query(MIGRATION_0018).execute(pool).await?;
     }
+
+    sqlx::query(MIGRATION_0019).execute(pool).await?;
 
     Ok(())
 }
@@ -396,7 +378,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_migrations_adds_active_run_unique_index() {
+    async fn run_migrations_drops_active_run_unique_index() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
 
         run_migrations(&pool).await.unwrap();
@@ -407,11 +389,11 @@ mod tests {
         .fetch_optional(&pool)
         .await
         .unwrap();
-        assert_eq!(index_exists, Some(1));
+        assert_eq!(index_exists, None);
     }
 
     #[tokio::test]
-    async fn run_migrations_dedupes_existing_active_runs_before_unique_index() {
+    async fn run_migrations_dedupes_existing_active_runs() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
 
         sqlx::query(MIGRATION_0001).execute(&pool).await.unwrap();
@@ -495,7 +477,7 @@ mod tests {
         .fetch_optional(&pool)
         .await
         .unwrap();
-        assert_eq!(index_exists, Some(1));
+        assert_eq!(index_exists, None);
     }
 
     #[tokio::test]
@@ -613,14 +595,13 @@ mod tests {
         assert!(runs_table_sql.contains("'idle'"));
         assert!(runs_table_sql.contains("'complete'"));
 
-        let active_run_index_sql: String = sqlx::query_scalar(
+        let active_run_index_sql: Option<String> = sqlx::query_scalar(
             "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_single_active_per_task' LIMIT 1",
         )
-        .fetch_one(&pool)
+        .fetch_optional(&pool)
         .await
         .unwrap();
-        assert!(active_run_index_sql.contains("'in_progress'"));
-        assert!(!active_run_index_sql.contains("'idle'"));
+        assert!(active_run_index_sql.is_none());
     }
 
     #[tokio::test]

@@ -5,16 +5,12 @@ use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext};
 use crate::app::worktrees::dto::{CreateWorktreeRequest, RemoveWorktreeRequest};
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 #[derive(Clone, Debug)]
 pub struct RunsService {
     repository: RunsRepository,
     worktrees_service: WorktreesService,
-    create_or_reuse_task_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
 
 impl RunsService {
@@ -22,7 +18,6 @@ impl RunsService {
         Self {
             repository,
             worktrees_service,
-            create_or_reuse_task_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -108,6 +103,7 @@ impl RunsService {
         Ok(Self::to_dto(created))
     }
 
+    #[cfg(test)]
     pub async fn create_or_reuse_active_run_with_defaults(
         &self,
         task_id: &str,
@@ -115,82 +111,8 @@ impl RunsService {
         provider_id: Option<&str>,
         model_id: Option<&str>,
     ) -> Result<RunDto, AppError> {
-        let task_id = task_id.trim();
-        if task_id.is_empty() {
-            return Err(AppError::validation("task_id is required"));
-        }
-
-        let task_lock = self.get_or_create_task_create_or_reuse_lock(task_id).await;
-        let _task_guard = task_lock.lock().await;
-
-        if let Some(existing) = self
-            .repository
-            .get_latest_reusable_run_for_task(task_id)
-            .await?
-        {
-            info!(
-                subsystem = "runs",
-                operation = "create_or_reuse_active_with_defaults",
-                task_id = task_id,
-                run_id = existing.id.as_str(),
-                reused = true,
-                "Reused existing active run"
-            );
-            return Ok(Self::to_dto(existing));
-        }
-
-        match self
-            .create_run_with_defaults(task_id, agent_id, provider_id, model_id)
+        self.create_run_with_defaults(task_id, agent_id, provider_id, model_id)
             .await
-        {
-            Ok(created) => Ok(created),
-            Err(err) if Self::is_active_run_uniqueness_violation(&err) => {
-                warn!(
-                    subsystem = "runs",
-                    operation = "create_or_reuse_active_with_defaults",
-                    task_id = task_id,
-                    "Active-run uniqueness race detected"
-                );
-                if let Some(existing) = self
-                    .repository
-                    .get_latest_reusable_run_for_task(task_id)
-                    .await?
-                {
-                    info!(
-                        subsystem = "runs",
-                        operation = "create_or_reuse_active_with_defaults",
-                        task_id = task_id,
-                        run_id = existing.id.as_str(),
-                        reused = true,
-                        "Reused active run after uniqueness race"
-                    );
-                    return Ok(Self::to_dto(existing));
-                }
-
-                Err(err)
-            }
-            Err(err) => Err(err),
-        }
-    }
-
-    async fn get_or_create_task_create_or_reuse_lock(&self, task_id: &str) -> Arc<Mutex<()>> {
-        let mut lock_map = self.create_or_reuse_task_locks.lock().await;
-        lock_map
-            .entry(task_id.to_string())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
-    }
-
-    fn is_active_run_uniqueness_violation(err: &AppError) -> bool {
-        let AppError::Database(sqlx::Error::Database(db_err)) = err else {
-            return false;
-        };
-
-        let code_matches = db_err.code().as_deref() == Some("2067");
-        let message = db_err.message();
-        code_matches
-            && (message.contains("idx_runs_single_active_per_task")
-                || message.contains("runs.task_id"))
     }
 
     pub async fn list_task_runs(&self, task_id: &str) -> Result<Vec<RunDto>, AppError> {
@@ -833,7 +755,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_or_reuse_active_run_reuses_existing_active_run() {
+    async fn create_or_reuse_active_run_creates_distinct_run_when_active_run_exists() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
@@ -845,17 +767,17 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(run.id, "run-active");
+        assert_ne!(run.id, "run-active");
         let run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE task_id = ?")
             .bind("task-1")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(run_count, 1);
+        assert_eq!(run_count, 2);
     }
 
     #[tokio::test]
-    async fn create_or_reuse_active_run_reuses_existing_when_agent_selection_is_provided() {
+    async fn create_or_reuse_active_run_uses_requested_agent_selection_when_creating_new_run() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
@@ -880,17 +802,17 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(run.id, "run-active");
-        assert_eq!(run.agent_id.as_deref(), Some("existing-agent"));
-        assert_eq!(run.provider_id.as_deref(), Some("existing-provider"));
-        assert_eq!(run.model_id.as_deref(), Some("existing-model"));
+        assert_ne!(run.id, "run-active");
+        assert_eq!(run.agent_id.as_deref(), Some("new-agent"));
+        assert_eq!(run.provider_id.as_deref(), Some("new-provider"));
+        assert_eq!(run.model_id.as_deref(), Some("new-model"));
 
         let run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE task_id = ?")
             .bind("task-1")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(run_count, 1);
+        assert_eq!(run_count, 2);
     }
 
     #[tokio::test]
@@ -953,7 +875,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_or_reuse_active_run_is_concurrent_safe_with_single_active_run() {
+    async fn create_or_reuse_active_run_is_concurrent_safe_with_distinct_active_runs() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
@@ -975,10 +897,11 @@ mod tests {
             returned_run_ids.push(task.await.unwrap().id);
         }
 
-        let first_id = returned_run_ids.first().cloned().unwrap();
-        assert!(returned_run_ids
+        let distinct_count = returned_run_ids
             .iter()
-            .all(|run_id| run_id.as_str() == first_id.as_str()));
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        assert_eq!(distinct_count, 8);
 
         let active_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM runs WHERE task_id = ? AND status IN ('queued','preparing','in_progress','idle')",
@@ -987,7 +910,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(active_count, 1);
+        assert_eq!(active_count, 8);
     }
 
     #[tokio::test]

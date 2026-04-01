@@ -112,22 +112,12 @@ impl TaskStatusTransitionService {
             return Ok(None);
         }
 
-        let Some(active_run) = self.runs_repository.get_latest_active_run_for_task(task_id).await? else {
-            info!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id, run_id, "Ignoring transition without active run");
-            return Ok(None);
-        };
-
-        if active_run.id != run_id {
-            info!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id, run_id, active_run_id = active_run.id, "Ignoring stale run transition");
-            return Ok(None);
-        }
-
         if let Some(expected_session_id) = expected_session_id {
             let expected_session_id = expected_session_id.trim();
             if expected_session_id.is_empty()
-                || active_run.opencode_session_id.as_deref() != Some(expected_session_id)
+                || run.opencode_session_id.as_deref() != Some(expected_session_id)
             {
-                info!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id, run_id, expected_session_id, active_session_id = active_run.opencode_session_id.as_deref().unwrap_or(""), source_event = source_event.unwrap_or(""), "Ignoring stale session transition");
+                info!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id, run_id, expected_session_id, run_session_id = run.opencode_session_id.as_deref().unwrap_or(""), source_event = source_event.unwrap_or(""), "Ignoring stale session transition");
                 return Ok(None);
             }
         }
@@ -154,17 +144,33 @@ impl TaskStatusTransitionService {
 
         let timestamp = Utc::now().to_rfc3339();
         let previous_status = task.status.clone();
-        let (updated_task, changed) = self
-            .tasks_repository
-            .update_task_status(
-                task_id,
-                UpdateTaskStatus {
-                    status: next_status.to_string(),
-                    updated_at: timestamp.clone(),
-                },
-            )
-            .await
-            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?;
+        let (updated_task, changed) = if next_status == "review" {
+            let changed = self
+                .runs_repository
+                .transition_task_doing_to_review_on_session_idle(
+                    run_id,
+                    expected_session_id.unwrap_or_default(),
+                    &timestamp,
+                )
+                .await?;
+            let updated_task = self
+                .tasks_repository
+                .get_task(task_id)
+                .await
+                .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?;
+            (updated_task, changed)
+        } else {
+            self.tasks_repository
+                .update_task_status(
+                    task_id,
+                    UpdateTaskStatus {
+                        status: next_status.to_string(),
+                        updated_at: timestamp.clone(),
+                    },
+                )
+                .await
+                .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
+        };
 
         if !changed {
             info!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id, run_id, "Ignoring duplicate transition write");

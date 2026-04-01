@@ -819,6 +819,7 @@ const TaskDetailScreen: Component = () => {
       <RunSettingsModal
         isOpen={isRunSettingsModalOpen}
         isSubmitting={isCreatingRun}
+        actionError={actionError}
         hasRunSelectionOptions={hasRunSelectionOptions}
         isOpenCodeMissing={isOpenCodeMissing}
         isLoadingRunSelectionOptions={isLoadingRunSelectionOptions}

@@ -112,7 +112,3 @@ ALTER TABLE runs__new RENAME TO runs;
 CREATE INDEX IF NOT EXISTS idx_runs_task_id_created_at ON runs (task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_project_id_created_at ON runs (project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs (status);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_single_active_per_task
-ON runs(task_id)
-WHERE status IN ('queued', 'preparing', 'in_progress');

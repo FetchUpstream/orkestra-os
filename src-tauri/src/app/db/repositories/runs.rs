@@ -218,102 +218,6 @@ impl RunsRepository {
         Ok(row.map(Self::map_row_to_run))
     }
 
-    pub async fn get_latest_active_run_for_task(
-        &self,
-        task_id: &str,
-    ) -> Result<Option<Run>, AppError> {
-        let row = sqlx::query(
-            "SELECT
-                id,
-                task_id,
-                project_id,
-                target_repo_id,
-                status,
-                run_state,
-                triggered_by,
-                created_at,
-                started_at,
-                finished_at,
-                summary,
-                error_message,
-                worktree_id,
-                agent_id,
-                provider_id,
-                model_id,
-                source_branch,
-                opencode_session_id,
-                initial_prompt_sent_at,
-                initial_prompt_client_request_id,
-                setup_state,
-                setup_started_at,
-                setup_finished_at,
-                setup_error_message,
-                cleanup_state,
-                cleanup_started_at,
-                cleanup_finished_at,
-                cleanup_error_message
-             FROM runs
-             WHERE task_id = ?
-               AND status IN ('queued', 'preparing', 'in_progress', 'idle')
-             ORDER BY created_at DESC
-             LIMIT 1",
-        )
-        .bind(task_id)
-        .fetch_optional(&self.pool)
-        .await
-        .runs_db("loading latest active run")?;
-
-        Ok(row.map(Self::map_row_to_run))
-    }
-
-    pub async fn get_latest_reusable_run_for_task(
-        &self,
-        task_id: &str,
-    ) -> Result<Option<Run>, AppError> {
-        let row = sqlx::query(
-            "SELECT
-                id,
-                task_id,
-                project_id,
-                target_repo_id,
-                status,
-                run_state,
-                triggered_by,
-                created_at,
-                started_at,
-                finished_at,
-                summary,
-                error_message,
-                worktree_id,
-                agent_id,
-                provider_id,
-                model_id,
-                source_branch,
-                opencode_session_id,
-                initial_prompt_sent_at,
-                initial_prompt_client_request_id,
-                setup_state,
-                setup_started_at,
-                setup_finished_at,
-                setup_error_message,
-                cleanup_state,
-                cleanup_started_at,
-                cleanup_finished_at,
-                cleanup_error_message
-             FROM runs
-             WHERE task_id = ?
-               AND status IN ('queued', 'preparing', 'in_progress')
-             ORDER BY created_at DESC
-             LIMIT 1",
-        )
-        .bind(task_id)
-        .fetch_optional(&self.pool)
-        .await
-        .runs_db("loading latest reusable run")?;
-
-        Ok(row.map(Self::map_row_to_run))
-    }
-
     pub async fn list_active_runs(&self) -> Result<Vec<Run>, AppError> {
         let rows = sqlx::query(
             "SELECT
@@ -761,14 +665,23 @@ impl RunsRepository {
                  SELECT task_id
                  FROM runs
                  WHERE id = ?
-                    AND status IN ('queued', 'preparing', 'in_progress', 'idle')
-                    AND opencode_session_id = ?
-              )
+                     AND status IN ('queued', 'preparing', 'in_progress', 'idle')
+                     AND opencode_session_id = ?
+               )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM runs AS other_runs
+                    WHERE other_runs.task_id = (SELECT task_id FROM runs WHERE id = ?)
+                      AND other_runs.id != ?
+                      AND other_runs.status = 'in_progress'
+                )
                 AND status = 'doing'",
         )
         .bind(updated_at)
         .bind(run_id)
         .bind(opencode_session_id)
+        .bind(run_id)
+        .bind(run_id)
         .execute(&self.pool)
         .await
         .runs_db("transitioning task to review on session idle")?;
@@ -889,6 +802,45 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn transition_task_doing_to_review_on_session_idle_skips_when_another_run_in_progress() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        sqlx::query("UPDATE tasks SET status = 'doing' WHERE id = 'task-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at, opencode_session_id)
+             VALUES
+             ('run-idle', 'task-1', 'project-1', 'repo-1', 'idle', 'user', '2024-01-01T00:00:00Z', 'session-idle'),
+             ('run-busy', 'task-1', 'project-1', 'repo-1', 'in_progress', 'user', '2024-01-01T00:01:00Z', 'session-busy')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let changed = repository
+            .transition_task_doing_to_review_on_session_idle(
+                "run-idle",
+                "session-idle",
+                "2024-01-01T00:10:00Z",
+            )
+            .await
+            .unwrap();
+
+        assert!(!changed);
+
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_status, "doing");
     }
 
     #[tokio::test]
