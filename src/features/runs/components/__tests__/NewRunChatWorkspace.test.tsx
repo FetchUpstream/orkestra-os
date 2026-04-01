@@ -210,7 +210,7 @@ describe("NewRunChatWorkspace", () => {
       sessionId: "session-1",
       status: "idle",
       streamConnected: true,
-      lastSyncAt: Date.now(),
+      lastSyncAt: null as number | null,
       messageOrder: [],
       messagesById: {},
       pendingQuestionsById: {},
@@ -946,6 +946,314 @@ describe("NewRunChatWorkspace", () => {
     expect(taskRails[0]?.textContent).toContain("First child output");
     expect(taskRails[0]?.textContent).not.toContain("Second child output");
     expect(taskRails[1]?.textContent).toContain("Second child output");
+  });
+
+  it("anchors once to the latest parent message after initial history arrives", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: null as number | null,
+      messageOrder: ["msg-root-1", "msg-root-2"],
+      messagesById: {
+        "msg-root-1": {
+          id: "msg-root-1",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-root-1": {
+              id: "part-root-1",
+              kind: "text",
+              type: "text",
+              text: "Earlier root message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-root-1"],
+        },
+        "msg-root-2": {
+          id: "msg-root-2",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-root-2": {
+              id: "part-root-2",
+              kind: "text",
+              type: "text",
+              text: "Latest root message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-root-2"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    if (!("scrollIntoView" in HTMLElement.prototype)) {
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+        configurable: true,
+        value: () => {},
+      });
+    }
+    const scrollIntoViewMock = vi.fn<(id: string | null) => void>();
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(function (this: HTMLElement) {
+        scrollIntoViewMock(this.dataset.runChatMessageId ?? null);
+      });
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
+
+    setStore((current) => ({
+      ...current,
+      lastSyncAt: Date.now(),
+    }));
+
+    await waitFor(() => {
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+      expect(scrollIntoViewMock).toHaveBeenCalledWith("msg-root-2");
+    });
+
+    rafSpy.mockRestore();
+    scrollSpy.mockRestore();
+  });
+
+  it("does not auto-scroll again when root transcript updates after initial anchor", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root-1", "msg-root-2"],
+      messagesById: {
+        "msg-root-1": {
+          id: "msg-root-1",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-root-1": {
+              id: "part-root-1",
+              kind: "text",
+              type: "text",
+              text: "Earlier root message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-root-1"],
+        },
+        "msg-root-2": {
+          id: "msg-root-2",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-root-2": {
+              id: "part-root-2",
+              kind: "text",
+              type: "text",
+              text: "Latest root message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-root-2"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    if (!("scrollIntoView" in HTMLElement.prototype)) {
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+        configurable: true,
+        value: () => {},
+      });
+    }
+    const scrollIntoViewMock = vi.fn<(id: string | null) => void>();
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(function (this: HTMLElement) {
+        scrollIntoViewMock(this.dataset.runChatMessageId ?? null);
+      });
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    setStore((current) => ({
+      ...current,
+      lastSyncAt: Date.now(),
+    }));
+
+    await waitFor(() => {
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+      expect(scrollIntoViewMock).toHaveBeenCalledWith("msg-root-2");
+    });
+
+    setStore((current) => ({
+      ...current,
+      messageOrder: [...current.messageOrder, "msg-root-3"],
+      messagesById: {
+        ...current.messagesById,
+        "msg-root-3": {
+          id: "msg-root-3",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-root-3": {
+              id: "part-root-3",
+              kind: "text",
+              type: "text",
+              text: "Newer root message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-root-3"],
+        },
+      },
+    }));
+
+    expect(screen.getByText("Newer root message")).toBeTruthy();
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+
+    rafSpy.mockRestore();
+    scrollSpy.mockRestore();
+  });
+
+  it("ignores child transcript output when choosing initial anchor target", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: null as number | null,
+      messageOrder: ["msg-root-1", "msg-root-2"],
+      messagesById: {
+        "msg-root-1": {
+          id: "msg-root-1",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task-1": {
+              id: "part-task-1",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Inspect workspace",
+            },
+          },
+          partOrder: ["part-task-1"],
+        },
+        "msg-root-2": {
+          id: "msg-root-2",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-root-2": {
+              id: "part-root-2",
+              kind: "text",
+              type: "text",
+              text: "Latest parent message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-root-2"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child",
+              sessionID: "session-child",
+              parentID: "msg-root-1",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child",
+            messageID: "msg-child",
+            partID: "part-child",
+            field: "text",
+            delta: "Child output should not anchor",
+          },
+        },
+      ],
+    });
+
+    if (!("scrollIntoView" in HTMLElement.prototype)) {
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+        configurable: true,
+        value: () => {},
+      });
+    }
+    const scrollIntoViewMock = vi.fn<(id: string | null) => void>();
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(function (this: HTMLElement) {
+        scrollIntoViewMock(this.dataset.runChatMessageId ?? null);
+      });
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+    expect(screen.getByText("Child output should not anchor")).toBeTruthy();
+
+    setStore((current) => ({
+      ...current,
+      lastSyncAt: Date.now(),
+    }));
+
+    await waitFor(() => {
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+      expect(scrollIntoViewMock).toHaveBeenCalledWith("msg-root-2");
+    });
+
+    rafSpy.mockRestore();
+    scrollSpy.mockRestore();
   });
 
   it("updates setup card state without remount", () => {

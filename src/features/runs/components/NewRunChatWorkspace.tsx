@@ -57,7 +57,6 @@ type NewRunChatWorkspaceProps = {
 };
 
 const TRANSCRIPT_WINDOW_CHUNK = 60;
-const AUTO_SCROLL_NEAR_BOTTOM_PX = 96;
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 const INTERNAL_ATTRIBUTION_ID_PATTERN =
@@ -1071,8 +1070,10 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const [composerValue, setComposerValue] = createSignal("");
   const [hasVisibleSubmitFailed, setHasVisibleSubmitFailed] =
     createSignal(false);
-  const [isTranscriptAutoFollowEnabled, setIsTranscriptAutoFollowEnabled] =
-    createSignal(true);
+  const [
+    isInitialTranscriptAnchorCompleted,
+    setIsInitialTranscriptAnchorCompleted,
+  ] = createSignal(false);
   const [transcriptVisibleCount, setTranscriptVisibleCount] = createSignal(
     TRANSCRIPT_WINDOW_CHUNK,
   );
@@ -1090,11 +1091,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   ] = createSignal("");
 
   let transcriptScrollRef: HTMLDivElement | undefined;
-  let transcriptBottomRef: HTMLDivElement | undefined;
   let runChatComposerRef: HTMLDivElement | undefined;
-  let transcriptScrollRaf: number | null = null;
-  let transcriptProgrammaticScrollResetRaf: number | null = null;
-  let isTranscriptProgrammaticScroll = false;
+  let initialTranscriptAnchorRaf: number | null = null;
+  let transcriptParentMessageRowRefs = new Map<string, HTMLDivElement>();
 
   const agentReadinessPhase = createMemo<AgentReadinessPhase>(() =>
     props.model.agent.readinessPhase(),
@@ -1479,104 +1478,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     return agentReadinessCopy() ?? "No agent messages yet.";
   });
 
-  const isNearBottom = (
-    element: HTMLElement,
-    thresholdPx = AUTO_SCROLL_NEAR_BOTTOM_PX,
-  ): boolean =>
-    element.scrollHeight - element.scrollTop - element.clientHeight <=
-    thresholdPx;
-
-  const markTranscriptProgrammaticScroll = () => {
-    isTranscriptProgrammaticScroll = true;
-    if (transcriptProgrammaticScrollResetRaf !== null) {
-      cancelAnimationFrame(transcriptProgrammaticScrollResetRaf);
-    }
-    transcriptProgrammaticScrollResetRaf = requestAnimationFrame(() => {
-      transcriptProgrammaticScrollResetRaf = null;
-      isTranscriptProgrammaticScroll = false;
-    });
-  };
-
-  const scheduleTranscriptScrollToBottom = () => {
-    if (transcriptScrollRaf !== null) {
-      return;
-    }
-
-    transcriptScrollRaf = requestAnimationFrame(() => {
-      transcriptScrollRaf = null;
-      if (!isTranscriptAutoFollowEnabled()) {
-        return;
-      }
-
-      markTranscriptProgrammaticScroll();
-
-      if (transcriptBottomRef) {
-        transcriptBottomRef.scrollIntoView({
-          block: "end",
-          inline: "nearest",
-          behavior: "auto",
-        });
-        return;
-      }
-
-      if (transcriptScrollRef) {
-        transcriptScrollRef.scrollTop = transcriptScrollRef.scrollHeight;
-      }
-    });
-  };
-
-  const getPartScrollRevision = (part: UiPart): string => {
-    if (part.kind === "text" || part.kind === "reasoning") {
-      const streamChunkCount = Array.isArray(part.streamChunks)
-        ? part.streamChunks.length
-        : 0;
-      const streamTextLength =
-        typeof part.streamTextLength === "number"
-          ? part.streamTextLength
-          : typeof part.streamText === "string"
-            ? part.streamText.length
-            : part.text.length;
-      const streamRevision =
-        typeof part.streamRevision === "number" ? part.streamRevision : 0;
-      return `${part.kind}:${part.streaming ? 1 : 0}:${part.text.length}:${streamChunkCount}:${streamTextLength}:${streamRevision}`;
-    }
-
-    if (part.kind === "tool") {
-      return [
-        part.kind,
-        part.toolName || "",
-        part.status || "",
-        typeof part.title === "string" ? part.title.length : "",
-      ].join("|");
-    }
-
-    if (part.kind === "file") {
-      return `${part.kind}:${part.filename}`;
-    }
-
-    if (part.kind === "patch") {
-      return `${part.kind}:${part.hash}`;
-    }
-
-    if (part.kind === "step-start") {
-      return part.kind;
-    }
-
-    if (part.kind === "step-finish") {
-      const reason =
-        part.reason === undefined || part.reason === null
-          ? ""
-          : String(part.reason).replace(INTERNAL_ID_PATTERN, "[internal-id]");
-      return `${part.kind}:${reason}`;
-    }
-
-    if (part.kind === "unknown") {
-      return `${part.kind}:${part.rawType || ""}`;
-    }
-
-    return "";
-  };
-
   const transcriptMessageOrder = createMemo(
     () => props.model.agent.store().messageOrder,
   );
@@ -1592,6 +1493,18 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     const order = transcriptMessageOrder();
     const startIndex = Math.max(0, order.length - transcriptVisibleCount());
     return order.slice(startIndex);
+  });
+  const latestParentTranscriptMessageId = createMemo(() => {
+    const messageIds = visibleTranscriptMessageIds();
+    return messageIds[messageIds.length - 1] ?? null;
+  });
+  const hasLoadedInitialTranscriptHistory = createMemo(() => {
+    const store = props.model.agent.store();
+    return (
+      store.lastSyncAt !== null ||
+      props.model.agent.state() === "unsupported" ||
+      props.model.agent.state() === "error"
+    );
   });
 
   const formatAgentPayload = (payload: unknown): string => {
@@ -1880,38 +1793,62 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
 
         if (row.role === "assistant") {
           return (
-            <RunChatMessage role="assistant" class="run-chat-message-item">
-              <RunChatAssistantMessage
-                content={row.content.length > 0 ? row.content : " "}
-                reasoning={reasoningNode}
-                toolRail={toolRailNode}
-                details={attributionNode}
-              />
-              <Show when={!row.hasRenderableContent}>{waitingRow}</Show>
-            </RunChatMessage>
+            <div
+              data-run-chat-message-id={row.key}
+              data-run-chat-message-kind="parent"
+              ref={(element) => {
+                transcriptParentMessageRowRefs.set(row.key, element);
+              }}
+            >
+              <RunChatMessage role="assistant" class="run-chat-message-item">
+                <RunChatAssistantMessage
+                  content={row.content.length > 0 ? row.content : " "}
+                  reasoning={reasoningNode}
+                  toolRail={toolRailNode}
+                  details={attributionNode}
+                />
+                <Show when={!row.hasRenderableContent}>{waitingRow}</Show>
+              </RunChatMessage>
+            </div>
           );
         }
 
         if (row.role === "user") {
           return (
-            <RunChatMessage role="user" class="run-chat-message-item">
-              <RunChatUserMessage>
-                <RunChatMarkdown
-                  content={row.content.length > 0 ? row.content : "(empty)"}
-                />
-              </RunChatUserMessage>
-            </RunChatMessage>
+            <div
+              data-run-chat-message-id={row.key}
+              data-run-chat-message-kind="parent"
+              ref={(element) => {
+                transcriptParentMessageRowRefs.set(row.key, element);
+              }}
+            >
+              <RunChatMessage role="user" class="run-chat-message-item">
+                <RunChatUserMessage>
+                  <RunChatMarkdown
+                    content={row.content.length > 0 ? row.content : "(empty)"}
+                  />
+                </RunChatUserMessage>
+              </RunChatMessage>
+            </div>
           );
         }
 
         return (
-          <RunChatMessage role="system" class="run-chat-message-item">
-            <RunChatSystemMessage>
-              <RunChatMarkdown
-                content={row.content.length > 0 ? row.content : row.timestamp}
-              />
-            </RunChatSystemMessage>
-          </RunChatMessage>
+          <div
+            data-run-chat-message-id={row.key}
+            data-run-chat-message-kind="parent"
+            ref={(element) => {
+              transcriptParentMessageRowRefs.set(row.key, element);
+            }}
+          >
+            <RunChatMessage role="system" class="run-chat-message-item">
+              <RunChatSystemMessage>
+                <RunChatMarkdown
+                  content={row.content.length > 0 ? row.content : row.timestamp}
+                />
+              </RunChatSystemMessage>
+            </RunChatMessage>
+          </div>
         );
       });
 
@@ -2201,34 +2138,10 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     }
   });
 
-  const transcriptScrollRevision = createMemo(() => {
-    const store = props.model.agent.store();
-    const messageCount = store.messageOrder.length;
-    if (messageCount === 0) {
-      return "0";
-    }
-
-    const lastMessageId = store.messageOrder[messageCount - 1];
-    const lastMessage = store.messagesById[lastMessageId];
-    if (!lastMessage) {
-      return `${messageCount}:${lastMessageId}:missing`;
-    }
-
-    const lastPartCount = lastMessage.partOrder.length;
-    const lastPartId = lastMessage.partOrder[lastPartCount - 1];
-    const lastPart = lastPartId ? lastMessage.partsById[lastPartId] : undefined;
-    const lastPartRevision = lastPart
-      ? getPartScrollRevision(lastPart)
-      : "no-part";
-
-    return [
-      messageCount,
-      lastMessageId,
-      lastPartCount,
-      lastMessage.updatedAt || lastMessage.createdAt || 0,
-      lastPartId || "",
-      lastPartRevision,
-    ].join(":");
+  createEffect(() => {
+    props.model.run()?.id;
+    transcriptParentMessageRowRefs = new Map<string, HTMLDivElement>();
+    setIsInitialTranscriptAnchorCompleted(false);
   });
 
   createEffect(() => {
@@ -2256,19 +2169,48 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
 
   createEffect(() => {
-    const revision = transcriptScrollRevision();
-    if (revision === "0") {
+    if (isInitialTranscriptAnchorCompleted()) {
       return;
     }
+
+    hasLoadedInitialTranscriptHistory();
+    const latestMessageId = latestParentTranscriptMessageId();
 
     const container = transcriptScrollRef;
-    if (!container) {
+    if (!container || !hasLoadedInitialTranscriptHistory()) {
       return;
     }
 
-    if (isTranscriptAutoFollowEnabled()) {
-      scheduleTranscriptScrollToBottom();
+    if (!latestMessageId) {
+      setIsInitialTranscriptAnchorCompleted(true);
+      return;
     }
+
+    chatTranscriptItems().length;
+
+    const target = transcriptParentMessageRowRefs.get(latestMessageId);
+    if (!target) {
+      return;
+    }
+
+    if (initialTranscriptAnchorRaf !== null) {
+      cancelAnimationFrame(initialTranscriptAnchorRaf);
+    }
+
+    initialTranscriptAnchorRaf = requestAnimationFrame(() => {
+      initialTranscriptAnchorRaf = null;
+      const row = transcriptParentMessageRowRefs.get(latestMessageId);
+      if (!row || !transcriptScrollRef) {
+        return;
+      }
+
+      row.scrollIntoView({
+        block: "nearest",
+        inline: "nearest",
+        behavior: "auto",
+      });
+      setIsInitialTranscriptAnchorCompleted(true);
+    });
   });
 
   createEffect(() => {
@@ -2283,9 +2225,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         composerElement.getBoundingClientRect().height,
       );
       setRunChatComposerOffsetPx(`${Math.max(0, composerHeight)}px`);
-      if (isTranscriptAutoFollowEnabled()) {
-        scheduleTranscriptScrollToBottom();
-      }
     };
 
     updateOffset();
@@ -2298,11 +2237,8 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
 
   onCleanup(() => {
-    if (transcriptScrollRaf !== null) {
-      cancelAnimationFrame(transcriptScrollRaf);
-    }
-    if (transcriptProgrammaticScrollResetRaf !== null) {
-      cancelAnimationFrame(transcriptProgrammaticScrollResetRaf);
+    if (initialTranscriptAnchorRaf !== null) {
+      cancelAnimationFrame(initialTranscriptAnchorRaf);
     }
   });
 
@@ -2327,12 +2263,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           ref={transcriptScrollRef}
           style={{
             "padding-bottom": runChatComposerOffsetPx(),
-          }}
-          onScroll={(event) => {
-            if (isTranscriptProgrammaticScroll) {
-              return;
-            }
-            setIsTranscriptAutoFollowEnabled(isNearBottom(event.currentTarget));
           }}
         >
           <Show when={props.model.agent.error().length > 0}>
@@ -2406,7 +2336,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                         const nextScrollHeight = container.scrollHeight;
                         const offset = nextScrollHeight - previousScrollHeight;
                         if (offset > 0) {
-                          markTranscriptProgrammaticScroll();
                           container.scrollTop += offset;
                         }
                       });
@@ -2417,7 +2346,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 </Show>
               }
             />
-            <div ref={transcriptBottomRef} aria-hidden="true" />
           </Show>
         </section>
         <div
