@@ -1665,6 +1665,7 @@ textarea::placeholder {
   min-height: 100%;
   gap: 8px;
   margin-top: 4px;
+  --task-writing-surface-bg: var(--surface-alt);
 }
 
 .task-detail-page--create .task-detail-main-card {
@@ -1674,12 +1675,6 @@ textarea::placeholder {
 
 .task-detail-page--create .task-detail-summary-strip {
   background: rgba(8, 10, 14, 0.85);
-}
-
-.task-detail-page--create .task-guide-crepe-shell,
-.task-detail-page--create .task-guide-crepe .milkdown,
-.task-detail-page--create .task-guide-crepe .milkdown .ProseMirror {
-  background: #0d1218;
 }
 
 .task-detail-state-card {
@@ -1725,8 +1720,8 @@ textarea::placeholder {
 
 .task-detail-title-input {
   width: 100%;
-  background: transparent;
-  border: 1px solid transparent;
+  background: var(--task-writing-surface-bg);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   color: var(--text);
   font-size: 1.5rem;
@@ -1743,14 +1738,25 @@ textarea::placeholder {
 
 .task-detail-title-input:hover {
   border-color: var(--border-subtle);
-  background: color-mix(in srgb, var(--bg) 92%, var(--surface-alt) 8%);
+  background: var(--task-writing-surface-bg);
 }
 
 .task-detail-title-input:focus {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--bg) 90%, var(--surface-alt) 10%);
+  background: var(--task-writing-surface-bg);
   box-shadow: 0 0 0 2px var(--accent-subtle);
   outline: none;
+}
+
+.task-detail-title-input:disabled,
+.task-detail-title-input[readonly] {
+  background: var(--task-writing-surface-bg);
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.task-detail-title-input::placeholder {
+  color: var(--text-subtle);
 }
 
 .task-detail-meta-row {
@@ -1925,7 +1931,7 @@ textarea::placeholder {
 
 /* Task detail Crepe overrides (keep frame-dark theme global) */
 .task-detail-page .task-guide-crepe-shell {
-  background: var(--surface-alt);
+  background: var(--task-writing-surface-bg);
   position: relative;
 }
 
@@ -1970,7 +1976,7 @@ textarea::placeholder {
 
 .task-detail-page .task-guide-crepe .milkdown,
 .task-detail-page .task-guide-crepe .milkdown .ProseMirror {
-  background: var(--surface-alt);
+  background: var(--task-writing-surface-bg);
 }
 
 .task-detail-page .task-guide-crepe .milkdown-toolbar {
