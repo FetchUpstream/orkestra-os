@@ -6,12 +6,18 @@ use crate::app::worktrees::pathing::resolve_worktree_path_typed;
 use base64::Engine;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tracing::{info, warn};
+
+const TERMINAL_ENV_KEYS: [&str; 7] = ["SHELL", "HOME", "PATH", "TERM", "COLORTERM", "LANG", "USER"];
+const DEFAULT_TERM: &str = "xterm-256color";
+const DEFAULT_COLORTERM: &str = "truecolor";
+const DEFAULT_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const DEFAULT_LANG: &str = "C.UTF-8";
 
 #[derive(Clone)]
 pub struct TerminalService {
@@ -127,6 +133,9 @@ impl TerminalService {
         })?;
         let cwd = self.resolve_worktree_path_typed(&run)?;
         let shell = Self::resolve_shell();
+        let shell_args = Self::resolve_shell_args(&shell);
+        let inherited_env = Self::capture_terminal_env();
+        let child_env = Self::build_terminal_env(&shell, &inherited_env);
 
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -134,7 +143,24 @@ impl TerminalService {
             .map_err(|source| TerminalServiceError::OpenPty { source })?;
 
         let mut cmd = CommandBuilder::new(&shell);
+        cmd.args(&shell_args);
         cmd.cwd(cwd.clone());
+        for (key, value) in &child_env {
+            cmd.env(key, value);
+        }
+
+        info!(
+            subsystem = "terminal",
+            operation = "open",
+            run_id = run_id,
+            shell = shell.as_str(),
+            shell_args = ?shell_args,
+            cwd = %cwd.display(),
+            inherited_env = ?inherited_env,
+            child_env = ?child_env,
+            controlling_tty = cmd.get_controlling_tty(),
+            "Resolved terminal shell startup"
+        );
 
         let child =
             pair.slave
@@ -406,6 +432,73 @@ impl TerminalService {
         }
     }
 
+    fn resolve_shell_args(shell: &str) -> Vec<&'static str> {
+        if Self::is_bash_shell(shell) {
+            return vec!["-i"];
+        }
+
+        Vec::new()
+    }
+
+    fn is_bash_shell(shell: &str) -> bool {
+        std::path::Path::new(shell)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.eq("bash"))
+            .unwrap_or(false)
+    }
+
+    fn capture_terminal_env() -> BTreeMap<String, String> {
+        let mut env = BTreeMap::new();
+
+        for key in TERMINAL_ENV_KEYS {
+            if let Some(value) = Self::read_env_var(key) {
+                env.insert(key.to_string(), value);
+            }
+        }
+
+        if !env.contains_key("USER") {
+            if let Some(value) = Self::read_env_var("LOGNAME") {
+                env.insert("USER".to_string(), value);
+            }
+        }
+
+        env
+    }
+
+    fn build_terminal_env(
+        shell: &str,
+        inherited_env: &BTreeMap<String, String>,
+    ) -> BTreeMap<String, String> {
+        let mut env = inherited_env.clone();
+
+        env.insert("SHELL".to_string(), shell.to_string());
+        env.insert("TERM".to_string(), DEFAULT_TERM.to_string());
+        Self::ensure_env_value(&mut env, "COLORTERM", DEFAULT_COLORTERM);
+        Self::ensure_env_value(&mut env, "PATH", DEFAULT_PATH);
+        Self::ensure_env_value(&mut env, "LANG", DEFAULT_LANG);
+
+        env
+    }
+
+    fn ensure_env_value(env: &mut BTreeMap<String, String>, key: &str, default: &str) {
+        let needs_default = env
+            .get(key)
+            .map(|value| value.trim().is_empty())
+            .unwrap_or(true);
+
+        if needs_default {
+            env.insert(key.to_string(), default.to_string());
+        }
+    }
+
+    fn read_env_var(key: &str) -> Option<String> {
+        std::env::var(key)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
     #[cfg(windows)]
     fn is_executable_on_path(candidate: &str) -> bool {
         if candidate.contains(std::path::MAIN_SEPARATOR) {
@@ -509,5 +602,52 @@ impl TerminalService {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        TerminalService, DEFAULT_COLORTERM, DEFAULT_LANG, DEFAULT_PATH, DEFAULT_TERM,
+    };
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn bash_shell_uses_explicit_interactive_mode() {
+        assert_eq!(TerminalService::resolve_shell_args("/bin/bash"), vec!["-i"]);
+        assert_eq!(TerminalService::resolve_shell_args("bash"), vec!["-i"]);
+    }
+
+    #[test]
+    fn non_bash_shell_keeps_default_args() {
+        assert!(TerminalService::resolve_shell_args("/bin/zsh").is_empty());
+    }
+
+    #[test]
+    fn terminal_env_normalizes_terminal_capabilities() {
+        let inherited = BTreeMap::from([
+            ("HOME".to_string(), "/home/louis".to_string()),
+            ("PATH".to_string(), "/custom/bin".to_string()),
+            ("TERM".to_string(), "dumb".to_string()),
+        ]);
+
+        let env = TerminalService::build_terminal_env("/bin/bash", &inherited);
+
+        assert_eq!(env.get("SHELL"), Some(&"/bin/bash".to_string()));
+        assert_eq!(env.get("TERM"), Some(&DEFAULT_TERM.to_string()));
+        assert_eq!(env.get("COLORTERM"), Some(&DEFAULT_COLORTERM.to_string()));
+        assert_eq!(env.get("PATH"), Some(&"/custom/bin".to_string()));
+        assert_eq!(env.get("HOME"), Some(&"/home/louis".to_string()));
+    }
+
+    #[test]
+    fn terminal_env_fills_missing_core_values() {
+        let env = TerminalService::build_terminal_env("/bin/bash", &BTreeMap::new());
+
+        assert_eq!(env.get("SHELL"), Some(&"/bin/bash".to_string()));
+        assert_eq!(env.get("TERM"), Some(&DEFAULT_TERM.to_string()));
+        assert_eq!(env.get("COLORTERM"), Some(&DEFAULT_COLORTERM.to_string()));
+        assert_eq!(env.get("PATH"), Some(&DEFAULT_PATH.to_string()));
+        assert_eq!(env.get("LANG"), Some(&DEFAULT_LANG.to_string()));
     }
 }
