@@ -31,12 +31,6 @@ After installing OpenCode, configure a provider and model before creating runs. 
 - https://opencode.ai/docs/models/
 - https://opencode.ai/docs/cli/
 
-## Install from source
-
-```bash
-bun install
-```
-
 ## Development
 
 Run the desktop app with Tauri:
