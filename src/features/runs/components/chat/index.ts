@@ -8,4 +8,7 @@ export { default as RunChatTranscript } from "./RunChatTranscript";
 export { default as RunChatUserMessage } from "./RunChatUserMessage";
 
 export type { RunChatRole } from "./RunChatMessage";
-export type { RunChatToolRailItem } from "./RunChatToolRail";
+export type {
+  RunChatToolRailItem,
+  RunChatToolRailSubagentItem,
+} from "./RunChatToolRail";

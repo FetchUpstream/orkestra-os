@@ -5067,6 +5067,111 @@ textarea::placeholder {
   line-height: 1.45;
 }
 
+.run-chat-tool-rail__subagents {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.run-chat-tool-rail__item--task {
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.run-chat-tool-rail__task-shell {
+  display: grid;
+  gap: 4px;
+}
+
+.run-chat-tool-rail__task-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.run-chat-tool-rail__task-summary {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.run-chat-tool-rail__subagent-panel {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.run-chat-tool-rail__subagent-panel--running {
+  border-color: rgba(91, 138, 255, 0.35);
+}
+
+.run-chat-tool-rail__subagent-panel--completed {
+  border-color: rgba(34, 197, 94, 0.28);
+}
+
+.run-chat-tool-rail__subagent-panel--failed {
+  border-color: rgba(239, 68, 68, 0.32);
+}
+
+.run-chat-tool-rail__subagent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.run-chat-tool-rail__subagent-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.run-chat-tool-rail__subagent-body {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.run-chat-tool-rail__subagent-message {
+  display: grid;
+  gap: 8px;
+}
+
+.run-chat-tool-rail__subagent-status-row {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.run-chat-tool-rail__subagent-markdown,
+.run-chat-tool-rail__subagent-reasoning {
+  color: var(--text-muted);
+}
+
+.run-chat-tool-rail__subagent-tools {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.run-chat-tool-rail__subagent-tool {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-subtle);
+  font-size: 0.76rem;
+}
+
 .run-chat-tool-rail__meta,
 .run-chat-details__meta,
 .run-chat-reasoning__meta {

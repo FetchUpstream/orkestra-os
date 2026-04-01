@@ -2399,9 +2399,15 @@ impl RunsOpenCodeService {
     pub async fn get_run_opencode_session_messages(
         &self,
         run_id: &str,
+        session_id: Option<&str>,
     ) -> Result<Vec<RunOpenCodeSessionMessageDto>, AppError> {
         let run = self.runs_service.get_run_model(run_id).await?;
-        let Some(session_id) = run.opencode_session_id else {
+        let session_id = session_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or(run.opencode_session_id);
+        let Some(session_id) = session_id else {
             return Ok(vec![]);
         };
         let session_id_for_error = session_id.clone();
@@ -2432,9 +2438,15 @@ impl RunsOpenCodeService {
     pub async fn get_run_opencode_session_todos(
         &self,
         run_id: &str,
+        session_id: Option<&str>,
     ) -> Result<Vec<RunOpenCodeSessionTodoDto>, AppError> {
         let run = self.runs_service.get_run_model(run_id).await?;
-        let Some(session_id) = run.opencode_session_id else {
+        let session_id = session_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or(run.opencode_session_id);
+        let Some(session_id) = session_id else {
             return Ok(vec![]);
         };
         let session_id_for_error = session_id.clone();

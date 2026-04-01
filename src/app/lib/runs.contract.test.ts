@@ -5,6 +5,8 @@ import {
   getRun,
   getRunSelectionOptions,
   getRunGitMergeStatus,
+  getRunOpenCodeSessionMessages,
+  getRunOpenCodeSessionTodos,
   listActiveRuns,
   listTaskRuns,
   mergeRunWorktreeIntoSource,
@@ -303,6 +305,24 @@ describe("runs contract", () => {
     });
   });
 
+  it("invokes child session history commands with optional sessionId", async () => {
+    invokeMock.mockResolvedValue([]);
+
+    await getRunOpenCodeSessionMessages({ runId: "run-1", sessionId: "ses-2" });
+    await getRunOpenCodeSessionTodos({ runId: "run-1", sessionId: "ses-2" });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      1,
+      "get_run_opencode_session_messages",
+      { runId: "run-1", sessionId: "ses-2" },
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      2,
+      "get_run_opencode_session_todos",
+      { runId: "run-1", sessionId: "ses-2" },
+    );
+  });
+
   it("normalizes bootstrap snake_case wrapped payload", async () => {
     invokeMock.mockResolvedValue({
       result: {
@@ -343,7 +363,6 @@ describe("runs contract", () => {
       sessionId: "session-1",
       streamConnected: true,
       readyPhase: "hydrated",
-      chatMode: "interactive",
     } satisfies BootstrapRunOpenCodeResult);
   });
 
@@ -381,7 +400,6 @@ describe("runs contract", () => {
       sessionId: undefined,
       streamConnected: false,
       readyPhase: undefined,
-      chatMode: "interactive",
     } satisfies BootstrapRunOpenCodeResult);
   });
 

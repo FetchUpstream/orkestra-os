@@ -4,6 +4,7 @@ import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
   bootstrapRunOpenCode,
   appendCappedHistory,
+  getBufferedRunOpenCodeEvents,
   getRun,
   getRunGitMergeStatus,
   getRunDiffFile,
@@ -1146,6 +1147,13 @@ export const useRunDetailModel = () => {
     baseEvents: RunOpenCodeEvent[] = [],
   ): Promise<void> => {
     const bootstrap = await bootstrapRunOpenCode(runId);
+    const fetchedBufferedEvents = await getBufferedRunOpenCodeEvents(
+      runId,
+    ).catch(() => bootstrap.bufferedEvents);
+    const bufferedEvents =
+      fetchedBufferedEvents.length > 0
+        ? fetchedBufferedEvents
+        : bootstrap.bufferedEvents;
     const chatMode = resolveChatMode(bootstrap);
 
     if (
@@ -1173,10 +1181,7 @@ export const useRunDetailModel = () => {
       return;
     }
 
-    const replaySource = appendCappedHistory(
-      bootstrap.bufferedEvents,
-      baseEvents,
-    );
+    const replaySource = appendCappedHistory(bufferedEvents, baseEvents);
     setAgentEvents((current) => appendCappedHistory(current, replaySource));
     setAgentReadinessPhase(normalizeReadinessPhase(bootstrap));
     setAgentState(bootstrap.state);
@@ -1938,7 +1943,13 @@ export const useRunDetailModel = () => {
         return;
       }
 
-      const replaySource = result.bufferedEvents;
+      const fetchedReplaySource = await getBufferedRunOpenCodeEvents(
+        normalizedRunId,
+      ).catch(() => result.bufferedEvents);
+      const replaySource =
+        fetchedReplaySource.length > 0
+          ? fetchedReplaySource
+          : result.bufferedEvents;
       setAgentEvents((current) => appendCappedHistory(current, replaySource));
 
       const sessionId =

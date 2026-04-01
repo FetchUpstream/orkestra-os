@@ -1,7 +1,25 @@
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import NewRunChatWorkspace from "../NewRunChatWorkspace";
+
+const { getRunOpenCodeSessionMessagesMock, getRunOpenCodeSessionTodosMock } =
+  vi.hoisted(() => ({
+    getRunOpenCodeSessionMessagesMock: vi.fn(async () => ({
+      messages: [],
+      raw: [],
+    })),
+    getRunOpenCodeSessionTodosMock: vi.fn(async () => ({ todos: [], raw: [] })),
+  }));
+
+vi.mock("../../../../app/lib/runs", async () => {
+  const actual = await vi.importActual<object>("../../../../app/lib/runs");
+  return {
+    ...actual,
+    getRunOpenCodeSessionMessages: getRunOpenCodeSessionMessagesMock,
+    getRunOpenCodeSessionTodos: getRunOpenCodeSessionTodosMock,
+  };
+});
 
 const createModelStub = (
   runStatus: "running" | "completed",
@@ -91,6 +109,16 @@ const createModelStub = (
 };
 
 describe("NewRunChatWorkspace", () => {
+  beforeEach(() => {
+    getRunOpenCodeSessionMessagesMock.mockClear();
+    getRunOpenCodeSessionTodosMock.mockClear();
+    getRunOpenCodeSessionMessagesMock.mockResolvedValue({
+      messages: [],
+      raw: [],
+    });
+    getRunOpenCodeSessionTodosMock.mockResolvedValue({ todos: [], raw: [] });
+  });
+
   it("disables composer for completed runs and keeps read-only copy visible", () => {
     const { model } = createModelStub("completed");
     render(() => <NewRunChatWorkspace model={model} />);
@@ -304,6 +332,517 @@ describe("NewRunChatWorkspace", () => {
     expect(
       screen.getByText("Cleanup script failed. Please investigate."),
     ).toBeTruthy();
+  });
+
+  it("renders grouped subagent output inside the task tool rail", () => {
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Map transcript UI",
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-root",
+            part: {
+              id: "part-task",
+              partID: "part-task",
+              messageID: "msg-root",
+              sessionID: "session-root",
+              type: "tool",
+              tool: "task",
+              state: { status: "running", title: "Map transcript UI" },
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child",
+              sessionID: "session-child",
+              parentID: "msg-root",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child",
+            messageID: "msg-child",
+            partID: "part-child",
+            field: "text",
+            delta: "ZIG",
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child",
+            messageID: "msg-child",
+            partID: "part-child",
+            field: "text",
+            delta: "ZAG",
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "session-child",
+            status: { type: "idle" },
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByText("Subagent")).toBeTruthy();
+    expect(screen.getByText("ZIGZAG")).toBeTruthy();
+    expect(screen.queryByText(/^ZIG$/)).toBeNull();
+    expect(
+      container.querySelector(".run-chat-tool-rail__subagent-panel"),
+    ).toBeTruthy();
+  });
+
+  it("renders child session placeholder output from session.updated before child message parts arrive", () => {
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "List workspace files",
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "session-child",
+              parentID: "msg-root",
+              title: "Agent launch to explore repository",
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "session-child",
+            status: { type: "busy" },
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByText("-> Task List workspace files")).toBeTruthy();
+    expect(
+      screen.getAllByText("Agent launch to explore repository").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("falls back to the latest task tool for non-root foreign session events", () => {
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "List workspace files",
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "session-child",
+              title: "Explorer session",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child",
+              sessionID: "session-child",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child",
+            messageID: "msg-child",
+            partID: "part-child",
+            field: "text",
+            delta: "workspace\nREADME.md",
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByText("-> Task List workspace files")).toBeTruthy();
+    expect(screen.getByText("workspace")).toBeTruthy();
+    expect(screen.getByText("README.md")).toBeTruthy();
+  });
+
+  it("hydrates task subagent output from fetched child session history", async () => {
+    getRunOpenCodeSessionMessagesMock.mockResolvedValue({
+      messages: [
+        {
+          info: {
+            id: "msg-child",
+            sessionID: "session-child",
+            role: "assistant",
+          },
+          parts: [
+            {
+              id: "part-child",
+              type: "text",
+              text: "Fetched child history output",
+              messageID: "msg-child",
+              sessionID: "session-child",
+            },
+          ],
+        },
+      ],
+      raw: [],
+    } as any);
+
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "List workspace files",
+              raw: {
+                sessionID: "session-child",
+              },
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledWith({
+        runId: "run-1",
+        sessionId: "session-child",
+      });
+      expect(screen.getByText("Fetched child history output")).toBeTruthy();
+    });
+  });
+
+  it("falls back to agent type instead of numbered subagent labels", () => {
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "List workspace files",
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child",
+              sessionID: "session-child",
+              role: "assistant",
+              agent: "explorer",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child",
+            messageID: "msg-child",
+            partID: "part-child",
+            field: "text",
+            delta: "hello",
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByText("@explorer")).toBeTruthy();
+    expect(screen.queryByText("Subagent 1")).toBeNull();
+  });
+
+  it("keeps child output anchored to the task row active when that session starts", () => {
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root-1", "msg-root-2"],
+      messagesById: {
+        "msg-root-1": {
+          id: "msg-root-1",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task-1": {
+              id: "part-task-1",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "completed",
+              title: "First task",
+            },
+          },
+          partOrder: ["part-task-1"],
+        },
+        "msg-root-2": {
+          id: "msg-root-2",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task-2": {
+              id: "part-task-2",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Second task",
+            },
+          },
+          partOrder: ["part-task-2"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-root",
+            part: {
+              id: "part-task-1",
+              messageID: "msg-root-1",
+              sessionID: "session-root",
+              type: "tool",
+              tool: "task",
+              state: { status: "completed", title: "First task" },
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child-1",
+            info: {
+              id: "msg-child-1",
+              sessionID: "session-child-1",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-1",
+            messageID: "msg-child-1",
+            partID: "part-child-1",
+            field: "text",
+            delta: "First child output",
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-root",
+            part: {
+              id: "part-task-2",
+              messageID: "msg-root-2",
+              sessionID: "session-root",
+              type: "tool",
+              tool: "task",
+              state: { status: "running", title: "Second task" },
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child-2",
+            info: {
+              id: "msg-child-2",
+              sessionID: "session-child-2",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-2",
+            messageID: "msg-child-2",
+            partID: "part-child-2",
+            field: "text",
+            delta: "Second child output",
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getAllByText(/-> Task /)).toHaveLength(2);
+    const taskRails = Array.from(
+      container.querySelectorAll(".run-chat-tool-rail"),
+    ).filter((node) => node.textContent?.includes("-> Task "));
+    expect(taskRails).toHaveLength(2);
+    expect(taskRails[0]?.textContent).toContain("First child output");
+    expect(taskRails[0]?.textContent).not.toContain("Second child output");
+    expect(taskRails[1]?.textContent).toContain("Second child output");
   });
 
   it("updates setup card state without remount", () => {

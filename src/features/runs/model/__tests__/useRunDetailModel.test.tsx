@@ -16,6 +16,7 @@ const {
   routeState,
   navigateMock,
   bootstrapRunOpenCodeMock,
+  getBufferedRunOpenCodeEventsMock,
   subscribeRunOpenCodeEventsMock,
   unsubscribeRunOpenCodeEventsMock,
   submitRunOpenCodePromptMock,
@@ -35,6 +36,7 @@ const {
   routeState: { runId: "run-1" },
   navigateMock: vi.fn(),
   bootstrapRunOpenCodeMock: vi.fn(),
+  getBufferedRunOpenCodeEventsMock: vi.fn(),
   subscribeRunOpenCodeEventsMock: vi.fn(),
   unsubscribeRunOpenCodeEventsMock: vi.fn(),
   submitRunOpenCodePromptMock: vi.fn(),
@@ -68,6 +70,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 vi.mock("../../../../app/lib/runs", () => ({
   bootstrapRunOpenCode: bootstrapRunOpenCodeMock,
+  getBufferedRunOpenCodeEvents: getBufferedRunOpenCodeEventsMock,
   appendCappedHistory: (current: unknown[], next: unknown[] | unknown) => [
     ...current,
     ...(Array.isArray(next) ? next : [next]),
@@ -111,6 +114,7 @@ describe("useRunDetailModel startup ownership", () => {
     routeState.runId = "run-1";
     navigateMock.mockReset();
     bootstrapRunOpenCodeMock.mockReset();
+    getBufferedRunOpenCodeEventsMock.mockReset();
     subscribeRunOpenCodeEventsMock.mockReset();
     unsubscribeRunOpenCodeEventsMock.mockReset();
     submitRunOpenCodePromptMock.mockReset();
@@ -135,6 +139,7 @@ describe("useRunDetailModel startup ownership", () => {
       todos: [],
       streamConnected: true,
     });
+    getBufferedRunOpenCodeEventsMock.mockResolvedValue([]);
     subscribeRunOpenCodeEventsMock.mockResolvedValue(() => undefined);
     getRunGitMergeStatusMock.mockResolvedValue({
       state: "ready",

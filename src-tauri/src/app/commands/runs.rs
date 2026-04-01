@@ -310,16 +310,26 @@ pub async fn start_run_opencode(
 pub async fn get_run_opencode_session_messages(
     state: tauri::State<'_, AppState>,
     run_id: String,
+    session_id: Option<String>,
 ) -> Result<Vec<RunOpenCodeSessionMessageDto>, String> {
     let service = context::runs_opencode_service(&state);
-    map_result(service.get_run_opencode_session_messages(&run_id).await)
+    map_result(
+        service
+            .get_run_opencode_session_messages(&run_id, session_id.as_deref())
+            .await,
+    )
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_run_opencode_session_todos(
     state: tauri::State<'_, AppState>,
     run_id: String,
+    session_id: Option<String>,
 ) -> Result<Vec<RunOpenCodeSessionTodoDto>, String> {
     let service = context::runs_opencode_service(&state);
-    map_result(service.get_run_opencode_session_todos(&run_id).await)
+    map_result(
+        service
+            .get_run_opencode_session_todos(&run_id, session_id.as_deref())
+            .await,
+    )
 }

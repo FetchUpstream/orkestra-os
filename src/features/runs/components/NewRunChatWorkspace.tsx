@@ -18,12 +18,23 @@ import {
   RunChatTranscript,
   RunChatUserMessage,
   type RunChatToolRailItem,
+  type RunChatToolRailSubagentItem,
 } from "./chat";
-import type { UiPart, UiPermissionRequest } from "../model/agentTypes";
+import type {
+  AgentStore,
+  OpenCodeBusEvent,
+  UiPart,
+  UiPermissionRequest,
+} from "../model/agentTypes";
+import { hydrateAgentStore } from "../model/agentReducer";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime } from "../../tasks/utils/taskDetail";
 import { AppIcon } from "../../../components/ui/icons";
 import RunInlineLoader from "../../../components/ui/RunInlineLoader";
+import {
+  getRunOpenCodeSessionMessages,
+  getRunOpenCodeSessionTodos,
+} from "../../../app/lib/runs";
 
 type AgentReadinessPhase =
   | "warming_backend"
@@ -111,6 +122,616 @@ const toStringArray = (value: unknown): string[] => {
     .filter(
       (item): item is string => typeof item === "string" && item.length > 0,
     );
+};
+
+const getEventRecord = (value: unknown): Record<string, unknown> => {
+  return isRecord(value) ? value : {};
+};
+
+const getNestedRecord = (
+  value: Record<string, unknown>,
+  ...keys: string[]
+): Record<string, unknown> | null => {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (isRecord(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
+const getSessionIdentifier = (value: unknown): string | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const nested = getNestedRecord(value, "part", "info", "properties");
+  const sessionId =
+    (typeof value.sessionID === "string" ? value.sessionID : null) ||
+    (typeof value.sessionId === "string" ? value.sessionId : null) ||
+    (nested && typeof nested.sessionID === "string"
+      ? nested.sessionID
+      : null) ||
+    (nested && typeof nested.sessionId === "string" ? nested.sessionId : null);
+
+  return sessionId?.trim() || null;
+};
+
+const getParentSessionIdentifier = (value: unknown): string | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const nested = getNestedRecord(value, "part", "info", "properties");
+  const parentId =
+    (typeof value.parentID === "string" ? value.parentID : null) ||
+    (typeof value.parentId === "string" ? value.parentId : null) ||
+    (nested && typeof nested.parentID === "string" ? nested.parentID : null) ||
+    (nested && typeof nested.parentId === "string" ? nested.parentId : null);
+
+  return parentId?.trim() || null;
+};
+
+type SubagentMessageSnapshot = {
+  id: string;
+  role: "assistant" | "user" | "system" | "unknown";
+  partsById: Record<string, UiPart>;
+  partOrder: string[];
+};
+
+type SubagentSessionSnapshot = {
+  sessionId: string;
+  parentSessionId: string | null;
+  parentMessageId: string | null;
+  assignedTaskPartId: string | null;
+  status: string;
+  title: string | null;
+  agentType: string | null;
+  messageOrder: string[];
+  messagesById: Record<string, SubagentMessageSnapshot>;
+};
+
+type SubagentHistorySnapshot = {
+  sessionId: string;
+  store: AgentStore;
+};
+
+const getParentMessageIdentifier = (value: unknown): string | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const nested = getNestedRecord(value, "info", "part", "properties");
+  const parentId =
+    (typeof value.parentID === "string" ? value.parentID : null) ||
+    (typeof value.parentId === "string" ? value.parentId : null) ||
+    (nested && typeof nested.parentID === "string" ? nested.parentID : null) ||
+    (nested && typeof nested.parentId === "string" ? nested.parentId : null);
+
+  return parentId?.trim() || null;
+};
+
+const getStatusType = (value: unknown): string | null => {
+  if (typeof value === "string") {
+    return value.trim() || null;
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  return (
+    (typeof value.type === "string" ? value.type.trim() : "") ||
+    (typeof value.status === "string" ? value.status.trim() : "") ||
+    null
+  );
+};
+
+const formatSubagentLabel = (
+  title: string | null,
+  agentType: string | null,
+): string => {
+  const normalizedTitle = title?.trim();
+  if (normalizedTitle) {
+    return normalizedTitle;
+  }
+
+  const normalizedAgentType = agentType?.trim();
+  if (normalizedAgentType) {
+    return normalizedAgentType.startsWith("@")
+      ? normalizedAgentType
+      : `@${normalizedAgentType}`;
+  }
+
+  return "Subagent";
+};
+
+const collectSessionIdsFromValue = (
+  value: unknown,
+  sessionIds: Set<string>,
+  seen: Set<unknown>,
+): void => {
+  if (!value || typeof value !== "object" || seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectSessionIdsFromValue(item, sessionIds, seen);
+    }
+    return;
+  }
+
+  for (const [key, nestedValue] of Object.entries(
+    value as Record<string, unknown>,
+  )) {
+    if (
+      (key === "sessionID" || key === "sessionId") &&
+      typeof nestedValue === "string"
+    ) {
+      const normalized = nestedValue.trim();
+      if (normalized.length > 0) {
+        sessionIds.add(normalized);
+      }
+      continue;
+    }
+    collectSessionIdsFromValue(nestedValue, sessionIds, seen);
+  }
+};
+
+const extractTaskSubagentSessionIds = (
+  part: UiPart,
+  rootSessionId: string | null,
+): string[] => {
+  if (part.kind !== "tool" || !isTaskToolName(part.toolName)) {
+    return [];
+  }
+  const sessionIds = new Set<string>();
+  collectSessionIdsFromValue(part.raw, sessionIds, new Set<unknown>());
+  return Array.from(sessionIds).filter(
+    (sessionId) => sessionId !== rootSessionId,
+  );
+};
+
+const buildSubagentMessagesFromStore = (store: AgentStore) => {
+  return store.messageOrder
+    .map((messageId) => store.messagesById[messageId])
+    .filter(Boolean)
+    .map((message) => {
+      const textParts: string[] = [];
+      const reasoningParts: string[] = [];
+      const toolItems: Array<{ id: string; summary: string; status?: string }> =
+        [];
+
+      for (const partId of message.partOrder) {
+        const part = message.partsById[partId];
+        if (!part) continue;
+        if (part.kind === "text" && part.text.trim().length > 0) {
+          textParts.push(part.text);
+          continue;
+        }
+        if (part.kind === "reasoning" && part.text.trim().length > 0) {
+          reasoningParts.push(part.text);
+          continue;
+        }
+        if (part.kind === "tool") {
+          toolItems.push({
+            id: part.id,
+            summary: buildToolSummary(part),
+            status: part.status,
+          });
+        }
+      }
+
+      return {
+        id: message.id,
+        role: message.role,
+        content: textParts.join("\n\n").trim(),
+        reasoningContent: reasoningParts.join("\n\n").trim(),
+        toolItems,
+      };
+    })
+    .filter(
+      (message) =>
+        message.content.length > 0 ||
+        message.reasoningContent.length > 0 ||
+        message.toolItems.length > 0,
+    );
+};
+
+const resolveTaskPartIdForParentMessage = (
+  parentMessageId: string | null,
+  rootMessagesById: Record<
+    string,
+    { partOrder: string[]; partsById: Record<string, UiPart> }
+  >,
+): string | null => {
+  if (!parentMessageId) {
+    return null;
+  }
+  const parentMessage = rootMessagesById[parentMessageId];
+  if (!parentMessage) {
+    return null;
+  }
+  const taskPartIds = parentMessage.partOrder.filter((partId) => {
+    const part = parentMessage.partsById[partId];
+    return part?.kind === "tool" && isTaskToolName(part.toolName);
+  });
+  if (taskPartIds.length === 0) {
+    return null;
+  }
+  return taskPartIds[taskPartIds.length - 1] ?? null;
+};
+
+const normalizeSubagentRole = (
+  value: unknown,
+): SubagentMessageSnapshot["role"] => {
+  return value === "assistant" ||
+    value === "user" ||
+    value === "system" ||
+    value === "unknown"
+    ? value
+    : "unknown";
+};
+
+const isTaskToolName = (value: unknown): boolean => {
+  return typeof value === "string" && value.trim().toLowerCase() === "task";
+};
+
+const buildSubagentPanels = (
+  rawEvents: readonly OpenCodeBusEvent[],
+  rootSessionId: string | null,
+  rootMessagesById: Record<
+    string,
+    { partOrder: string[]; partsById: Record<string, UiPart> }
+  >,
+  taskPartSessionIdsByPartId: Record<string, string[]>,
+  fetchedSessionHistories: Record<string, SubagentHistorySnapshot>,
+): Record<string, RunChatToolRailSubagentItem[]> => {
+  const sessions = new Map<string, SubagentSessionSnapshot>();
+  let activeTaskPartId: string | null = null;
+  const allRootTaskPartIds = Object.values(rootMessagesById).flatMap(
+    (message) =>
+      message.partOrder.filter((partId) => {
+        const part = message.partsById[partId];
+        return part?.kind === "tool" && isTaskToolName(part.toolName);
+      }),
+  );
+
+  const ensureSession = (
+    sessionId: string,
+    parentSessionId: string | null,
+  ): SubagentSessionSnapshot => {
+    const existing = sessions.get(sessionId);
+    if (existing) {
+      if (!existing.parentSessionId && parentSessionId) {
+        existing.parentSessionId = parentSessionId;
+      }
+      return existing;
+    }
+    const created: SubagentSessionSnapshot = {
+      sessionId,
+      parentSessionId,
+      parentMessageId: null,
+      assignedTaskPartId: null,
+      status: "running",
+      title: null,
+      agentType: null,
+      messageOrder: [],
+      messagesById: {},
+    };
+    sessions.set(sessionId, created);
+    return created;
+  };
+
+  for (const event of rawEvents) {
+    const properties = getEventRecord(event.properties);
+    const sessionId = getSessionIdentifier(properties);
+    const parentSessionId = getParentSessionIdentifier(properties);
+    const rootPart = getNestedRecord(properties, "part");
+
+    if (
+      sessionId &&
+      rootSessionId &&
+      sessionId === rootSessionId &&
+      rootPart &&
+      ((event.type === "message.part.updated" &&
+        typeof rootPart.type === "string" &&
+        rootPart.type === "tool" &&
+        isTaskToolName(rootPart.tool)) ||
+        (event.type === "message.updated" &&
+          typeof rootPart.type === "string" &&
+          rootPart.type === "tool" &&
+          isTaskToolName(rootPart.tool)))
+    ) {
+      activeTaskPartId =
+        (typeof rootPart.id === "string" ? rootPart.id.trim() : "") ||
+        (typeof rootPart.partID === "string" ? rootPart.partID.trim() : "") ||
+        (typeof rootPart.partId === "string" ? rootPart.partId.trim() : "") ||
+        activeTaskPartId;
+    }
+
+    if (!sessionId) {
+      continue;
+    }
+
+    if (rootSessionId && sessionId === rootSessionId) {
+      continue;
+    }
+
+    const session = ensureSession(sessionId, parentSessionId);
+    if (!session.assignedTaskPartId && activeTaskPartId) {
+      session.assignedTaskPartId = activeTaskPartId;
+    }
+
+    if (event.type === "session.updated") {
+      const info = getNestedRecord(properties, "info") ?? properties;
+      const parentMessageId = getParentMessageIdentifier(info);
+      if (parentMessageId && !session.parentMessageId) {
+        session.parentMessageId = parentMessageId;
+      }
+      const title =
+        (typeof info.title === "string" ? info.title.trim() : "") ||
+        (typeof info.slug === "string" ? info.slug.trim() : "");
+      if (title) {
+        session.title = title;
+      }
+      const agentType =
+        (typeof info.agent === "string" ? info.agent.trim() : "") ||
+        (typeof info.mode === "string" ? info.mode.trim() : "");
+      if (agentType) {
+        session.agentType = agentType;
+      }
+      continue;
+    }
+
+    if (event.type === "message.updated") {
+      const info = getNestedRecord(properties, "info") ?? properties;
+      const parentMessageId = getParentMessageIdentifier(info);
+      if (parentMessageId && !session.parentMessageId) {
+        session.parentMessageId = parentMessageId;
+      }
+      const agentType =
+        (typeof info.agent === "string" ? info.agent.trim() : "") ||
+        (typeof info.mode === "string" ? info.mode.trim() : "");
+      if (agentType && !session.agentType) {
+        session.agentType = agentType;
+      }
+      const taskPartId = resolveTaskPartIdForParentMessage(
+        session.parentMessageId,
+        rootMessagesById,
+      );
+      if (taskPartId && !session.assignedTaskPartId) {
+        session.assignedTaskPartId = taskPartId;
+      }
+    }
+
+    if (event.type === "session.status") {
+      const nextStatus = getStatusType(properties.status) || session.status;
+      session.status = nextStatus;
+      continue;
+    }
+
+    if (event.type === "message.updated") {
+      const info = getNestedRecord(properties, "info") ?? properties;
+      const messageId =
+        (typeof info.id === "string" ? info.id : null) ||
+        (typeof info.messageID === "string" ? info.messageID : null) ||
+        (typeof info.messageId === "string" ? info.messageId : null);
+      if (!messageId?.trim()) {
+        continue;
+      }
+      const normalizedId = messageId.trim();
+      const existing = session.messagesById[normalizedId];
+      session.messagesById[normalizedId] = {
+        id: normalizedId,
+        role: normalizeSubagentRole(info.role),
+        partsById: existing?.partsById ?? {},
+        partOrder: existing?.partOrder ?? [],
+      };
+      if (!session.messageOrder.includes(normalizedId)) {
+        session.messageOrder.push(normalizedId);
+      }
+      continue;
+    }
+
+    if (
+      event.type !== "message.part.updated" &&
+      event.type !== "message.part.delta"
+    ) {
+      continue;
+    }
+
+    const rawPart = getNestedRecord(properties, "part") ?? properties;
+    const messageId =
+      (typeof rawPart.messageID === "string" ? rawPart.messageID : null) ||
+      (typeof rawPart.messageId === "string" ? rawPart.messageId : null);
+    const partId =
+      (typeof rawPart.id === "string" ? rawPart.id : null) ||
+      (typeof rawPart.partID === "string" ? rawPart.partID : null) ||
+      (typeof rawPart.partId === "string" ? rawPart.partId : null);
+    const partType = typeof rawPart.type === "string" ? rawPart.type : "text";
+    if (!messageId?.trim() || !partId?.trim()) {
+      continue;
+    }
+
+    const normalizedMessageId = messageId.trim();
+    const normalizedPartId = partId.trim();
+    const existingMessage = session.messagesById[normalizedMessageId] ?? {
+      id: normalizedMessageId,
+      role: "unknown" as const,
+      partsById: {},
+      partOrder: [],
+    };
+    const existingPart = existingMessage.partsById[normalizedPartId];
+    const delta = typeof properties.delta === "string" ? properties.delta : "";
+
+    let nextPart: UiPart;
+    if (
+      partType === "reasoning" ||
+      (existingPart && existingPart.kind === "reasoning")
+    ) {
+      const previousText =
+        existingPart && existingPart.kind === "reasoning"
+          ? existingPart.text
+          : "";
+      nextPart = {
+        kind: "reasoning",
+        id: normalizedPartId,
+        type: "reasoning",
+        text:
+          typeof rawPart.text === "string"
+            ? rawPart.text
+            : `${previousText}${delta}`,
+        streaming:
+          event.type === "message.part.delta" ||
+          (typeof rawPart.streaming === "boolean" ? rawPart.streaming : false),
+        raw: rawPart,
+      };
+    } else if (partType === "tool") {
+      const state = getNestedRecord(rawPart, "state") ?? {};
+      nextPart = {
+        kind: "tool",
+        id: normalizedPartId,
+        type: "tool",
+        toolName: typeof rawPart.tool === "string" ? rawPart.tool : "tool",
+        callId:
+          (typeof rawPart.callID === "string" ? rawPart.callID : undefined) ||
+          (typeof rawPart.callId === "string" ? rawPart.callId : undefined),
+        status: typeof state.status === "string" ? state.status : "pending",
+        title: typeof state.title === "string" ? state.title : undefined,
+        input: state.input,
+        output: state.output,
+        error: state.error,
+        raw: rawPart,
+      };
+    } else {
+      const previousText =
+        existingPart && existingPart.kind === "text" ? existingPart.text : "";
+      nextPart = {
+        kind: "text",
+        id: normalizedPartId,
+        type: "text",
+        text:
+          typeof rawPart.text === "string"
+            ? rawPart.text
+            : `${previousText}${delta}`,
+        streaming:
+          event.type === "message.part.delta" ||
+          (typeof rawPart.streaming === "boolean" ? rawPart.streaming : false),
+        raw: rawPart,
+      };
+    }
+
+    session.messagesById[normalizedMessageId] = {
+      ...existingMessage,
+      partsById: {
+        ...existingMessage.partsById,
+        [normalizedPartId]: nextPart,
+      },
+      partOrder: existingMessage.partsById[normalizedPartId]
+        ? existingMessage.partOrder
+        : [...existingMessage.partOrder, normalizedPartId],
+    };
+    if (!session.messageOrder.includes(normalizedMessageId)) {
+      session.messageOrder.push(normalizedMessageId);
+    }
+  }
+
+  for (const session of sessions.values()) {
+    if (!session.assignedTaskPartId && session.parentMessageId) {
+      session.assignedTaskPartId = resolveTaskPartIdForParentMessage(
+        session.parentMessageId,
+        rootMessagesById,
+      );
+    }
+    if (!session.assignedTaskPartId && allRootTaskPartIds.length === 1) {
+      session.assignedTaskPartId = allRootTaskPartIds[0] ?? null;
+    }
+  }
+
+  for (const [taskPartId, sessionIds] of Object.entries(
+    taskPartSessionIdsByPartId,
+  )) {
+    for (const sessionId of sessionIds) {
+      const session = ensureSession(sessionId, null);
+      if (!session.assignedTaskPartId) {
+        session.assignedTaskPartId = taskPartId;
+      }
+    }
+  }
+
+  return Array.from(sessions.values()).reduce<
+    Record<string, RunChatToolRailSubagentItem[]>
+  >((acc, session) => {
+    const taskPartId = session.assignedTaskPartId;
+    if (!taskPartId) {
+      return acc;
+    }
+
+    const liveMessages = buildSubagentMessagesFromStore({
+      sessionId: session.sessionId,
+      status: "idle",
+      streamConnected: false,
+      lastSyncAt: null,
+      messagesById: Object.fromEntries(
+        session.messageOrder
+          .map((messageId) => [messageId, session.messagesById[messageId]])
+          .filter((entry) => Boolean(entry[1])),
+      ) as AgentStore["messagesById"],
+      messageOrder: session.messageOrder,
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+    const fetchedMessages =
+      fetchedSessionHistories[session.sessionId]?.store !== undefined
+        ? buildSubagentMessagesFromStore(
+            fetchedSessionHistories[session.sessionId].store,
+          )
+        : [];
+    const messages = liveMessages.length > 0 ? liveMessages : fetchedMessages;
+
+    if (messages.length === 0) {
+      if (!session.title) {
+        return acc;
+      }
+      messages.push({
+        id: `${session.sessionId}-placeholder`,
+        role: "assistant",
+        content: session.title,
+        reasoningContent: "",
+        toolItems: [],
+      });
+    }
+
+    if (messages.length === 0) {
+      return acc;
+    }
+
+    const subagent: RunChatToolRailSubagentItem = {
+      id: session.sessionId,
+      label: formatSubagentLabel(
+        session.title,
+        session.agentType ||
+          Object.values(
+            fetchedSessionHistories[session.sessionId]?.store.messagesById ??
+              {},
+          )
+            .map((message) => message.attribution?.agent?.trim() || "")
+            .find(Boolean) ||
+          null,
+      ),
+      status: session.status,
+      messages,
+    };
+
+    acc[taskPartId] = [...(acc[taskPartId] ?? []), subagent];
+    return acc;
+  }, {});
 };
 
 const sanitizeAttributionValue = (value: unknown): string => {
@@ -359,6 +980,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const [overrideAgentId, setOverrideAgentId] = createSignal("");
   const [overrideProviderId, setOverrideProviderId] = createSignal("");
   const [overrideModelId, setOverrideModelId] = createSignal("");
+  const [fetchedSubagentHistories, setFetchedSubagentHistories] = createSignal<
+    Record<string, SubagentHistorySnapshot>
+  >({});
   const [
     composerSelectionValidationError,
     setComposerSelectionValidationError,
@@ -925,6 +1549,71 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     return `${baseText}${deltas.join("")}`;
   };
 
+  const taskPartSessionIdsByPartId = createMemo(() => {
+    const mapping: Record<string, string[]> = {};
+    const rootSessionId = props.model.agent.store().sessionId;
+    for (const message of Object.values(
+      props.model.agent.store().messagesById,
+    )) {
+      for (const partId of message.partOrder) {
+        const part = message.partsById[partId];
+        if (!part) {
+          continue;
+        }
+        const sessionIds = extractTaskSubagentSessionIds(part, rootSessionId);
+        if (sessionIds.length > 0) {
+          mapping[part.id] = sessionIds;
+        }
+      }
+    }
+    return mapping;
+  });
+
+  createEffect(() => {
+    const runId = props.model.run()?.id;
+    if (!runId) {
+      return;
+    }
+
+    const histories = fetchedSubagentHistories();
+    const sessionIds = Array.from(
+      new Set(Object.values(taskPartSessionIdsByPartId()).flat()),
+    );
+
+    for (const sessionId of sessionIds) {
+      if (histories[sessionId]) {
+        continue;
+      }
+
+      void Promise.all([
+        getRunOpenCodeSessionMessages({ runId, sessionId }),
+        getRunOpenCodeSessionTodos({ runId, sessionId }),
+      ])
+        .then(([messagesResult, todosResult]) => {
+          const hydrated = hydrateAgentStore({
+            sessionId,
+            messages: messagesResult.messages,
+            todos: todosResult.todos,
+          });
+          setFetchedSubagentHistories((current) => ({
+            ...current,
+            [sessionId]: { sessionId, store: hydrated },
+          }));
+        })
+        .catch(() => undefined);
+    }
+  });
+
+  const subagentPanelsByTaskPartId = createMemo(() => {
+    return buildSubagentPanels(
+      props.model.agent.store().rawEvents ?? [],
+      props.model.agent.store().sessionId,
+      props.model.agent.store().messagesById,
+      taskPartSessionIdsByPartId(),
+      fetchedSubagentHistories(),
+    );
+  });
+
   const getStepDetailsSummary = (part: UiPart): string | null => {
     if (part.kind === "step-start") {
       const snapshot = formatAgentPayload(part.snapshot).trim();
@@ -986,11 +1675,14 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
 
         if (part.kind === "tool") {
           const summary = buildToolSummary(part);
+          const isTask = isTaskToolName(part.toolName);
           toolItems.push({
             id: part.id,
             label: part.title?.trim() || part.toolName || "Tool",
             summary,
             status: part.status,
+            isTask,
+            subagents: subagentPanelsByTaskPartId()[part.id] ?? [],
           });
           continue;
         }

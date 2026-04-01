@@ -188,9 +188,19 @@ export type RunOpenCodeSessionMessagesResult = {
   raw: unknown;
 };
 
+export type GetRunOpenCodeSessionMessagesParams = {
+  runId: string;
+  sessionId?: string;
+};
+
 export type RunOpenCodeSessionTodosResult = {
   todos: unknown[];
   raw: unknown;
+};
+
+export type GetRunOpenCodeSessionTodosParams = {
+  runId: string;
+  sessionId?: string;
 };
 
 export type BootstrapRunOpenCodeResult = {
@@ -1431,10 +1441,15 @@ export const getBufferedRunOpenCodeEvents = async (
 };
 
 export const getRunOpenCodeSessionMessages = async (
-  runId: string,
+  params: string | GetRunOpenCodeSessionMessagesParams,
 ): Promise<RunOpenCodeSessionMessagesResult> => {
+  const request =
+    typeof params === "string"
+      ? { runId: params, sessionId: undefined }
+      : params;
   const response = await invoke<unknown>("get_run_opencode_session_messages", {
-    runId,
+    runId: request.runId,
+    sessionId: request.sessionId,
   });
 
   if (Array.isArray(response)) {
@@ -1463,10 +1478,15 @@ export const getRunOpenCodeSessionMessages = async (
 };
 
 export const getRunOpenCodeSessionTodos = async (
-  runId: string,
+  params: string | GetRunOpenCodeSessionTodosParams,
 ): Promise<RunOpenCodeSessionTodosResult> => {
+  const request =
+    typeof params === "string"
+      ? { runId: params, sessionId: undefined }
+      : params;
   const response = await invoke<unknown>("get_run_opencode_session_todos", {
-    runId,
+    runId: request.runId,
+    sessionId: request.sessionId,
   });
 
   if (Array.isArray(response)) {
