@@ -1,5 +1,6 @@
 import { For, Index, Show, type Component, type JSX } from "solid-js";
 import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
+import { AppIcon } from "../../../components/ui/icons";
 import type { EnvVarInput, RepoInput } from "../utils/projectForm";
 
 type Props = {
@@ -147,7 +148,9 @@ const CreateProjectPanel: Component<Props> = (props) => (
             <div>
               <h3 class="projects-repos-title">Environment variables</h3>
               <p class="projects-repos-subtitle">
-                Optional key/value pairs applied only to this project.
+                Optional Terminal Session Environment Variables for this
+                project. These variables will be injected into the terminal and
+                agent sessions.
               </p>
             </div>
             <button
@@ -170,9 +173,18 @@ const CreateProjectPanel: Component<Props> = (props) => (
               <Index each={props.envVars()}>
                 {(entry, index) => (
                   <div
-                    class="projects-repo-row border-base-content/15 bg-base-200/35 rounded-none border"
+                    class="projects-repo-row border-base-content/15 bg-base-200/35 relative rounded-none border pt-5 pr-12"
                     role="listitem"
                   >
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-xs text-error hover:bg-error/10 hover:text-error absolute top-3 right-3 h-7 min-h-7 w-7 rounded-none p-0"
+                      onClick={() => props.removeEnvVar(index)}
+                      aria-label={`Remove environment variable ${index + 1}`}
+                      title="Remove environment variable"
+                    >
+                      <AppIcon name="action.delete" size={14} />
+                    </button>
                     <label class="projects-field">
                       <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                         <span class="field-label-text">Key</span>
@@ -208,17 +220,6 @@ const CreateProjectPanel: Component<Props> = (props) => (
                         aria-label={`Environment variable ${index + 1} value`}
                       />
                     </label>
-                    <div class="projects-repo-controls">
-                      <div class="repo-actions">
-                        <button
-                          type="button"
-                          class="btn btn-sm border-error/25 bg-error/10 text-error hover:bg-error/15 rounded-none border px-4 text-xs font-medium"
-                          onClick={() => props.removeEnvVar(index)}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </div>
                   </div>
                 )}
               </Index>
