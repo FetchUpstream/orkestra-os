@@ -1,9 +1,38 @@
+use crate::app::projects::env::ProjectEnvVar;
 use crate::app::projects::errors::ProjectsRepositoryError;
 use crate::app::projects::models::{
     NewProject, Project, ProjectDetails, ProjectRepository, UpsertProjectRepository,
 };
 use sqlx::{Row, SqlitePool};
 use std::collections::{HashMap, HashSet};
+
+fn parse_project_env_vars(
+    raw: Option<String>,
+) -> Result<Option<Vec<ProjectEnvVar>>, ProjectsRepositoryError> {
+    match raw {
+        Some(value) => serde_json::from_str::<Vec<ProjectEnvVar>>(&value)
+            .map(Some)
+            .map_err(|_| {
+                ProjectsRepositoryError::validation(
+                    "stored project environment variables are invalid",
+                )
+            }),
+        None => Ok(None),
+    }
+}
+
+fn serialize_project_env_vars(
+    env_vars: &Option<Vec<ProjectEnvVar>>,
+) -> Result<Option<String>, ProjectsRepositoryError> {
+    match env_vars {
+        Some(entries) => serde_json::to_string(entries).map(Some).map_err(|_| {
+            ProjectsRepositoryError::validation(
+                "project environment variables could not be serialized",
+            )
+        }),
+        None => Ok(None),
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ProjectsRepository {
@@ -23,7 +52,7 @@ impl ProjectsRepository {
 
     pub async fn list_projects(&self) -> Result<Vec<Project>, ProjectsRepositoryError> {
         let rows = sqlx::query(
-            "SELECT id, key, name, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, created_at, updated_at
+            "SELECT id, key, name, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, env_vars_json, created_at, updated_at
             FROM projects
             ORDER BY created_at DESC",
         )
@@ -33,19 +62,22 @@ impl ProjectsRepository {
 
         let projects = rows
             .into_iter()
-            .map(|row| Project {
-                id: row.get("id"),
-                key: row.get("key"),
-                name: row.get("name"),
-                description: row.get("description"),
-                default_repo_id: row.get("default_repo_id"),
-                default_run_agent: row.get("default_run_agent"),
-                default_run_provider: row.get("default_run_provider"),
-                default_run_model: row.get("default_run_model"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+            .map(|row| {
+                Ok(Project {
+                    id: row.get("id"),
+                    key: row.get("key"),
+                    name: row.get("name"),
+                    description: row.get("description"),
+                    default_repo_id: row.get("default_repo_id"),
+                    default_run_agent: row.get("default_run_agent"),
+                    default_run_provider: row.get("default_run_provider"),
+                    default_run_model: row.get("default_run_model"),
+                    env_vars: parse_project_env_vars(row.get("env_vars_json"))?,
+                    created_at: row.get("created_at"),
+                    updated_at: row.get("updated_at"),
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(projects)
     }
@@ -55,7 +87,7 @@ impl ProjectsRepository {
         id: &str,
     ) -> Result<Option<ProjectDetails>, ProjectsRepositoryError> {
         let maybe_project = sqlx::query(
-            "SELECT id, key, name, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, created_at, updated_at
+            "SELECT id, key, name, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, env_vars_json, created_at, updated_at
             FROM projects
             WHERE id = ?",
         )
@@ -77,6 +109,7 @@ impl ProjectsRepository {
             default_run_agent: project_row.get("default_run_agent"),
             default_run_provider: project_row.get("default_run_provider"),
             default_run_model: project_row.get("default_run_model"),
+            env_vars: parse_project_env_vars(project_row.get("env_vars_json"))?,
             created_at: project_row.get("created_at"),
             updated_at: project_row.get("updated_at"),
         };
@@ -146,10 +179,11 @@ impl ProjectsRepository {
         let mut tx = self.pool.begin().await.map_err(|source| {
             ProjectsRepositoryError::db("starting project creation transaction", source)
         })?;
+        let env_vars_json = serialize_project_env_vars(&input.env_vars)?;
 
         sqlx::query(
-            "INSERT INTO projects (id, name, key, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO projects (id, name, key, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, env_vars_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&input.id)
         .bind(&input.name)
@@ -159,6 +193,7 @@ impl ProjectsRepository {
         .bind(&input.default_run_agent)
         .bind(&input.default_run_provider)
         .bind(&input.default_run_model)
+        .bind(&env_vars_json)
         .bind(&input.created_at)
         .bind(&input.updated_at)
         .execute(&mut *tx)
@@ -226,6 +261,7 @@ impl ProjectsRepository {
                 default_run_agent: input.default_run_agent,
                 default_run_provider: input.default_run_provider,
                 default_run_model: input.default_run_model,
+                env_vars: input.env_vars,
                 created_at: input.created_at,
                 updated_at: input.updated_at,
             },
@@ -242,12 +278,14 @@ impl ProjectsRepository {
         default_run_agent: &Option<String>,
         default_run_provider: &str,
         default_run_model: &str,
+        env_vars: &Option<Vec<ProjectEnvVar>>,
         updated_at: &str,
         repositories: &[UpsertProjectRepository],
     ) -> Result<Option<ProjectDetails>, ProjectsRepositoryError> {
         let mut tx = self.pool.begin().await.map_err(|source| {
             ProjectsRepositoryError::db("starting project update transaction", source)
         })?;
+        let env_vars_json = serialize_project_env_vars(env_vars)?;
 
         let project_exists = sqlx::query("SELECT 1 FROM projects WHERE id = ? LIMIT 1")
             .bind(project_id)
@@ -264,7 +302,7 @@ impl ProjectsRepository {
         }
 
         sqlx::query(
-            "UPDATE projects SET name = ?, key = ?, description = ?, default_run_agent = ?, default_run_provider = ?, default_run_model = ?, updated_at = ? WHERE id = ?",
+            "UPDATE projects SET name = ?, key = ?, description = ?, default_run_agent = ?, default_run_provider = ?, default_run_model = ?, env_vars_json = ?, updated_at = ? WHERE id = ?",
         )
         .bind(name)
         .bind(key)
@@ -272,6 +310,7 @@ impl ProjectsRepository {
         .bind(default_run_agent)
         .bind(default_run_provider)
         .bind(default_run_model)
+        .bind(&env_vars_json)
         .bind(updated_at)
         .bind(project_id)
         .execute(&mut *tx)
@@ -414,7 +453,7 @@ impl ProjectsRepository {
 
         let source_project_row =
             sqlx::query(
-                "SELECT id, description, default_run_agent, default_run_provider, default_run_model FROM projects WHERE id = ? LIMIT 1",
+                "SELECT id, description, default_run_agent, default_run_provider, default_run_model, env_vars_json FROM projects WHERE id = ? LIMIT 1",
             )
                 .bind(source_project_id)
                 .fetch_optional(&mut *tx)
@@ -458,8 +497,8 @@ impl ProjectsRepository {
         }
 
         sqlx::query(
-            "INSERT INTO projects (id, name, key, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO projects (id, name, key, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, env_vars_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(new_project_id)
         .bind(new_name)
@@ -481,6 +520,12 @@ impl ProjectsRepository {
         .bind(
             source_project_row
                 .try_get::<Option<String>, _>("default_run_model")
+                .ok()
+                .flatten(),
+        )
+        .bind(
+            source_project_row
+                .try_get::<Option<String>, _>("env_vars_json")
                 .ok()
                 .flatten(),
         )

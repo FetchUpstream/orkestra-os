@@ -32,6 +32,7 @@ const ProjectsScreen: Component = () => {
           name={model.name}
           keyValue={model.key}
           description={model.description}
+          envVars={model.envVars}
           repositories={model.repositories}
           defaultRepoIndex={model.defaultRepoIndex}
           error={model.error}
@@ -48,6 +49,7 @@ const ProjectsScreen: Component = () => {
           runProviderOptions={model.runProviderOptions}
           visibleRunModelOptions={model.visibleRunModelOptions}
           runDefaultsValidationError={model.runDefaultsValidationError}
+          projectEnvVarError={model.projectEnvVarError}
           setDescription={model.setDescription}
           setTouched={model.setTouched}
           setDefaultRepoIndex={model.setDefaultRepoIndex}
@@ -56,8 +58,11 @@ const ProjectsScreen: Component = () => {
           setDefaultRunModel={model.setDefaultRunModel}
           updateName={model.updateName}
           updateKey={model.updateKey}
+          addEnvVar={model.addEnvVar}
           addRepository={model.addRepository}
+          removeEnvVar={model.removeEnvVar}
           removeRepository={model.removeRepository}
+          updateEnvVar={model.updateEnvVar}
           updateRepository={model.updateRepository}
           onDeleteProject={model.onOpenDeleteCurrentProject}
           resetToCreateMode={() => {

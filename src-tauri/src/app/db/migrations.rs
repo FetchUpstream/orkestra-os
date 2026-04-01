@@ -18,9 +18,12 @@ const MIGRATION_0010: &str =
 const MIGRATION_0011: &str =
     include_str!("../../../migrations/0011_add_runs_initial_prompt_claim_tracking.sql");
 const MIGRATION_0015: &str = include_str!("../../../migrations/0015_add_task_search_fts.sql");
-const MIGRATION_0017: &str = include_str!("../../../migrations/0017_update_run_status_lifecycle.sql");
+const MIGRATION_0017: &str =
+    include_str!("../../../migrations/0017_update_run_status_lifecycle.sql");
 const MIGRATION_0018: &str = include_str!("../../../migrations/0018_add_runs_run_state.sql");
-const MIGRATION_0019: &str = include_str!("../../../migrations/0019_drop_runs_single_active_index.sql");
+const MIGRATION_0019: &str =
+    include_str!("../../../migrations/0019_drop_runs_single_active_index.sql");
+const MIGRATION_0020: &str = include_str!("../../../migrations/0020_add_project_env_vars.sql");
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(MIGRATION_0001).execute(pool).await?;
@@ -161,11 +164,33 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     let has_default_run_agent = project_columns
         .iter()
         .any(|row| row.get::<String, _>("name") == "default_run_agent");
+    let has_default_run_provider = project_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "default_run_provider");
+    let has_default_run_model = project_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "default_run_model");
+    let has_env_vars_json = project_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "env_vars_json");
 
     if !has_default_run_agent {
         sqlx::query("ALTER TABLE projects ADD COLUMN default_run_agent TEXT")
             .execute(pool)
             .await?;
+    }
+    if !has_default_run_provider {
+        sqlx::query("ALTER TABLE projects ADD COLUMN default_run_provider TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_default_run_model {
+        sqlx::query("ALTER TABLE projects ADD COLUMN default_run_model TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_env_vars_json {
+        sqlx::query(MIGRATION_0020).execute(pool).await?;
     }
 
     let run_columns = sqlx::query("PRAGMA table_info(runs)")
@@ -573,16 +598,18 @@ mod tests {
 
         run_migrations(&pool).await.unwrap();
 
-        let run_queued_status: String = sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-queued'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let run_queued_status: String =
+            sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-queued'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(run_queued_status, "idle");
 
-        let run_completed_status: String = sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-completed'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let run_completed_status: String =
+            sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-completed'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(run_completed_status, "complete");
 
         let runs_table_sql: String = sqlx::query_scalar(

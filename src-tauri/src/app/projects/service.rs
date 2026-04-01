@@ -4,11 +4,13 @@ use crate::app::projects::dto::{
     CloneProjectRequest, CreateProjectRequest, ProjectDetailsDto, ProjectDto, ProjectRepositoryDto,
     UpdateProjectRequest,
 };
+use crate::app::projects::env::{normalize_project_env_vars, project_env_var_map};
 use crate::app::projects::errors::ProjectsServiceError;
 use crate::app::projects::models::{NewProject, NewProjectRepository, UpsertProjectRepository};
 use crate::app::projects::search_service::ProjectFileSearchService;
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
+use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 pub struct ProjectsService {
@@ -88,6 +90,7 @@ impl ProjectsService {
                 default_run_agent: project.default_run_agent,
                 default_run_provider: project.default_run_provider,
                 default_run_model: project.default_run_model,
+                env_vars: project.env_vars,
                 created_at: project.created_at,
                 updated_at: project.updated_at,
             })
@@ -113,6 +116,7 @@ impl ProjectsService {
                 default_run_agent: details.project.default_run_agent,
                 default_run_provider: details.project.default_run_provider,
                 default_run_model: details.project.default_run_model,
+                env_vars: details.project.env_vars,
                 created_at: details.project.created_at,
                 updated_at: details.project.updated_at,
             },
@@ -145,6 +149,8 @@ impl ProjectsService {
             .filter(|agent| !agent.is_empty());
         input.default_run_provider = input.default_run_provider.trim().to_string();
         input.default_run_model = input.default_run_model.trim().to_string();
+        let normalized_env_vars = normalize_project_env_vars(input.env_vars.as_deref())
+            .map_err(ProjectsServiceError::Validation)?;
         self.validate_key(&input.key).map_err(AppError::from)?;
         self.validate_repositories(&input.repositories)
             .map_err(AppError::from)?;
@@ -175,6 +181,7 @@ impl ProjectsService {
             default_run_agent,
             default_run_provider: Some(input.default_run_provider),
             default_run_model: Some(input.default_run_model),
+            env_vars: (!normalized_env_vars.is_empty()).then_some(normalized_env_vars),
             created_at: now.clone(),
             updated_at: now,
             repositories: input
@@ -213,6 +220,7 @@ impl ProjectsService {
                 default_run_agent: created.project.default_run_agent,
                 default_run_provider: created.project.default_run_provider,
                 default_run_model: created.project.default_run_model,
+                env_vars: created.project.env_vars,
                 created_at: created.project.created_at,
                 updated_at: created.project.updated_at,
             },
@@ -246,6 +254,8 @@ impl ProjectsService {
             .filter(|agent| !agent.is_empty());
         input.default_run_provider = input.default_run_provider.trim().to_string();
         input.default_run_model = input.default_run_model.trim().to_string();
+        let normalized_env_vars = normalize_project_env_vars(input.env_vars.as_deref())
+            .map_err(ProjectsServiceError::Validation)?;
         self.validate_key(&input.key).map_err(AppError::from)?;
         self.validate_repositories(&input.repositories)
             .map_err(AppError::from)?;
@@ -298,6 +308,7 @@ impl ProjectsService {
                 &default_run_agent,
                 &input.default_run_provider,
                 &input.default_run_model,
+                &(!normalized_env_vars.is_empty()).then_some(normalized_env_vars),
                 &now,
                 &normalized_repositories,
             )
@@ -316,6 +327,7 @@ impl ProjectsService {
                 default_run_agent: updated.project.default_run_agent,
                 default_run_provider: updated.project.default_run_provider,
                 default_run_model: updated.project.default_run_model,
+                env_vars: updated.project.env_vars,
                 created_at: updated.project.created_at,
                 updated_at: updated.project.updated_at,
             },
@@ -410,6 +422,7 @@ impl ProjectsService {
                 default_run_agent: cloned.project.default_run_agent,
                 default_run_provider: cloned.project.default_run_provider,
                 default_run_model: cloned.project.default_run_model,
+                env_vars: cloned.project.env_vars,
                 created_at: cloned.project.created_at,
                 updated_at: cloned.project.updated_at,
             },
@@ -529,6 +542,28 @@ impl ProjectsService {
         }
         Ok(())
     }
+
+    pub async fn resolve_project_env_vars(
+        &self,
+        project_id: &str,
+    ) -> Result<HashMap<String, String>, AppError> {
+        let project_id = project_id.trim();
+        if project_id.is_empty() {
+            return Err(AppError::validation("project id is required"));
+        }
+
+        let details = self
+            .repository
+            .get_project(project_id)
+            .await
+            .map_err(|source| ProjectsServiceError::QueryProjectData { source })
+            .map_err(AppError::from)?
+            .ok_or_else(|| AppError::from(ProjectsServiceError::NotFound("project not found")))?;
+
+        project_env_var_map(details.project.env_vars.as_deref())
+            .map_err(ProjectsServiceError::Validation)
+            .map_err(AppError::from)
+    }
 }
 
 #[cfg(test)]
@@ -562,6 +597,7 @@ mod tests {
                 default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
+                env_vars: None,
                 repositories: vec![
                     crate::app::projects::dto::CreateProjectRepositoryRequest {
                         id: None,
@@ -614,6 +650,7 @@ mod tests {
                 default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
+                env_vars: None,
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
                     id: None,
                     name: "Main".to_string(),
@@ -636,6 +673,7 @@ mod tests {
                 &source.project.default_run_agent,
                 source.project.default_run_provider.as_deref().unwrap_or(""),
                 source.project.default_run_model.as_deref().unwrap_or(""),
+                &source.project.env_vars,
                 "2024-01-02T00:00:00Z",
                 &[],
             )
@@ -673,6 +711,7 @@ mod tests {
                 default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
+                env_vars: None,
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
                     id: None,
                     name: "Main".to_string(),
@@ -712,6 +751,7 @@ mod tests {
                 default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
+                env_vars: None,
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
                     id: None,
                     name: "Main".to_string(),
@@ -736,6 +776,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_project_persists_and_resolves_project_env_vars() {
+        let service = setup_service().await;
+
+        let created = service
+            .create_project(CreateProjectRequest {
+                name: "Env Source".to_string(),
+                description: None,
+                key: "ENV".to_string(),
+                default_run_agent: None,
+                default_run_provider: "provider-a".to_string(),
+                default_run_model: "model-a".to_string(),
+                env_vars: Some(vec![
+                    crate::app::projects::env::ProjectEnvVar {
+                        key: " API_TOKEN ".to_string(),
+                        value: "secret".to_string(),
+                    },
+                    crate::app::projects::env::ProjectEnvVar {
+                        key: "EMPTY_OK".to_string(),
+                        value: "".to_string(),
+                    },
+                ]),
+                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
+                    id: None,
+                    name: "Main".to_string(),
+                    repo_path: "/repo/main".to_string(),
+                    is_default: true,
+                    setup_script: None,
+                    cleanup_script: None,
+                }],
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(created.project.env_vars.as_ref().map(Vec::len), Some(2));
+        assert_eq!(
+            created
+                .project
+                .env_vars
+                .as_ref()
+                .and_then(|vars| vars.first())
+                .map(|entry| entry.key.as_str()),
+            Some("API_TOKEN")
+        );
+
+        let resolved = service
+            .resolve_project_env_vars(&created.project.id)
+            .await
+            .unwrap();
+        assert_eq!(resolved.get("API_TOKEN"), Some(&"secret".to_string()));
+        assert_eq!(resolved.get("EMPTY_OK"), Some(&"".to_string()));
+    }
+
+    #[tokio::test]
     async fn delete_project_removes_project_records_and_worktree_artifacts() {
         let service = setup_service().await;
 
@@ -747,6 +840,7 @@ mod tests {
                 default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
+                env_vars: None,
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
                     id: None,
                     name: "Main".to_string(),
@@ -843,6 +937,7 @@ mod tests {
                 default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
+                env_vars: None,
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
                     id: None,
                     name: "Main".to_string(),
@@ -865,6 +960,7 @@ mod tests {
                     default_run_agent: None,
                     default_run_provider: "provider-a".to_string(),
                     default_run_model: "model-a".to_string(),
+                    env_vars: None,
                     repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
                         id: Some(created.repositories[0].id.clone()),
                         name: "Main".to_string(),
@@ -943,6 +1039,7 @@ mod tests {
                 default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
+                env_vars: None,
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
                     id: None,
                     name: "Main".to_string(),
@@ -963,6 +1060,7 @@ mod tests {
                 default_run_agent: None,
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
+                env_vars: None,
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
                     id: None,
                     name: "Main".to_string(),

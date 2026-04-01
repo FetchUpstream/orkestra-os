@@ -1101,7 +1101,10 @@ mod tests {
 
         assert_eq!(ids, vec!["run-running", "run-preparing", "run-queued"]);
         assert!(runs.iter().all(|run| {
-            matches!(run.status.as_str(), "queued" | "preparing" | "in_progress" | "idle")
+            matches!(
+                run.status.as_str(),
+                "queued" | "preparing" | "in_progress" | "idle"
+            )
         }));
     }
 
@@ -1258,7 +1261,10 @@ mod tests {
         seed_task_with_status(&pool, "task-1", &repo_path, "todo").await;
         seed_run(&pool, "run-1", "task-1").await;
 
-        let updated = service.transition_run_to_in_progress("run-1").await.unwrap();
+        let updated = service
+            .transition_run_to_in_progress("run-1")
+            .await
+            .unwrap();
 
         assert_eq!(updated.status, "in_progress");
         let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")

@@ -451,7 +451,6 @@ impl TasksService {
 
         Self::next_status(from) == Some(to)
     }
-
 }
 
 #[cfg(test)]
@@ -469,7 +468,6 @@ mod tests {
             TaskSearchService::new(repository.clone(), TaskSearchRepository::new(pool.clone()));
         (TasksService::new(repository, search_service), pool)
     }
-
 
     async fn seed_project_and_repository(pool: &SqlitePool) {
         let project_id = "project-1";

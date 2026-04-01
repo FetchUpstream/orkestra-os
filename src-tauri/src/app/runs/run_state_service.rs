@@ -93,7 +93,10 @@ impl RunStateService {
             .map(str::trim)
             .filter(|state| !state.is_empty());
 
-        if matches!(current, Some(COMMITTING_CHANGES | RESOLVING_REBASE_CONFLICTS)) {
+        if matches!(
+            current,
+            Some(COMMITTING_CHANGES | RESOLVING_REBASE_CONFLICTS)
+        ) {
             return Ok(None);
         }
 
@@ -226,14 +229,16 @@ impl RunStateService {
             return Ok(());
         };
 
-        app_handle.emit(RUN_STATE_CHANGED_EVENT, payload).map_err(|source| {
-            AppError::infrastructure_with_source(
-                "runs",
-                "emit_run_state_changed_failed",
-                "failed to emit run state changed event",
-                source,
-            )
-        })
+        app_handle
+            .emit(RUN_STATE_CHANGED_EVENT, payload)
+            .map_err(|source| {
+                AppError::infrastructure_with_source(
+                    "runs",
+                    "emit_run_state_changed_failed",
+                    "failed to emit run state changed event",
+                    source,
+                )
+            })
     }
 
     async fn is_ready_to_merge(&self, run: &Run) -> Result<bool, AppError> {
@@ -308,10 +313,11 @@ impl RunStateService {
             Ok(commit) => commit,
             Err(_) => return Ok(false),
         };
-        let (analysis, _) = match source_repo.merge_analysis_for_ref(&mut source_ref, &[&worktree_annotated]) {
-            Ok(analysis) => analysis,
-            Err(_) => return Ok(false),
-        };
+        let (analysis, _) =
+            match source_repo.merge_analysis_for_ref(&mut source_ref, &[&worktree_annotated]) {
+                Ok(analysis) => analysis,
+                Err(_) => return Ok(false),
+            };
 
         Ok(analysis.is_fast_forward() || analysis.is_up_to_date())
     }

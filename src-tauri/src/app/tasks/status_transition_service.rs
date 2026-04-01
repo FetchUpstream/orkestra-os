@@ -54,16 +54,8 @@ impl TaskStatusTransitionService {
         task_id: &str,
         run_id: &str,
     ) -> Result<Option<TaskStatusChangedEventDto>, AppError> {
-        self.transition_task_status(
-            task_id,
-            run_id,
-            None,
-            "review",
-            "doing",
-            "user_reply",
-            None,
-        )
-        .await
+        self.transition_task_status(task_id, run_id, None, "review", "doing", "user_reply", None)
+            .await
     }
 
     pub fn emit_task_status_changed(
@@ -103,12 +95,27 @@ impl TaskStatusTransitionService {
         }
 
         let Some(run) = self.runs_repository.get_run(run_id).await? else {
-            warn!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id, run_id, "Ignoring missing run");
+            warn!(
+                subsystem = "tasks",
+                operation = "transition_task_status",
+                transition_source,
+                task_id,
+                run_id,
+                "Ignoring missing run"
+            );
             return Ok(None);
         };
 
         if run.task_id != task_id {
-            warn!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id, run_id, actual_task_id = run.task_id, "Ignoring mismatched task/run pair");
+            warn!(
+                subsystem = "tasks",
+                operation = "transition_task_status",
+                transition_source,
+                task_id,
+                run_id,
+                actual_task_id = run.task_id,
+                "Ignoring mismatched task/run pair"
+            );
             return Ok(None);
         }
 
@@ -117,7 +124,17 @@ impl TaskStatusTransitionService {
             if expected_session_id.is_empty()
                 || run.opencode_session_id.as_deref() != Some(expected_session_id)
             {
-                info!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id, run_id, expected_session_id, run_session_id = run.opencode_session_id.as_deref().unwrap_or(""), source_event = source_event.unwrap_or(""), "Ignoring stale session transition");
+                info!(
+                    subsystem = "tasks",
+                    operation = "transition_task_status",
+                    transition_source,
+                    task_id,
+                    run_id,
+                    expected_session_id,
+                    run_session_id = run.opencode_session_id.as_deref().unwrap_or(""),
+                    source_event = source_event.unwrap_or(""),
+                    "Ignoring stale session transition"
+                );
                 return Ok(None);
             }
         }
@@ -128,17 +145,41 @@ impl TaskStatusTransitionService {
             .await
             .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?
         else {
-            warn!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id, run_id, "Ignoring missing task");
+            warn!(
+                subsystem = "tasks",
+                operation = "transition_task_status",
+                transition_source,
+                task_id,
+                run_id,
+                "Ignoring missing task"
+            );
             return Ok(None);
         };
 
         if task.status == next_status {
-            info!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id, run_id, status = task.status.as_str(), "Ignoring idempotent transition");
+            info!(
+                subsystem = "tasks",
+                operation = "transition_task_status",
+                transition_source,
+                task_id,
+                run_id,
+                status = task.status.as_str(),
+                "Ignoring idempotent transition"
+            );
             return Ok(None);
         }
 
         if task.status != expected_from_status || Self::is_terminal_status(&task) {
-            info!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id, run_id, current_status = task.status.as_str(), expected_from_status, "Ignoring invalid transition");
+            info!(
+                subsystem = "tasks",
+                operation = "transition_task_status",
+                transition_source,
+                task_id,
+                run_id,
+                current_status = task.status.as_str(),
+                expected_from_status,
+                "Ignoring invalid transition"
+            );
             return Ok(None);
         }
 
@@ -173,7 +214,14 @@ impl TaskStatusTransitionService {
         };
 
         if !changed {
-            info!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id, run_id, "Ignoring duplicate transition write");
+            info!(
+                subsystem = "tasks",
+                operation = "transition_task_status",
+                transition_source,
+                task_id,
+                run_id,
+                "Ignoring duplicate transition write"
+            );
             return Ok(None);
         }
 
@@ -193,7 +241,18 @@ impl TaskStatusTransitionService {
 
         self.emit_task_status_changed(&payload)?;
 
-        info!(subsystem = "tasks", operation = "transition_task_status", transition_source, task_id = updated_task.id, project_id = updated_task.project_id, run_id, previous_status = payload.previous_status.as_str(), new_status = payload.new_status.as_str(), source_event = source_event.unwrap_or(""), "Applied task status transition");
+        info!(
+            subsystem = "tasks",
+            operation = "transition_task_status",
+            transition_source,
+            task_id = updated_task.id,
+            project_id = updated_task.project_id,
+            run_id,
+            previous_status = payload.previous_status.as_str(),
+            new_status = payload.new_status.as_str(),
+            source_event = source_event.unwrap_or(""),
+            "Applied task status transition"
+        );
 
         Ok(Some(payload))
     }

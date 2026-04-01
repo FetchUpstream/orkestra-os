@@ -1,4 +1,5 @@
 use crate::app::errors::AppError;
+use crate::app::projects::service::ProjectsService;
 use crate::app::runs::dto::RunDto;
 use crate::app::runs::service::RunsService;
 use crate::app::terminal::error::TerminalServiceError;
@@ -21,6 +22,7 @@ const DEFAULT_LANG: &str = "C.UTF-8";
 
 #[derive(Clone)]
 pub struct TerminalService {
+    projects_service: ProjectsService,
     runs_service: RunsService,
     worktrees_root: PathBuf,
     sessions: Arc<Mutex<HashMap<String, TerminalSession>>>,
@@ -67,8 +69,13 @@ struct TerminalSession {
 }
 
 impl TerminalService {
-    pub fn new(runs_service: RunsService, app_data_dir: PathBuf) -> Self {
+    pub fn new(
+        projects_service: ProjectsService,
+        runs_service: RunsService,
+        app_data_dir: PathBuf,
+    ) -> Self {
         Self {
+            projects_service,
             runs_service,
             worktrees_root: app_data_dir.join("worktrees"),
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -135,7 +142,15 @@ impl TerminalService {
         let shell = Self::resolve_shell();
         let shell_args = Self::resolve_shell_args(&shell);
         let inherited_env = Self::capture_terminal_env();
-        let child_env = Self::build_terminal_env(&shell, &inherited_env);
+        let project_env = self
+            .projects_service
+            .resolve_project_env_vars(&run.project_id)
+            .await
+            .map_err(|source| TerminalServiceError::ResolveRun {
+                run_id: run_id.to_string(),
+                source,
+            })?;
+        let child_env = Self::build_terminal_env(&shell, &inherited_env, &project_env);
 
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -469,6 +484,7 @@ impl TerminalService {
     fn build_terminal_env(
         shell: &str,
         inherited_env: &BTreeMap<String, String>,
+        project_env: &HashMap<String, String>,
     ) -> BTreeMap<String, String> {
         let mut env = inherited_env.clone();
 
@@ -477,6 +493,10 @@ impl TerminalService {
         Self::ensure_env_value(&mut env, "COLORTERM", DEFAULT_COLORTERM);
         Self::ensure_env_value(&mut env, "PATH", DEFAULT_PATH);
         Self::ensure_env_value(&mut env, "LANG", DEFAULT_LANG);
+
+        for (key, value) in project_env {
+            env.insert(key.clone(), value.clone());
+        }
 
         env
     }
@@ -607,10 +627,8 @@ impl TerminalService {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        TerminalService, DEFAULT_COLORTERM, DEFAULT_LANG, DEFAULT_PATH, DEFAULT_TERM,
-    };
-    use std::collections::BTreeMap;
+    use super::{TerminalService, DEFAULT_COLORTERM, DEFAULT_LANG, DEFAULT_PATH, DEFAULT_TERM};
+    use std::collections::{BTreeMap, HashMap};
 
     #[test]
     fn bash_shell_uses_explicit_interactive_mode() {
@@ -631,7 +649,7 @@ mod tests {
             ("TERM".to_string(), "dumb".to_string()),
         ]);
 
-        let env = TerminalService::build_terminal_env("/bin/bash", &inherited);
+        let env = TerminalService::build_terminal_env("/bin/bash", &inherited, &HashMap::new());
 
         assert_eq!(env.get("SHELL"), Some(&"/bin/bash".to_string()));
         assert_eq!(env.get("TERM"), Some(&DEFAULT_TERM.to_string()));
@@ -642,12 +660,27 @@ mod tests {
 
     #[test]
     fn terminal_env_fills_missing_core_values() {
-        let env = TerminalService::build_terminal_env("/bin/bash", &BTreeMap::new());
+        let env =
+            TerminalService::build_terminal_env("/bin/bash", &BTreeMap::new(), &HashMap::new());
 
         assert_eq!(env.get("SHELL"), Some(&"/bin/bash".to_string()));
         assert_eq!(env.get("TERM"), Some(&DEFAULT_TERM.to_string()));
         assert_eq!(env.get("COLORTERM"), Some(&DEFAULT_COLORTERM.to_string()));
         assert_eq!(env.get("PATH"), Some(&DEFAULT_PATH.to_string()));
         assert_eq!(env.get("LANG"), Some(&DEFAULT_LANG.to_string()));
+    }
+
+    #[test]
+    fn terminal_env_applies_project_overrides() {
+        let inherited = BTreeMap::from([("PATH".to_string(), "/base/bin".to_string())]);
+        let project = HashMap::from([
+            ("API_TOKEN".to_string(), "secret".to_string()),
+            ("PATH".to_string(), "/project/bin".to_string()),
+        ]);
+
+        let env = TerminalService::build_terminal_env("/bin/bash", &inherited, &project);
+
+        assert_eq!(env.get("API_TOKEN"), Some(&"secret".to_string()));
+        assert_eq!(env.get("PATH"), Some(&"/project/bin".to_string()));
     }
 }

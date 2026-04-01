@@ -137,9 +137,9 @@ impl RunsMergeService {
 
             if conflict_result.is_none() {
                 let signature = Self::signature(&context.repo)?;
-                rebase
-                    .finish(Some(&signature))
-                    .map_err(|err| AppError::validation(format!("failed to finish rebase: {err}")))?;
+                rebase.finish(Some(&signature)).map_err(|err| {
+                    AppError::validation(format!("failed to finish rebase: {err}"))
+                })?;
                 Self::reattach_head_to_branch_if_needed(&context.repo, &context.worktree_branch)?;
             }
 
@@ -694,8 +694,8 @@ mod tests {
     use crate::app::db::repositories::runs::RunsRepository;
     use crate::app::errors::AppError;
     use crate::app::runs::run_state_service::RunStateService;
-    use crate::app::runs::status_transition_service::RunStatusTransitionService;
     use crate::app::runs::service::RunsService;
+    use crate::app::runs::status_transition_service::RunStatusTransitionService;
     use crate::app::worktrees::service::WorktreesService;
     use git2::{Repository, Signature};
     use sqlx::SqlitePool;

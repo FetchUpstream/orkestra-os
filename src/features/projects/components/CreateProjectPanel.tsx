@@ -1,12 +1,13 @@
 import { For, Index, Show, type Component, type JSX } from "solid-js";
 import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
-import type { RepoInput } from "../utils/projectForm";
+import type { EnvVarInput, RepoInput } from "../utils/projectForm";
 
 type Props = {
   mode: () => "create" | "edit";
   name: () => string;
   keyValue: () => string;
   description: () => string;
+  envVars: () => EnvVarInput[];
   repositories: () => RepoInput[];
   defaultRepoIndex: () => number;
   error: () => string;
@@ -23,6 +24,7 @@ type Props = {
   runProviderOptions: () => RunSelectionOption[];
   visibleRunModelOptions: () => RunModelOption[];
   runDefaultsValidationError: () => string;
+  projectEnvVarError: () => string;
   setDescription: (value: string) => void;
   setTouched: (
     next: (prev: Record<string, boolean>) => Record<string, boolean>,
@@ -33,8 +35,15 @@ type Props = {
   setDefaultRunModel: (value: string) => void;
   updateName: (value: string) => void;
   updateKey: (value: string) => void;
+  addEnvVar: () => void;
   addRepository: () => void;
+  removeEnvVar: (index: number) => void;
   removeRepository: (index: number) => void;
+  updateEnvVar: (
+    index: number,
+    field: keyof EnvVarInput,
+    value: string,
+  ) => void;
   updateRepository: (
     index: number,
     field: keyof RepoInput,
@@ -125,6 +134,100 @@ const CreateProjectPanel: Component<Props> = (props) => (
             rows={3}
           />
         </label>
+      </div>
+      <div class="form-section">
+        <div>
+          <h3 class="form-section-title">Project Environment</h3>
+          <p class="form-section-subtitle">
+            Project-scoped environment variables for run terminals and OpenCode.
+          </p>
+        </div>
+        <div class="projects-repos-block border-base-content/15 bg-base-100 rounded-none border">
+          <div class="projects-repos-head">
+            <div>
+              <h3 class="projects-repos-title">Environment variables</h3>
+              <p class="projects-repos-subtitle">
+                Optional key/value pairs applied only to this project.
+              </p>
+            </div>
+            <button
+              type="button"
+              class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+              onClick={props.addEnvVar}
+            >
+              Add variable
+            </button>
+          </div>
+          <Show
+            when={props.envVars().length > 0}
+            fallback={
+              <p class="project-placeholder-text px-4 py-4 text-sm">
+                No project env vars configured.
+              </p>
+            }
+          >
+            <div class="projects-repo-list" role="list">
+              <Index each={props.envVars()}>
+                {(entry, index) => (
+                  <div
+                    class="projects-repo-row border-base-content/15 bg-base-200/35 rounded-none border"
+                    role="listitem"
+                  >
+                    <label class="projects-field">
+                      <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                        <span class="field-label-text">Key</span>
+                      </span>
+                      <input
+                        placeholder="API_TOKEN"
+                        value={entry().key}
+                        onInput={(event) =>
+                          props.updateEnvVar(
+                            index,
+                            "key",
+                            event.currentTarget.value,
+                          )
+                        }
+                        aria-label={`Environment variable ${index + 1} key`}
+                      />
+                    </label>
+                    <label class="projects-field">
+                      <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                        <span class="field-label-text">Value</span>
+                        <span class="field-optional">optional</span>
+                      </span>
+                      <input
+                        placeholder="your-value"
+                        value={entry().value}
+                        onInput={(event) =>
+                          props.updateEnvVar(
+                            index,
+                            "value",
+                            event.currentTarget.value,
+                          )
+                        }
+                        aria-label={`Environment variable ${index + 1} value`}
+                      />
+                    </label>
+                    <div class="projects-repo-controls">
+                      <div class="repo-actions">
+                        <button
+                          type="button"
+                          class="btn btn-sm border-error/25 bg-error/10 text-error hover:bg-error/15 rounded-none border px-4 text-xs font-medium"
+                          onClick={() => props.removeEnvVar(index)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </Index>
+            </div>
+          </Show>
+          <Show when={props.projectEnvVarError()}>
+            {(message) => <p class="field-error px-4 pb-4">{message()}</p>}
+          </Show>
+        </div>
       </div>
       <div class="form-section">
         <div>

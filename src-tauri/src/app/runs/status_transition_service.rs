@@ -141,14 +141,16 @@ impl RunStatusTransitionService {
             return Ok(());
         };
 
-        app_handle.emit(RUN_STATUS_CHANGED_EVENT, payload).map_err(|source| {
-            AppError::infrastructure_with_source(
-                "runs",
-                "emit_run_status_changed_failed",
-                "failed to emit run status changed event",
-                source,
-            )
-        })
+        app_handle
+            .emit(RUN_STATUS_CHANGED_EVENT, payload)
+            .map_err(|source| {
+                AppError::infrastructure_with_source(
+                    "runs",
+                    "emit_run_status_changed_failed",
+                    "failed to emit run status changed event",
+                    source,
+                )
+            })
     }
 
     async fn transition_run_status_for_active_task(
@@ -172,12 +174,27 @@ impl RunStatusTransitionService {
         }
 
         let Some(run) = self.runs_repository.get_run(run_id).await? else {
-            warn!(subsystem = "runs", operation = "transition_run_status", transition_source, task_id, run_id, "Ignoring missing run");
+            warn!(
+                subsystem = "runs",
+                operation = "transition_run_status",
+                transition_source,
+                task_id,
+                run_id,
+                "Ignoring missing run"
+            );
             return Ok(None);
         };
 
         if run.task_id != task_id {
-            warn!(subsystem = "runs", operation = "transition_run_status", transition_source, task_id, run_id, actual_task_id = run.task_id, "Ignoring mismatched task/run pair");
+            warn!(
+                subsystem = "runs",
+                operation = "transition_run_status",
+                transition_source,
+                task_id,
+                run_id,
+                actual_task_id = run.task_id,
+                "Ignoring mismatched task/run pair"
+            );
             return Ok(None);
         }
 
@@ -186,7 +203,17 @@ impl RunStatusTransitionService {
             if expected_session_id.is_empty()
                 || run.opencode_session_id.as_deref() != Some(expected_session_id)
             {
-                info!(subsystem = "runs", operation = "transition_run_status", transition_source, task_id, run_id, expected_session_id, run_session_id = run.opencode_session_id.as_deref().unwrap_or(""), source_event = source_event.unwrap_or(""), "Ignoring stale session transition");
+                info!(
+                    subsystem = "runs",
+                    operation = "transition_run_status",
+                    transition_source,
+                    task_id,
+                    run_id,
+                    expected_session_id,
+                    run_session_id = run.opencode_session_id.as_deref().unwrap_or(""),
+                    source_event = source_event.unwrap_or(""),
+                    "Ignoring stale session transition"
+                );
                 return Ok(None);
             }
         }
@@ -217,51 +244,93 @@ impl RunStatusTransitionService {
         }
 
         let Some(run) = self.runs_repository.get_run(run_id).await? else {
-            warn!(subsystem = "runs", operation = "transition_run_status", transition_source, run_id, "Ignoring missing run");
+            warn!(
+                subsystem = "runs",
+                operation = "transition_run_status",
+                transition_source,
+                run_id,
+                "Ignoring missing run"
+            );
             return Ok(None);
         };
 
         if let Some(expected_task_id) = expected_task_id {
             if run.task_id != expected_task_id {
-                warn!(subsystem = "runs", operation = "transition_run_status", transition_source, run_id, expected_task_id, actual_task_id = run.task_id, "Ignoring mismatched task/run pair");
+                warn!(
+                    subsystem = "runs",
+                    operation = "transition_run_status",
+                    transition_source,
+                    run_id,
+                    expected_task_id,
+                    actual_task_id = run.task_id,
+                    "Ignoring mismatched task/run pair"
+                );
                 return Ok(None);
             }
         }
 
         if run.status == next_status {
-            info!(subsystem = "runs", operation = "transition_run_status", transition_source, run_id, status = run.status.as_str(), "Ignoring idempotent transition");
+            info!(
+                subsystem = "runs",
+                operation = "transition_run_status",
+                transition_source,
+                run_id,
+                status = run.status.as_str(),
+                "Ignoring idempotent transition"
+            );
             return Ok(None);
         }
 
         if Self::is_terminal_status(run.status.as_str()) {
-            info!(subsystem = "runs", operation = "transition_run_status", transition_source, run_id, current_status = run.status.as_str(), source_event = source_event.unwrap_or(""), "Ignoring transition from terminal run state");
+            info!(
+                subsystem = "runs",
+                operation = "transition_run_status",
+                transition_source,
+                run_id,
+                current_status = run.status.as_str(),
+                source_event = source_event.unwrap_or(""),
+                "Ignoring transition from terminal run state"
+            );
             return Ok(None);
         }
 
         if !expected_from_statuses.contains(&run.status.as_str()) {
-            info!(subsystem = "runs", operation = "transition_run_status", transition_source, run_id, current_status = run.status.as_str(), source_event = source_event.unwrap_or(""), "Ignoring invalid transition");
+            info!(
+                subsystem = "runs",
+                operation = "transition_run_status",
+                transition_source,
+                run_id,
+                current_status = run.status.as_str(),
+                source_event = source_event.unwrap_or(""),
+                "Ignoring invalid transition"
+            );
             return Ok(None);
         }
 
         let timestamp = Utc::now().to_rfc3339();
         let changed = match next_status {
-            "in_progress" => self
-                .runs_repository
-                .transition_run_to_in_progress_and_mark_task_doing(run_id, &timestamp)
-                .await?,
-            "idle" => self
-                .runs_repository
-                .transition_run_to_idle(run_id)
-                .await?,
-            "complete" => self
-                .runs_repository
-                .finalize_run_completion_and_task_done(run_id, &timestamp)
-                .await?,
+            "in_progress" => {
+                self.runs_repository
+                    .transition_run_to_in_progress_and_mark_task_doing(run_id, &timestamp)
+                    .await?
+            }
+            "idle" => self.runs_repository.transition_run_to_idle(run_id).await?,
+            "complete" => {
+                self.runs_repository
+                    .finalize_run_completion_and_task_done(run_id, &timestamp)
+                    .await?
+            }
             _ => return Ok(None),
         };
 
         if !changed {
-            info!(subsystem = "runs", operation = "transition_run_status", transition_source, run_id, "Ignoring duplicate transition write");
+            info!(
+                subsystem = "runs",
+                operation = "transition_run_status",
+                transition_source,
+                run_id,
+                "Ignoring duplicate transition write"
+            );
             return Ok(None);
         }
 
@@ -297,7 +366,18 @@ impl RunStatusTransitionService {
             _ => {}
         }
 
-        info!(subsystem = "runs", operation = "transition_run_status", transition_source, run_id = updated_run.id, task_id = updated_run.task_id, project_id = updated_run.project_id, previous_status = payload.previous_status.as_str(), new_status = payload.new_status.as_str(), source_event = source_event.unwrap_or(""), "Applied run status transition");
+        info!(
+            subsystem = "runs",
+            operation = "transition_run_status",
+            transition_source,
+            run_id = updated_run.id,
+            task_id = updated_run.task_id,
+            project_id = updated_run.project_id,
+            previous_status = payload.previous_status.as_str(),
+            new_status = payload.new_status.as_str(),
+            source_event = source_event.unwrap_or(""),
+            "Applied run status transition"
+        );
 
         Ok(Some(payload))
     }

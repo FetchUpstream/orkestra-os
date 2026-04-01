@@ -21,6 +21,7 @@ const ProjectDetailScreen: Component = () => {
     model.project()?.repositories.find((r) => r.is_default);
   const otherRepos = () =>
     model.project()?.repositories.filter((r) => !r.is_default) ?? [];
+  const envVars = () => model.project()?.envVars ?? [];
 
   return (
     <>
@@ -83,6 +84,37 @@ const ProjectDetailScreen: Component = () => {
                     </div>
                   </div>
                 </header>
+
+                <Show when={envVars().length > 0}>
+                  <section
+                    class="projects-panel border-base-content/15 bg-base-200/25 mb-4 border"
+                    aria-labelledby="project-env-vars-heading"
+                  >
+                    <div class="project-section-header border-base-content/10 border-b px-4 py-3">
+                      <h2
+                        id="project-env-vars-heading"
+                        class="project-section-title"
+                      >
+                        Environment variables ({envVars().length})
+                      </h2>
+                    </div>
+                    <div class="px-4 py-4">
+                      <p class="project-placeholder-text mb-3 text-sm">
+                        Project-scoped variables applied to run terminals and
+                        OpenCode sessions.
+                      </p>
+                      <div class="flex flex-wrap gap-2">
+                        <For each={envVars()}>
+                          {(entry) => (
+                            <span class="badge badge-outline border-base-content/15 text-base-content/75 rounded-none px-2 py-2 font-mono text-[11px]">
+                              {entry.key}
+                            </span>
+                          )}
+                        </For>
+                      </div>
+                    </div>
+                  </section>
+                </Show>
 
                 <section
                   class="projects-panel projects-panel--repos border-base-content/15 bg-base-200/25 border"

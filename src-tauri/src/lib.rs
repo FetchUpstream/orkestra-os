@@ -28,7 +28,9 @@ pub fn run() {
                 .runs_opencode_service
                 .clone();
             tauri::async_runtime::spawn(async move {
-                let _ = dependency_service.get_opencode_dependency_status(true).await;
+                let _ = dependency_service
+                    .get_opencode_dependency_status(true)
+                    .await;
             });
 
             if let Some(main_window) = app.get_webview_window("main") {

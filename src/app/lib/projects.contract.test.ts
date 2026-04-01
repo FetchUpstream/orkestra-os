@@ -39,6 +39,7 @@ describe("projects contract", () => {
       defaultRunAgent: "agent-a",
       defaultRunProvider: "provider-a",
       defaultRunModel: "model-a",
+      envVars: [{ key: "API_TOKEN", value: "secret" }],
       repositories: [{ path: "/repo/main", is_default: true }],
     };
 
@@ -52,6 +53,7 @@ describe("projects contract", () => {
         default_run_agent: "agent-a",
         default_run_provider: "provider-a",
         default_run_model: "model-a",
+        env_vars: [{ key: "API_TOKEN", value: "secret" }],
         repositories: [
           {
             repo_path: "/repo/main",
@@ -84,6 +86,7 @@ describe("projects contract", () => {
       defaultRunAgent: "agent-a",
       defaultRunProvider: "provider-a",
       defaultRunModel: "model-a",
+      envVars: [{ key: "NODE_ENV", value: "test" }],
       repositories: [{ id: "repo-1", path: "/repo/main", is_default: true }],
     });
 
@@ -96,6 +99,7 @@ describe("projects contract", () => {
         default_run_agent: "agent-a",
         default_run_provider: "provider-a",
         default_run_model: "model-a",
+        env_vars: [{ key: "NODE_ENV", value: "test" }],
         repositories: [
           {
             id: "repo-1",
@@ -119,6 +123,7 @@ describe("projects contract", () => {
           key: "PAT",
           description: null,
           default_run_agent: "agent-a",
+          env_vars: [{ key: "API_TOKEN", value: "secret" }],
         },
         repositories: [
           {
@@ -156,6 +161,7 @@ describe("projects contract", () => {
       key: "PAT",
       description: null,
       defaultRunAgent: "agent-a",
+      envVars: [{ key: "API_TOKEN", value: "secret" }],
       repositories: [
         {
           id: "repo-path",
@@ -171,12 +177,17 @@ describe("projects contract", () => {
       key: "RPP",
       description: null,
       defaultRunAgent: "agent-b",
+      defaultRunProvider: undefined,
+      defaultRunModel: undefined,
+      envVars: undefined,
       repositories: [
         {
           id: "repo-repo-path",
           path: "/repo/repo-path-variant",
           name: "Tools",
           is_default: false,
+          setup_script: undefined,
+          cleanup_script: undefined,
         },
       ],
     } satisfies Project);

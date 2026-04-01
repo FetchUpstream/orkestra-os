@@ -92,7 +92,7 @@ impl RunsRepository {
 
     pub async fn create_run(&self, input: NewRun) -> Result<Run, AppError> {
         sqlx::query(
-             "INSERT INTO runs (
+            "INSERT INTO runs (
                 id,
                 task_id,
                 project_id,
@@ -341,10 +341,7 @@ impl RunsRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn transition_run_to_idle(
-        &self,
-        run_id: &str,
-    ) -> Result<bool, AppError> {
+    pub async fn transition_run_to_idle(&self, run_id: &str) -> Result<bool, AppError> {
         let result = sqlx::query(
             "UPDATE runs
              SET status = 'idle'
@@ -834,10 +831,11 @@ mod tests {
 
         assert!(!changed);
 
-        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let task_status: String =
+            sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(task_status, "doing");
     }
 
@@ -867,16 +865,18 @@ mod tests {
 
         assert!(changed);
 
-        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let task_status: String =
+            sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(task_status, "doing");
 
-        let run_status: String = sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-idle'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let run_status: String =
+            sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-idle'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(run_status, "in_progress");
     }
 
@@ -912,10 +912,11 @@ mod tests {
 
         assert!(changed);
 
-        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let task_status: String =
+            sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(task_status, "review");
     }
 
@@ -939,10 +940,11 @@ mod tests {
 
         assert!(changed);
 
-        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let task_status: String =
+            sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(task_status, "done");
 
         let run_status: String = sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-1'")
@@ -1015,7 +1017,10 @@ mod tests {
         let ids: Vec<&str> = active_runs.iter().map(|run| run.id.as_str()).collect();
         assert_eq!(ids, vec!["run-running", "run-preparing", "run-queued"]);
         assert!(active_runs.iter().all(|run| {
-            matches!(run.status.as_str(), "queued" | "preparing" | "in_progress" | "idle")
+            matches!(
+                run.status.as_str(),
+                "queued" | "preparing" | "in_progress" | "idle"
+            )
         }));
     }
 }

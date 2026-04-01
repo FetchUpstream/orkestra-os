@@ -25,8 +25,12 @@ import {
 } from "../../../app/lib/projectKey";
 import {
   createProjectKeyError,
+  emptyEnvVar,
   emptyRepo,
   getCreateProjectErrorMessage,
+  getProjectEnvVarError,
+  normalizeProjectEnvVars,
+  type EnvVarInput,
   type RepoInput,
 } from "../utils/projectForm";
 
@@ -41,6 +45,7 @@ export const useProjectsPageModel = () => {
   const [name, setName] = createSignal("");
   const [key, setKey] = createSignal("");
   const [description, setDescription] = createSignal("");
+  const [envVars, setEnvVars] = createSignal<EnvVarInput[]>([]);
   const [repositories, setRepositories] = createSignal<RepoInput[]>([
     emptyRepo(),
   ]);
@@ -256,6 +261,8 @@ export const useProjectsPageModel = () => {
     return index < 0 || index >= repositories().length;
   });
 
+  const projectEnvVarError = createMemo(() => getProjectEnvVarError(envVars()));
+
   const isDeleteConfirmationEnabled = createMemo(() => {
     const projectId = deleteProjectId()?.trim() ?? "";
     if (!projectId) return false;
@@ -280,6 +287,7 @@ export const useProjectsPageModel = () => {
     setName("");
     setKey("");
     setDescription("");
+    setEnvVars([]);
     setRepositories([emptyRepo()]);
     setDefaultRepoIndex(0);
     setDefaultRunProvider("");
@@ -306,6 +314,26 @@ export const useProjectsPageModel = () => {
 
   const addRepository = () => {
     setRepositories((prev) => [...prev, emptyRepo()]);
+  };
+
+  const addEnvVar = () => {
+    setEnvVars((prev) => [...prev, emptyEnvVar()]);
+  };
+
+  const removeEnvVar = (index: number) => {
+    setEnvVars((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+  };
+
+  const updateEnvVar = (
+    index: number,
+    field: keyof EnvVarInput,
+    value: string,
+  ) => {
+    setEnvVars((prev) =>
+      prev.map((entry, itemIndex) =>
+        itemIndex === index ? { ...entry, [field]: value } : entry,
+      ),
+    );
   };
 
   const removeRepository = (index: number) => {
@@ -357,6 +385,7 @@ export const useProjectsPageModel = () => {
       setup_script: repo.setupScript.trim(),
       cleanup_script: repo.cleanupScript.trim(),
     }));
+    const normalizedEnvVars = normalizeProjectEnvVars(envVars());
 
     if (normalizedRepositories.some((repo) => !repo.path)) {
       setError("Repository path is required for each entry.");
@@ -373,6 +402,11 @@ export const useProjectsPageModel = () => {
       return;
     }
 
+    if (projectEnvVarError()) {
+      setError(projectEnvVarError());
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const payload = {
@@ -382,6 +416,7 @@ export const useProjectsPageModel = () => {
         defaultRunProvider: defaultRunProvider().trim(),
         defaultRunModel: defaultRunModel().trim(),
         defaultRunAgent: defaultRunAgent().trim() || undefined,
+        envVars: normalizedEnvVars.length > 0 ? normalizedEnvVars : undefined,
         repositories: normalizedRepositories.map((repo, index) => ({
           id: repo.id,
           path: repo.path,
@@ -442,6 +477,7 @@ export const useProjectsPageModel = () => {
       setName(projectDetails.name);
       setKey(projectDetails.key);
       setDescription(projectDetails.description ?? "");
+      setEnvVars(projectDetails.envVars ?? []);
       setRepositories(
         nextRepositories.length > 0 ? nextRepositories : [emptyRepo()],
       );
@@ -624,6 +660,7 @@ export const useProjectsPageModel = () => {
     name,
     key,
     description,
+    envVars,
     repositories,
     defaultRepoIndex,
     error,
@@ -639,6 +676,7 @@ export const useProjectsPageModel = () => {
     defaultRunAgent,
     defaultRunModel,
     runDefaultsValidationError,
+    projectEnvVarError,
     isLoadingProjectForEdit,
     isCloneModalOpen,
     touched,
@@ -672,7 +710,10 @@ export const useProjectsPageModel = () => {
     updateKey,
     updateCloneProjectKey,
     addRepository,
+    addEnvVar,
+    removeEnvVar,
     removeRepository,
+    updateEnvVar,
     updateRepository,
     resetForm,
     onEditProject,

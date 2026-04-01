@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::app::projects::env::ProjectEnvVar;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectDto {
     pub id: String,
@@ -10,6 +12,7 @@ pub struct ProjectDto {
     pub default_run_agent: Option<String>,
     pub default_run_provider: Option<String>,
     pub default_run_model: Option<String>,
+    pub env_vars: Option<Vec<ProjectEnvVar>>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -22,6 +25,7 @@ pub struct CreateProjectRequest {
     pub default_run_agent: Option<String>,
     pub default_run_provider: String,
     pub default_run_model: String,
+    pub env_vars: Option<Vec<ProjectEnvVar>>,
     pub repositories: Vec<CreateProjectRepositoryRequest>,
 }
 
@@ -33,6 +37,7 @@ pub struct UpdateProjectRequest {
     pub default_run_agent: Option<String>,
     pub default_run_provider: String,
     pub default_run_model: String,
+    pub env_vars: Option<Vec<ProjectEnvVar>>,
     pub repositories: Vec<CreateProjectRepositoryRequest>,
 }
 

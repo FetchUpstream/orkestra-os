@@ -2,8 +2,7 @@ use crate::app::errors::AppError;
 use crate::app::projects::service::ProjectsService;
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, OpenCodeDependencyStatusDto,
-    RawAgentEvent,
-    ReplyRunOpenCodePermissionResponse, RunAgentDto, RunAgentsResponseDto, RunDto,
+    RawAgentEvent, ReplyRunOpenCodePermissionResponse, RunAgentDto, RunAgentsResponseDto, RunDto,
     RunModelSelectionDto, RunOpenCodeChatModeDto, RunOpenCodeSessionMessageDto,
     RunOpenCodeSessionTodoDto, RunProviderDto, RunProvidersResponseDto,
     RunSelectionCatalogResponseDto, StartRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
@@ -15,11 +14,11 @@ use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
 use anyhow::{Context, Error as AnyhowError};
 use chrono::Utc;
+use git2::Repository;
 use opencode::{
     create_opencode_client, create_opencode_server, types::PartInput, OpencodeClient,
     OpencodeClientConfig, OpencodeServer, OpencodeServerOptions, RequestOptions,
 };
-use git2::Repository;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -180,6 +179,20 @@ fn to_nonempty_trimmed_string(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+fn build_opencode_server_options(
+    cwd: PathBuf,
+    project_env: HashMap<String, String>,
+) -> OpencodeServerOptions {
+    let mut options = OpencodeServerOptions {
+        cwd: Some(cwd),
+        ..Default::default()
+    };
+    options.port = 0;
+    options.config = Some(serde_json::json!({}));
+    options.env = project_env;
+    options
 }
 
 fn build_permission_reply_body(session_id: &str, reply: &str, remember: bool) -> serde_json::Value {
@@ -732,7 +745,13 @@ impl RunsOpenCodeService {
         // Keep requestID/requestId first for backwards-compatibility, then fall back.
         Self::parse_payload_property(
             payload,
-            &["requestID", "requestId", "id", "permissionID", "permissionId"],
+            &[
+                "requestID",
+                "requestId",
+                "id",
+                "permissionID",
+                "permissionId",
+            ],
         )
     }
 
@@ -900,8 +919,10 @@ impl RunsOpenCodeService {
                     return Ok(());
                 };
                 let request_id_hint = Self::parse_permission_request_id(payload);
-                let permission_kind =
-                    Self::parse_payload_property(payload, &["kind", "permission", "tool", "action"]);
+                let permission_kind = Self::parse_payload_property(
+                    payload,
+                    &["kind", "permission", "tool", "action"],
+                );
                 info!(
                     target: "opencode.runtime",
                     marker = "permission_event_received",
@@ -920,8 +941,7 @@ impl RunsOpenCodeService {
                     return Ok(());
                 }
 
-                let Some(request_id) = Self::parse_permission_request_id(payload)
-                else {
+                let Some(request_id) = Self::parse_permission_request_id(payload) else {
                     return Ok(());
                 };
                 let (was_new, pending_count) = {
@@ -944,7 +964,10 @@ impl RunsOpenCodeService {
                     was_new = was_new,
                     "Tracked pending permission request"
                 );
-                let _ = self.run_state_service.handle_permission_requested(run_id).await?;
+                let _ = self
+                    .run_state_service
+                    .handle_permission_requested(run_id)
+                    .await?;
                 Ok(())
             }
             "permission.replied" | "permission.rejected" => {
@@ -971,8 +994,7 @@ impl RunsOpenCodeService {
                     return Ok(());
                 }
 
-                let Some(request_id) = Self::parse_permission_request_id(payload)
-                else {
+                let Some(request_id) = Self::parse_permission_request_id(payload) else {
                     return Ok(());
                 };
                 let (removed, pending_count) = {
@@ -994,7 +1016,10 @@ impl RunsOpenCodeService {
                     removed = removed,
                     "Cleared pending permission request from runtime state"
                 );
-                let _ = self.run_state_service.handle_permission_resolved(run_id).await?;
+                let _ = self
+                    .run_state_service
+                    .handle_permission_resolved(run_id)
+                    .await?;
                 Ok(())
             }
             "session.idle" => {
@@ -1459,12 +1484,7 @@ impl RunsOpenCodeService {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("."))
         };
-        let mut options = OpencodeServerOptions {
-            cwd: Some(cwd.clone()),
-            ..Default::default()
-        };
-        options.port = 0;
-        options.config = Some(serde_json::json!({}));
+        let options = build_opencode_server_options(cwd.clone(), HashMap::new());
 
         let server = match create_opencode_server(Some(options)).await {
             Ok(server) => server,
@@ -1529,12 +1549,7 @@ impl RunsOpenCodeService {
             Box<dyn std::future::Future<Output = Result<T, AppError>> + Send + 'a>,
         >,
     {
-        let mut options = OpencodeServerOptions {
-            cwd: Some(cwd),
-            ..Default::default()
-        };
-        options.port = 0;
-        options.config = Some(serde_json::json!({}));
+        let options = build_opencode_server_options(cwd, HashMap::new());
 
         let server = create_opencode_server(Some(options))
             .await
@@ -1573,12 +1588,13 @@ impl RunsOpenCodeService {
         }
 
         let configured_path = PathBuf::from(configured_repo_path);
-        let canonical_configured_path = std::fs::canonicalize(&configured_path).map_err(|error| {
-            AppError::validation(format!(
-                "project default repository path is invalid or stale: {} ({error})",
-                configured_path.display()
-            ))
-        })?;
+        let canonical_configured_path =
+            std::fs::canonicalize(&configured_path).map_err(|error| {
+                AppError::validation(format!(
+                    "project default repository path is invalid or stale: {} ({error})",
+                    configured_path.display()
+                ))
+            })?;
 
         if !canonical_configured_path.is_dir() {
             return Err(AppError::validation(format!(
@@ -1595,7 +1611,9 @@ impl RunsOpenCodeService {
         })?;
 
         let git_root = repo.workdir().ok_or_else(|| {
-            AppError::validation("project default repository must resolve to a non-bare git workdir")
+            AppError::validation(
+                "project default repository must resolve to a non-bare git workdir",
+            )
         })?;
         let canonical_git_root = std::fs::canonicalize(git_root).map_err(|error| {
             AppError::validation(format!(
@@ -1638,7 +1656,9 @@ impl RunsOpenCodeService {
                         .list(RequestOptions::default())
                         .await
                         .map_err(|err| {
-                            AppError::validation(format!("failed to list OpenCode providers: {err}"))
+                            AppError::validation(format!(
+                                "failed to list OpenCode providers: {err}"
+                            ))
                         })?;
 
                     let config_providers_response = client
@@ -1646,7 +1666,9 @@ impl RunsOpenCodeService {
                         .providers(RequestOptions::default())
                         .await
                         .map_err(|err| {
-                            AppError::validation(format!("failed to list OpenCode providers: {err}"))
+                            AppError::validation(format!(
+                                "failed to list OpenCode providers: {err}"
+                            ))
                         })?;
 
                     let config_response = client
@@ -1819,12 +1841,11 @@ impl RunsOpenCodeService {
         }
 
         let worktree_path = self.resolve_worktree_path(&run)?;
-        let mut options = OpencodeServerOptions {
-            cwd: Some(worktree_path.clone()),
-            ..Default::default()
-        };
-        options.port = 0;
-        options.config = Some(serde_json::json!({}));
+        let project_env = self
+            .projects_service
+            .resolve_project_env_vars(&run.project_id)
+            .await?;
+        let options = build_opencode_server_options(worktree_path.clone(), project_env);
         info!(
             target: "opencode.runtime",
             marker = "ensure",
@@ -2097,8 +2118,11 @@ impl RunsOpenCodeService {
         ) {
             Ok(selected) => selected,
             Err(err) => {
-                self.release_initial_seed_claim_if_claimant(run_id, claimed_initial_seed_request_id)
-                    .await?;
+                self.release_initial_seed_claim_if_claimant(
+                    run_id,
+                    claimed_initial_seed_request_id,
+                )
+                .await?;
                 return Err(err);
             }
         };
@@ -2162,7 +2186,10 @@ impl RunsOpenCodeService {
             .handle_user_replied_to_agent(&run_defaults.task_id, run_id)
             .await?;
         if run_state_hint.as_deref() == Some("committing_changes") {
-            let _ = self.run_state_service.handle_commit_requested(run_id).await?;
+            let _ = self
+                .run_state_service
+                .handle_commit_requested(run_id)
+                .await?;
         }
 
         info!(
@@ -2206,9 +2233,10 @@ impl RunsOpenCodeService {
         }
 
         let decision = decision.trim().to_lowercase();
-        let opencode_reply = map_permission_decision_to_reply(decision.as_str()).ok_or_else(|| {
-            AppError::validation("decision must be one of: deny, once, always, reject")
-        })?;
+        let opencode_reply =
+            map_permission_decision_to_reply(decision.as_str()).ok_or_else(|| {
+                AppError::validation("decision must be one of: deny, once, always, reject")
+            })?;
         info!(
             target: "opencode.runtime",
             marker = "permission_reply_command_start",
@@ -2284,21 +2312,21 @@ impl RunsOpenCodeService {
         {
             let state = handle
                 .session_runtime_state
-                    .lock()
-                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
-                if !state.pending_permissions.contains(request_id) {
-                    let pending_count = state.pending_permissions.len();
-                    info!(
-                        target: "opencode.runtime",
-                        marker = "permission_reply_stale",
-                        run_id = run_id,
-                        request_id = request_id,
-                        session_id = session_id,
-                        pending_count = pending_count,
-                        mapped_reply = opencode_reply,
-                        "Ignoring stale permission reply for missing pending permission"
-                    );
-                    return Ok(ReplyRunOpenCodePermissionResponse {
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            if !state.pending_permissions.contains(request_id) {
+                let pending_count = state.pending_permissions.len();
+                info!(
+                    target: "opencode.runtime",
+                    marker = "permission_reply_stale",
+                    run_id = run_id,
+                    request_id = request_id,
+                    session_id = session_id,
+                    pending_count = pending_count,
+                    mapped_reply = opencode_reply,
+                    "Ignoring stale permission reply for missing pending permission"
+                );
+                return Ok(ReplyRunOpenCodePermissionResponse {
                     state: "accepted".to_string(),
                     reason: Some("stale_permission_request".to_string()),
                     replied_at: Utc::now().to_rfc3339(),
@@ -2318,11 +2346,17 @@ impl RunsOpenCodeService {
             "Sending permission reply to OpenCode"
         );
 
-        let response_result = handle.client.call_operation(
+        let response_result = handle
+            .client
+            .call_operation(
                 "permission.reply",
                 RequestOptions::default()
                     .with_path("requestID", request_id.to_string())
-                    .with_body(build_permission_reply_body(session_id, opencode_reply, remember)),
+                    .with_body(build_permission_reply_body(
+                        session_id,
+                        opencode_reply,
+                        remember,
+                    )),
             )
             .await;
 
@@ -3108,7 +3142,7 @@ impl RunsOpenCodeService {
 
 #[cfg(test)]
 mod tests {
-    use super::RunsOpenCodeService;
+    use super::{build_opencode_server_options, RunsOpenCodeService};
     use crate::app::db::migrations::run_migrations;
     use crate::app::db::repositories::projects::ProjectsRepository;
     use crate::app::db::repositories::runs::RunsRepository;
@@ -3130,6 +3164,19 @@ mod tests {
     use std::sync::atomic::AtomicU64;
     use std::sync::{Arc, Mutex};
     use uuid::Uuid;
+
+    #[test]
+    fn build_opencode_server_options_applies_project_env() {
+        let cwd = PathBuf::from("/tmp/project");
+        let env = HashMap::from([("API_TOKEN".to_string(), "secret".to_string())]);
+
+        let options = build_opencode_server_options(cwd.clone(), env.clone());
+
+        assert_eq!(options.cwd, Some(cwd));
+        assert_eq!(options.port, 0);
+        assert_eq!(options.env, env);
+        assert_eq!(options.config, Some(serde_json::json!({})));
+    }
 
     async fn setup_services() -> (RunsService, RunsOpenCodeService, SqlitePool, TempDir) {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -3299,10 +3346,22 @@ mod tests {
 
     #[test]
     fn map_permission_decision_to_reply_preserves_ui_contract() {
-        assert_eq!(super::map_permission_decision_to_reply("deny"), Some("reject"));
-        assert_eq!(super::map_permission_decision_to_reply("once"), Some("once"));
-        assert_eq!(super::map_permission_decision_to_reply("always"), Some("always"));
-        assert_eq!(super::map_permission_decision_to_reply("reject"), Some("reject"));
+        assert_eq!(
+            super::map_permission_decision_to_reply("deny"),
+            Some("reject")
+        );
+        assert_eq!(
+            super::map_permission_decision_to_reply("once"),
+            Some("once")
+        );
+        assert_eq!(
+            super::map_permission_decision_to_reply("always"),
+            Some("always")
+        );
+        assert_eq!(
+            super::map_permission_decision_to_reply("reject"),
+            Some("reject")
+        );
         assert_eq!(super::map_permission_decision_to_reply("allow"), None);
     }
 
@@ -3321,7 +3380,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_prompt_selection_prefers_complete_prompt_override_then_run_defaults_then_backend_defaults() {
+    fn resolve_prompt_selection_prefers_complete_prompt_override_then_run_defaults_then_backend_defaults(
+    ) {
         let selected = RunsOpenCodeService::resolve_prompt_selection(
             Some("run-agent"),
             Some("run-provider"),

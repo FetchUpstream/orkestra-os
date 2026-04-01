@@ -1,3 +1,5 @@
+use crate::app::projects::env::ProjectEnvVar;
+
 #[derive(Clone, Debug)]
 pub struct Project {
     pub id: String,
@@ -8,6 +10,7 @@ pub struct Project {
     pub default_run_agent: Option<String>,
     pub default_run_provider: Option<String>,
     pub default_run_model: Option<String>,
+    pub env_vars: Option<Vec<ProjectEnvVar>>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -59,6 +62,7 @@ pub struct NewProject {
     pub default_run_agent: Option<String>,
     pub default_run_provider: Option<String>,
     pub default_run_model: Option<String>,
+    pub env_vars: Option<Vec<ProjectEnvVar>>,
     pub created_at: String,
     pub updated_at: String,
     pub repositories: Vec<NewProjectRepository>,

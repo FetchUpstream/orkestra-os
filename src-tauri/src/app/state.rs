@@ -79,7 +79,8 @@ impl AppState {
             run_status_transition_service.clone(),
             app_data_dir.clone(),
         );
-        let terminal_service = TerminalService::new(runs_service.clone(), app_data_dir);
+        let terminal_service =
+            TerminalService::new(projects_service.clone(), runs_service.clone(), app_data_dir);
         let tasks_service = TasksService::new(tasks_repository, task_search_service);
         Self {
             projects_service,
