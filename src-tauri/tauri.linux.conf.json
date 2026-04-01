@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "title": "orkestraos",
+        "width": 800,
+        "height": 600,
+        "maximized": true,
+        "backgroundColor": "#0a0f14"
+      }
+    ]
+  }
+}

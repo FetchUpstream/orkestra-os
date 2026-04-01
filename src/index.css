@@ -41,10 +41,8 @@
   --noise: 0;
 }
 
-html {
-  background: var(--color-base-300);
-}
-
-body {
-  background: var(--color-base-300);
+html,
+body,
+#root {
+  background: #0a0f14;
 }
