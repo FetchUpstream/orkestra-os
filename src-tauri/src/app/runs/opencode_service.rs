@@ -19,6 +19,7 @@ use opencode::{
     create_opencode_client, create_opencode_server, types::PartInput, OpencodeClient,
     OpencodeClientConfig, OpencodeServer, OpencodeServerOptions, RequestOptions,
 };
+use std::fmt;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -140,6 +141,33 @@ fn app_error_from_anyhow(err: AnyhowError) -> AppError {
         .collect::<Vec<_>>()
         .join(": ");
     AppError::validation(chain)
+}
+
+#[derive(Debug)]
+struct LifecycleScriptExecutionError {
+    app_error: AppError,
+    failed_commands: Vec<String>,
+}
+
+impl LifecycleScriptExecutionError {
+    fn failed_commands(&self) -> &[String] {
+        &self.failed_commands
+    }
+}
+
+impl From<AppError> for LifecycleScriptExecutionError {
+    fn from(app_error: AppError) -> Self {
+        Self {
+            app_error,
+            failed_commands: Vec::new(),
+        }
+    }
+}
+
+impl fmt::Display for LifecycleScriptExecutionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.app_error.fmt(f)
+    }
 }
 
 fn lock_error(resource: &'static str) -> AppError {
@@ -586,6 +614,69 @@ impl Default for SessionRuntimeState {
 }
 
 impl RunsOpenCodeService {
+    fn normalize_lifecycle_command_label(command: &str) -> Option<String> {
+        let normalized = command.split_whitespace().collect::<Vec<_>>().join(" ");
+        if normalized.is_empty() {
+            return None;
+        }
+
+        const MAX_COMMAND_LABEL_LEN: usize = 120;
+        if normalized.chars().count() <= MAX_COMMAND_LABEL_LEN {
+            return Some(normalized);
+        }
+
+        let truncated = normalized
+            .chars()
+            .take(MAX_COMMAND_LABEL_LEN.saturating_sub(1))
+            .collect::<String>();
+        Some(format!("{}…", truncated.trim_end()))
+    }
+
+    fn parse_failed_lifecycle_commands(raw: &str) -> Vec<String> {
+        let mut commands = Vec::new();
+        for line in raw.lines() {
+            let command = line
+                .split_once('\t')
+                .map(|(_, command)| command)
+                .unwrap_or(line);
+            let Some(command) = Self::normalize_lifecycle_command_label(command) else {
+                continue;
+            };
+            if !commands.contains(&command) {
+                commands.push(command);
+            }
+        }
+
+        commands
+    }
+
+    fn script_contains_command(script: &str, command: &str) -> bool {
+        Self::normalize_lifecycle_command_label(script)
+            .is_some_and(|normalized_script| normalized_script.contains(command))
+    }
+
+    fn compose_cleanup_failure_prompt(failed_commands: &[String]) -> String {
+        if failed_commands.is_empty() {
+            return "Cleanup failed before the affected step could be identified. Please investigate the cleanup script and apply the appropriate fix.".to_string();
+        }
+
+        if failed_commands.len() == 1 {
+            return format!(
+                "The cleanup step `{}` failed. Please investigate the failure and apply the appropriate fix.",
+                failed_commands[0]
+            );
+        }
+
+        let command_list = failed_commands
+            .iter()
+            .map(|command| format!("- `{command}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "The following cleanup steps failed:\n{command_list}\nPlease investigate these failures and apply the appropriate fixes."
+        )
+    }
+
     async fn handle_session_idle_signal(
         &self,
         run_id: &str,
@@ -638,6 +729,7 @@ impl RunsOpenCodeService {
             }
             Err(err) => {
                 let error_text = err.to_string();
+                let failure_prompt = Self::compose_cleanup_failure_prompt(err.failed_commands());
                 let _ = self
                     .runs_service
                     .mark_cleanup_failed(run_id, &error_text)
@@ -645,7 +737,7 @@ impl RunsOpenCodeService {
                 let _ = self
                     .submit_run_opencode_prompt(
                         run_id,
-                        "This command produced errors. Please investigate.",
+                        &failure_prompt,
                         None,
                         None,
                         None,
@@ -1192,7 +1284,7 @@ impl RunsOpenCodeService {
         &self,
         run_id: &str,
         script: Option<&str>,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), LifecycleScriptExecutionError> {
         let script = script.map(str::trim).filter(|script| !script.is_empty());
         let Some(script) = script else {
             return Ok(());
@@ -1206,11 +1298,32 @@ impl RunsOpenCodeService {
             "Executing lifecycle script"
         );
 
-        let run = self.runs_service.get_run(run_id).await?;
-        let worktree_path = self.resolve_worktree_path(&run)?;
+        let run = self
+            .runs_service
+            .get_run(run_id)
+            .await
+            .map_err(LifecycleScriptExecutionError::from)?;
+        let worktree_path = self
+            .resolve_worktree_path(&run)
+            .map_err(LifecycleScriptExecutionError::from)?;
+        let failure_log_path = std::env::temp_dir().join(format!(
+            "orkestraos-lifecycle-failures-{}.log",
+            uuid::Uuid::new_v4()
+        ));
+        let wrapped_script = format!(
+            r#"set -E
+set -o pipefail
+failure_log_path="${{ORK_LIFECYCLE_FAILURE_LOG_PATH:?}}"
+: > "$failure_log_path"
+trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$command" ]; then printf "%s\t%s\n" "$status" "$command" >> "$failure_log_path"; fi' ERR
+{script}"#
+        );
         let output = Command::new("bash")
+            .arg("--noprofile")
+            .arg("--norc")
             .arg("-lc")
-            .arg(script)
+            .arg(&wrapped_script)
+            .env("ORK_LIFECYCLE_FAILURE_LOG_PATH", &failure_log_path)
             .current_dir(worktree_path)
             .output()
             .await
@@ -1219,9 +1332,11 @@ impl RunsOpenCodeService {
                 source,
             })
             .with_context(|| format!("while executing lifecycle script for run '{run_id}'"))
-            .map_err(app_error_from_anyhow)?;
+            .map_err(app_error_from_anyhow)
+            .map_err(LifecycleScriptExecutionError::from)?;
 
         if output.status.success() {
+            let _ = std::fs::remove_file(&failure_log_path);
             info!(
                 target: "opencode.runtime",
                 subsystem = "runs.opencode",
@@ -1231,6 +1346,18 @@ impl RunsOpenCodeService {
             );
             return Ok(());
         }
+
+        let failed_commands = std::fs::read_to_string(&failure_log_path)
+            .ok()
+            .map(|raw| Self::parse_failed_lifecycle_commands(&raw))
+            .map(|commands| {
+                commands
+                    .into_iter()
+                    .filter(|command| Self::script_contains_command(script, command))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let _ = std::fs::remove_file(&failure_log_path);
 
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -1249,13 +1376,16 @@ impl RunsOpenCodeService {
             exit_status = output.status.to_string(),
             "Lifecycle script failed"
         );
-        Err(app_error_from_anyhow(AnyhowError::new(
-            OpenCodeServiceError::LifecycleScriptFailed {
-                run_id: run_id.to_string(),
-                exit_status: output.status.to_string(),
-                details,
-            },
-        )))
+        Err(LifecycleScriptExecutionError {
+            app_error: app_error_from_anyhow(AnyhowError::new(
+                OpenCodeServiceError::LifecycleScriptFailed {
+                    run_id: run_id.to_string(),
+                    exit_status: output.status.to_string(),
+                    details,
+                },
+            )),
+            failed_commands,
+        })
     }
 
     async fn ensure_run_ready_for_operation(
@@ -3341,6 +3471,80 @@ mod tests {
         assert_eq!(
             prompt,
             "Ship release notes\n\nDraft changelog\n\nVerify links\n\nImplementation guide:\nUse release template"
+        );
+    }
+
+    #[test]
+    fn parse_failed_lifecycle_commands_deduplicates_and_normalizes_commands() {
+        let commands = RunsOpenCodeService::parse_failed_lifecycle_commands(
+            "1\tbun install\n2\t  bun   install  \n1\tbun test\n",
+        );
+
+        assert_eq!(commands, vec!["bun install", "bun test"]);
+    }
+
+    #[test]
+    fn compose_cleanup_failure_prompt_formats_single_command() {
+        let prompt =
+            RunsOpenCodeService::compose_cleanup_failure_prompt(&["bun install".to_string()]);
+
+        assert_eq!(
+            prompt,
+            "The cleanup step `bun install` failed. Please investigate the failure and apply the appropriate fix."
+        );
+    }
+
+    #[test]
+    fn compose_cleanup_failure_prompt_formats_multiple_commands() {
+        let prompt = RunsOpenCodeService::compose_cleanup_failure_prompt(&[
+            "bun install".to_string(),
+            "bun test".to_string(),
+        ]);
+
+        assert_eq!(
+            prompt,
+            "The following cleanup steps failed:\n- `bun install`\n- `bun test`\nPlease investigate these failures and apply the appropriate fixes."
+        );
+    }
+
+    #[test]
+    fn compose_cleanup_failure_prompt_uses_fallback_when_commands_are_unavailable() {
+        let prompt = RunsOpenCodeService::compose_cleanup_failure_prompt(&[]);
+
+        assert_eq!(
+            prompt,
+            "Cleanup failed before the affected step could be identified. Please investigate the cleanup script and apply the appropriate fix."
+        );
+    }
+
+    #[tokio::test]
+    async fn run_lifecycle_script_in_worktree_collects_failed_commands() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "queued").await;
+
+        let worktree_id = "ALP/cleanup-fail";
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(worktree_id);
+        fs::create_dir_all(&worktree_path).unwrap();
+        update_run_worktree_id(&pool, "run-1", worktree_id).await;
+
+        let err = opencode_service
+            .run_lifecycle_script_in_worktree(
+                "run-1",
+                Some("set +e\nfalse\nls /definitely-missing-cleanup-dir\nexit 1"),
+            )
+            .await
+            .expect_err("script should fail");
+
+        assert_eq!(
+            err.failed_commands(),
+            ["false", "ls /definitely-missing-cleanup-dir"]
         );
     }
 
