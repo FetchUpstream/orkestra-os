@@ -1240,14 +1240,15 @@ export const useRunDetailModel = () => {
     baseEvents: RunOpenCodeEvent[] = [],
   ): Promise<void> => {
     const bootstrap = await bootstrapRunOpenCode(runId);
-    const fetchedBufferedEvents = await getBufferedRunOpenCodeEvents(
-      runId,
-    ).catch(() => bootstrap.bufferedEvents);
-    const bufferedEvents =
-      fetchedBufferedEvents.length > 0
-        ? fetchedBufferedEvents
-        : bootstrap.bufferedEvents;
     const chatMode = resolveChatMode(bootstrap);
+    const bufferedEvents =
+      chatMode === "interactive"
+        ? await getBufferedRunOpenCodeEvents(runId)
+            .then((events) =>
+              events.length > 0 ? events : bootstrap.bufferedEvents,
+            )
+            .catch(() => bootstrap.bufferedEvents)
+        : bootstrap.bufferedEvents;
 
     if (
       requestVersion !== activeAgentRequestVersion ||
@@ -2074,12 +2075,13 @@ export const useRunDetailModel = () => {
         return;
       }
 
-      const fetchedReplaySource = await getBufferedRunOpenCodeEvents(
-        normalizedRunId,
-      ).catch(() => result.bufferedEvents);
       const replaySource =
-        fetchedReplaySource.length > 0
-          ? fetchedReplaySource
+        nextChatMode === "interactive"
+          ? await getBufferedRunOpenCodeEvents(normalizedRunId)
+              .then((events) =>
+                events.length > 0 ? events : result.bufferedEvents,
+              )
+              .catch(() => result.bufferedEvents)
           : result.bufferedEvents;
       setAgentEvents((current) => appendCappedHistory(current, replaySource));
 
@@ -2319,7 +2321,7 @@ export const useRunDetailModel = () => {
       return;
     }
 
-    if (agentChatMode() === "unavailable") {
+    if (agentChatMode() !== "interactive") {
       return;
     }
 
@@ -2883,7 +2885,7 @@ export const useRunDetailModel = () => {
         return;
       }
 
-      if (agentChatMode() === "unavailable") {
+      if (agentChatMode() !== "interactive") {
         return;
       }
 

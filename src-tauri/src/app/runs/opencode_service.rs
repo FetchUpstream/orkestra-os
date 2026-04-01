@@ -1593,6 +1593,33 @@ impl RunsOpenCodeService {
         None
     }
 
+    fn should_use_completed_read_only_bootstrap(status: &str) -> bool {
+        status == "complete"
+    }
+
+    fn fallback_ephemeral_cwd(&self) -> PathBuf {
+        if self.worktrees_root.exists() {
+            return self.worktrees_root.clone();
+        }
+
+        self.worktrees_root
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+    }
+
+    fn resolve_read_only_fetch_cwd(
+        &self,
+        worktree_id: Option<&str>,
+    ) -> PathBuf {
+        let Some(worktree_id) = worktree_id.map(str::trim).filter(|value| !value.is_empty()) else {
+            return self.fallback_ephemeral_cwd();
+        };
+
+        resolve_worktree_path(&self.worktrees_root, worktree_id)
+            .unwrap_or_else(|_| self.fallback_ephemeral_cwd())
+    }
+
     fn compute_stream_connected(buffered_events: &[RawAgentEvent]) -> bool {
         for event in buffered_events.iter().rev() {
             match event.event_name.as_str() {
@@ -2211,6 +2238,75 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         Ok(RunServerCleanupDecision::Keep(
             RunServerKeepReason::UnsupportedRunStatus,
         ))
+    }
+
+    async fn shutdown_leftover_completed_handle_if_unused(
+        &self,
+        run_id: &str,
+        source: &'static str,
+    ) {
+        let Some(handle) = self.handles.read().await.get(run_id).cloned() else {
+            info!(
+                target: "opencode.runtime",
+                marker = "completed_read_only_no_persistent_handle",
+                run_id = run_id,
+                source = source,
+                "OpenCode completed/read-only fetch avoided persistent handle creation"
+            );
+            return;
+        };
+
+        match self.evaluate_cleanup_decision(run_id, &handle).await {
+            Ok(RunServerCleanupDecision::Shutdown(reason)) => {
+                info!(
+                    target: "opencode.runtime",
+                    marker = "completed_read_only_shutdown_attempt",
+                    run_id = run_id,
+                    source = source,
+                    reason = reason.as_str(),
+                    "OpenCode completed/read-only fetch is shutting down leftover persistent handle"
+                );
+
+                match self
+                    .stop_run_opencode_internal(run_id, reason.as_str(), true, true)
+                    .await
+                {
+                    Ok(_) => info!(
+                        target: "opencode.runtime",
+                        marker = "completed_read_only_shutdown_complete",
+                        run_id = run_id,
+                        source = source,
+                        reason = reason.as_str(),
+                        "OpenCode completed/read-only leftover persistent handle shut down"
+                    ),
+                    Err(err) => warn!(
+                        target: "opencode.runtime",
+                        marker = "completed_read_only_shutdown_failed",
+                        run_id = run_id,
+                        source = source,
+                        reason = reason.as_str(),
+                        error = %err,
+                        "OpenCode completed/read-only leftover persistent handle could not be shut down"
+                    ),
+                }
+            }
+            Ok(RunServerCleanupDecision::Keep(reason)) => info!(
+                target: "opencode.runtime",
+                marker = "completed_read_only_shutdown_deferred",
+                run_id = run_id,
+                source = source,
+                keep_reason = reason.as_str(),
+                "OpenCode completed/read-only fetch left persistent handle alive because it is still in use"
+            ),
+            Err(err) => warn!(
+                target: "opencode.runtime",
+                marker = "completed_read_only_shutdown_evaluation_failed",
+                run_id = run_id,
+                source = source,
+                error = %err,
+                "OpenCode completed/read-only leftover handle evaluation failed"
+            ),
+        }
     }
 
     fn build_run_lifecycle(run: &RunDto) -> RunOpenCodeLifecycle {
@@ -3602,6 +3698,39 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         };
         let session_id_for_error = session_id.clone();
 
+        if Self::should_use_completed_read_only_bootstrap(run.status.as_str()) {
+            let cwd = self.resolve_read_only_fetch_cwd(run.worktree_id.as_deref());
+            info!(
+                target: "opencode.runtime",
+                marker = "completed_read_only_session_messages_ephemeral",
+                run_id = run_id,
+                session_id = session_id.as_str(),
+                "OpenCode completed/read-only session message fetch using ephemeral path"
+            );
+            let result = self
+                .with_ephemeral_client(cwd, |client| {
+                    Box::pin(async move {
+                        let request = RequestOptions::default().with_path("id", session_id.clone());
+                        let response = client
+                            .session()
+                            .messages(request)
+                            .await
+                            .map_err(|source| OpenCodeServiceError::SessionMessages {
+                                session_id: session_id_for_error.clone(),
+                                source,
+                            })
+                            .context("while loading run OpenCode session messages")
+                            .map_err(app_error_from_anyhow)?;
+
+                        Ok(value_array_to_message_wrappers(response.data))
+                    })
+                })
+                .await;
+            self.shutdown_leftover_completed_handle_if_unused(run_id, "session_messages")
+                .await;
+            return result;
+        }
+
         let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
         if ensured.state == "unsupported" {
             return Ok(vec![]);
@@ -3642,6 +3771,39 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             return Ok(vec![]);
         };
         let session_id_for_error = session_id.clone();
+
+        if Self::should_use_completed_read_only_bootstrap(run.status.as_str()) {
+            let cwd = self.resolve_read_only_fetch_cwd(run.worktree_id.as_deref());
+            info!(
+                target: "opencode.runtime",
+                marker = "completed_read_only_session_todos_ephemeral",
+                run_id = run_id,
+                session_id = session_id.as_str(),
+                "OpenCode completed/read-only session todo fetch using ephemeral path"
+            );
+            let result = self
+                .with_ephemeral_client(cwd, |client| {
+                    Box::pin(async move {
+                        let request = RequestOptions::default().with_path("id", session_id.clone());
+                        let response = client
+                            .session()
+                            .todo(request)
+                            .await
+                            .map_err(|source| OpenCodeServiceError::SessionTodos {
+                                session_id: session_id_for_error.clone(),
+                                source,
+                            })
+                            .context("while loading run OpenCode session todos")
+                            .map_err(app_error_from_anyhow)?;
+
+                        Ok(value_array_to_todo_wrappers(response.data))
+                    })
+                })
+                .await;
+            self.shutdown_leftover_completed_handle_if_unused(run_id, "session_todos")
+                .await;
+            return result;
+        }
 
         let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
         if ensured.state == "unsupported" {
@@ -3845,11 +4007,19 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         let bootstrap_start = Instant::now();
         let run = self.runs_service.get_run_model(run_id).await?;
 
-        if run.status == "complete" {
+        if Self::should_use_completed_read_only_bootstrap(run.status.as_str()) {
             let session_id = run.opencode_session_id.filter(|id| !id.trim().is_empty());
+            let cwd = self.resolve_read_only_fetch_cwd(run.worktree_id.as_deref());
             let (messages, todos) = if let Some(session_id) = session_id.as_ref() {
                 let session_id_for_fetch = session_id.clone();
-                self.with_ephemeral_client(self.worktrees_root.clone(), |client| {
+                info!(
+                    target: "opencode.runtime",
+                    marker = "completed_read_only_bootstrap_ephemeral",
+                    run_id = run_id,
+                    session_id = session_id_for_fetch.as_str(),
+                    "OpenCode completed/read-only bootstrap using ephemeral path"
+                );
+                self.with_ephemeral_client(cwd, |client| {
                     Box::pin(async move {
                         Self::fetch_session_history_with_client(client, &session_id_for_fetch).await
                     })
@@ -3878,6 +4048,9 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 latency_ms = bootstrap_start.elapsed().as_millis() as u64,
                 "OpenCode bootstrap payload gathered"
             );
+
+            self.shutdown_leftover_completed_handle_if_unused(run_id, "bootstrap")
+                .await;
 
             return Ok(BootstrapRunOpenCodeResponse {
                 state: "ready".to_string(),
@@ -4962,6 +5135,49 @@ mod tests {
         assert!(response.reason.is_none());
         assert!(response.buffered_events.is_empty());
         assert!(!response.stream_connected);
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn completed_session_history_fetch_does_not_create_persistent_handle() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "completed").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+
+        let _ = opencode_service
+            .get_run_opencode_session_messages("run-1", None)
+            .await;
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+
+        let _ = opencode_service
+            .get_run_opencode_session_todos("run-1", None)
+            .await;
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn bootstrap_completed_run_shuts_down_existing_unused_persistent_handle() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "completed").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        assert!(opencode_service.handles.read().await.contains_key("run-1"));
+
+        let response = opencode_service
+            .bootstrap_run_opencode("run-1")
+            .await
+            .unwrap();
+
+        assert_eq!(response.chat_mode, super::RunOpenCodeChatModeDto::ReadOnly);
+        assert_eq!(response.state, "ready");
         assert!(!opencode_service.handles.read().await.contains_key("run-1"));
     }
 

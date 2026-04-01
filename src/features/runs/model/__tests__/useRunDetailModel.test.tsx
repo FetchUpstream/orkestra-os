@@ -226,9 +226,9 @@ describe("useRunDetailModel startup ownership", () => {
     expect(submitRunOpenCodePromptMock).not.toHaveBeenCalled();
   });
 
-  it("hydrates read-only history and subscribes to permission/event updates", async () => {
+  it("hydrates read-only history without subscribing to live event updates", async () => {
     bootstrapRunOpenCodeMock.mockResolvedValueOnce({
-      state: "running",
+      state: "ready",
       chatMode: "read_only",
       bufferedEvents: [
         {
@@ -260,6 +260,7 @@ describe("useRunDetailModel startup ownership", () => {
       ],
       todos: [],
       streamConnected: false,
+      readyPhase: "completed_history",
     });
 
     let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
@@ -271,9 +272,10 @@ describe("useRunDetailModel startup ownership", () => {
     await waitFor(() => {
       expect(modelRef).toBeDefined();
       expect(modelRef!.agent.chatMode()).toBe("read_only");
-      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
       expect(modelRef!.agent.events().length).toBe(1);
     });
+
+    expect(subscribeRunOpenCodeEventsMock).not.toHaveBeenCalled();
   });
 
   it("uses startup-cached run options when available", async () => {

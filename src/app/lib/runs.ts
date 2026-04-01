@@ -773,6 +773,10 @@ const unwrapSnapshotItems = (items: unknown[]): unknown[] => {
 };
 
 const toRunOpenCodeAgentState = (state: unknown): RunOpenCodeAgentState => {
+  if (state === "ready") {
+    return "running";
+  }
+
   if (
     state === "idle" ||
     state === "accepted" ||

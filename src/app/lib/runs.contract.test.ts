@@ -406,6 +406,31 @@ describe("runs contract", () => {
     } satisfies BootstrapRunOpenCodeResult);
   });
 
+  it("normalizes completed read-only bootstrap ready state", async () => {
+    invokeMock.mockResolvedValue({
+      state: "ready",
+      chat_mode: "read_only",
+      messages: [{ payload: { id: "msg-1" } }],
+      todos: [],
+      stream_connected: false,
+      ready_phase: "completed_history",
+    });
+
+    const result = await bootstrapRunOpenCode("run-complete");
+
+    expect(result).toEqual({
+      state: "running",
+      chatMode: "read_only",
+      reason: undefined,
+      bufferedEvents: [],
+      messages: [{ id: "msg-1" }],
+      todos: [],
+      sessionId: undefined,
+      streamConnected: false,
+      readyPhase: "completed_history",
+    } satisfies BootstrapRunOpenCodeResult);
+  });
+
   it("invokes get_run_git_merge_status with runId argument", async () => {
     invokeMock.mockResolvedValue({
       state: "ready",
