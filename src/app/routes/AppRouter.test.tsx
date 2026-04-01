@@ -1855,7 +1855,7 @@ describe("app routing and shell", () => {
 
     expect(
       screen.getByRole("button", { name: "New task" }).hasAttribute("disabled"),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       screen.queryByText("Failed to load project tasks. Please refresh."),
     ).toBeNull();
@@ -5049,6 +5049,15 @@ describe("app routing and shell", () => {
       expect(
         screen.getByRole("heading", { name: "Create Project" }),
       ).toBeTruthy();
+    });
+  });
+
+  it("redirects startup home to the canonical board route", async () => {
+    renderAt("/");
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/board");
+      expect(screen.getByRole("button", { name: "New task" })).toBeTruthy();
     });
   });
 

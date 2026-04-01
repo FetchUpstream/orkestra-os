@@ -27,6 +27,12 @@ import {
   OpenCodeDependencyProvider,
   useOpenCodeDependency,
 } from "../contexts/OpenCodeDependencyContext";
+import {
+  BOARD_ROUTE_PATH,
+  buildBoardHref,
+  getBoardProjectIdFromSearch,
+  readRememberedBoardProjectId,
+} from "../lib/boardNavigation";
 
 type TaskDetailTopbarConfig =
   | {
@@ -324,7 +330,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
 
   const shellTitle = () => {
     if (location.pathname.endsWith("/tasks/new")) return "Create task";
-    if (location.pathname === "/board") {
+    if (location.pathname === BOARD_ROUTE_PATH) {
       const projectId = boardProjectId();
       const project = projectId
         ? projects().find((item) => item.id === projectId)
@@ -340,7 +346,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   };
 
   const shellSubtitle = () => {
-    if (location.pathname === "/board") {
+    if (location.pathname === BOARD_ROUTE_PATH) {
       return undefined;
     }
     if (location.pathname.startsWith("/runs/")) {
@@ -404,16 +410,12 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   };
 
   const boardProjectId = () => {
-    if (location.pathname !== "/board") return "";
-    const queryProjectId = new URLSearchParams(location.search).get(
-      "projectId",
-    );
+    if (location.pathname !== BOARD_ROUTE_PATH) return "";
+    const queryProjectId = getBoardProjectIdFromSearch(location.search);
     if (queryProjectId) return queryProjectId;
-    try {
-      return window.localStorage.getItem("board.selectedProjectId") ?? "";
-    } catch {
-      return "";
-    }
+    const rememberedProjectId = readRememberedBoardProjectId();
+    if (rememberedProjectId) return rememberedProjectId;
+    return projects()[0]?.id ?? "";
   };
 
   const settingsProjectId = () => {
@@ -507,7 +509,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
               ) : null
             }
             center={
-              location.pathname === "/board" ? (
+              location.pathname === BOARD_ROUTE_PATH ? (
                 <div class="projects-field m-0 w-[min(32rem,38vw)] min-w-64">
                   <input
                     type="search"
@@ -698,7 +700,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
                     </div>
                   );
                 })()
-              ) : location.pathname === "/board" ? (
+              ) : location.pathname === BOARD_ROUTE_PATH ? (
                 <>
                   <button
                     type="button"
@@ -731,7 +733,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
                 </>
               ) : settingsProjectId() ? (
                 <a
-                  href={`/board?projectId=${settingsProjectId()}`}
+                  href={buildBoardHref(settingsProjectId())}
                   class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
                   aria-label="Close project settings"
                   title="Close project settings"

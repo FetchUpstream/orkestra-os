@@ -1,5 +1,6 @@
 import { useNavigate } from "@solidjs/router";
 import { createMemo, createSignal, onMount, type JSX } from "solid-js";
+import { buildBoardHref } from "../../../app/lib/boardNavigation";
 import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
 import {
   cloneProject,
@@ -395,7 +396,7 @@ export const useProjectsPageModel = () => {
       if (mode() === "edit" && activeEditProjectId) {
         await updateProject(activeEditProjectId, payload);
         await loadProjects();
-        navigate(`/board?projectId=${encodeURIComponent(activeEditProjectId)}`);
+        navigate(buildBoardHref(activeEditProjectId));
         return;
       }
 
@@ -597,7 +598,7 @@ export const useProjectsPageModel = () => {
 
         const nextProject = nextProjects[0];
         if (nextProject) {
-          navigate(`/board?projectId=${encodeURIComponent(nextProject.id)}`);
+          navigate(buildBoardHref(nextProject.id));
           return;
         }
 

@@ -1,6 +1,7 @@
 import { useLocation, useNavigate, useParams } from "@solidjs/router";
 import { listen } from "@tauri-apps/api/event";
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { buildBoardHref } from "../../../app/lib/boardNavigation";
 import {
   bootstrapRunOpenCode,
   appendCappedHistory,
@@ -1361,10 +1362,7 @@ export const useRunDetailModel = () => {
     if (runDetailOrigin() === "board") {
       const projectId =
         task()?.projectId?.trim() || run()?.projectId?.trim() || "";
-      if (projectId) {
-        return `/board?projectId=${encodeURIComponent(projectId)}`;
-      }
-      return "/board";
+      return buildBoardHref(projectId);
     }
 
     const taskValue = task();
@@ -1467,10 +1465,7 @@ export const useRunDetailModel = () => {
   const boardHref = createMemo(() => {
     const projectId =
       task()?.projectId?.trim() || run()?.projectId?.trim() || "";
-    if (projectId) {
-      return `/board?projectId=${encodeURIComponent(projectId)}`;
-    }
-    return "/board";
+    return buildBoardHref(projectId);
   });
 
   const refreshRunDetails = async (runId: string): Promise<void> => {

@@ -1,10 +1,11 @@
 import { Route } from "@solidjs/router";
 import type { Component } from "solid-js";
 import AppShell from "../layouts/AppShell";
-import BoardPage from "../../pages/BoardPage";
+import { BoardScreen } from "../../features/board";
 import NotFoundPage from "../../pages/NotFoundPage";
 import ProjectsPage from "../../pages/ProjectsPage";
 import RunDetailPage from "../../pages/RunDetailPage";
+import StartupRedirectPage from "../../pages/StartupRedirectPage";
 import TaskCreatePage from "../../pages/TaskCreatePage";
 import TaskDetailPage from "../../pages/TaskDetailPage";
 
@@ -12,8 +13,8 @@ const AppRoutes: Component = () => {
   return (
     <>
       <Route path="/" component={AppShell}>
-        <Route path="/" component={BoardPage} />
-        <Route path="/board" component={BoardPage} />
+        <Route path="/" component={StartupRedirectPage} />
+        <Route path="/board" component={BoardScreen} />
         <Route path="/tasks/:taskId" component={TaskDetailPage} />
         <Route
           path="/projects/:projectId/tasks/new"

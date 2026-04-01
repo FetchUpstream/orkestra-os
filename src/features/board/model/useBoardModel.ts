@@ -6,6 +6,11 @@ import {
   onMount,
 } from "solid-js";
 import {
+  BOARD_SELECTED_PROJECT_STORAGE_KEY,
+  getBoardProjectIdFromSearch,
+  readRememberedBoardProjectId,
+} from "../../../app/lib/boardNavigation";
+import {
   getProject,
   listProjects,
   type Project,
@@ -46,18 +51,6 @@ const ACTIVE_RUN_STATUSES = new Set([
   "in_progress",
   "idle",
 ]);
-const BOARD_SELECTED_PROJECT_STORAGE_KEY = "board.selectedProjectId";
-
-const readRememberedBoardProjectId = (): string => {
-  if (typeof window === "undefined") return "";
-  try {
-    return (
-      window.localStorage.getItem(BOARD_SELECTED_PROJECT_STORAGE_KEY) ?? ""
-    );
-  } catch {
-    return "";
-  }
-};
 
 const persistBoardProjectId = (projectId: string) => {
   if (typeof window === "undefined") return;
@@ -77,7 +70,7 @@ const persistBoardProjectId = (projectId: string) => {
 
 const readBoardProjectIdFromQuery = (): string => {
   if (typeof window === "undefined") return "";
-  return new URLSearchParams(window.location.search).get("projectId") ?? "";
+  return getBoardProjectIdFromSearch(window.location.search);
 };
 
 const resolveInitialProjectSelection = (loadedProjects: Project[]): string => {
@@ -86,14 +79,14 @@ const resolveInitialProjectSelection = (loadedProjects: Project[]): string => {
     loadedProjects.map((project) => project.id),
   );
 
-  const rememberedProjectId = readRememberedBoardProjectId();
-  if (rememberedProjectId && availableProjectIds.has(rememberedProjectId)) {
-    return rememberedProjectId;
-  }
-
   const queryProjectId = readBoardProjectIdFromQuery();
   if (queryProjectId && availableProjectIds.has(queryProjectId)) {
     return queryProjectId;
+  }
+
+  const rememberedProjectId = readRememberedBoardProjectId();
+  if (rememberedProjectId && availableProjectIds.has(rememberedProjectId)) {
+    return rememberedProjectId;
   }
 
   return loadedProjects[0]?.id ?? "";

@@ -6,6 +6,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
+import { buildBoardHref } from "../../../app/lib/boardNavigation";
 import { getProject } from "../../../app/lib/projects";
 import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
 import { subscribeToTaskStatusChanged } from "../../../app/lib/taskStatusEvents";
@@ -328,7 +329,7 @@ export const useTaskDetailModel = () => {
     if (taskDetailOrigin() === "run" && taskDetailRunId()) {
       return `/runs/${taskDetailRunId()}`;
     }
-    if (taskDetailOrigin() === "board") return "/board";
+    if (taskDetailOrigin() === "board") return buildBoardHref(projectId());
     return projectId() ? `/projects/${projectId()}` : "/projects";
   });
   const backLabel = createMemo(() => {

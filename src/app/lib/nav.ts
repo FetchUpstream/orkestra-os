@@ -1,4 +1,5 @@
 import type { Project } from "./projects";
+import { buildBoardHref } from "./boardNavigation";
 
 export type ProjectNavItemConfig = {
   id: string;
@@ -27,5 +28,5 @@ export const buildProjectNavItem = (
   id: project.id,
   label: project.name,
   keyAvatar: normalizeAvatarKey(project),
-  href: `/board?projectId=${encodeURIComponent(project.id)}`,
+  href: buildBoardHref(project.id),
 });

@@ -1,5 +1,6 @@
 import { useLocation, useNavigate, useParams } from "@solidjs/router";
 import { createMemo, createSignal } from "solid-js";
+import { buildBoardHref } from "../../../app/lib/boardNavigation";
 import { getProject } from "../../../app/lib/projects";
 import {
   addTaskDependency,
@@ -85,7 +86,7 @@ export const useTaskCreateModel = () => {
   });
 
   const backHref = createMemo(() => {
-    if (origin() === "board") return "/board";
+    if (origin() === "board") return buildBoardHref(params.projectId);
     return params.projectId ? `/projects/${params.projectId}` : "/projects";
   });
 
