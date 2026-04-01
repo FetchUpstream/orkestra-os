@@ -19,8 +19,8 @@ use opencode::{
     create_opencode_client, create_opencode_server, types::PartInput, OpencodeClient,
     OpencodeClientConfig, OpencodeServer, OpencodeServerOptions, RequestOptions,
 };
-use std::fmt;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

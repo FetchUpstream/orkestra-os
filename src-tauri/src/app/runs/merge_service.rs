@@ -670,15 +670,18 @@ impl RunsMergeService {
         }
         let files = files.into_iter().collect::<Vec<_>>();
 
-        let mut prompt = format!(
-            "Rebase conflict detected while rebasing this run branch onto `{source_branch}`. Resolve the conflicts and continue the rebase."
+        let conflicted_files = if files.is_empty() {
+            "- none reported by Git\n".to_string()
+        } else {
+            files
+                .iter()
+                .map(|path| format!("- `{path}`\n"))
+                .collect::<String>()
+        };
+
+        let prompt = format!(
+            "A rebase is already in progress for this worktree. Resolve the conflicts in the listed files and continue the existing rebase safely.\n\nConflicting files:\n{conflicted_files}\nRequirements:\n\n* First confirm a rebase is in progress with `git status`.\n\n* This is an existing rebase continuation flow, not a normal standalone commit flow.\n\n* Resolve only the listed conflict markers and preserve both `{source_branch}`-intended changes and this run's valid changes.\n\n* Before continuing, verify there are no unresolved conflicts with `git diff --name-only --diff-filter=U`.\n\n* Stage only the resolved conflicted files.\n\n* Continue the rebase non-interactively using:\n  `GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true git rebase --continue`\n\n* Inspect the real exit status and stderr/stdout of `git rebase --continue`. Do not assume success just because the command ran.\n\n* Do not create a normal commit unless Git explicitly requires it as part of the rebase flow.\n\n* Never edit, recreate, or patch files inside `.git`, `rebase-merge`, or `git-rebase-todo`.\n\n* Never try to repair broken rebase metadata manually.\n\n* If `git rebase --continue` fails because rebase metadata is missing or corrupt, stop and report that the rebase state is broken instead of trying to repair Git internals manually.\n\n* After attempting to continue, run `git status --short --branch` and report the exact resulting rebase state, including whether the rebase completed or more conflicts remain."
         );
-        if !files.is_empty() {
-            prompt.push_str("\n\nConflicting files:\n");
-            for path in &files {
-                prompt.push_str(&format!("- `{path}`\n"));
-            }
-        }
 
         Ok(RunMergeConflictDto {
             files,
@@ -939,6 +942,37 @@ mod tests {
         let conflict = response.conflict.expect("expected conflict payload");
         assert!(conflict.files.iter().any(|file| file == "README.md"));
         assert!(conflict.chat_prompt.contains("Conflicting files"));
+        assert!(conflict
+            .chat_prompt
+            .contains("A rebase is already in progress for this worktree."));
+        assert!(conflict.chat_prompt.contains("`git status`"));
+        assert!(conflict.chat_prompt.contains(&format!(
+            "`{}`-intended changes",
+            run.source_branch.clone().unwrap()
+        )));
+        assert!(conflict
+            .chat_prompt
+            .contains("`git diff --name-only --diff-filter=U`"));
+        assert!(conflict
+            .chat_prompt
+            .contains("Stage only the resolved conflicted files."));
+        assert!(conflict
+            .chat_prompt
+            .contains("`GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true git rebase --continue`"));
+        assert!(conflict
+            .chat_prompt
+            .contains("Inspect the real exit status and stderr/stdout"));
+        assert!(conflict
+            .chat_prompt
+            .contains("Do not create a normal commit unless Git explicitly requires it"));
+        assert!(conflict.chat_prompt.contains("Never edit, recreate, or patch files inside `.git`, `rebase-merge`, or `git-rebase-todo`."));
+        assert!(conflict
+            .chat_prompt
+            .contains("Never try to repair broken rebase metadata manually."));
+        assert!(conflict.chat_prompt.contains("rebase state is broken"));
+        assert!(conflict
+            .chat_prompt
+            .contains("`git status --short --branch`"));
 
         let repo = Repository::open(&worktree_path).unwrap();
         let head = repo.head().unwrap();
