@@ -4357,6 +4357,30 @@ textarea::placeholder {
   font-weight: 700;
 }
 
+.run-detail-topbar__status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: var(--text-subtle);
+  box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 24%, transparent);
+}
+
+.run-detail-topbar__status-dot[data-status="warming"] {
+  background: #ffbf69;
+  color: #ffbf69;
+}
+
+.run-detail-topbar__status-dot[data-status="connected"] {
+  background: #7ce0bb;
+  color: #7ce0bb;
+}
+
+.run-detail-topbar__status-dot[data-status="disconnected"] {
+  background: #ff8f9f;
+  color: #ff8f9f;
+}
+
 .run-chat-log-stream {
   height: 100%;
   min-height: 0;

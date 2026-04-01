@@ -873,6 +873,53 @@ describe("useRunDetailModel startup ownership", () => {
     );
   });
 
+  it("tracks OpenCode connection status across disconnect and reconnect events", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+      expect(modelRef!.agent.connectionStatus()).toBe("warming");
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "stream.disconnected",
+      data: { reason: "socket_closed" },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.connectionStatus()).toBe("disconnected");
+    });
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:01.000Z",
+      event: "stream.reconnected",
+      data: { reason: "socket_recovered" },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.connectionStatus()).toBe("connected");
+    });
+  });
+
   it("suppresses idle refresh when same-batch session is mismatched", async () => {
     let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
     render(() => {

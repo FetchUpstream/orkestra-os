@@ -946,6 +946,7 @@ const NewRunDetailScreen: Component = () => {
         detail: {
           title: runTopbarTitle(),
           subtitle: runTopbarSubtitle(),
+          connectionStatus: model.agent.connectionStatus(),
           backHref,
           backLabel,
           actions: [

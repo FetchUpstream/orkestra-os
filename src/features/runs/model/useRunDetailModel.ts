@@ -92,6 +92,11 @@ export type RunChatSessionHealth =
   | "reconnecting"
   | "unresponsive";
 
+export type RunOpenCodeConnectionStatus =
+  | "warming"
+  | "connected"
+  | "disconnected";
+
 export type PendingRunPrompt = {
   id: string;
   text: string;
@@ -215,6 +220,8 @@ export const useRunDetailModel = () => {
     createSignal<PendingRunPrompt | null>(null);
   const [chatSessionHealth, setChatSessionHealth] =
     createSignal<RunChatSessionHealth>("idle");
+  const [agentConnectionStatus, setAgentConnectionStatus] =
+    createSignal<RunOpenCodeConnectionStatus>("warming");
   const [runAgentOptions, setRunAgentOptions] = createSignal<
     RunSelectionOption[]
   >([]);
@@ -1156,6 +1163,24 @@ export const useRunDetailModel = () => {
       ts: event.ts,
       raw: event,
     };
+  };
+
+  const resolveAgentConnectionStatus = (
+    eventType: string,
+  ): RunOpenCodeConnectionStatus | null => {
+    switch (eventType) {
+      case "server.connected":
+      case "stream.connected":
+      case "stream.reconnected":
+        return "connected";
+      case "server.disconnected":
+      case "stream.disconnected":
+      case "stream.reconnecting":
+      case "stream.terminated":
+        return "disconnected";
+      default:
+        return null;
+    }
   };
 
   const extractSessionIdFromMessages = (messages: unknown[]): string | null => {
@@ -2182,6 +2207,7 @@ export const useRunDetailModel = () => {
     let shouldHydrateSnapshot = false;
     let shouldResubscribe = false;
     let shouldRefreshRunForSessionIdle = false;
+    let nextConnectionStatus: RunOpenCodeConnectionStatus | null = null;
 
     setAgentEvents((current) => appendCappedHistory(current, batch));
     setAgentStore((current) => {
@@ -2192,6 +2218,10 @@ export const useRunDetailModel = () => {
           busEvent.type === "stream.resync_needed"
         ) {
           shouldHydrateSnapshot = true;
+        }
+        const connectionStatus = resolveAgentConnectionStatus(busEvent.type);
+        if (connectionStatus) {
+          nextConnectionStatus = connectionStatus;
         }
         if (busEvent.type === "stream.resync_needed") {
           shouldResubscribe = true;
@@ -2212,6 +2242,10 @@ export const useRunDetailModel = () => {
         return reduceOpenCodeEvent(nextState, busEvent);
       }, current);
     });
+
+    if (nextConnectionStatus) {
+      setAgentConnectionStatus(nextConnectionStatus);
+    }
 
     if (shouldRefreshRunForSessionIdle) {
       void refreshRunDetails(runId);
@@ -2855,6 +2889,7 @@ export const useRunDetailModel = () => {
     clearPendingAgentSnapshotHydrate();
     setAgentEvents([]);
     setAgentStore(createEmptyAgentStore(null));
+    setAgentConnectionStatus("warming");
     setAgentError("");
     setAgentReadinessPhase(null);
     setAgentChatMode("unavailable");
@@ -3334,6 +3369,7 @@ export const useRunDetailModel = () => {
     agent: {
       state: agentState,
       chatMode: agentChatMode,
+      connectionStatus: agentConnectionStatus,
       readinessPhase: agentReadinessPhase,
       events: agentEvents,
       store: agentStore,

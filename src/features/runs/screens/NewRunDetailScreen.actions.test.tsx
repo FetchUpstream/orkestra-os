@@ -97,6 +97,7 @@ const createModelStub = (options?: {
   isSubmittingPrompt?: boolean;
   agent?: {
     chatMode?: "interactive" | "read_only" | "unavailable";
+    connectionStatus?: "warming" | "connected" | "disconnected";
     state?:
       | "idle"
       | "accepted"
@@ -228,6 +229,7 @@ const createModelStub = (options?: {
     },
     agent: {
       chatMode: () => options?.agent?.chatMode ?? "interactive",
+      connectionStatus: () => options?.agent?.connectionStatus ?? "connected",
       error: () => options?.agent?.error ?? "",
       state: () => options?.agent?.state ?? "running",
       readinessPhase: () => options?.agent?.readinessPhase ?? "ready",
@@ -1065,6 +1067,35 @@ describe("NewRunDetailScreen git actions", () => {
         title: string;
       };
       expect(payload.title).toBe("Current task");
+    });
+
+    window.removeEventListener("run-detail:topbar-config", onTopbarConfig);
+  });
+
+  it("emits the run topbar OpenCode connection status", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        task: { title: "" },
+        run: { taskTitle: "Ship reconnect UX" },
+        agent: { connectionStatus: "warming" },
+      }),
+    );
+
+    const topbarEvents: CustomEvent[] = [];
+    const onTopbarConfig = (event: Event) => {
+      topbarEvents.push(event as CustomEvent);
+    };
+    window.addEventListener("run-detail:topbar-config", onTopbarConfig);
+
+    render(() => <NewRunDetailScreen />);
+
+    await waitFor(() => {
+      const payload = topbarEvents[topbarEvents.length - 1]?.detail as {
+        title: string;
+        connectionStatus: string;
+      };
+      expect(payload.title).toBe("Ship reconnect UX");
+      expect(payload.connectionStatus).toBe("warming");
     });
 
     window.removeEventListener("run-detail:topbar-config", onTopbarConfig);

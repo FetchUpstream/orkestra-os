@@ -69,6 +69,7 @@ type TaskDetailTopbarConfig =
 type RunDetailTopbarConfig = {
   title: string;
   subtitle: string;
+  connectionStatus: "warming" | "connected" | "disconnected";
   backHref: string;
   backLabel: string;
   actions: Array<{
@@ -392,7 +393,16 @@ const AppShellContent: Component<AppShellProps> = (props) => {
       return config.title;
     }
     if (location.pathname.startsWith("/runs/") && runConfig?.title?.trim()) {
-      return runConfig.title;
+      return (
+        <span class="inline-flex min-w-0 items-center gap-2">
+          <span
+            class="run-detail-topbar__status-dot"
+            data-status={runConfig.connectionStatus}
+            aria-hidden="true"
+          />
+          <span class="truncate">{runConfig.title}</span>
+        </span>
+      );
     }
     return shellTitle();
   };
