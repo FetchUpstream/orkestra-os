@@ -309,6 +309,12 @@ export const useBoardModel = () => {
   const [selectedRunProviderId, setSelectedRunProviderIdSignal] =
     createSignal("");
   const [selectedRunModelId, setSelectedRunModelIdSignal] = createSignal("");
+  const [projectDefaultRunAgentId, setProjectDefaultRunAgentId] =
+    createSignal("");
+  const [projectDefaultRunProviderId, setProjectDefaultRunProviderId] =
+    createSignal("");
+  const [projectDefaultRunModelId, setProjectDefaultRunModelId] =
+    createSignal("");
   const [
     pendingRunSettingsDefaultsInitialization,
     setPendingRunSettingsDefaultsInitialization,
@@ -442,8 +448,13 @@ export const useBoardModel = () => {
     setSelectedRunAgentId(agentId);
   };
 
-  const applyProjectRunDefaults = (project: Project | null) => {
-    if (!project) {
+  const applyProjectRunDefaults = () => {
+    if (
+      !projectDefaultRunAgentId().trim() &&
+      !projectDefaultRunProviderId().trim() &&
+      !projectDefaultRunModelId().trim() &&
+      !selectedProjectDetail()
+    ) {
       setSelectedRunAgentId("");
       setSelectedRunProviderIdSignal("");
       setSelectedRunModelIdSignal("");
@@ -453,9 +464,9 @@ export const useBoardModel = () => {
 
     const resolved = initializeProjectRunDefaults({
       persisted: {
-        agentId: project.defaultRunAgent,
-        providerId: project.defaultRunProvider,
-        modelId: project.defaultRunModel,
+        agentId: projectDefaultRunAgentId(),
+        providerId: projectDefaultRunProviderId(),
+        modelId: projectDefaultRunModelId(),
       },
       agents: runAgentOptions(),
       providers: runProviderOptions(),
@@ -468,6 +479,43 @@ export const useBoardModel = () => {
       getProjectRunDefaultsMessage(resolved, "starting a run"),
     );
   };
+
+  const initializePendingRunSettingsDefaultsIfReady = () => {
+    if (!pendingRunSettingsDefaultsInitialization()) {
+      return false;
+    }
+
+    applyProjectRunDefaults();
+    setPendingRunSettingsDefaultsInitialization(false);
+    return true;
+  };
+
+  createEffect(() => {
+    if (!pendingRunSettingsDefaultsInitialization()) {
+      return;
+    }
+
+    selectedProjectDetail();
+    hasRunSelectionOptions();
+    initializePendingRunSettingsDefaultsIfReady();
+  });
+
+  createEffect(() => {
+    if (!isRunSettingsModalOpen()) {
+      return;
+    }
+
+    const hasAnyExplicitSelection = Boolean(
+      selectedRunAgentId().trim() ||
+      selectedRunProviderId().trim() ||
+      selectedRunModelId().trim(),
+    );
+    if (hasAnyExplicitSelection) {
+      return;
+    }
+
+    applyProjectRunDefaults();
+  });
 
   const refreshRunSelectionOptions = async () => {
     const projectId = selectedProjectId().trim();
@@ -487,10 +535,7 @@ export const useBoardModel = () => {
       setRunAgentOptions(cachedOptions.agents);
       setRunProviderOptions(cachedOptions.providers);
       setRunModelOptions(cachedOptions.models);
-      if (pendingRunSettingsDefaultsInitialization()) {
-        applyProjectRunDefaults(selectedProjectDetail());
-        setPendingRunSettingsDefaultsInitialization(false);
-      }
+      initializePendingRunSettingsDefaultsIfReady();
       return;
     }
 
@@ -504,10 +549,7 @@ export const useBoardModel = () => {
       setRunAgentOptions(options.agents);
       setRunProviderOptions(options.providers);
       setRunModelOptions(options.models);
-      if (pendingRunSettingsDefaultsInitialization()) {
-        applyProjectRunDefaults(selectedProjectDetail());
-        setPendingRunSettingsDefaultsInitialization(false);
-      }
+      initializePendingRunSettingsDefaultsIfReady();
     } catch {
       if (requestVersion !== runSelectionOptionsRequestVersion) {
         return;
@@ -523,9 +565,14 @@ export const useBoardModel = () => {
     }
   };
 
-  const loadSelectedProjectDetail = async (projectId: string) => {
+  const loadSelectedProjectDetail = async (
+    projectId: string,
+    options?: { clearBeforeLoad?: boolean },
+  ) => {
     const requestVersion = ++activeProjectDetailRequestVersion;
-    setSelectedProjectDetail(null);
+    if (options?.clearBeforeLoad !== false) {
+      setSelectedProjectDetail(null);
+    }
 
     try {
       const loadedProject = await getProject(projectId);
@@ -536,10 +583,12 @@ export const useBoardModel = () => {
         return;
       }
       setSelectedProjectDetail(loadedProject);
-      if (pendingRunSettingsDefaultsInitialization()) {
-        applyProjectRunDefaults(loadedProject);
-        setPendingRunSettingsDefaultsInitialization(false);
-      }
+      setProjectDefaultRunAgentId(loadedProject.defaultRunAgent?.trim() || "");
+      setProjectDefaultRunProviderId(
+        loadedProject.defaultRunProvider?.trim() || "",
+      );
+      setProjectDefaultRunModelId(loadedProject.defaultRunModel?.trim() || "");
+      initializePendingRunSettingsDefaultsIfReady();
     } catch {
       if (
         requestVersion !== activeProjectDetailRequestVersion ||
@@ -548,10 +597,52 @@ export const useBoardModel = () => {
         return;
       }
       setSelectedProjectDetail(null);
+      setProjectDefaultRunAgentId("");
+      setProjectDefaultRunProviderId("");
+      setProjectDefaultRunModelId("");
       if (pendingRunSettingsDefaultsInitialization()) {
-        applyProjectRunDefaults(null);
+        applyProjectRunDefaults();
         setPendingRunSettingsDefaultsInitialization(false);
       }
+    }
+  };
+
+  const hydrateRunDefaultsFromSelectedProject = async () => {
+    const projectId = selectedProjectId().trim();
+    if (!projectId) {
+      applyProjectRunDefaults();
+      return;
+    }
+
+    const existingProject = selectedProjectDetail();
+    if (existingProject) {
+      setProjectDefaultRunAgentId(
+        existingProject.defaultRunAgent?.trim() || "",
+      );
+      setProjectDefaultRunProviderId(
+        existingProject.defaultRunProvider?.trim() || "",
+      );
+      setProjectDefaultRunModelId(
+        existingProject.defaultRunModel?.trim() || "",
+      );
+      applyProjectRunDefaults();
+      return;
+    }
+
+    try {
+      const loadedProject = await getProject(projectId);
+      if (selectedProjectId().trim() !== projectId) {
+        return;
+      }
+      setSelectedProjectDetail(loadedProject);
+      setProjectDefaultRunAgentId(loadedProject.defaultRunAgent?.trim() || "");
+      setProjectDefaultRunProviderId(
+        loadedProject.defaultRunProvider?.trim() || "",
+      );
+      setProjectDefaultRunModelId(loadedProject.defaultRunModel?.trim() || "");
+      applyProjectRunDefaults();
+    } catch {
+      // Keep modal usable even if project details fail to reload.
     }
   };
 
@@ -845,8 +936,15 @@ export const useBoardModel = () => {
     if (!canTaskTransitionToStatus(taskId, "doing")) return;
 
     const openRunSettingsModal = () => {
-      setPendingRunSettingsDefaultsInitialization(!hasRunSelectionOptions());
-      applyProjectRunDefaults(selectedProjectDetail());
+      const projectId = selectedProjectId().trim();
+
+      setPendingRunSettingsDefaultsInitialization(true);
+      if (!selectedProjectDetail() && projectId) {
+        void loadSelectedProjectDetail(projectId, { clearBeforeLoad: false });
+      }
+      void hydrateRunDefaultsFromSelectedProject();
+      initializePendingRunSettingsDefaultsIfReady();
+      setError("");
       setPendingInProgressTaskId(taskId);
       setIsRunSettingsModalOpen(true);
       void refreshRunSelectionOptions();

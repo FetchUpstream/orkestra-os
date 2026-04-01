@@ -242,6 +242,7 @@ const BoardScreen: Component = () => {
       <RunSettingsModal
         isOpen={model.isRunSettingsModalOpen}
         isSubmitting={model.isConfirmingMoveTaskToInProgress}
+        actionError={model.error}
         hasRunSelectionOptions={model.hasRunSelectionOptions}
         isOpenCodeMissing={model.isOpenCodeMissing}
         isLoadingRunSelectionOptions={model.isLoadingRunSelectionOptions}

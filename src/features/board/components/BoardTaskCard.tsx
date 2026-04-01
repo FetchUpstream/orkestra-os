@@ -59,6 +59,21 @@ const BoardTaskCard: Component<Props> = (props) => {
     props.onDragEnd?.();
   };
 
+  const suppressChildLinkDrag = (event: DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const forwardTaskDragStart = (event: DragEvent) => {
+    event.stopPropagation();
+    onDragStart(event);
+  };
+
+  const forwardTaskDragEnd = (event: DragEvent) => {
+    event.stopPropagation();
+    onDragEnd();
+  };
+
   return (
     <li
       class="project-task-item board-task-card border-l-2 border-l-transparent bg-transparent"
@@ -81,10 +96,7 @@ const BoardTaskCard: Component<Props> = (props) => {
         href={`/tasks/${props.task.id}?origin=board`}
         class="project-task-link flex flex-col gap-2"
         draggable={false}
-        onDragStart={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-        }}
+        onDragStart={suppressChildLinkDrag}
         onClick={(event) => {
           if (dragJustEnded() || props.isDragging) {
             event.preventDefault();
@@ -132,6 +144,9 @@ const BoardTaskCard: Component<Props> = (props) => {
                       class="board-task-run-details"
                       data-run-id={miniCard.runId}
                       aria-label="Run Details"
+                      draggable={!props.isStatusUpdating}
+                      onDragStart={forwardTaskDragStart}
+                      onDragEnd={forwardTaskDragEnd}
                     >
                       <p class="board-task-run-details-title">Run Details</p>
                       <Show
@@ -161,7 +176,13 @@ const BoardTaskCard: Component<Props> = (props) => {
                     class="board-task-run-details board-task-run-details-link"
                     data-run-id={miniCard.runId}
                     aria-label="Run Details"
+                    draggable={!props.isStatusUpdating}
+                    onDragStart={forwardTaskDragStart}
+                    onDragEnd={forwardTaskDragEnd}
                     onClick={(event) => {
+                      if (dragJustEnded() || props.isDragging) {
+                        event.preventDefault();
+                      }
                       event.stopPropagation();
                     }}
                   >
