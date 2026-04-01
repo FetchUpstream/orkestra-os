@@ -1671,6 +1671,78 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("renders multiple run mini-cards for a single board task in newest-first order", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "list_project_tasks") {
+        return Promise.resolve([
+          {
+            id: "task-1",
+            title: "Task with multiple runs",
+            status: "doing",
+            display_key: "ALP-24",
+          },
+        ]);
+      }
+      if (command === "list_task_runs") {
+        const taskId = (args as { taskId?: string } | undefined)?.taskId;
+        if (taskId === "task-1") {
+          return Promise.resolve([
+            {
+              id: "run-older",
+              task_id: "task-1",
+              project_id: "p-1",
+              status: "running",
+              display_key: "RUN-24",
+              triggered_by: "user",
+              created_at: "2026-01-02T00:00:00.000Z",
+            },
+            {
+              id: "run-newer",
+              task_id: "task-1",
+              project_id: "p-1",
+              status: "idle",
+              display_key: "RUN-25",
+              triggered_by: "user",
+              created_at: "2026-01-03T00:00:00.000Z",
+            },
+          ]);
+        }
+      }
+      return Promise.resolve([]);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Run Details")).toHaveLength(2);
+      expect(screen.getByText("Waiting for Input")).toBeTruthy();
+      expect(screen.getByText("Busy Coding")).toBeTruthy();
+    });
+
+    const runLinks = Array.from(
+      document.querySelectorAll(".board-task-run-details-link"),
+    ) as HTMLAnchorElement[];
+    expect(runLinks).toHaveLength(2);
+    expect(runLinks[0]?.getAttribute("href")).toBe(
+      "/runs/run-newer?origin=board",
+    );
+    expect(runLinks[1]?.getAttribute("href")).toBe(
+      "/runs/run-older?origin=board",
+    );
+  });
+
   it("hides review mini-card for completed runs", async () => {
     invokeMock.mockImplementation((command: string, args?: unknown) => {
       if (command === "list_projects") {

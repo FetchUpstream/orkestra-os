@@ -1,5 +1,5 @@
 import { A } from "@solidjs/router";
-import { Show, createSignal, type Component } from "solid-js";
+import { For, Show, createSignal, type Component } from "solid-js";
 import type { Project } from "../../../app/lib/projects";
 import type { Task } from "../../../app/lib/tasks";
 import RunInlineLoader from "../../../components/ui/RunInlineLoader";
@@ -12,7 +12,7 @@ import {
 type Props = {
   task: Task;
   project: Project | null;
-  runMiniCard?: BoardTaskRunMiniCard;
+  runMiniCards?: BoardTaskRunMiniCard[];
   isDragging?: boolean;
   isStatusUpdating?: boolean;
   onDragStart?: (taskId: string, event: DragEvent) => void;
@@ -25,9 +25,9 @@ const BoardTaskCard: Component<Props> = (props) => {
   const showDependencyBadge = () =>
     props.task.status === "todo" && dependencyState() !== "none";
   const showRunMiniCard = () =>
-    props.task.status !== "done" && !!props.runMiniCard;
-  const isRunStateActive = () => {
-    const state = props.runMiniCard?.state;
+    props.task.status !== "done" && (props.runMiniCards?.length ?? 0) > 0;
+  const isRunStateActive = (miniCard: BoardTaskRunMiniCard) => {
+    const state = miniCard.state;
     return (
       state === "warming_up" ||
       state === "busy_coding" ||
@@ -35,8 +35,8 @@ const BoardTaskCard: Component<Props> = (props) => {
       state === "resolving_rebase_conflicts"
     );
   };
-  const runStateIcon = () => {
-    switch (props.runMiniCard?.state) {
+  const runStateIcon = (miniCard: BoardTaskRunMiniCard) => {
+    switch (miniCard.state) {
       case "ready_to_merge":
         return <span class="text-success font-semibold">✓</span>;
       case "permission_requested":
@@ -120,61 +120,76 @@ const BoardTaskCard: Component<Props> = (props) => {
           </Show>
         </div>
       </A>
-      <Show when={showRunMiniCard() && props.runMiniCard}>
-        {(miniCard) => (
-          <Show
-            when={miniCard().isNavigable}
-            fallback={
-              <div class="board-task-run-details" aria-label="Run Details">
-                <p class="board-task-run-details-title">Run Details</p>
+      <Show when={showRunMiniCard() && props.runMiniCards}>
+        {(miniCards) => (
+          <div class="mt-1 flex flex-col gap-1">
+            <For each={miniCards()}>
+              {(miniCard) => (
                 <Show
-                  when={isRunStateActive()}
+                  when={miniCard.isNavigable}
                   fallback={
-                    <p class="run-inline-loading-row board-task-run-details-row">
-                      <span aria-hidden="true">{runStateIcon()}</span>
-                      <span>{miniCard().label}</span>
-                    </p>
+                    <div
+                      class="board-task-run-details"
+                      data-run-id={miniCard.runId}
+                      aria-label="Run Details"
+                    >
+                      <p class="board-task-run-details-title">Run Details</p>
+                      <Show
+                        when={isRunStateActive(miniCard)}
+                        fallback={
+                          <p class="run-inline-loading-row board-task-run-details-row">
+                            <span aria-hidden="true">
+                              {runStateIcon(miniCard)}
+                            </span>
+                            <span>{miniCard.label}</span>
+                          </p>
+                        }
+                      >
+                        <RunInlineLoader
+                          as="p"
+                          class="board-task-run-details-row"
+                          srLabel="Run pending"
+                        >
+                          <span>{miniCard.label}</span>
+                        </RunInlineLoader>
+                      </Show>
+                    </div>
                   }
                 >
-                  <RunInlineLoader
-                    as="p"
-                    class="board-task-run-details-row"
-                    srLabel="Run pending"
+                  <A
+                    href={`/runs/${miniCard.runId}?origin=board`}
+                    class="board-task-run-details board-task-run-details-link"
+                    data-run-id={miniCard.runId}
+                    aria-label="Run Details"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                    }}
                   >
-                    <span>{miniCard().label}</span>
-                  </RunInlineLoader>
+                    <p class="board-task-run-details-title">Run Details</p>
+                    <Show
+                      when={isRunStateActive(miniCard)}
+                      fallback={
+                        <p class="run-inline-loading-row board-task-run-details-row">
+                          <span aria-hidden="true">
+                            {runStateIcon(miniCard)}
+                          </span>
+                          <span>{miniCard.label}</span>
+                        </p>
+                      }
+                    >
+                      <RunInlineLoader
+                        as="p"
+                        class="board-task-run-details-row"
+                        srLabel="Run pending"
+                      >
+                        <span>{miniCard.label}</span>
+                      </RunInlineLoader>
+                    </Show>
+                  </A>
                 </Show>
-              </div>
-            }
-          >
-            <A
-              href={`/runs/${miniCard().runId}?origin=board`}
-              class="board-task-run-details board-task-run-details-link"
-              aria-label="Run Details"
-              onClick={(event) => {
-                event.stopPropagation();
-              }}
-            >
-              <p class="board-task-run-details-title">Run Details</p>
-              <Show
-                when={isRunStateActive()}
-                fallback={
-                  <p class="run-inline-loading-row board-task-run-details-row">
-                    <span aria-hidden="true">{runStateIcon()}</span>
-                    <span>{miniCard().label}</span>
-                  </p>
-                }
-              >
-                <RunInlineLoader
-                  as="p"
-                  class="board-task-run-details-row"
-                  srLabel="Run pending"
-                >
-                  <span>{miniCard().label}</span>
-                </RunInlineLoader>
-              </Show>
-            </A>
-          </Show>
+              )}
+            </For>
+          </div>
         )}
       </Show>
     </li>

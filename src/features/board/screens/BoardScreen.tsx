@@ -221,7 +221,7 @@ const BoardScreen: Component = () => {
                           <BoardTaskCard
                             task={task}
                             project={model.selectedProject()}
-                            runMiniCard={model.taskRunMiniCards()[task.id]}
+                            runMiniCards={model.taskRunMiniCards()[task.id]}
                             isDragging={draggingTaskId() === task.id}
                             isStatusUpdating={model.isTaskStatusUpdating(
                               task.id,

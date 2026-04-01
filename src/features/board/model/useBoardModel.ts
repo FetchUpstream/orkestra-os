@@ -29,6 +29,7 @@ import {
   createRun,
   listTaskRuns,
   startRunOpenCode,
+  type Run,
   type RunState,
 } from "../../../app/lib/runs";
 import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
@@ -104,6 +105,9 @@ export type BoardTaskRunMiniCard = {
   label: string;
   state: RunState;
   isNavigable: boolean;
+  createdAt?: string;
+  runNumber?: number | null;
+  isOptimistic?: boolean;
 };
 
 const boardLabelForRunState = (state: RunState): string => {
@@ -139,47 +143,129 @@ const fallbackRunState = (status: string): RunState | null => {
   }
 };
 
-const resolveTaskRunMiniCard = (
-  task: Task,
-  runItems: Awaited<ReturnType<typeof listTaskRuns>>,
-): BoardTaskRunMiniCard | null => {
-  if (task.status === "done") return null;
+const resolveRunTimestamp = (run: Run): number => {
+  const timestamp = Date.parse(
+    run.createdAt || run.startedAt || run.finishedAt || "",
+  );
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
 
-  if (task.status === "review") {
-    const activeRun = runItems.find((run) =>
-      ACTIVE_RUN_STATUSES.has(run.status),
-    );
-    if (activeRun) {
-      const runState = activeRun.runState ?? fallbackRunState(activeRun.status);
-      if (!runState) {
-        return null;
-      }
-      return {
-        runId: activeRun.id,
-        label: boardLabelForRunState(runState),
-        state: runState,
-        isNavigable: true,
-      };
-    }
+const resolveMiniCardTimestamp = (miniCard: BoardTaskRunMiniCard): number => {
+  const timestamp = Date.parse(miniCard.createdAt || "");
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
 
+const sortRunsForBoard = (runItems: Run[]): Run[] => {
+  return [...runItems].sort((a, b) => {
+    const timestampDiff = resolveRunTimestamp(b) - resolveRunTimestamp(a);
+    if (timestampDiff !== 0) return timestampDiff;
+
+    const runNumberDiff = (b.runNumber ?? -1) - (a.runNumber ?? -1);
+    if (runNumberDiff !== 0) return runNumberDiff;
+
+    return b.id.localeCompare(a.id);
+  });
+};
+
+const sortMiniCardsForBoard = (
+  miniCards: BoardTaskRunMiniCard[],
+): BoardTaskRunMiniCard[] => {
+  return [...miniCards].sort((a, b) => {
+    if (a.isOptimistic && !b.isOptimistic) return -1;
+    if (!a.isOptimistic && b.isOptimistic) return 1;
+
+    const timestampDiff =
+      resolveMiniCardTimestamp(b) - resolveMiniCardTimestamp(a);
+    if (timestampDiff !== 0) return timestampDiff;
+
+    const runNumberDiff = (b.runNumber ?? -1) - (a.runNumber ?? -1);
+    if (runNumberDiff !== 0) return runNumberDiff;
+
+    if (a.runId === b.runId) return 0;
+    return a.runId > b.runId ? -1 : 1;
+  });
+};
+
+const areMiniCardsEquivalent = (
+  previous: BoardTaskRunMiniCard,
+  next: BoardTaskRunMiniCard,
+): boolean => {
+  return (
+    previous.runId === next.runId &&
+    previous.label === next.label &&
+    previous.state === next.state &&
+    previous.isNavigable === next.isNavigable &&
+    previous.createdAt === next.createdAt &&
+    previous.runNumber === next.runNumber &&
+    previous.isOptimistic === next.isOptimistic
+  );
+};
+
+const reconcileMiniCards = (
+  previous: BoardTaskRunMiniCard[] | undefined,
+  next: BoardTaskRunMiniCard[],
+): BoardTaskRunMiniCard[] => {
+  if (!previous || previous.length === 0) {
+    return next;
+  }
+
+  const previousByRunId = new Map(
+    previous.map((miniCard) => [miniCard.runId, miniCard]),
+  );
+  return next.map((miniCard) => {
+    const previousMiniCard = previousByRunId.get(miniCard.runId);
+    return previousMiniCard &&
+      areMiniCardsEquivalent(previousMiniCard, miniCard)
+      ? previousMiniCard
+      : miniCard;
+  });
+};
+
+const runToBoardTaskRunMiniCard = (run: Run): BoardTaskRunMiniCard | null => {
+  const runState = run.runState ?? fallbackRunState(run.status);
+  if (!runState) {
     return null;
   }
 
-  const activeRun = runItems.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
-  if (activeRun) {
-    const runState = activeRun.runState ?? fallbackRunState(activeRun.status);
-    if (!runState) {
-      return null;
-    }
-    return {
-      runId: activeRun.id,
-      label: boardLabelForRunState(runState),
-      state: runState,
-      isNavigable: true,
-    };
+  return {
+    runId: run.id,
+    label: boardLabelForRunState(runState),
+    state: runState,
+    isNavigable: true,
+    createdAt: run.createdAt,
+    runNumber: run.runNumber,
+  };
+};
+
+const optimisticRunIdForTask = (taskId: string) => `pending-${taskId}`;
+
+const mergeTaskRunMiniCards = (
+  current: Record<string, BoardTaskRunMiniCard[]>,
+  taskId: string,
+  nextMiniCards: BoardTaskRunMiniCard[],
+): Record<string, BoardTaskRunMiniCard[]> => {
+  const next = { ...current };
+  if (nextMiniCards.length === 0) {
+    delete next[taskId];
+    return next;
   }
 
-  return null;
+  next[taskId] = reconcileMiniCards(current[taskId], nextMiniCards);
+  return next;
+};
+
+const resolveTaskRunMiniCards = (
+  task: Task,
+  runItems: Awaited<ReturnType<typeof listTaskRuns>>,
+): BoardTaskRunMiniCard[] => {
+  if (task.status === "done") return [];
+
+  return sortRunsForBoard(runItems)
+    .filter((run) => ACTIVE_RUN_STATUSES.has(run.status))
+    .flatMap((run) => {
+      const miniCard = runToBoardTaskRunMiniCard(run);
+      return miniCard ? [miniCard] : [];
+    });
 };
 
 export const useBoardModel = () => {
@@ -199,7 +285,7 @@ export const useBoardModel = () => {
   const [isProjectsLoading, setIsProjectsLoading] = createSignal(true);
   const [isTasksLoading, setIsTasksLoading] = createSignal(false);
   const [taskRunMiniCards, setTaskRunMiniCards] = createSignal<
-    Record<string, BoardTaskRunMiniCard>
+    Record<string, BoardTaskRunMiniCard[]>
   >({});
   const [error, setError] = createSignal("");
   const [isRunSettingsModalOpen, setIsRunSettingsModalOpen] =
@@ -232,10 +318,30 @@ export const useBoardModel = () => {
   let activeTaskRunsRequestVersion = 0;
   let activeTaskSearchRequestVersion = 0;
   let runSelectionOptionsRequestVersion = 0;
+  const taskRunRequestVersions: Record<string, number> = {};
   let boardEventSubscriptionDisposed = false;
   let removeBoardEventSubscription: (() => void) | null = null;
   let removeBoardRunStatusSubscription: (() => void) | null = null;
   let removeBoardRunStateSubscription: (() => void) | null = null;
+
+  const beginTaskRunRequest = (taskId: string): number => {
+    const nextVersion = (taskRunRequestVersions[taskId] ?? 0) + 1;
+    taskRunRequestVersions[taskId] = nextVersion;
+    return nextVersion;
+  };
+
+  const isTaskRunRequestCurrent = (taskId: string, requestVersion: number) => {
+    return taskRunRequestVersions[taskId] === requestVersion;
+  };
+
+  const applyTaskRunMiniCards = (
+    taskId: string,
+    miniCards: BoardTaskRunMiniCard[],
+  ) => {
+    setTaskRunMiniCards((current) =>
+      mergeTaskRunMiniCards(current, taskId, miniCards),
+    );
+  };
 
   const refreshMiniCardForTask = async (taskId: string) => {
     const taskValue = tasks().find((task) => task.id === taskId);
@@ -243,18 +349,16 @@ export const useBoardModel = () => {
       return;
     }
 
+    const taskRunRequestVersion = beginTaskRunRequest(taskId);
+
     try {
       const runs = await listTaskRuns(taskId);
-      const miniCard = resolveTaskRunMiniCard(taskValue, runs);
-      setTaskRunMiniCards((current) => {
-        const next = { ...current };
-        if (!miniCard) {
-          delete next[taskId];
-        } else {
-          next[taskId] = miniCard;
-        }
-        return next;
-      });
+      if (!isTaskRunRequestCurrent(taskId, taskRunRequestVersion)) {
+        return;
+      }
+
+      const miniCards = resolveTaskRunMiniCards(taskValue, runs);
+      applyTaskRunMiniCards(taskId, miniCards);
     } catch {
       // Ignore transient run refresh failures.
     }
@@ -476,11 +580,15 @@ export const useBoardModel = () => {
 
       const taskRunMiniCardEntries = await Promise.all(
         nonDoneTasks.map(async (task) => {
+          const taskRunRequestVersion = beginTaskRunRequest(task.id);
           try {
             const runs = await listTaskRuns(task.id);
-            const miniCard = resolveTaskRunMiniCard(task, runs);
-            if (!miniCard) return null;
-            return [task.id, miniCard] as const;
+            if (!isTaskRunRequestCurrent(task.id, taskRunRequestVersion)) {
+              return null;
+            }
+
+            const miniCards = resolveTaskRunMiniCards(task, runs);
+            return { taskId: task.id, miniCards, taskRunRequestVersion };
           } catch {
             return null;
           }
@@ -495,11 +603,29 @@ export const useBoardModel = () => {
         return;
       }
 
-      setTaskRunMiniCards(
-        Object.fromEntries(
-          taskRunMiniCardEntries.filter((entry) => entry !== null),
-        ),
-      );
+      setTaskRunMiniCards((current) => {
+        let next = { ...current };
+        const activeTaskIds = new Set(nonDoneTasks.map((task) => task.id));
+
+        for (const taskId of Object.keys(next)) {
+          if (!activeTaskIds.has(taskId)) {
+            delete next[taskId];
+          }
+        }
+
+        for (const entry of taskRunMiniCardEntries) {
+          if (!entry) continue;
+          if (
+            !isTaskRunRequestCurrent(entry.taskId, entry.taskRunRequestVersion)
+          ) {
+            continue;
+          }
+
+          next = mergeTaskRunMiniCards(next, entry.taskId, entry.miniCards);
+        }
+
+        return next;
+      });
     } catch {
       if (
         requestVersion !== activeTasksRequestVersion ||
@@ -624,7 +750,7 @@ export const useBoardModel = () => {
     if (!taskToMove || taskToMove.status === targetStatus) return false;
     if (!canTransitionStatus(taskToMove.status, targetStatus)) return false;
     const previousStatus = taskToMove.status;
-    const previousMiniCard = taskRunMiniCards()[taskId];
+    const previousMiniCards = taskRunMiniCards()[taskId];
 
     setUpdatingTaskIds((current) => [...current, taskId]);
     setError("");
@@ -634,16 +760,28 @@ export const useBoardModel = () => {
       ),
     );
     if (targetStatus === "done") {
+      beginTaskRunRequest(taskId);
       setTaskRunMiniCards((current) => {
         const next = { ...current };
         delete next[taskId];
         return next;
       });
     } else if (targetStatus === "doing") {
-      setTaskRunMiniCards((current) => ({
-        ...current,
-        [taskId]: optimisticDoingMiniCard(taskId),
-      }));
+      beginTaskRunRequest(taskId);
+      setTaskRunMiniCards((current) => {
+        const optimisticMiniCard: BoardTaskRunMiniCard = {
+          ...optimisticDoingMiniCard(taskId),
+          isOptimistic: true,
+        };
+        const preservedMiniCards = (current[taskId] ?? []).filter(
+          (miniCard) => miniCard.runId !== optimisticRunIdForTask(taskId),
+        );
+
+        return mergeTaskRunMiniCards(current, taskId, [
+          optimisticMiniCard,
+          ...sortMiniCardsForBoard(preservedMiniCards),
+        ]);
+      });
     }
 
     try {
@@ -657,24 +795,22 @@ export const useBoardModel = () => {
         ),
       );
       if (updatedTask.status === "done") {
+        beginTaskRunRequest(taskId);
         setTaskRunMiniCards((current) => {
           const next = { ...current };
           delete next[taskId];
           return next;
         });
-      } else {
+      } else if (updatedTask.status !== "doing") {
         try {
+          const taskRunRequestVersion = beginTaskRunRequest(taskId);
           const runs = await listTaskRuns(taskId);
-          const miniCard = resolveTaskRunMiniCard(updatedTask, runs);
-          setTaskRunMiniCards((current) => {
-            const next = { ...current };
-            if (!miniCard) {
-              delete next[taskId];
-            } else {
-              next[taskId] = miniCard;
-            }
-            return next;
-          });
+          if (!isTaskRunRequestCurrent(taskId, taskRunRequestVersion)) {
+            return true;
+          }
+
+          const miniCards = resolveTaskRunMiniCards(updatedTask, runs);
+          applyTaskRunMiniCards(taskId, miniCards);
         } catch {
           // Preserve current mini-card state when run refresh fails.
         }
@@ -685,10 +821,11 @@ export const useBoardModel = () => {
           task.id === taskId ? { ...task, status: previousStatus } : task,
         ),
       );
+      beginTaskRunRequest(taskId);
       setTaskRunMiniCards((current) => {
         const next = { ...current };
-        if (previousMiniCard) {
-          next[taskId] = previousMiniCard;
+        if (previousMiniCards && previousMiniCards.length > 0) {
+          next[taskId] = previousMiniCards;
         } else {
           delete next[taskId];
         }
@@ -766,6 +903,26 @@ export const useBoardModel = () => {
             selectedRunProviderId().trim() || resolved.providerId || undefined,
           modelId: selectedRunModelId().trim() || resolved.modelId || undefined,
         });
+        const createdRunMiniCard = runToBoardTaskRunMiniCard(createdRun);
+        if (createdRunMiniCard) {
+          beginTaskRunRequest(taskId);
+          setTaskRunMiniCards((current) => {
+            const remainingMiniCards = (current[taskId] ?? []).filter(
+              (miniCard) =>
+                miniCard.runId !== optimisticRunIdForTask(taskId) &&
+                miniCard.runId !== createdRun.id,
+            );
+
+            return mergeTaskRunMiniCards(
+              current,
+              taskId,
+              sortMiniCardsForBoard([
+                createdRunMiniCard,
+                ...remainingMiniCards,
+              ]),
+            );
+          });
+        }
         const startResult = await startRunOpenCode(createdRun.id);
         if (startResult.state === "unsupported") {
           openCodeDependency.showRequiredModal();
@@ -782,6 +939,7 @@ export const useBoardModel = () => {
           );
           return;
         }
+        void refreshMiniCardForTask(taskId);
       } catch {
         setError("Task moved, but failed to create run. Please try again.");
       }
