@@ -203,6 +203,7 @@ impl RunsService {
         Ok(())
     }
 
+    #[cfg(test)]
     pub async fn transition_run_to_in_progress(&self, run_id: &str) -> Result<RunDto, AppError> {
         let run_id = run_id.trim();
         if run_id.is_empty() {
@@ -326,18 +327,6 @@ impl RunsService {
             .await
     }
 
-    pub async fn mark_run_completed(&self, run_id: &str) -> Result<bool, AppError> {
-        let run_id = run_id.trim();
-        if run_id.is_empty() {
-            return Err(AppError::validation("run_id is required"));
-        }
-
-        let finished_at = Utc::now().to_rfc3339();
-        self.repository
-            .finalize_run_completion_and_task_done(run_id, &finished_at)
-            .await
-    }
-
     pub async fn mark_setup_running_if_pending(&self, run_id: &str) -> Result<bool, AppError> {
         let run_id = run_id.trim();
         if run_id.is_empty() {
@@ -412,6 +401,7 @@ impl RunsService {
             .await
     }
 
+    #[cfg(test)]
     pub async fn transition_task_to_review_on_session_idle(
         &self,
         run_id: &str,

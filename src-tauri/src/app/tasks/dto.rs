@@ -28,13 +28,6 @@ pub struct SetTaskStatusRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TaskUpdatedEventDto {
-    pub task_id: String,
-    pub project_id: String,
-    pub status: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TaskStatusChangedEventDto {
     pub task_id: String,
     pub project_id: String,

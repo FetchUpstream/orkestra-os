@@ -320,6 +320,7 @@ impl RunsRepository {
         Ok(true)
     }
 
+    #[cfg(test)]
     pub async fn transition_run_to_in_progress(
         &self,
         run_id: &str,
