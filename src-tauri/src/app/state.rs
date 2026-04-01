@@ -7,6 +7,7 @@ use crate::app::projects::service::ProjectsService;
 use crate::app::runs::diff_service::RunsDiffService;
 use crate::app::runs::merge_service::RunsMergeService;
 use crate::app::runs::opencode_service::RunsOpenCodeService;
+use crate::app::runs::run_state_service::RunStateService;
 use crate::app::runs::service::RunsService;
 use crate::app::runs::status_transition_service::RunStatusTransitionService;
 use crate::app::tasks::search_service::TaskSearchService;
@@ -24,6 +25,7 @@ pub struct AppState {
     pub runs_diff_service: RunsDiffService,
     pub runs_merge_service: RunsMergeService,
     pub runs_opencode_service: RunsOpenCodeService,
+    pub run_state_service: RunStateService,
     pub run_status_transition_service: RunStatusTransitionService,
     pub tasks_service: TasksService,
     pub task_status_transition_service: TaskStatusTransitionService,
@@ -50,12 +52,22 @@ impl AppState {
             tasks_repository.clone(),
             Some(app_handle.clone()),
         );
-        let run_status_transition_service =
-            RunStatusTransitionService::new(RunsRepository::new(db_pool.clone()), Some(app_handle));
         let runs_service = RunsService::new(runs_repository, worktrees_service.clone());
+        let run_state_service = RunStateService::new(
+            RunsRepository::new(db_pool.clone()),
+            runs_service.clone(),
+            Some(app_handle.clone()),
+            app_data_dir.clone(),
+        );
+        let run_status_transition_service = RunStatusTransitionService::new(
+            RunsRepository::new(db_pool.clone()),
+            run_state_service.clone(),
+            Some(app_handle),
+        );
         let runs_diff_service = RunsDiffService::new(runs_service.clone(), app_data_dir.clone());
         let runs_merge_service = RunsMergeService::new(
             runs_service.clone(),
+            run_state_service.clone(),
             run_status_transition_service.clone(),
             app_data_dir.clone(),
         );
@@ -63,6 +75,7 @@ impl AppState {
             runs_service.clone(),
             projects_service.clone(),
             task_status_transition_service.clone(),
+            run_state_service.clone(),
             run_status_transition_service.clone(),
             app_data_dir.clone(),
         );
@@ -74,6 +87,7 @@ impl AppState {
             runs_diff_service,
             runs_merge_service,
             runs_opencode_service,
+            run_state_service,
             run_status_transition_service,
             tasks_service,
             task_status_transition_service,

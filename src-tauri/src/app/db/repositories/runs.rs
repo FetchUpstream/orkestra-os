@@ -92,12 +92,13 @@ impl RunsRepository {
 
     pub async fn create_run(&self, input: NewRun) -> Result<Run, AppError> {
         sqlx::query(
-            "INSERT INTO runs (
+             "INSERT INTO runs (
                 id,
                 task_id,
                 project_id,
                 target_repo_id,
                 status,
+                run_state,
                 triggered_by,
                 created_at,
                 worktree_id,
@@ -105,13 +106,14 @@ impl RunsRepository {
                 provider_id,
                 model_id,
                 source_branch
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&input.id)
         .bind(&input.task_id)
         .bind(&input.project_id)
         .bind(&input.target_repo_id)
         .bind(&input.status)
+        .bind(&input.run_state)
         .bind(&input.triggered_by)
         .bind(&input.created_at)
         .bind(&input.worktree_id)
@@ -139,6 +141,7 @@ impl RunsRepository {
                 project_id,
                 target_repo_id,
                 status,
+                run_state,
                 triggered_by,
                 created_at,
                 started_at,
@@ -181,6 +184,7 @@ impl RunsRepository {
                 project_id,
                 target_repo_id,
                 status,
+                run_state,
                 triggered_by,
                 created_at,
                 started_at,
@@ -225,6 +229,7 @@ impl RunsRepository {
                 project_id,
                 target_repo_id,
                 status,
+                run_state,
                 triggered_by,
                 created_at,
                 started_at,
@@ -272,6 +277,7 @@ impl RunsRepository {
                 project_id,
                 target_repo_id,
                 status,
+                run_state,
                 triggered_by,
                 created_at,
                 started_at,
@@ -316,6 +322,7 @@ impl RunsRepository {
                 project_id,
                 target_repo_id,
                 status,
+                run_state,
                 triggered_by,
                 created_at,
                 started_at,
@@ -444,6 +451,33 @@ impl RunsRepository {
         .execute(&self.pool)
         .await
         .runs_db("transitioning run to idle")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn update_run_state(
+        &self,
+        run_id: &str,
+        run_state: Option<&str>,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET run_state = ?
+             WHERE id = ?
+               AND (
+                 (run_state IS NULL AND ? IS NOT NULL)
+                 OR (run_state IS NOT NULL AND ? IS NULL)
+                 OR run_state != ?
+               )",
+        )
+        .bind(run_state)
+        .bind(run_id)
+        .bind(run_state)
+        .bind(run_state)
+        .bind(run_state)
+        .execute(&self.pool)
+        .await
+        .runs_db("updating run state")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -749,6 +783,7 @@ impl RunsRepository {
             project_id: row.get("project_id"),
             target_repo_id: row.get("target_repo_id"),
             status: row.get("status"),
+            run_state: row.get("run_state"),
             triggered_by: row.get("triggered_by"),
             created_at: row.get("created_at"),
             started_at: row.get("started_at"),

@@ -1565,7 +1565,7 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Run Details")).toBeTruthy();
-      expect(screen.getByText("Coding")).toBeTruthy();
+      expect(screen.getByText("Busy Coding")).toBeTruthy();
       expect(
         document.querySelector(".board-task-run-details .run-inline-spinner"),
       ).toBeTruthy();
@@ -1671,7 +1671,7 @@ describe("app routing and shell", () => {
     });
   });
 
-  it("shows waiting-for-merge mini-card for review tasks with completed run", async () => {
+  it("hides review mini-card for completed runs", async () => {
     invokeMock.mockImplementation((command: string, args?: unknown) => {
       if (command === "list_projects") {
         return Promise.resolve([
@@ -1717,15 +1717,11 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(screen.getByText("Waiting for merge")).toBeTruthy();
-      expect(
-        document.querySelector(".board-task-run-details .run-inline-spinner"),
-      ).toBeNull();
-      expect(document.querySelector(".board-task-run-warning")).toBeTruthy();
+      expect(screen.queryByText("Run Details")).toBeNull();
     });
   });
 
-  it("shows waiting mini-card with warning icon for review tasks with active run", async () => {
+  it("shows active run-state mini-card for review tasks with active run", async () => {
     invokeMock.mockImplementation((command: string, args?: unknown) => {
       if (command === "list_projects") {
         return Promise.resolve([
@@ -1771,11 +1767,10 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(screen.getByText("Waiting")).toBeTruthy();
+      expect(screen.getByText("Busy Coding")).toBeTruthy();
       expect(
         document.querySelector(".board-task-run-details .run-inline-spinner"),
-      ).toBeNull();
-      expect(document.querySelector(".board-task-run-warning")).toBeTruthy();
+      ).toBeTruthy();
     });
   });
 
@@ -2049,7 +2044,7 @@ describe("app routing and shell", () => {
         screen.getByRole("heading", { name: "In Progress (1)" }),
       ).toBeTruthy();
       expect(screen.getByText("Run Details")).toBeTruthy();
-      expect(screen.getByText("Coding")).toBeTruthy();
+      expect(screen.getByText("Busy Coding")).toBeTruthy();
     });
   });
 
@@ -2158,7 +2153,7 @@ describe("app routing and shell", () => {
       screen.getByRole("heading", { name: "In Progress (1)" }),
     ).toBeTruthy();
     expect(screen.getByText("Run Details")).toBeTruthy();
-    expect(screen.getByText("Coding")).toBeTruthy();
+    expect(screen.getByText("Busy Coding")).toBeTruthy();
     expect(window.location.pathname).toBe("/board");
     expect(document.querySelector(".board-task-run-details-link")).toBeNull();
 
@@ -2179,7 +2174,7 @@ describe("app routing and shell", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Coding")).toBeTruthy();
+      expect(screen.getByText("Busy Coding")).toBeTruthy();
       const runLink = document.querySelector(
         '.board-task-run-details-link[href="/runs/run-task-optimistic-mini-card?origin=board"]',
       ) as HTMLAnchorElement | null;
@@ -2874,7 +2869,7 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Review (1)" })).toBeTruthy();
-      expect(screen.getByText("Waiting for merge")).toBeTruthy();
+      expect(screen.queryByText("Run Details")).toBeNull();
     });
 
     const doneSection = screen
@@ -2905,7 +2900,7 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Review (1)" })).toBeTruthy();
-      expect(screen.getByText("Waiting for merge")).toBeTruthy();
+      expect(screen.queryByText("Run Details")).toBeNull();
       expect(
         screen.getByText("Failed to update task status. Please try again."),
       ).toBeTruthy();

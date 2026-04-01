@@ -1,6 +1,7 @@
 use crate::app::db::repositories::runs::RunsRepository;
 use crate::app::errors::AppError;
 use crate::app::runs::dto::RunStatusChangedEventDto;
+use crate::app::runs::run_state_service::RunStateService;
 use chrono::Utc;
 use tauri::Emitter;
 use tracing::{info, warn};
@@ -10,13 +11,19 @@ const RUN_STATUS_CHANGED_EVENT: &str = "run-status-changed";
 #[derive(Clone, Debug)]
 pub struct RunStatusTransitionService {
     runs_repository: RunsRepository,
+    run_state_service: RunStateService,
     app_handle: Option<tauri::AppHandle>,
 }
 
 impl RunStatusTransitionService {
-    pub fn new(runs_repository: RunsRepository, app_handle: Option<tauri::AppHandle>) -> Self {
+    pub fn new(
+        runs_repository: RunsRepository,
+        run_state_service: RunStateService,
+        app_handle: Option<tauri::AppHandle>,
+    ) -> Self {
         Self {
             runs_repository,
+            run_state_service,
             app_handle,
         }
     }
@@ -69,6 +76,7 @@ impl RunStatusTransitionService {
         };
 
         self.emit_run_status_changed(&payload)?;
+        let _ = self.run_state_service.handle_run_started(run_id).await?;
         Ok(Some(payload))
     }
 
@@ -285,6 +293,22 @@ impl RunStatusTransitionService {
         };
 
         self.emit_run_status_changed(&payload)?;
+
+        match next_status {
+            "in_progress" => {
+                let _ = self.run_state_service.handle_user_replied(run_id).await?;
+            }
+            "idle" => {
+                let _ = self
+                    .run_state_service
+                    .handle_waiting_for_input(run_id, transition_source)
+                    .await?;
+            }
+            "complete" => {
+                let _ = self.run_state_service.handle_run_merged(run_id).await?;
+            }
+            _ => {}
+        }
 
         info!(subsystem = "runs", operation = "transition_run_status", transition_source, run_id = updated_run.id, task_id = updated_run.task_id, project_id = updated_run.project_id, previous_status = payload.previous_status.as_str(), new_status = payload.new_status.as_str(), source_event = source_event.unwrap_or(""), "Applied run status transition");
 

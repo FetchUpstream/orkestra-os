@@ -12,6 +12,18 @@ export const RUN_STATUSES = [
 
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
+export const RUN_STATES = [
+  "warming_up",
+  "busy_coding",
+  "waiting_for_input",
+  "permission_requested",
+  "committing_changes",
+  "resolving_rebase_conflicts",
+  "ready_to_merge",
+] as const;
+
+export type RunState = (typeof RUN_STATES)[number];
+
 export type Run = {
   id: string;
   taskId: string;
@@ -20,6 +32,7 @@ export type Run = {
   displayKey?: string | null;
   targetRepoId?: string | null;
   status: RunStatus;
+  runState?: RunState | null;
   triggeredBy: string;
   createdAt: string;
   startedAt?: string | null;
@@ -134,6 +147,7 @@ export type SubmitRunOpenCodePromptParams = {
   runId: string;
   prompt: string;
   clientRequestId?: string;
+  runStateHint?: RunState;
   agent?: string;
   agentId?: string;
   providerId?: string;
@@ -450,6 +464,8 @@ type RunResponse = {
   target_repo_id?: string | null;
   targetRepoId?: string | null;
   status: string;
+  run_state?: string | null;
+  runState?: string | null;
   triggered_by?: string;
   triggeredBy?: string;
   created_at?: string;
@@ -605,10 +621,18 @@ type RunGitActionEnvelopeResponse = RunGitActionResponse & {
 };
 
 const runStatusSet = new Set<string>(RUN_STATUSES);
+const runStateSet = new Set<string>(RUN_STATES);
 
 const toRunStatus = (status: string): RunStatus => {
+  if (status === "running") return "in_progress";
+  if (status === "completed") return "complete";
   if (runStatusSet.has(status)) return status as RunStatus;
   return "queued";
+};
+
+const toRunState = (state: string | null | undefined): RunState | null => {
+  if (!state) return null;
+  return runStateSet.has(state) ? (state as RunState) : null;
 };
 
 const pick = <T>(snake: T | undefined, camel: T | undefined): T | undefined =>
@@ -622,6 +646,7 @@ const toRun = (run: RunResponse): Run => ({
   displayKey: pick(run.display_key, run.displayKey),
   targetRepoId: pick(run.target_repo_id, run.targetRepoId),
   status: toRunStatus(run.status),
+  runState: toRunState(pick(run.run_state, run.runState)) ?? undefined,
   triggeredBy: pick(run.triggered_by, run.triggeredBy) ?? "",
   createdAt: pick(run.created_at, run.createdAt) ?? "",
   startedAt: pick(run.started_at, run.startedAt),
@@ -1561,6 +1586,7 @@ export const submitRunOpenCodePrompt = async ({
   runId,
   prompt,
   clientRequestId,
+  runStateHint,
   agent,
   agentId,
   providerId,
@@ -1573,6 +1599,7 @@ export const submitRunOpenCodePrompt = async ({
         runId,
         prompt,
         clientRequestId,
+        runStateHint,
         agent,
         agentId,
         providerId,

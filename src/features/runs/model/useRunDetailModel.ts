@@ -32,6 +32,7 @@ import {
   type RunTerminalFrame,
   writeRunTerminal,
 } from "../../../app/lib/runs";
+import { subscribeToRunStateChanged } from "../../../app/lib/runStateEvents";
 import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
 import {
   getRunSelectionOptionsWithCache,
@@ -1752,6 +1753,7 @@ export const useRunDetailModel = () => {
 
     let disposed = false;
     let unlisten: (() => void) | undefined;
+    let unlistenRunState: (() => void) | undefined;
 
     void (async () => {
       const remove = await subscribeToRunStatusChanged((event) => {
@@ -1762,17 +1764,28 @@ export const useRunDetailModel = () => {
         void refreshRunDetails(runId);
       });
 
+      const removeRunState = await subscribeToRunStateChanged((event) => {
+        if (disposed || params.runId !== runId || event.runId !== runId) {
+          return;
+        }
+
+        void refreshRunDetails(runId);
+      });
+
       if (disposed) {
         remove();
+        removeRunState();
         return;
       }
 
       unlisten = remove;
+      unlistenRunState = removeRunState;
     })();
 
     onCleanup(() => {
       disposed = true;
       unlisten?.();
+      unlistenRunState?.();
     });
   });
 
@@ -2346,6 +2359,9 @@ export const useRunDetailModel = () => {
         runId,
         prompt,
         clientRequestId: options?.clientRequestId,
+        runStateHint: options?.markCommitPending
+          ? "committing_changes"
+          : undefined,
         agentId: options?.agentId,
         providerId: options?.providerId,
         modelId: options?.modelId,

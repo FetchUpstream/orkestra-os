@@ -21,6 +21,7 @@ const MIGRATION_0012: &str =
     include_str!("../../../migrations/0012_add_runs_active_task_unique_index.sql");
 const MIGRATION_0015: &str = include_str!("../../../migrations/0015_add_task_search_fts.sql");
 const MIGRATION_0017: &str = include_str!("../../../migrations/0017_update_run_status_lifecycle.sql");
+const MIGRATION_0018: &str = include_str!("../../../migrations/0018_add_runs_run_state.sql");
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(MIGRATION_0001).execute(pool).await?;
@@ -296,6 +297,16 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
         sqlx::query(MIGRATION_0017).execute(pool).await?;
     }
 
+    let has_run_state = sqlx::query("PRAGMA table_info(runs)")
+        .fetch_all(pool)
+        .await?
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "run_state");
+
+    if !has_run_state {
+        sqlx::query(MIGRATION_0018).execute(pool).await?;
+    }
+
     Ok(())
 }
 
@@ -358,6 +369,30 @@ mod tests {
         assert!(run_columns
             .iter()
             .any(|row| row.get::<String, _>("name") == "model_id"));
+        assert!(run_columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "run_state"));
+    }
+
+    #[tokio::test]
+    async fn run_migrations_adds_run_state_column_to_existing_runs_table() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+        sqlx::query(MIGRATION_0001).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0002).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0003).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0006).execute(&pool).await.unwrap();
+
+        run_migrations(&pool).await.unwrap();
+
+        let run_columns = sqlx::query("PRAGMA table_info(runs)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+        assert!(run_columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "run_state"));
     }
 
     #[tokio::test]

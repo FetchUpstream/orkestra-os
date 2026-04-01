@@ -11,6 +11,7 @@ import {
   type Project,
 } from "../../../app/lib/projects";
 import { subscribeToTaskStatusChanged } from "../../../app/lib/taskStatusEvents";
+import { subscribeToRunStateChanged } from "../../../app/lib/runStateEvents";
 import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
 import {
   listProjectTasks,
@@ -23,6 +24,7 @@ import {
   createRun,
   listTaskRuns,
   startRunOpenCode,
+  type RunState,
 } from "../../../app/lib/runs";
 import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
 import {
@@ -38,15 +40,12 @@ import {
 import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
 import { canTransitionStatus } from "../../tasks/utils/taskDetail";
 import { groupTasksByStatus } from "../utils/board";
-import { isRunCommitPending } from "../../runs/model/commitUiState";
-
 const ACTIVE_RUN_STATUSES = new Set([
   "queued",
   "preparing",
   "in_progress",
   "idle",
 ]);
-const FINISHED_RUN_STATUSES = new Set(["complete", "failed", "cancelled"]);
 const BOARD_SELECTED_PROJECT_STORAGE_KEY = "board.selectedProjectId";
 
 const readRememberedBoardProjectId = (): string => {
@@ -102,16 +101,49 @@ const resolveInitialProjectSelection = (loadedProjects: Project[]): string => {
 
 const optimisticDoingMiniCard = (taskId: string): BoardTaskRunMiniCard => ({
   runId: `pending-${taskId}`,
-  label: "Coding",
-  state: "coding",
+  label: "Busy Coding",
+  state: "busy_coding",
   isNavigable: false,
 });
 
 export type BoardTaskRunMiniCard = {
   runId: string;
   label: string;
-  state: "coding" | "committing" | "waiting" | "waitingForMerge";
+  state: RunState;
   isNavigable: boolean;
+};
+
+const boardLabelForRunState = (state: RunState): string => {
+  switch (state) {
+    case "warming_up":
+      return "Warming Up";
+    case "busy_coding":
+      return "Busy Coding";
+    case "waiting_for_input":
+      return "Waiting for Input";
+    case "permission_requested":
+      return "Permission Requested";
+    case "committing_changes":
+      return "Committing Changes";
+    case "resolving_rebase_conflicts":
+      return "Resolving Rebase Conflicts";
+    case "ready_to_merge":
+      return "Ready to Merge";
+  }
+};
+
+const fallbackRunState = (status: string): RunState | null => {
+  switch (status) {
+    case "queued":
+    case "preparing":
+      return "warming_up";
+    case "in_progress":
+      return "busy_coding";
+    case "idle":
+      return "waiting_for_input";
+    default:
+      return null;
+  }
 };
 
 const resolveTaskRunMiniCard = (
@@ -125,33 +157,31 @@ const resolveTaskRunMiniCard = (
       ACTIVE_RUN_STATUSES.has(run.status),
     );
     if (activeRun) {
+      const runState = activeRun.runState ?? fallbackRunState(activeRun.status);
+      if (!runState) {
+        return null;
+      }
       return {
         runId: activeRun.id,
-        label: "Waiting",
-        state: "waiting",
+        label: boardLabelForRunState(runState),
+        state: runState,
         isNavigable: true,
       };
     }
 
-    const finishedRun = runItems.find((run) =>
-      FINISHED_RUN_STATUSES.has(run.status),
-    );
-    if (!finishedRun) return null;
-    return {
-      runId: finishedRun.id,
-      label:
-        finishedRun.status === "complete" ? "Waiting for merge" : "Waiting",
-      state: finishedRun.status === "complete" ? "waitingForMerge" : "waiting",
-      isNavigable: true,
-    };
+    return null;
   }
 
   const activeRun = runItems.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
   if (activeRun) {
+    const runState = activeRun.runState ?? fallbackRunState(activeRun.status);
+    if (!runState) {
+      return null;
+    }
     return {
       runId: activeRun.id,
-      label: isRunCommitPending(activeRun.id) ? "Committing changes" : "Coding",
-      state: isRunCommitPending(activeRun.id) ? "committing" : "coding",
+      label: boardLabelForRunState(runState),
+      state: runState,
       isNavigable: true,
     };
   }
@@ -212,6 +242,30 @@ export const useBoardModel = () => {
   let boardEventSubscriptionDisposed = false;
   let removeBoardEventSubscription: (() => void) | null = null;
   let removeBoardRunStatusSubscription: (() => void) | null = null;
+  let removeBoardRunStateSubscription: (() => void) | null = null;
+
+  const refreshMiniCardForTask = async (taskId: string) => {
+    const taskValue = tasks().find((task) => task.id === taskId);
+    if (!taskValue) {
+      return;
+    }
+
+    try {
+      const runs = await listTaskRuns(taskId);
+      const miniCard = resolveTaskRunMiniCard(taskValue, runs);
+      setTaskRunMiniCards((current) => {
+        const next = { ...current };
+        if (!miniCard) {
+          delete next[taskId];
+        } else {
+          next[taskId] = miniCard;
+        }
+        return next;
+      });
+    } catch {
+      // Ignore transient run refresh failures.
+    }
+  };
 
   const selectedProject = createMemo(
     () =>
@@ -783,28 +837,7 @@ export const useBoardModel = () => {
           return;
         }
 
-        void (async () => {
-          const taskValue = tasks().find((task) => task.id === event.taskId);
-          if (!taskValue) {
-            return;
-          }
-
-          try {
-            const runs = await listTaskRuns(event.taskId);
-            const miniCard = resolveTaskRunMiniCard(taskValue, runs);
-            setTaskRunMiniCards((current) => {
-              const next = { ...current };
-              if (!miniCard) {
-                delete next[event.taskId];
-              } else {
-                next[event.taskId] = miniCard;
-              }
-              return next;
-            });
-          } catch {
-            // Ignore transient run refresh failures.
-          }
-        })();
+        void refreshMiniCardForTask(event.taskId);
       });
 
       if (boardEventSubscriptionDisposed) {
@@ -813,6 +846,28 @@ export const useBoardModel = () => {
       }
 
       removeBoardRunStatusSubscription = unlisten;
+    })();
+
+    void (async () => {
+      const unlisten = await subscribeToRunStateChanged((event) => {
+        if (boardEventSubscriptionDisposed) {
+          return;
+        }
+
+        const currentProjectId = selectedProjectId();
+        if (!currentProjectId || event.projectId !== currentProjectId) {
+          return;
+        }
+
+        void refreshMiniCardForTask(event.taskId);
+      });
+
+      if (boardEventSubscriptionDisposed) {
+        unlisten();
+        return;
+      }
+
+      removeBoardRunStateSubscription = unlisten;
     })();
 
     setError("");
@@ -851,6 +906,10 @@ export const useBoardModel = () => {
     if (removeBoardRunStatusSubscription) {
       removeBoardRunStatusSubscription();
       removeBoardRunStatusSubscription = null;
+    }
+    if (removeBoardRunStateSubscription) {
+      removeBoardRunStateSubscription();
+      removeBoardRunStateSubscription = null;
     }
   });
 

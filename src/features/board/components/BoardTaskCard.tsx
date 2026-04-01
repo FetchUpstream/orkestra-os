@@ -28,7 +28,24 @@ const BoardTaskCard: Component<Props> = (props) => {
     props.task.status !== "done" && !!props.runMiniCard;
   const isRunStateActive = () => {
     const state = props.runMiniCard?.state;
-    return state === "coding" || state === "committing";
+    return (
+      state === "warming_up" ||
+      state === "busy_coding" ||
+      state === "committing_changes" ||
+      state === "resolving_rebase_conflicts"
+    );
+  };
+  const runStateIcon = () => {
+    switch (props.runMiniCard?.state) {
+      case "ready_to_merge":
+        return <span class="text-success font-semibold">✓</span>;
+      case "permission_requested":
+        return <span class="board-task-run-warning font-semibold">?</span>;
+      case "waiting_for_input":
+        return <span class="board-task-run-warning font-semibold">…</span>;
+      default:
+        return <span class="board-task-run-warning font-semibold">…</span>;
+    }
   };
 
   const onDragStart = (event: DragEvent) => {
@@ -114,9 +131,7 @@ const BoardTaskCard: Component<Props> = (props) => {
                   when={isRunStateActive()}
                   fallback={
                     <p class="run-inline-loading-row board-task-run-details-row">
-                      <span class="board-task-run-warning" aria-hidden="true">
-                        !
-                      </span>
+                      <span aria-hidden="true">{runStateIcon()}</span>
                       <span>{miniCard().label}</span>
                     </p>
                   }
@@ -145,9 +160,7 @@ const BoardTaskCard: Component<Props> = (props) => {
                 when={isRunStateActive()}
                 fallback={
                   <p class="run-inline-loading-row board-task-run-details-row">
-                    <span class="board-task-run-warning" aria-hidden="true">
-                      !
-                    </span>
+                    <span aria-hidden="true">{runStateIcon()}</span>
                     <span>{miniCard().label}</span>
                   </p>
                 }

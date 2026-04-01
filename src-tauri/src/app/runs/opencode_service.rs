@@ -8,6 +8,7 @@ use crate::app::runs::dto::{
     RunOpenCodeSessionTodoDto, RunProviderDto, RunProvidersResponseDto,
     RunSelectionCatalogResponseDto, StartRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
 };
+use crate::app::runs::run_state_service::RunStateService;
 use crate::app::runs::service::RunsService;
 use crate::app::runs::status_transition_service::RunStatusTransitionService;
 use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
@@ -515,6 +516,7 @@ pub struct RunsOpenCodeService {
     runs_service: RunsService,
     projects_service: ProjectsService,
     task_status_transition_service: TaskStatusTransitionService,
+    run_state_service: RunStateService,
     run_status_transition_service: RunStatusTransitionService,
     worktrees_root: PathBuf,
     handles: Arc<RwLock<HashMap<String, Arc<RunOpenCodeHandle>>>>,
@@ -631,6 +633,7 @@ impl RunsOpenCodeService {
                     .submit_run_opencode_prompt(
                         run_id,
                         "This command produced errors. Please investigate.",
+                        None,
                         None,
                         None,
                         None,
@@ -851,10 +854,16 @@ impl RunsOpenCodeService {
                 else {
                     return Ok(());
                 };
-                let mut state = session_runtime_state
-                    .lock()
-                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
-                state.pending_questions.insert(request_id);
+                {
+                    let mut state = session_runtime_state
+                        .lock()
+                        .map_err(|_| lock_error("OpenCode session runtime state"))?;
+                    state.pending_questions.insert(request_id);
+                }
+                let _ = self
+                    .run_state_service
+                    .handle_waiting_for_input(run_id, "question_asked")
+                    .await?;
                 Ok(())
             }
             "question.replied" | "question.rejected" => {
@@ -875,10 +884,13 @@ impl RunsOpenCodeService {
                 else {
                     return Ok(());
                 };
-                let mut state = session_runtime_state
-                    .lock()
-                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
-                state.pending_questions.remove(&request_id);
+                {
+                    let mut state = session_runtime_state
+                        .lock()
+                        .map_err(|_| lock_error("OpenCode session runtime state"))?;
+                    state.pending_questions.remove(&request_id);
+                }
+                let _ = self.run_state_service.handle_user_replied(run_id).await?;
                 Ok(())
             }
             "permission.asked" => {
@@ -912,11 +924,14 @@ impl RunsOpenCodeService {
                 else {
                     return Ok(());
                 };
-                let mut state = session_runtime_state
-                    .lock()
-                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
-                let was_new = state.pending_permissions.insert(request_id.clone());
-                let pending_count = state.pending_permissions.len();
+                let (was_new, pending_count) = {
+                    let mut state = session_runtime_state
+                        .lock()
+                        .map_err(|_| lock_error("OpenCode session runtime state"))?;
+                    let was_new = state.pending_permissions.insert(request_id.clone());
+                    let pending_count = state.pending_permissions.len();
+                    (was_new, pending_count)
+                };
                 info!(
                     target: "opencode.runtime",
                     marker = "permission_pending_added",
@@ -929,6 +944,7 @@ impl RunsOpenCodeService {
                     was_new = was_new,
                     "Tracked pending permission request"
                 );
+                let _ = self.run_state_service.handle_permission_requested(run_id).await?;
                 Ok(())
             }
             "permission.replied" | "permission.rejected" => {
@@ -959,11 +975,14 @@ impl RunsOpenCodeService {
                 else {
                     return Ok(());
                 };
-                let mut state = session_runtime_state
-                    .lock()
-                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
-                let removed = state.pending_permissions.remove(&request_id);
-                let pending_count = state.pending_permissions.len();
+                let (removed, pending_count) = {
+                    let mut state = session_runtime_state
+                        .lock()
+                        .map_err(|_| lock_error("OpenCode session runtime state"))?;
+                    let removed = state.pending_permissions.remove(&request_id);
+                    let pending_count = state.pending_permissions.len();
+                    (removed, pending_count)
+                };
                 info!(
                     target: "opencode.runtime",
                     marker = "permission_pending_cleared",
@@ -975,6 +994,7 @@ impl RunsOpenCodeService {
                     removed = removed,
                     "Cleared pending permission request from runtime state"
                 );
+                let _ = self.run_state_service.handle_permission_resolved(run_id).await?;
                 Ok(())
             }
             "session.idle" => {
@@ -1385,6 +1405,7 @@ impl RunsOpenCodeService {
         runs_service: RunsService,
         projects_service: ProjectsService,
         task_status_transition_service: TaskStatusTransitionService,
+        run_state_service: RunStateService,
         run_status_transition_service: RunStatusTransitionService,
         app_data_dir: PathBuf,
     ) -> Self {
@@ -1392,6 +1413,7 @@ impl RunsOpenCodeService {
             runs_service,
             projects_service,
             task_status_transition_service,
+            run_state_service,
             run_status_transition_service,
             worktrees_root: app_data_dir.join("worktrees"),
             handles: Arc::new(RwLock::new(HashMap::new())),
@@ -1978,6 +2000,7 @@ impl RunsOpenCodeService {
         run_id: &str,
         prompt: &str,
         client_request_id: Option<String>,
+        run_state_hint: Option<String>,
         agent: Option<String>,
         provider_id: Option<String>,
         model_id: Option<String>,
@@ -2138,6 +2161,9 @@ impl RunsOpenCodeService {
             .task_status_transition_service
             .handle_user_replied_to_agent(&run_defaults.task_id, run_id)
             .await?;
+        if run_state_hint.as_deref() == Some("committing_changes") {
+            let _ = self.run_state_service.handle_commit_requested(run_id).await?;
+        }
 
         info!(
             target: "opencode.runtime",
@@ -2452,6 +2478,7 @@ impl RunsOpenCodeService {
                 &context.run_id,
                 &prompt,
                 Some(client_request_id.clone()),
+                None,
                 None,
                 None,
                 None,
@@ -3088,6 +3115,7 @@ mod tests {
     use crate::app::db::repositories::tasks::TasksRepository;
     use crate::app::projects::search_service::ProjectFileSearchService;
     use crate::app::projects::service::ProjectsService;
+    use crate::app::runs::run_state_service::RunStateService;
     use crate::app::runs::service::RunsService;
     use crate::app::runs::status_transition_service::RunStatusTransitionService;
     use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
@@ -3122,12 +3150,22 @@ mod tests {
             TasksRepository::new(pool.clone()),
             None,
         );
-        let run_status_transition_service =
-            RunStatusTransitionService::new(RunsRepository::new(pool.clone()), None);
+        let run_state_service = RunStateService::new(
+            RunsRepository::new(pool.clone()),
+            runs_service.clone(),
+            None,
+            app_data_dir.clone(),
+        );
+        let run_status_transition_service = RunStatusTransitionService::new(
+            RunsRepository::new(pool.clone()),
+            run_state_service.clone(),
+            None,
+        );
         let opencode_service = RunsOpenCodeService::new(
             runs_service.clone(),
             projects_service,
             task_status_transition_service,
+            run_state_service,
             run_status_transition_service,
             app_data_dir,
         );
@@ -3573,6 +3611,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -3703,6 +3742,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
 
@@ -3737,6 +3777,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -3766,6 +3807,7 @@ mod tests {
                 "run-1",
                 "manual prompt",
                 Some("manual-123".to_string()),
+                None,
                 None,
                 None,
                 None,
@@ -3830,6 +3872,7 @@ mod tests {
                 "run-1",
                 "seed prompt",
                 Some("initial-run-message:run-1".to_string()),
+                None,
                 None,
                 None,
                 None,

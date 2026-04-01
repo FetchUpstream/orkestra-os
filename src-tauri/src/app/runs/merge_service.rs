@@ -2,6 +2,7 @@ use crate::app::errors::AppError;
 use crate::app::runs::dto::{
     RunMergeConflictDto, RunMergeResponseDto, RunMergeStatusDto, RunRebaseResponseDto,
 };
+use crate::app::runs::run_state_service::RunStateService;
 use crate::app::runs::service::RunsService;
 use crate::app::runs::status_transition_service::RunStatusTransitionService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
@@ -16,6 +17,7 @@ use std::process::Command;
 #[derive(Clone, Debug)]
 pub struct RunsMergeService {
     runs_service: RunsService,
+    run_state_service: RunStateService,
     run_status_transition_service: RunStatusTransitionService,
     worktrees_root: PathBuf,
 }
@@ -58,11 +60,13 @@ struct MergeContext {
 impl RunsMergeService {
     pub fn new(
         runs_service: RunsService,
+        run_state_service: RunStateService,
         run_status_transition_service: RunStatusTransitionService,
         app_data_dir: PathBuf,
     ) -> Self {
         Self {
             runs_service,
+            run_state_service,
             run_status_transition_service,
             worktrees_root: app_data_dir.join("worktrees"),
         }
@@ -91,53 +95,76 @@ impl RunsMergeService {
             });
         }
 
-        Self::ensure_head_on_worktree_branch(&context.repo, &context.worktree_branch)?;
-        let source_annotated =
-            self.source_annotated_commit(&context.repo, &context.source_branch)?;
-        let mut rebase = context
-            .repo
-            .rebase(None, Some(&source_annotated), Some(&source_annotated), None)
-            .map_err(|err| AppError::validation(format!("failed to start rebase: {err}")))?;
+        let rebase_conflict = {
+            Self::ensure_head_on_worktree_branch(&context.repo, &context.worktree_branch)?;
+            let source_annotated =
+                self.source_annotated_commit(&context.repo, &context.source_branch)?;
+            let mut rebase = context
+                .repo
+                .rebase(None, Some(&source_annotated), Some(&source_annotated), None)
+                .map_err(|err| AppError::validation(format!("failed to start rebase: {err}")))?;
 
-        loop {
-            let next = match rebase.next() {
-                Some(Ok(op)) => Some(op),
-                Some(Err(err)) => {
-                    return Err(AppError::validation(format!("rebase failed: {err}")));
+            let mut conflict_result = None;
+            loop {
+                let next = match rebase.next() {
+                    Some(Ok(op)) => Some(op),
+                    Some(Err(err)) => {
+                        return Err(AppError::validation(format!("rebase failed: {err}")));
+                    }
+                    None => None,
+                };
+                if next.is_none() {
+                    break;
                 }
-                None => None,
-            };
-            if next.is_none() {
-                break;
+
+                let index = context.repo.index().map_err(|err| {
+                    AppError::validation(format!("failed to inspect rebase index: {err}"))
+                })?;
+                if index.has_conflicts() {
+                    Self::attach_head_to_worktree_branch(&context.repo, &context.worktree_branch)?;
+                    let conflict =
+                        Self::build_conflict_payload(&context.repo, &context.source_branch)?;
+                    let status = self.compute_status(&context)?;
+                    conflict_result = Some((conflict, status));
+                    break;
+                }
+
+                let signature = Self::signature(&context.repo)?;
+                rebase.commit(None, &signature, None).map_err(|err| {
+                    AppError::validation(format!("failed to commit rebase step: {err}"))
+                })?;
             }
 
-            let index = context.repo.index().map_err(|err| {
-                AppError::validation(format!("failed to inspect rebase index: {err}"))
-            })?;
-            if index.has_conflicts() {
-                Self::attach_head_to_worktree_branch(&context.repo, &context.worktree_branch)?;
-                let conflict = Self::build_conflict_payload(&context.repo, &context.source_branch)?;
-                let status = self.compute_status(&context)?;
-                return Ok(RunRebaseResponseDto {
-                    state: MergeState::Conflicted.as_str().to_string(),
-                    status,
-                    conflict: Some(conflict),
-                });
+            if conflict_result.is_none() {
+                let signature = Self::signature(&context.repo)?;
+                rebase
+                    .finish(Some(&signature))
+                    .map_err(|err| AppError::validation(format!("failed to finish rebase: {err}")))?;
+                Self::reattach_head_to_branch_if_needed(&context.repo, &context.worktree_branch)?;
             }
 
-            let signature = Self::signature(&context.repo)?;
-            rebase.commit(None, &signature, None).map_err(|err| {
-                AppError::validation(format!("failed to commit rebase step: {err}"))
-            })?;
+            conflict_result
+        };
+
+        if let Some((conflict, status)) = rebase_conflict {
+            let _ = self
+                .run_state_service
+                .handle_rebase_conflicts_started(run_id)
+                .await?;
+            return Ok(RunRebaseResponseDto {
+                state: MergeState::Conflicted.as_str().to_string(),
+                status,
+                conflict: Some(conflict),
+            });
         }
 
-        let signature = Self::signature(&context.repo)?;
-        rebase
-            .finish(Some(&signature))
-            .map_err(|err| AppError::validation(format!("failed to finish rebase: {err}")))?;
-        Self::reattach_head_to_branch_if_needed(&context.repo, &context.worktree_branch)?;
-
         let status = self.compute_status(&context)?;
+        if context.run_status == "idle" {
+            let _ = self
+                .run_state_service
+                .handle_waiting_for_input(run_id, "rebase_completed")
+                .await?;
+        }
         Ok(RunRebaseResponseDto {
             state: status.state.clone(),
             status,
@@ -666,6 +693,7 @@ mod tests {
     use crate::app::db::migrations::run_migrations;
     use crate::app::db::repositories::runs::RunsRepository;
     use crate::app::errors::AppError;
+    use crate::app::runs::run_state_service::RunStateService;
     use crate::app::runs::status_transition_service::RunStatusTransitionService;
     use crate::app::runs::service::RunsService;
     use crate::app::worktrees::service::WorktreesService;
@@ -703,15 +731,26 @@ mod tests {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
         let temp_dir = TempDir::new();
+        let app_data_dir = temp_dir.path().join("app-data");
         let runs_repository = RunsRepository::new(pool.clone());
-        let worktrees_service = WorktreesService::new(temp_dir.path().join("app-data"));
+        let worktrees_service = WorktreesService::new(app_data_dir.clone());
         let runs_service = RunsService::new(runs_repository, worktrees_service);
-        let run_status_transition_service =
-            RunStatusTransitionService::new(RunsRepository::new(pool.clone()), None);
+        let run_state_service = RunStateService::new(
+            RunsRepository::new(pool.clone()),
+            runs_service.clone(),
+            None,
+            app_data_dir.clone(),
+        );
+        let run_status_transition_service = RunStatusTransitionService::new(
+            RunsRepository::new(pool.clone()),
+            run_state_service.clone(),
+            None,
+        );
         let merge_service = RunsMergeService::new(
             runs_service.clone(),
+            run_state_service,
             run_status_transition_service,
-            temp_dir.path().join("app-data"),
+            app_data_dir,
         );
         (runs_service, merge_service, pool, temp_dir)
     }

@@ -8,6 +8,7 @@ pub struct RunDto {
     pub project_id: String,
     pub target_repo_id: Option<String>,
     pub status: String,
+    pub run_state: Option<String>,
     pub triggered_by: String,
     pub created_at: String,
     pub started_at: Option<String>,
@@ -38,6 +39,17 @@ pub struct RunStatusChangedEventDto {
     pub project_id: String,
     pub previous_status: String,
     pub new_status: String,
+    pub transition_source: String,
+    pub timestamp: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RunStateChangedEventDto {
+    pub run_id: String,
+    pub task_id: String,
+    pub project_id: String,
+    pub previous_run_state: Option<String>,
+    pub new_run_state: Option<String>,
     pub transition_source: String,
     pub timestamp: String,
 }

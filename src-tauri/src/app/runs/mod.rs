@@ -4,5 +4,6 @@ pub mod errors;
 pub mod merge_service;
 pub mod models;
 pub mod opencode_service;
+pub mod run_state_service;
 pub mod service;
 pub mod status_transition_service;

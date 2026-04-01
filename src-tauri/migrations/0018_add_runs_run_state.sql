@@ -1,0 +1,2 @@
+ALTER TABLE runs
+ADD COLUMN run_state TEXT NULL;
