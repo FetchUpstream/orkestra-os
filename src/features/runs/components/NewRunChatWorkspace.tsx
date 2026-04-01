@@ -187,6 +187,10 @@ const getParentSessionIdentifier = (value: unknown): string | null => {
 type SubagentMessageSnapshot = {
   id: string;
   role: "assistant" | "user" | "system" | "unknown";
+  attribution?: {
+    agent?: string;
+    model?: string;
+  };
   partsById: Record<string, UiPart>;
   partOrder: string[];
 };
@@ -199,6 +203,7 @@ type SubagentSessionSnapshot = {
   status: string;
   title: string | null;
   agentType: string | null;
+  model: string | null;
   messageOrder: string[];
   messagesById: Record<string, SubagentMessageSnapshot>;
 };
@@ -237,13 +242,80 @@ const getStatusType = (value: unknown): string | null => {
   );
 };
 
+const sanitizeSubagentAttributionValue = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (!normalized || INTERNAL_ATTRIBUTION_ID_PATTERN.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+};
+
+const sanitizeSubagentModelLabel = (value: unknown): string | null => {
+  const normalized = sanitizeSubagentAttributionValue(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const slashParts = normalized.split("/").map((segment) => segment.trim());
+  const slashTail = slashParts[slashParts.length - 1];
+  if (slashParts.length > 1 && slashTail) {
+    return INTERNAL_ATTRIBUTION_ID_PATTERN.test(slashTail) ? null : slashTail;
+  }
+
+  const colonParts = normalized.split(":").map((segment) => segment.trim());
+  const colonTail = colonParts[colonParts.length - 1];
+  if (colonParts.length > 1 && colonTail) {
+    return INTERNAL_ATTRIBUTION_ID_PATTERN.test(colonTail) ? null : colonTail;
+  }
+
+  return normalized;
+};
+
+const readSubagentAttribution = (
+  value: unknown,
+): { agent: string | null; model: string | null } => {
+  if (!isRecord(value)) {
+    return { agent: null, model: null };
+  }
+
+  return {
+    agent:
+      sanitizeSubagentAttributionValue(
+        value.agent ?? value.agentID ?? value.agentId ?? value.agent_id,
+      ) ?? null,
+    model:
+      sanitizeSubagentModelLabel(
+        value.model ??
+          value.modelID ??
+          value.modelId ??
+          value.model_id ??
+          value.modelName ??
+          value.model_name,
+      ) ?? null,
+  };
+};
+
 const formatSubagentLabel = (
   title: string | null,
   agentType: string | null,
+  model: string | null,
+  hasOutput: boolean,
 ): string => {
   const normalizedTitle = title?.trim();
   if (normalizedTitle) {
-    return normalizedTitle;
+    const normalizedModel = model?.trim();
+    return normalizedModel
+      ? `${normalizedTitle} - ${normalizedModel}`
+      : normalizedTitle;
+  }
+
+  if (!hasOutput) {
+    return "~ Delegating...";
   }
 
   const normalizedAgentType = agentType?.trim();
@@ -428,6 +500,7 @@ const buildSubagentPanels = (
       status: "running",
       title: null,
       agentType: null,
+      model: null,
       messageOrder: [],
       messagesById: {},
     };
@@ -487,11 +560,16 @@ const buildSubagentPanels = (
       if (title) {
         session.title = title;
       }
+      const attribution = readSubagentAttribution(info);
       const agentType =
+        attribution.agent ||
         (typeof info.agent === "string" ? info.agent.trim() : "") ||
         (typeof info.mode === "string" ? info.mode.trim() : "");
       if (agentType) {
         session.agentType = agentType;
+      }
+      if (attribution.model) {
+        session.model = attribution.model;
       }
       continue;
     }
@@ -502,11 +580,16 @@ const buildSubagentPanels = (
       if (parentMessageId && !session.parentMessageId) {
         session.parentMessageId = parentMessageId;
       }
+      const attribution = readSubagentAttribution(info);
       const agentType =
+        attribution.agent ||
         (typeof info.agent === "string" ? info.agent.trim() : "") ||
         (typeof info.mode === "string" ? info.mode.trim() : "");
       if (agentType && !session.agentType) {
         session.agentType = agentType;
+      }
+      if (attribution.model && !session.model) {
+        session.model = attribution.model;
       }
       const taskPartId = resolveTaskPartIdForParentMessage(
         session.parentMessageId,
@@ -525,6 +608,7 @@ const buildSubagentPanels = (
 
     if (event.type === "message.updated") {
       const info = getNestedRecord(properties, "info") ?? properties;
+      const attribution = readSubagentAttribution(info);
       const messageId =
         (typeof info.id === "string" ? info.id : null) ||
         (typeof info.messageID === "string" ? info.messageID : null) ||
@@ -537,6 +621,13 @@ const buildSubagentPanels = (
       session.messagesById[normalizedId] = {
         id: normalizedId,
         role: normalizeSubagentRole(info.role),
+        attribution:
+          attribution.agent || attribution.model
+            ? {
+                ...(attribution.agent ? { agent: attribution.agent } : {}),
+                ...(attribution.model ? { model: attribution.model } : {}),
+              }
+            : existing?.attribution,
         partsById: existing?.partsById ?? {},
         partOrder: existing?.partOrder ?? [],
       };
@@ -707,35 +798,29 @@ const buildSubagentPanels = (
         : [];
     const messages = liveMessages.length > 0 ? liveMessages : fetchedMessages;
 
-    if (messages.length === 0) {
-      if (!session.title) {
-        return acc;
-      }
-      messages.push({
-        id: `${session.sessionId}-placeholder`,
-        role: "assistant",
-        content: session.title,
-        reasoningContent: "",
-        toolItems: [],
-      });
-    }
-
-    if (messages.length === 0) {
-      return acc;
-    }
+    const fetchedHistoryMessages = Object.values(
+      fetchedSessionHistories[session.sessionId]?.store.messagesById ?? {},
+    );
+    const fallbackAgentType =
+      session.agentType ||
+      fetchedHistoryMessages
+        .map((message) => message.attribution?.agent?.trim() || "")
+        .find(Boolean) ||
+      null;
+    const fallbackModel =
+      session.model ||
+      fetchedHistoryMessages
+        .map((message) => message.attribution?.model?.trim() || "")
+        .find(Boolean) ||
+      null;
 
     const subagent: RunChatToolRailSubagentItem = {
       id: session.sessionId,
       label: formatSubagentLabel(
         session.title,
-        session.agentType ||
-          Object.values(
-            fetchedSessionHistories[session.sessionId]?.store.messagesById ??
-              {},
-          )
-            .map((message) => message.attribution?.agent?.trim() || "")
-            .find(Boolean) ||
-          null,
+        fallbackAgentType,
+        fallbackModel,
+        messages.length > 0,
       ),
       status: session.status,
       messages,
@@ -973,6 +1058,10 @@ const buildToolSummary = (part: UiPart): string => {
       ) || focused;
   } else if (normalizedToolName.includes("ast_grep_")) {
     focused = toSingleLine(getNestedValueByKeys(input, ["pattern"])) || focused;
+  }
+
+  if (normalizedToolName === "task") {
+    return focused || "~ Delegating...";
   }
 
   return `-> ${toolName}${focused ? ` ${focused}` : ""}`;

@@ -65,13 +65,13 @@ describe("RunChatToolRail", () => {
           {
             id: "tool-1",
             label: "Task",
-            summary: "-> Task Map transcript UI",
+            summary: "Map transcript UI",
             status: "running",
             isTask: true,
             subagents: [
               {
                 id: "subagent-1",
-                label: "Explore android folder (@explorer)",
+                label: "Explore android folder - chatgpt-5.4",
                 status: "running",
                 messages: [
                   {
@@ -97,8 +97,8 @@ describe("RunChatToolRail", () => {
     expect(
       container.querySelector(".run-chat-tool-rail__subagent-panel"),
     ).toBeTruthy();
-    expect(getByText("-> Task Map transcript UI")).toBeTruthy();
-    expect(getByText("Explore android folder (@explorer)")).toBeTruthy();
+    expect(getByText("Map transcript UI")).toBeTruthy();
+    expect(getByText("Explore android folder - chatgpt-5.4")).toBeTruthy();
     expect(getByText("Investigating transcript wiring.")).toBeTruthy();
     expect(
       container.querySelector(
@@ -124,7 +124,7 @@ describe("RunChatToolRail", () => {
           {
             id: "tool-1",
             label: "Task",
-            summary: "-> Task Keep panel compact",
+            summary: "Keep panel compact",
             status: "running",
             isTask: true,
             subagents: [
@@ -165,5 +165,31 @@ describe("RunChatToolRail", () => {
     expect(getByText("Older message")).toBeTruthy();
     expect(getByText("Recent message")).toBeTruthy();
     expect(getByText("Newest message")).toBeTruthy();
+  });
+
+  it("shows a delegating empty state before subagent output arrives", () => {
+    const { getAllByText } = render(() => (
+      <RunChatToolRail
+        items={[
+          {
+            id: "tool-1",
+            label: "Task",
+            summary: "~ Delegating...",
+            status: "running",
+            isTask: true,
+            subagents: [
+              {
+                id: "subagent-1",
+                label: "~ Delegating...",
+                status: "running",
+                messages: [],
+              },
+            ],
+          },
+        ]}
+      />
+    ));
+
+    expect(getAllByText("~ Delegating...").length).toBeGreaterThan(0);
   });
 });

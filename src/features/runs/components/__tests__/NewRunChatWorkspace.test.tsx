@@ -492,10 +492,53 @@ describe("NewRunChatWorkspace", () => {
 
     render(() => <NewRunChatWorkspace model={model} />);
 
-    expect(screen.getByText("-> Task List workspace files")).toBeTruthy();
+    expect(screen.getByText("List workspace files")).toBeTruthy();
     expect(
       screen.getAllByText("Agent launch to explore repository").length,
     ).toBeGreaterThan(0);
+  });
+
+  it("shows delegating state before child session metadata or output arrives", () => {
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              raw: {
+                sessionID: "session-child",
+              },
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getAllByText("~ Delegating...").length).toBeGreaterThan(0);
   });
 
   it("falls back to the latest task tool for non-root foreign session events", () => {
@@ -568,7 +611,7 @@ describe("NewRunChatWorkspace", () => {
 
     render(() => <NewRunChatWorkspace model={model} />);
 
-    expect(screen.getByText("-> Task List workspace files")).toBeTruthy();
+    expect(screen.getByText("List workspace files")).toBeTruthy();
     expect(screen.getByText("workspace")).toBeTruthy();
     expect(screen.getByText("README.md")).toBeTruthy();
   });
@@ -643,6 +686,61 @@ describe("NewRunChatWorkspace", () => {
       });
       expect(screen.getByText("Fetched child history output")).toBeTruthy();
     });
+  });
+
+  it("shows session title and model in the subagent header when known", () => {
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "List workspace files",
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "session-child",
+              parentID: "msg-root",
+              title: "Map the codebase",
+              model: "openai/chatgpt-5.4",
+            },
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByText("Map the codebase - chatgpt-5.4")).toBeTruthy();
+    expect(screen.queryByText(/^Task$/)).toBeNull();
   });
 
   it("falls back to agent type instead of numbered subagent labels", () => {
@@ -835,10 +933,15 @@ describe("NewRunChatWorkspace", () => {
 
     const { container } = render(() => <NewRunChatWorkspace model={model} />);
 
-    expect(screen.getAllByText(/-> Task /)).toHaveLength(2);
+    expect(screen.getByText("First task")).toBeTruthy();
+    expect(screen.getByText("Second task")).toBeTruthy();
     const taskRails = Array.from(
       container.querySelectorAll(".run-chat-tool-rail"),
-    ).filter((node) => node.textContent?.includes("-> Task "));
+    ).filter(
+      (node) =>
+        node.textContent?.includes("First task") ||
+        node.textContent?.includes("Second task"),
+    );
     expect(taskRails).toHaveLength(2);
     expect(taskRails[0]?.textContent).toContain("First child output");
     expect(taskRails[0]?.textContent).not.toContain("Second child output");
