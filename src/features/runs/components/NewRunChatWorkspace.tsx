@@ -44,6 +44,13 @@ type AgentReadinessPhase =
   | "submit_failed"
   | null;
 
+type ChatSessionHealth =
+  | "idle"
+  | "sending"
+  | "send_failed"
+  | "reconnecting"
+  | "unresponsive";
+
 type NewRunChatWorkspaceProps = {
   model: ReturnType<typeof useRunDetailModel>;
   hideTranscriptScrollbar?: boolean;
@@ -55,6 +62,10 @@ const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 const INTERNAL_ATTRIBUTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const hasCompletedRunStatus = (status: string | null | undefined): boolean => {
+  return status === "complete" || status === "completed";
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -999,6 +1010,21 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const agentReadinessPhase = createMemo<AgentReadinessPhase>(() =>
     props.model.agent.readinessPhase(),
   );
+  const pendingPrompt = createMemo(
+    () => props.model.agent.pendingPrompt?.() ?? null,
+  );
+  const chatSessionHealth = createMemo<ChatSessionHealth>(() => {
+    const reportedHealth = props.model.agent.sessionHealth?.();
+    if (reportedHealth) {
+      return reportedHealth;
+    }
+
+    if (props.model.agent.isSubmittingPrompt()) {
+      return "sending";
+    }
+
+    return "idle";
+  });
   const visibleAgentReadinessPhase = createMemo<AgentReadinessPhase>(() => {
     if (hasVisibleSubmitFailed()) {
       const phase = agentReadinessPhase();
@@ -1030,7 +1056,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     return (
       phase === "warming_backend" ||
       phase === "creating_session" ||
-      phase === "reconnecting"
+      phase === "reconnecting" ||
+      chatSessionHealth() === "reconnecting" ||
+      chatSessionHealth() === "unresponsive"
     );
   });
   const isTranscriptWaitingForAgentOutput = createMemo(() => {
@@ -1042,8 +1070,8 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       phase === "reconnecting"
     );
   });
-  const isRunCompleted = createMemo(
-    () => props.model.run()?.status === "complete",
+  const isRunCompleted = createMemo(() =>
+    hasCompletedRunStatus(props.model.run()?.status),
   );
   const isReadOnlyChatMode = createMemo(
     () => props.model.agent.chatMode?.() === "read_only",
@@ -1994,10 +2022,87 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       );
     });
 
+    const pendingPromptItem = pendingPrompt();
+    const optimisticPromptItem = pendingPromptItem ? (
+      <RunChatMessage
+        role="user"
+        class="run-chat-message-item"
+        ariaLabel="Pending message"
+      >
+        <RunChatUserMessage>
+          <div class="space-y-2">
+            <RunChatMarkdown content={pendingPromptItem.text} />
+            <p class="text-primary-content/75 text-[11px] font-medium tracking-[0.18em] uppercase">
+              {pendingPromptItem.status === "failed"
+                ? "Send failed"
+                : chatSessionHealth() === "reconnecting"
+                  ? "Reconnecting…"
+                  : "Sending…"}
+            </p>
+            <Show when={pendingPromptItem.status === "failed"}>
+              <div class="flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  class="btn btn-xs border-primary-content/30 text-primary-content hover:bg-primary-content/10 rounded-none border bg-transparent px-3 text-[11px] font-medium"
+                  onClick={() => {
+                    void props.model.agent.retryPendingPrompt?.();
+                  }}
+                >
+                  Retry send
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-xs border-primary-content/30 text-primary-content hover:bg-primary-content/10 rounded-none border bg-transparent px-3 text-[11px] font-medium"
+                  onClick={() => {
+                    void props.model.agent.reconnectSession?.();
+                  }}
+                >
+                  Reconnect
+                </button>
+              </div>
+            </Show>
+          </div>
+        </RunChatUserMessage>
+      </RunChatMessage>
+    ) : null;
+
+    const sessionStatusItem =
+      chatSessionHealth() === "reconnecting" ||
+      chatSessionHealth() === "unresponsive" ? (
+        <RunChatMessage
+          role="system"
+          class="run-chat-message-item"
+          ariaLabel="Chat connection status"
+        >
+          <RunChatSystemMessage>
+            <div class="flex w-full flex-wrap items-center justify-between gap-3">
+              <span>
+                {chatSessionHealth() === "reconnecting"
+                  ? "Chat session became unresponsive. Reconnecting…"
+                  : "Chat session is unresponsive. Reconnect to recover without restarting the app."}
+              </span>
+              <Show when={chatSessionHealth() === "unresponsive"}>
+                <button
+                  type="button"
+                  class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
+                  onClick={() => {
+                    void props.model.agent.reconnectSession?.();
+                  }}
+                >
+                  Reconnect chat
+                </button>
+              </Show>
+            </div>
+          </RunChatSystemMessage>
+        </RunChatMessage>
+      ) : null;
+
     return [
       ...messageItems,
+      ...(optimisticPromptItem ? [optimisticPromptItem] : []),
       ...pendingPermissionItems,
       ...failedPermissionItems,
+      ...(sessionStatusItem ? [sessionStatusItem] : []),
     ];
   });
 
@@ -2267,6 +2372,13 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                   }
 
                   setComposerSelectionValidationError("");
+                  if (chatSessionHealth() === "unresponsive") {
+                    const recovered =
+                      (await props.model.agent.reconnectSession?.()) ?? false;
+                    if (!recovered) {
+                      return;
+                    }
+                  }
                   const success = await props.model.agent.submitPrompt(value, {
                     agentId,
                     providerId,

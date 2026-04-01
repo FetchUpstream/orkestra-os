@@ -885,6 +885,86 @@ describe("NewRunChatWorkspace", () => {
     });
   });
 
+  it("shows immediate pending composer state while prompt submission is in flight", async () => {
+    const pendingSubmit = (() => {
+      let resolve!: (accepted: boolean) => void;
+      const promise = new Promise<boolean>((res) => {
+        resolve = res;
+      });
+      return { promise, resolve };
+    })();
+    const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(false);
+    const submitPromptMock = vi.fn(async () => {
+      setIsSubmittingPrompt(true);
+      const accepted = await pendingSubmit.promise;
+      setIsSubmittingPrompt(false);
+      return accepted;
+    });
+    const { model } = createModelStub("running");
+    model.agent.submitPrompt = submitPromptMock;
+    model.agent.isSubmittingPrompt = isSubmittingPrompt;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.input(screen.getByLabelText("Message agent"), {
+      target: { value: "Hello" },
+    });
+    await fireEvent.submit(screen.getByLabelText("Chat composer"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Send" }).textContent).toBe(
+        "Sending...",
+      );
+      expect(
+        (screen.getByLabelText("Message agent") as HTMLTextAreaElement)
+          .disabled,
+      ).toBe(true);
+    });
+
+    pendingSubmit.resolve(true);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Send" }).textContent).toBe(
+        "Send",
+      );
+    });
+  });
+
+  it("preserves unsent composer text when prompt submission fails", async () => {
+    const submitPromptMock = vi.fn(async () => false);
+    const { model } = createModelStub("running");
+    model.agent.submitPrompt = submitPromptMock;
+    model.agent.submitError = () => "Failed to submit prompt.";
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.input(screen.getByLabelText("Message agent"), {
+      target: { value: "Keep this draft" },
+    });
+    await fireEvent.submit(screen.getByLabelText("Chat composer"));
+
+    expect(submitPromptMock).toHaveBeenCalledWith("Keep this draft", {
+      agentId: "agent-1",
+      providerId: "provider-1",
+      modelId: "model-1",
+    });
+    expect(
+      (screen.getByLabelText("Message agent") as HTMLTextAreaElement).value,
+    ).toBe("Keep this draft");
+    expect(screen.getByText("Failed to submit prompt.")).toBeTruthy();
+  });
+
+  it("surfaces reconnecting status and blocks composer while stream reconnects", () => {
+    const { model } = createModelStub("running");
+    model.agent.readinessPhase = () => "reconnecting";
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByRole("status")).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Message agent") as HTMLTextAreaElement).disabled,
+    ).toBe(true);
+  });
+
   it("shows concrete default selections and no run-default option", () => {
     const { model } = createModelStub("running", false, {
       agentId: "agent-1",

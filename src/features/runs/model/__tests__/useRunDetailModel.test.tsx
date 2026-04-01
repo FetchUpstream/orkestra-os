@@ -458,6 +458,41 @@ describe("useRunDetailModel startup ownership", () => {
     });
   });
 
+  it("sets submitting state immediately while prompt submission is pending", async () => {
+    const pendingSubmit = deferred<{
+      status: "accepted";
+      queuedAt: string;
+    }>();
+    submitRunOpenCodePromptMock.mockReturnValueOnce(pendingSubmit.promise);
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    const submitPromise = modelRef!.agent.submitPrompt("Ship it");
+
+    await waitFor(() => {
+      expect(modelRef!.agent.isSubmittingPrompt()).toBe(true);
+    });
+
+    pendingSubmit.resolve({
+      status: "accepted",
+      queuedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await expect(submitPromise).resolves.toBe(true);
+
+    await waitFor(() => {
+      expect(modelRef!.agent.isSubmittingPrompt()).toBe(false);
+      expect(modelRef!.agent.submitError()).toBe("");
+    });
+  });
+
   it("surfaces backend validation message when rebase throws", async () => {
     rebaseRunWorktreeOntoSourceMock.mockRejectedValueOnce(
       new Error("Worktree has uncommitted changes; commit or stash first."),
@@ -789,6 +824,50 @@ describe("useRunDetailModel startup ownership", () => {
         expect(refreshCalls).toBeLessThanOrEqual(3);
       },
       { timeout: 3000 },
+    );
+  });
+
+  it("resubscribes after stream.resync_needed event", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const firstSubscribeCall = subscribeRunOpenCodeEventsMock.mock
+      .calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    firstSubscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "stream.resync_needed",
+      data: { reason: "missed_events" },
+    });
+
+    await waitFor(
+      () => {
+        expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(2);
+      },
+      { timeout: 3000 },
+    );
+
+    expect(unsubscribeRunOpenCodeEventsMock).toHaveBeenCalledWith(
+      "run-1",
+      expect.stringContaining("run-detail:run-1:"),
     );
   });
 

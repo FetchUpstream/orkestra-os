@@ -50,6 +50,7 @@ import type {
   AgentPermissionState,
   AgentStore,
   OpenCodeBusEvent,
+  UiMessage,
   UiPermissionRequest,
 } from "./agentTypes";
 import { setRunCommitPending } from "./commitUiState";
@@ -82,6 +83,66 @@ export type RunDraftReviewSubmissionPlan = {
   fileCount: number;
   isSubmittable: boolean;
   blockedReason: string;
+};
+
+export type RunChatSessionHealth =
+  | "idle"
+  | "sending"
+  | "send_failed"
+  | "reconnecting"
+  | "unresponsive";
+
+export type PendingRunPrompt = {
+  id: string;
+  text: string;
+  submittedAt: number;
+  acceptedAt: number | null;
+  messageCountAtSubmit: number;
+  attempts: number;
+  reconnectAttempts: number;
+  status: "sending" | "failed";
+  options?: {
+    clientRequestId?: string;
+    markCommitPending?: boolean;
+    agentId?: string;
+    providerId?: string;
+    modelId?: string;
+  };
+};
+
+const PENDING_PROMPT_ACK_TIMEOUT_MS = 8000;
+
+const getUiMessageText = (message: UiMessage): string => {
+  const textParts: string[] = [];
+
+  for (const partId of message.partOrder) {
+    const part = message.partsById[partId];
+    if (!part) {
+      continue;
+    }
+
+    if (part.kind === "text" || part.kind === "reasoning") {
+      const content =
+        typeof part.streamText === "string"
+          ? part.streamText
+          : typeof part.text === "string"
+            ? part.text
+            : "";
+      if (content.trim().length > 0) {
+        textParts.push(content);
+      }
+    }
+  }
+
+  return textParts.join("\n\n").trim();
+};
+
+const normalizePromptText = (value: string): string => {
+  return value.replace(/\s+/g, " ").trim();
+};
+
+const hasCompletedRunStatus = (status: string | null | undefined): boolean => {
+  return status === "complete" || status === "completed";
 };
 
 type UpsertRunReviewDraftCommentInput = {
@@ -150,6 +211,10 @@ export const useRunDetailModel = () => {
   >(null);
   const [isSubmittingPrompt, setIsSubmittingPrompt] = createSignal(false);
   const [submitError, setSubmitError] = createSignal("");
+  const [pendingPrompt, setPendingPrompt] =
+    createSignal<PendingRunPrompt | null>(null);
+  const [chatSessionHealth, setChatSessionHealth] =
+    createSignal<RunChatSessionHealth>("idle");
   const [runAgentOptions, setRunAgentOptions] = createSignal<
     RunSelectionOption[]
   >([]);
@@ -223,6 +288,25 @@ export const useRunDetailModel = () => {
       clearTimeout(cleanupRefreshFollowUpTimer);
       cleanupRefreshFollowUpTimer = null;
     }
+  };
+
+  const clearPendingPrompt = (): void => {
+    setPendingPrompt(null);
+    setChatSessionHealth("idle");
+  };
+
+  const markPendingPromptFailed = (): void => {
+    setPendingPrompt((current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        status: "failed",
+      };
+    });
+    setChatSessionHealth("send_failed");
   };
 
   const areDiffFilesEqual = (
@@ -322,15 +406,20 @@ export const useRunDetailModel = () => {
       return false;
     }
 
+    const normalizedStatus = status as string;
+
     return (
-      status === "queued" ||
-      status === "preparing" ||
-      status === "in_progress" ||
-      status === "idle"
+      normalizedStatus === "queued" ||
+      normalizedStatus === "preparing" ||
+      normalizedStatus === "running" ||
+      normalizedStatus === "in_progress" ||
+      normalizedStatus === "idle"
     );
   });
 
-  const isTerminalInputBlocked = createMemo(() => run()?.status === "complete");
+  const isTerminalInputBlocked = createMemo(() =>
+    hasCompletedRunStatus(run()?.status),
+  );
 
   const getErrorMessage = (value: unknown): string => {
     if (value instanceof Error) {
@@ -1448,7 +1537,7 @@ export const useRunDetailModel = () => {
     return `${minutes}m ${seconds}s`;
   });
 
-  const isRunCompleted = createMemo(() => run()?.status === "complete");
+  const isRunCompleted = createMemo(() => hasCompletedRunStatus(run()?.status));
   const runDefaultProviderId = createMemo(
     () => run()?.providerId?.trim() || "",
   );
@@ -1714,7 +1803,7 @@ export const useRunDetailModel = () => {
       await refreshGitMergeStatus();
       if (result.status === "merged" || result.status === "completing") {
         await refreshRunDetails(runId);
-        if (run()?.status === "complete" && task()?.status === "done") {
+        if (hasCompletedRunStatus(run()?.status) && task()?.status === "done") {
           setPostMergeCompletionMessage(
             "Merge completed. Returning to board...",
           );
@@ -2321,6 +2410,48 @@ export const useRunDetailModel = () => {
     }
   };
 
+  const reconnectAgentSession = async (): Promise<boolean> => {
+    const runId = params.runId?.trim() ?? "";
+    if (!runId) {
+      setAgentError("Missing run.");
+      setChatSessionHealth("unresponsive");
+      return false;
+    }
+
+    const requestVersion = ++activeAgentRequestVersion;
+    activePromptSubmitVersion += 1;
+    setIsSubmittingPrompt(false);
+    setSubmitError("");
+    setChatSessionHealth("reconnecting");
+    unsubscribeAgentEvents(runId);
+    isAgentUiSubscribed = true;
+
+    await ensureAgentForRun(runId);
+    if (
+      requestVersion !== activeAgentRequestVersion ||
+      params.runId !== runId ||
+      agentState() === "unsupported" ||
+      agentState() === "error" ||
+      agentChatMode() === "unavailable"
+    ) {
+      setChatSessionHealth("unresponsive");
+      return false;
+    }
+
+    await subscribeAgentEvents(runId);
+    if (
+      requestVersion !== activeAgentRequestVersion ||
+      params.runId !== runId ||
+      agentState() === "error"
+    ) {
+      setChatSessionHealth("unresponsive");
+      return false;
+    }
+
+    setChatSessionHealth(pendingPrompt() ? "sending" : "idle");
+    return true;
+  };
+
   const submitPrompt = async (
     text: string,
     options?: {
@@ -2332,7 +2463,16 @@ export const useRunDetailModel = () => {
     },
   ): Promise<boolean> => {
     const prompt = text.trim();
+    const normalizedPrompt = normalizePromptText(prompt);
     if (!prompt) {
+      return false;
+    }
+
+    const currentPendingPrompt = pendingPrompt();
+    if (currentPendingPrompt?.status === "sending") {
+      setSubmitError(
+        "Wait for the current message to finish sending or reconnect.",
+      );
       return false;
     }
 
@@ -2344,7 +2484,30 @@ export const useRunDetailModel = () => {
 
     const requestVersion = activeAgentRequestVersion;
     const submitVersion = ++activePromptSubmitVersion;
+    const clientRequestId =
+      options?.clientRequestId?.trim() || crypto.randomUUID();
+    const pendingPromptId = crypto.randomUUID();
+    const nextAttemptCount =
+      normalizePromptText(currentPendingPrompt?.text ?? "") === normalizedPrompt
+        ? (currentPendingPrompt?.attempts ?? 0) + 1
+        : 1;
+    setPendingPrompt({
+      id: pendingPromptId,
+      text: prompt,
+      submittedAt: Date.now(),
+      acceptedAt: null,
+      messageCountAtSubmit: agentStore().messageOrder.length,
+      attempts: nextAttemptCount,
+      reconnectAttempts: 0,
+      status: "sending",
+      options: {
+        ...options,
+        clientRequestId,
+      },
+    });
+    setChatSessionHealth("sending");
     setIsSubmittingPrompt(true);
+    setSubmitError("");
     if (options?.markCommitPending) {
       setRunCommitPending(runId, true);
     }
@@ -2353,13 +2516,13 @@ export const useRunDetailModel = () => {
       const response = await submitRunOpenCodePrompt({
         runId,
         prompt,
-        clientRequestId: options?.clientRequestId,
-        runStateHint: options?.markCommitPending
-          ? "committing_changes"
-          : undefined,
-        agentId: options?.agentId,
-        providerId: options?.providerId,
-        modelId: options?.modelId,
+        ...(clientRequestId ? { clientRequestId } : {}),
+        ...(options?.markCommitPending
+          ? { runStateHint: "committing_changes" as const }
+          : {}),
+        ...(options?.agentId ? { agentId: options.agentId } : {}),
+        ...(options?.providerId ? { providerId: options.providerId } : {}),
+        ...(options?.modelId ? { modelId: options.modelId } : {}),
       });
 
       if (
@@ -2372,6 +2535,16 @@ export const useRunDetailModel = () => {
 
       if (response.status === "accepted") {
         setSubmitError("");
+        setPendingPrompt((current) => {
+          if (!current || current.id !== pendingPromptId) {
+            return current;
+          }
+
+          return {
+            ...current,
+            acceptedAt: Date.now(),
+          };
+        });
         if (agentState() !== "unsupported" && agentState() !== "error") {
           setAgentReadinessPhase("ready");
         }
@@ -2383,6 +2556,7 @@ export const useRunDetailModel = () => {
         response.reason?.trim() ||
           "Prompt submission is not supported for this run.",
       );
+      markPendingPromptFailed();
       return false;
     } catch (submitError) {
       if (
@@ -2397,6 +2571,7 @@ export const useRunDetailModel = () => {
       setSubmitError(
         getErrorMessage(submitError) || "Failed to submit prompt.",
       );
+      markPendingPromptFailed();
       return false;
     } finally {
       if (options?.markCommitPending) {
@@ -2411,6 +2586,97 @@ export const useRunDetailModel = () => {
       }
     }
   };
+
+  const retryPendingPrompt = async (): Promise<boolean> => {
+    const current = pendingPrompt();
+    if (!current) {
+      return false;
+    }
+
+    const shouldReconnectFirst =
+      chatSessionHealth() === "unresponsive" || agentState() === "error";
+    if (shouldReconnectFirst) {
+      const recovered = await reconnectAgentSession();
+      if (!recovered) {
+        return false;
+      }
+    }
+
+    return submitPrompt(current.text, current.options);
+  };
+
+  createEffect(() => {
+    const currentPendingPrompt = pendingPrompt();
+    if (!currentPendingPrompt) {
+      return;
+    }
+
+    const store = agentStore();
+    const recentMessageIds = store.messageOrder.slice(
+      currentPendingPrompt.messageCountAtSubmit,
+    );
+    const acknowledged = recentMessageIds.some((messageId) => {
+      const message = store.messagesById[messageId];
+      if (!message || message.role !== "user") {
+        return false;
+      }
+
+      return getUiMessageText(message) === currentPendingPrompt.text;
+    });
+
+    if (acknowledged) {
+      clearPendingPrompt();
+    }
+  });
+
+  createEffect(() => {
+    const currentPendingPrompt = pendingPrompt();
+    if (!currentPendingPrompt || currentPendingPrompt.status !== "sending") {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      const latestPendingPrompt = pendingPrompt();
+      if (
+        !latestPendingPrompt ||
+        latestPendingPrompt.id !== currentPendingPrompt.id
+      ) {
+        return;
+      }
+
+      const latestLastSyncAt = agentStore().lastSyncAt ?? 0;
+      if (latestLastSyncAt > currentPendingPrompt.submittedAt) {
+        return;
+      }
+
+      if (currentPendingPrompt.attempts < 2) {
+        void reconnectAgentSession();
+        return;
+      }
+
+      setSubmitError(
+        "Chat session stopped responding before the message appeared. Reconnect and retry.",
+      );
+      markPendingPromptFailed();
+      setChatSessionHealth("unresponsive");
+    }, PENDING_PROMPT_ACK_TIMEOUT_MS);
+
+    onCleanup(() => clearTimeout(timeout));
+  });
+
+  createEffect(() => {
+    const health = chatSessionHealth();
+    const phase = agentReadinessPhase();
+
+    if (health === "sending" && phase === "reconnecting") {
+      setChatSessionHealth("reconnecting");
+      return;
+    }
+
+    if (health === "reconnecting" && phase === "ready") {
+      setChatSessionHealth(pendingPrompt() ? "sending" : "idle");
+    }
+  });
 
   const replyPermission = async (
     requestId: string,
@@ -2593,6 +2859,8 @@ export const useRunDetailModel = () => {
     activePromptSubmitVersion += 1;
     setIsSubmittingPrompt(false);
     setSubmitError("");
+    setPendingPrompt(null);
+    setChatSessionHealth("idle");
     setIsReplyingPermission(false);
     setPermissionReplyError("");
     setAgentState("idle");
@@ -3071,6 +3339,8 @@ export const useRunDetailModel = () => {
       error: agentError,
       isSubmittingPrompt,
       submitError,
+      pendingPrompt,
+      sessionHealth: chatSessionHealth,
       runAgentOptions,
       runProviderOptions,
       runModelOptions,
@@ -3082,7 +3352,9 @@ export const useRunDetailModel = () => {
       isReplyingPermission,
       permissionReplyError,
       submitPrompt,
+      retryPendingPrompt,
       replyPermission,
+      reconnectSession: reconnectAgentSession,
       ensureAgentForRun,
       subscribeAgentEvents,
       unsubscribeAgentEvents,

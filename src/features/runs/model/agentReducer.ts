@@ -580,6 +580,7 @@ const appendRawEvent = (
 ): AgentStore => {
   return {
     ...state,
+    lastSyncAt: Date.now(),
     rawEvents: appendCappedHistory(state.rawEvents, event),
   };
 };
