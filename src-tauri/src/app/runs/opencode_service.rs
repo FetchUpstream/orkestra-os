@@ -599,10 +599,65 @@ struct RunOpenCodeHandle {
 
 #[derive(Clone, Debug)]
 struct RunOpenCodeLifecycleSnapshot {
+    run_id: String,
+    run_status: Option<String>,
+    is_read_only: bool,
+    created_at: String,
     state: RunOpenCodeLifecycleState,
     viewer_count: usize,
     active_operation_count: usize,
     last_interaction_at: String,
+    last_viewer_activity_at: Option<String>,
+    last_backend_operation_at: Option<String>,
+    last_main_session_activity_at: Option<String>,
+    shutdown_requested: bool,
+    shutdown_reason: Option<String>,
+    event_stream_task_registered: bool,
+}
+
+impl RunOpenCodeLifecycleSnapshot {
+    fn run_status_str(&self) -> &str {
+        self.run_status.as_deref().unwrap_or("unknown")
+    }
+
+    fn lifecycle_state_str(&self) -> &'static str {
+        match self.state {
+            RunOpenCodeLifecycleState::Active => "active",
+            RunOpenCodeLifecycleState::ShuttingDown => "shutting_down",
+            RunOpenCodeLifecycleState::Stopped => "stopped",
+        }
+    }
+
+    fn idle_for_ms(&self) -> Option<u64> {
+        DateTime::parse_from_rfc3339(self.last_interaction_at.as_str())
+            .ok()
+            .and_then(|timestamp| {
+                Utc::now()
+                    .signed_duration_since(timestamp.with_timezone(&Utc))
+                    .to_std()
+                    .ok()
+            })
+            .map(|duration| duration.as_millis() as u64)
+    }
+
+    fn retention_hint(&self) -> String {
+        if self.viewer_count > 0 {
+            return "viewer_lease_present".to_string();
+        }
+        if self.active_operation_count > 0 {
+            return "active_operation_in_flight".to_string();
+        }
+        if self.shutdown_requested {
+            return self
+                .shutdown_reason
+                .clone()
+                .unwrap_or_else(|| "shutdown_requested".to_string());
+        }
+        if self.is_read_only {
+            return "completed_read_only_handle_retained".to_string();
+        }
+        format!("run_status:{}", self.run_status_str())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -634,6 +689,18 @@ impl RunServerKeepReason {
             Self::UnsupportedRunStatus => "unsupported_run_status",
         }
     }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::LifecycleNotActive => "runtime lifecycle is not active",
+            Self::ProtectedRunStatus => "run is in progress and protected from cleanup",
+            Self::ActiveViewers => "viewer lease present",
+            Self::ActiveOperations => "active operation in flight",
+            Self::IdleGracePeriod => "run is idle but grace period has not expired",
+            Self::MissingInteractionTimestamp => "last interaction timestamp is unavailable",
+            Self::UnsupportedRunStatus => "run status is not eligible for cleanup",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -651,6 +718,39 @@ impl RunServerShutdownReason {
             Self::TerminalRunCleanup => "terminal_run_cleanup",
         }
     }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::IdleTimeout => "eligible due to idle timeout",
+            Self::CompletedRunCleanup => "eligible due to completed read-only state",
+            Self::TerminalRunCleanup => "eligible due to terminal run state",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RunServerCleanupEvaluation {
+    decision: RunServerCleanupDecision,
+    snapshot: RunOpenCodeLifecycleSnapshot,
+    reason_code: &'static str,
+    reason_detail: &'static str,
+    idle_for_ms: Option<u64>,
+    grace_remaining_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct OpenCodeHandleInventorySummary {
+    total_handles: usize,
+    active_handles: usize,
+    shutting_down_handles: usize,
+    stopped_handles: usize,
+    viewed_handles: usize,
+    active_operation_handles: usize,
+    idle_handles: usize,
+    in_progress_handles: usize,
+    completed_handles: usize,
+    shutdown_requested_handles: usize,
+    completed_persistent_handles: Vec<String>,
 }
 
 #[cfg(test)]
@@ -719,10 +819,20 @@ impl RunOpenCodeHandle {
             .lock()
             .map_err(|_| lock_error("OpenCode lifecycle state"))?;
         Ok(RunOpenCodeLifecycleSnapshot {
+            run_id: lifecycle.run_id.clone(),
+            run_status: lifecycle.run_status.clone(),
+            is_read_only: lifecycle.is_read_only,
+            created_at: lifecycle.created_at.clone(),
             state: lifecycle.state,
             viewer_count: lifecycle.active_viewer_ids.len(),
             active_operation_count: lifecycle.active_operation_count,
             last_interaction_at: lifecycle.last_interaction_at.clone(),
+            last_viewer_activity_at: lifecycle.last_viewer_activity_at.clone(),
+            last_backend_operation_at: lifecycle.last_backend_operation_at.clone(),
+            last_main_session_activity_at: lifecycle.last_main_session_activity_at.clone(),
+            shutdown_requested: lifecycle.shutdown_requested,
+            shutdown_reason: lifecycle.shutdown_reason.clone(),
+            event_stream_task_registered: lifecycle.event_stream_task_registered,
         })
     }
 
@@ -807,7 +917,9 @@ impl RunOpenCodeHandle {
             return Err(Self::lifecycle_inactive_conflict());
         }
         let now = Utc::now().to_rfc3339();
-        let inserted = lifecycle.active_viewer_ids.insert(subscriber_id.to_string());
+        let inserted = lifecycle
+            .active_viewer_ids
+            .insert(subscriber_id.to_string());
         lifecycle.last_interaction_at = now.clone();
         lifecycle.last_viewer_activity_at = Some(now.clone());
         debug!(
@@ -950,6 +1062,19 @@ impl RunOpenCodeHandle {
         lifecycle.shutdown_reason = Some(reason.to_string());
         lifecycle.state = RunOpenCodeLifecycleState::ShuttingDown;
         lifecycle.last_interaction_at = Utc::now().to_rfc3339();
+        info!(
+            target: "opencode.runtime",
+            marker = "shutdown_state_updated",
+            run_id = lifecycle.run_id.as_str(),
+            run_status = lifecycle.run_status.as_deref().unwrap_or("unknown"),
+            lifecycle_state = "shutting_down",
+            viewer_count = lifecycle.active_viewer_ids.len(),
+            active_operation_count = lifecycle.active_operation_count,
+            shutdown_requested = lifecycle.shutdown_requested,
+            shutdown_reason = lifecycle.shutdown_reason.as_deref().unwrap_or(reason),
+            last_interaction_at = lifecycle.last_interaction_at.as_str(),
+            "OpenCode runtime lifecycle updated for shutdown"
+        );
         Ok(())
     }
 
@@ -973,6 +1098,19 @@ impl RunOpenCodeHandle {
         lifecycle.shutdown_reason = Some(reason.to_string());
         lifecycle.state = RunOpenCodeLifecycleState::ShuttingDown;
         lifecycle.last_interaction_at = Utc::now().to_rfc3339();
+        info!(
+            target: "opencode.runtime",
+            marker = "shutdown_state_updated",
+            run_id = lifecycle.run_id.as_str(),
+            run_status = lifecycle.run_status.as_deref().unwrap_or("unknown"),
+            lifecycle_state = "shutting_down",
+            viewer_count = lifecycle.active_viewer_ids.len(),
+            active_operation_count = lifecycle.active_operation_count,
+            shutdown_requested = lifecycle.shutdown_requested,
+            shutdown_reason = lifecycle.shutdown_reason.as_deref().unwrap_or(reason),
+            last_interaction_at = lifecycle.last_interaction_at.as_str(),
+            "OpenCode runtime lifecycle updated for shutdown"
+        );
         Ok(())
     }
 
@@ -984,6 +1122,18 @@ impl RunOpenCodeHandle {
         lifecycle.state = RunOpenCodeLifecycleState::Stopped;
         lifecycle.last_interaction_at = Utc::now().to_rfc3339();
         lifecycle.event_stream_task_registered = false;
+        info!(
+            target: "opencode.runtime",
+            marker = "lifecycle_stopped",
+            run_id = lifecycle.run_id.as_str(),
+            run_status = lifecycle.run_status.as_deref().unwrap_or("unknown"),
+            viewer_count = lifecycle.active_viewer_ids.len(),
+            active_operation_count = lifecycle.active_operation_count,
+            shutdown_requested = lifecycle.shutdown_requested,
+            shutdown_reason = lifecycle.shutdown_reason.as_deref().unwrap_or("unknown"),
+            last_interaction_at = lifecycle.last_interaction_at.as_str(),
+            "OpenCode runtime lifecycle marked stopped"
+        );
         Ok(())
     }
 }
@@ -1162,17 +1312,16 @@ impl RunsOpenCodeService {
                     .runs_service
                     .mark_cleanup_failed(run_id, &error_text)
                     .await?;
-                self
-                    .submit_run_opencode_prompt(
-                        run_id,
-                        &failure_prompt,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                    .await?;
+                self.submit_run_opencode_prompt(
+                    run_id,
+                    &failure_prompt,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
             }
         }
 
@@ -1608,10 +1757,7 @@ impl RunsOpenCodeService {
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
-    fn resolve_read_only_fetch_cwd(
-        &self,
-        worktree_id: Option<&str>,
-    ) -> PathBuf {
+    fn resolve_read_only_fetch_cwd(&self, worktree_id: Option<&str>) -> PathBuf {
         let Some(worktree_id) = worktree_id.map(str::trim).filter(|value| !value.is_empty()) else {
             return self.fallback_ephemeral_cwd();
         };
@@ -2057,10 +2203,96 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             .map(|timestamp| timestamp.with_timezone(&Utc))
     }
 
+    async fn summarize_tracked_handles(&self) -> OpenCodeHandleInventorySummary {
+        let handles: Vec<Arc<RunOpenCodeHandle>> =
+            self.handles.read().await.values().cloned().collect();
+        let mut summary = OpenCodeHandleInventorySummary {
+            total_handles: handles.len(),
+            ..Default::default()
+        };
+
+        for handle in handles {
+            let Ok(snapshot) = handle.lifecycle_snapshot() else {
+                continue;
+            };
+
+            match snapshot.state {
+                RunOpenCodeLifecycleState::Active => summary.active_handles += 1,
+                RunOpenCodeLifecycleState::ShuttingDown => summary.shutting_down_handles += 1,
+                RunOpenCodeLifecycleState::Stopped => summary.stopped_handles += 1,
+            }
+
+            if snapshot.viewer_count > 0 {
+                summary.viewed_handles += 1;
+            }
+            if snapshot.active_operation_count > 0 {
+                summary.active_operation_handles += 1;
+            }
+            if snapshot.shutdown_requested {
+                summary.shutdown_requested_handles += 1;
+            }
+
+            match snapshot.run_status_str() {
+                "idle" => summary.idle_handles += 1,
+                "queued" | "preparing" | "in_progress" => summary.in_progress_handles += 1,
+                "complete" | "failed" | "cancelled" => {
+                    summary.completed_handles += 1;
+                    summary.completed_persistent_handles.push(format!(
+                        "{}(status={}, state={}, viewers={}, ops={}, shutdown_requested={}, retention_hint={})",
+                        snapshot.run_id,
+                        snapshot.run_status_str(),
+                        snapshot.lifecycle_state_str(),
+                        snapshot.viewer_count,
+                        snapshot.active_operation_count,
+                        snapshot.shutdown_requested,
+                        snapshot.retention_hint()
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        summary
+    }
+
+    async fn log_handle_inventory(&self, marker: &'static str, reason: &'static str) {
+        let summary = self.summarize_tracked_handles().await;
+        let completed_persistent_handles = if summary.completed_persistent_handles.is_empty() {
+            String::new()
+        } else {
+            summary.completed_persistent_handles.join(", ")
+        };
+        info!(
+            target: "opencode.runtime",
+            marker = marker,
+            reason = reason,
+            total_handles = summary.total_handles,
+            active_handles = summary.active_handles,
+            shutting_down_handles = summary.shutting_down_handles,
+            stopped_handles = summary.stopped_handles,
+            viewed_handles = summary.viewed_handles,
+            active_operation_handles = summary.active_operation_handles,
+            idle_handles = summary.idle_handles,
+            in_progress_handles = summary.in_progress_handles,
+            completed_handles = summary.completed_handles,
+            shutdown_requested_handles = summary.shutdown_requested_handles,
+            completed_persistent_handles = completed_persistent_handles.as_str(),
+            "OpenCode runtime handle inventory"
+        );
+    }
+
     pub fn start_cleanup_supervisor(&self) {
         if self.cleanup_supervisor_started.swap(true, Ordering::SeqCst) {
             return;
         }
+
+        info!(
+            target: "opencode.runtime",
+            marker = "cleanup_supervisor_started",
+            interval_secs = RUN_SERVER_CLEANUP_SUPERVISOR_INTERVAL.as_secs(),
+            idle_grace_period_secs = RUN_SERVER_IDLE_GRACE_PERIOD.as_secs(),
+            "OpenCode cleanup supervisor started"
+        );
 
         let service = self.clone();
         tauri::async_runtime::spawn(async move {
@@ -2100,64 +2332,142 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             .map(|(run_id, handle)| (run_id.clone(), Arc::clone(handle)))
             .collect();
 
+        let starting_summary = self.summarize_tracked_handles().await;
+        let mut kept_count = 0usize;
+        let mut eligible_count = 0usize;
+        let mut shutdown_succeeded_count = 0usize;
+        let mut shutdown_failed_count = 0usize;
+        let mut evaluation_failed_count = 0usize;
+
         info!(
             target: "opencode.runtime",
             marker = "cleanup_pass_started",
             handle_count = handles.len(),
+            active_handles = starting_summary.active_handles,
+            viewed_handles = starting_summary.viewed_handles,
+            active_operation_handles = starting_summary.active_operation_handles,
+            idle_handles = starting_summary.idle_handles,
+            completed_handles = starting_summary.completed_handles,
+            shutdown_requested_handles = starting_summary.shutdown_requested_handles,
             "OpenCode cleanup supervisor pass started"
         );
 
+        self.log_handle_inventory("cleanup_inventory", "pass_started")
+            .await;
+
         for (run_id, handle) in handles {
             match self.evaluate_cleanup_decision(&run_id, &handle).await {
-                Ok(RunServerCleanupDecision::Keep(reason)) => {
-                    debug!(
-                        target: "opencode.runtime",
-                        marker = "cleanup_handle_kept",
-                        run_id = run_id.as_str(),
-                        reason = reason.as_str(),
-                        "OpenCode cleanup supervisor kept runtime"
-                    );
-                }
-                Ok(RunServerCleanupDecision::Shutdown(shutdown_reason)) => {
-                    info!(
-                        target: "opencode.runtime",
-                        marker = "cleanup_handle_eligible",
-                        run_id = run_id.as_str(),
-                        reason = shutdown_reason.as_str(),
-                        "OpenCode cleanup supervisor marked runtime eligible"
-                    );
+                Ok(evaluation) => match evaluation.decision {
+                    RunServerCleanupDecision::Keep(_reason) => {
+                        kept_count += 1;
+                        info!(
+                            target: "opencode.runtime",
+                            marker = "cleanup_handle_kept",
+                            run_id = run_id.as_str(),
+                            run_status = evaluation.snapshot.run_status_str(),
+                            lifecycle_state = evaluation.snapshot.lifecycle_state_str(),
+                            viewer_count = evaluation.snapshot.viewer_count,
+                            active_operation_count = evaluation.snapshot.active_operation_count,
+                            shutdown_requested = evaluation.snapshot.shutdown_requested,
+                            shutdown_reason = evaluation
+                                .snapshot
+                                .shutdown_reason
+                                .as_deref()
+                                .unwrap_or(""),
+                            event_stream_task_registered = evaluation.snapshot.event_stream_task_registered,
+                            created_at = evaluation.snapshot.created_at.as_str(),
+                            last_interaction_at = evaluation.snapshot.last_interaction_at.as_str(),
+                            last_viewer_activity_at = evaluation
+                                .snapshot
+                                .last_viewer_activity_at
+                                .as_deref()
+                                .unwrap_or(""),
+                            last_backend_operation_at = evaluation
+                                .snapshot
+                                .last_backend_operation_at
+                                .as_deref()
+                                .unwrap_or(""),
+                            last_main_session_activity_at = evaluation
+                                .snapshot
+                                .last_main_session_activity_at
+                                .as_deref()
+                                .unwrap_or(""),
+                            reason = evaluation.reason_code,
+                            reason_detail = evaluation.reason_detail,
+                            cleanup_result = "kept",
+                            idle_for_ms = evaluation.idle_for_ms,
+                            grace_remaining_ms = evaluation.grace_remaining_ms,
+                            "OpenCode cleanup supervisor kept runtime"
+                        );
+                    }
+                    RunServerCleanupDecision::Shutdown(shutdown_reason) => {
+                        eligible_count += 1;
+                        info!(
+                            target: "opencode.runtime",
+                            marker = "cleanup_handle_eligible",
+                            run_id = run_id.as_str(),
+                            run_status = evaluation.snapshot.run_status_str(),
+                            lifecycle_state = evaluation.snapshot.lifecycle_state_str(),
+                            viewer_count = evaluation.snapshot.viewer_count,
+                            active_operation_count = evaluation.snapshot.active_operation_count,
+                            shutdown_requested = evaluation.snapshot.shutdown_requested,
+                            shutdown_reason_existing = evaluation
+                                .snapshot
+                                .shutdown_reason
+                                .as_deref()
+                                .unwrap_or(""),
+                            last_interaction_at = evaluation.snapshot.last_interaction_at.as_str(),
+                            reason = evaluation.reason_code,
+                            reason_detail = evaluation.reason_detail,
+                            cleanup_result = "eligible",
+                            idle_for_ms = evaluation.idle_for_ms,
+                            grace_remaining_ms = evaluation.grace_remaining_ms,
+                            "OpenCode cleanup supervisor marked runtime eligible"
+                        );
 
-                    match self
-                        .stop_run_opencode_internal(
-                            &run_id,
-                            shutdown_reason.as_str(),
-                            true,
-                            true,
-                        )
-                        .await
-                    {
-                        Ok(_) => {
-                            info!(
-                                target: "opencode.runtime",
-                                marker = "cleanup_shutdown_succeeded",
-                                run_id = run_id.as_str(),
-                                reason = shutdown_reason.as_str(),
-                                "OpenCode cleanup supervisor shut down runtime"
-                            );
-                        }
-                        Err(err) => {
-                            warn!(
-                                target: "opencode.runtime",
-                                marker = "cleanup_shutdown_failed",
-                                run_id = run_id.as_str(),
-                                reason = shutdown_reason.as_str(),
-                                error = %err,
-                                "OpenCode cleanup supervisor failed to shut down runtime"
-                            );
+                        match self
+                            .stop_run_opencode_internal(
+                                &run_id,
+                                shutdown_reason.as_str(),
+                                true,
+                                true,
+                            )
+                            .await
+                        {
+                            Ok(_) => {
+                                shutdown_succeeded_count += 1;
+                                info!(
+                                    target: "opencode.runtime",
+                                    marker = "cleanup_shutdown_succeeded",
+                                    run_id = run_id.as_str(),
+                                    run_status = evaluation.snapshot.run_status_str(),
+                                    reason = evaluation.reason_code,
+                                    reason_detail = shutdown_reason.description(),
+                                    "OpenCode cleanup supervisor shut down runtime"
+                                );
+                            }
+                            Err(err) => {
+                                shutdown_failed_count += 1;
+                                warn!(
+                                    target: "opencode.runtime",
+                                    marker = "cleanup_shutdown_failed",
+                                    run_id = run_id.as_str(),
+                                    run_status = evaluation.snapshot.run_status_str(),
+                                    lifecycle_state = evaluation.snapshot.lifecycle_state_str(),
+                                    viewer_count = evaluation.snapshot.viewer_count,
+                                    active_operation_count = evaluation.snapshot.active_operation_count,
+                                    shutdown_requested = evaluation.snapshot.shutdown_requested,
+                                    reason = evaluation.reason_code,
+                                    reason_detail = shutdown_reason.description(),
+                                    error = %err,
+                                    "OpenCode cleanup supervisor failed to shut down runtime"
+                                );
+                            }
                         }
                     }
-                }
+                },
                 Err(err) => {
+                    evaluation_failed_count += 1;
                     warn!(
                         target: "opencode.runtime",
                         marker = "cleanup_evaluation_failed",
@@ -2169,6 +2479,26 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             }
         }
 
+        let ending_summary = self.summarize_tracked_handles().await;
+        info!(
+            target: "opencode.runtime",
+            marker = "cleanup_pass_completed",
+            handle_count = ending_summary.total_handles,
+            kept_count = kept_count,
+            eligible_count = eligible_count,
+            shutdown_succeeded_count = shutdown_succeeded_count,
+            shutdown_failed_count = shutdown_failed_count,
+            evaluation_failed_count = evaluation_failed_count,
+            viewed_handles = ending_summary.viewed_handles,
+            active_operation_handles = ending_summary.active_operation_handles,
+            idle_handles = ending_summary.idle_handles,
+            completed_handles = ending_summary.completed_handles,
+            shutdown_requested_handles = ending_summary.shutdown_requested_handles,
+            "OpenCode cleanup supervisor pass completed"
+        );
+        self.log_handle_inventory("cleanup_inventory", "pass_completed")
+            .await;
+
         Ok(())
     }
 
@@ -2176,68 +2506,128 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         &self,
         run_id: &str,
         handle: &RunOpenCodeHandle,
-    ) -> Result<RunServerCleanupDecision, AppError> {
+    ) -> Result<RunServerCleanupEvaluation, AppError> {
         let run = self.runs_service.get_run(run_id).await?;
         handle.sync_run_metadata(&run)?;
         let snapshot = handle.lifecycle_snapshot()?;
+        let idle_for_ms = snapshot.idle_for_ms();
 
         if snapshot.state != RunOpenCodeLifecycleState::Active {
-            return Ok(RunServerCleanupDecision::Keep(
-                RunServerKeepReason::LifecycleNotActive,
-            ));
+            let reason = RunServerKeepReason::LifecycleNotActive;
+            return Ok(RunServerCleanupEvaluation {
+                decision: RunServerCleanupDecision::Keep(reason),
+                snapshot,
+                reason_code: reason.as_str(),
+                reason_detail: reason.description(),
+                idle_for_ms,
+                grace_remaining_ms: None,
+            });
         }
 
         if matches!(run.status.as_str(), "queued" | "preparing" | "in_progress") {
-            return Ok(RunServerCleanupDecision::Keep(
-                RunServerKeepReason::ProtectedRunStatus,
-            ));
+            let reason = RunServerKeepReason::ProtectedRunStatus;
+            return Ok(RunServerCleanupEvaluation {
+                decision: RunServerCleanupDecision::Keep(reason),
+                snapshot,
+                reason_code: reason.as_str(),
+                reason_detail: reason.description(),
+                idle_for_ms,
+                grace_remaining_ms: None,
+            });
         }
 
         if snapshot.viewer_count > 0 {
-            return Ok(RunServerCleanupDecision::Keep(
-                RunServerKeepReason::ActiveViewers,
-            ));
+            let reason = RunServerKeepReason::ActiveViewers;
+            return Ok(RunServerCleanupEvaluation {
+                decision: RunServerCleanupDecision::Keep(reason),
+                snapshot,
+                reason_code: reason.as_str(),
+                reason_detail: reason.description(),
+                idle_for_ms,
+                grace_remaining_ms: None,
+            });
         }
 
         if snapshot.active_operation_count > 0 {
-            return Ok(RunServerCleanupDecision::Keep(
-                RunServerKeepReason::ActiveOperations,
-            ));
+            let reason = RunServerKeepReason::ActiveOperations;
+            return Ok(RunServerCleanupEvaluation {
+                decision: RunServerCleanupDecision::Keep(reason),
+                snapshot,
+                reason_code: reason.as_str(),
+                reason_detail: reason.description(),
+                idle_for_ms,
+                grace_remaining_ms: None,
+            });
         }
 
         if run.status == "idle" {
             let Some(last_interaction_at) = Self::cleanup_last_interaction_at(&snapshot) else {
-                return Ok(RunServerCleanupDecision::Keep(
-                    RunServerKeepReason::MissingInteractionTimestamp,
-                ));
+                let reason = RunServerKeepReason::MissingInteractionTimestamp;
+                return Ok(RunServerCleanupEvaluation {
+                    decision: RunServerCleanupDecision::Keep(reason),
+                    snapshot,
+                    reason_code: reason.as_str(),
+                    reason_detail: reason.description(),
+                    idle_for_ms,
+                    grace_remaining_ms: None,
+                });
             };
 
-            if Utc::now()
+            let idle_duration = Utc::now()
                 .signed_duration_since(last_interaction_at)
                 .to_std()
-                .unwrap_or_default()
-                < RUN_SERVER_IDLE_GRACE_PERIOD
-            {
-                return Ok(RunServerCleanupDecision::Keep(
-                    RunServerKeepReason::IdleGracePeriod,
-                ));
+                .unwrap_or_default();
+            if idle_duration < RUN_SERVER_IDLE_GRACE_PERIOD {
+                let reason = RunServerKeepReason::IdleGracePeriod;
+                return Ok(RunServerCleanupEvaluation {
+                    decision: RunServerCleanupDecision::Keep(reason),
+                    snapshot,
+                    reason_code: reason.as_str(),
+                    reason_detail: reason.description(),
+                    idle_for_ms,
+                    grace_remaining_ms: Some(
+                        RUN_SERVER_IDLE_GRACE_PERIOD
+                            .saturating_sub(idle_duration)
+                            .as_millis() as u64,
+                    ),
+                });
             }
 
-            return Ok(RunServerCleanupDecision::Shutdown(
-                RunServerShutdownReason::IdleTimeout,
-            ));
+            let reason = RunServerShutdownReason::IdleTimeout;
+            return Ok(RunServerCleanupEvaluation {
+                decision: RunServerCleanupDecision::Shutdown(reason),
+                snapshot,
+                reason_code: reason.as_str(),
+                reason_detail: reason.description(),
+                idle_for_ms,
+                grace_remaining_ms: Some(0),
+            });
         }
 
         if Self::is_terminal_run_status(run.status.as_str()) {
-            return Ok(RunServerCleanupDecision::Shutdown(match run.status.as_str() {
+            let reason = match run.status.as_str() {
                 "complete" => RunServerShutdownReason::CompletedRunCleanup,
                 _ => RunServerShutdownReason::TerminalRunCleanup,
-            }));
+            };
+            return Ok(RunServerCleanupEvaluation {
+                decision: RunServerCleanupDecision::Shutdown(reason),
+                snapshot,
+                reason_code: reason.as_str(),
+                reason_detail: reason.description(),
+                idle_for_ms,
+                grace_remaining_ms: None,
+            });
         }
 
-        Ok(RunServerCleanupDecision::Keep(
-            RunServerKeepReason::UnsupportedRunStatus,
-        ))
+        let reason = RunServerKeepReason::UnsupportedRunStatus;
+        Ok(RunServerCleanupEvaluation {
+            decision: RunServerCleanupDecision::Keep(reason),
+            snapshot,
+            reason_code: reason.as_str(),
+            reason_detail: reason.description(),
+            idle_for_ms,
+            grace_remaining_ms: None,
+        })
     }
 
     async fn shutdown_leftover_completed_handle_if_unused(
@@ -2257,47 +2647,68 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         };
 
         match self.evaluate_cleanup_decision(run_id, &handle).await {
-            Ok(RunServerCleanupDecision::Shutdown(reason)) => {
-                info!(
-                    target: "opencode.runtime",
-                    marker = "completed_read_only_shutdown_attempt",
-                    run_id = run_id,
-                    source = source,
-                    reason = reason.as_str(),
-                    "OpenCode completed/read-only fetch is shutting down leftover persistent handle"
-                );
+            Ok(evaluation) => match evaluation.decision {
+                RunServerCleanupDecision::Shutdown(reason) => {
+                    info!(
+                        target: "opencode.runtime",
+                        marker = "completed_read_only_shutdown_attempt",
+                        run_id = run_id,
+                        source = source,
+                        run_status = evaluation.snapshot.run_status_str(),
+                        lifecycle_state = evaluation.snapshot.lifecycle_state_str(),
+                        viewer_count = evaluation.snapshot.viewer_count,
+                        active_operation_count = evaluation.snapshot.active_operation_count,
+                        shutdown_requested = evaluation.snapshot.shutdown_requested,
+                        reason = evaluation.reason_code,
+                        reason_detail = evaluation.reason_detail,
+                        "OpenCode completed/read-only fetch is shutting down leftover persistent handle"
+                    );
 
-                match self
-                    .stop_run_opencode_internal(run_id, reason.as_str(), true, true)
-                    .await
-                {
-                    Ok(_) => info!(
-                        target: "opencode.runtime",
-                        marker = "completed_read_only_shutdown_complete",
-                        run_id = run_id,
-                        source = source,
-                        reason = reason.as_str(),
-                        "OpenCode completed/read-only leftover persistent handle shut down"
-                    ),
-                    Err(err) => warn!(
-                        target: "opencode.runtime",
-                        marker = "completed_read_only_shutdown_failed",
-                        run_id = run_id,
-                        source = source,
-                        reason = reason.as_str(),
-                        error = %err,
-                        "OpenCode completed/read-only leftover persistent handle could not be shut down"
-                    ),
+                    match self
+                        .stop_run_opencode_internal(run_id, reason.as_str(), true, true)
+                        .await
+                    {
+                        Ok(_) => info!(
+                            target: "opencode.runtime",
+                            marker = "completed_read_only_shutdown_complete",
+                            run_id = run_id,
+                            source = source,
+                            run_status = evaluation.snapshot.run_status_str(),
+                            reason = evaluation.reason_code,
+                            "OpenCode completed/read-only leftover persistent handle shut down"
+                        ),
+                        Err(err) => warn!(
+                            target: "opencode.runtime",
+                            marker = "completed_read_only_shutdown_failed",
+                            run_id = run_id,
+                            source = source,
+                            run_status = evaluation.snapshot.run_status_str(),
+                            lifecycle_state = evaluation.snapshot.lifecycle_state_str(),
+                            viewer_count = evaluation.snapshot.viewer_count,
+                            active_operation_count = evaluation.snapshot.active_operation_count,
+                            reason = evaluation.reason_code,
+                            reason_detail = evaluation.reason_detail,
+                            error = %err,
+                            "OpenCode completed/read-only leftover persistent handle could not be shut down"
+                        ),
+                    }
                 }
-            }
-            Ok(RunServerCleanupDecision::Keep(reason)) => info!(
+                RunServerCleanupDecision::Keep(_reason) => info!(
                 target: "opencode.runtime",
                 marker = "completed_read_only_shutdown_deferred",
                 run_id = run_id,
                 source = source,
-                keep_reason = reason.as_str(),
+                run_status = evaluation.snapshot.run_status_str(),
+                lifecycle_state = evaluation.snapshot.lifecycle_state_str(),
+                viewer_count = evaluation.snapshot.viewer_count,
+                active_operation_count = evaluation.snapshot.active_operation_count,
+                shutdown_requested = evaluation.snapshot.shutdown_requested,
+                keep_reason = evaluation.reason_code,
+                keep_reason_detail = evaluation.reason_detail,
+                last_interaction_at = evaluation.snapshot.last_interaction_at.as_str(),
                 "OpenCode completed/read-only fetch left persistent handle alive because it is still in use"
-            ),
+                ),
+            },
             Err(err) => warn!(
                 target: "opencode.runtime",
                 marker = "completed_read_only_shutdown_evaluation_failed",
@@ -2418,7 +2829,11 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 
         if let Some(handle) = self.handles.read().await.get(run_id).cloned() {
             if require_unused {
-                match self.evaluate_cleanup_decision(run_id, &handle).await? {
+                match self
+                    .evaluate_cleanup_decision(run_id, &handle)
+                    .await?
+                    .decision
+                {
                     RunServerCleanupDecision::Shutdown(current_reason) => {
                         reason = current_reason.as_str().to_string();
                         handle.request_shutdown_if_unused(reason.as_str())?;
@@ -2432,6 +2847,23 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             } else {
                 handle.request_shutdown(reason.as_str())?;
             }
+
+            let snapshot = handle.lifecycle_snapshot()?;
+
+            info!(
+                target: "opencode.runtime",
+                marker = "shutdown_preflight",
+                run_id = run_id,
+                run_status = snapshot.run_status_str(),
+                lifecycle_state = snapshot.lifecycle_state_str(),
+                viewer_count = snapshot.viewer_count,
+                active_operation_count = snapshot.active_operation_count,
+                shutdown_requested = snapshot.shutdown_requested,
+                last_interaction_at = snapshot.last_interaction_at.as_str(),
+                require_unused = require_unused,
+                reason = reason.as_str(),
+                "OpenCode runtime shutdown preflight evaluated"
+            );
         }
 
         self.mark_shutdown_requested(run_id).await;
@@ -2473,6 +2905,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     reason = reason.as_str(),
                     "OpenCode runtime teardown completed"
                 );
+                self.log_handle_inventory("handle_inventory", "shutdown_complete")
+                    .await;
 
                 StopRunOpenCodeResponse {
                     state: "stopped".to_string(),
@@ -2488,6 +2922,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     init_lock_removed = init_lock_removed,
                     "OpenCode runtime shutdown found no active handle"
                 );
+                self.log_handle_inventory("handle_inventory", "shutdown_noop")
+                    .await;
 
                 StopRunOpenCodeResponse {
                     state: "stopped".to_string(),
@@ -2501,6 +2937,17 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         .await;
 
         self.clear_shutdown_requested(run_id).await;
+        if let Err(err) = &result {
+            warn!(
+                target: "opencode.runtime",
+                marker = "shutdown_failed",
+                run_id = run_id,
+                reason = reason.as_str(),
+                require_unused = require_unused,
+                error = %err,
+                "OpenCode runtime shutdown failed"
+            );
+        }
         result
     }
 
@@ -2509,13 +2956,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         run_id: &str,
         reason: Option<&str>,
     ) -> Result<StopRunOpenCodeResponse, AppError> {
-        self.stop_run_opencode_internal(
-            run_id,
-            reason.unwrap_or("shutdown_requested"),
-            true,
-            false,
-        )
-        .await
+        self.stop_run_opencode_internal(run_id, reason.unwrap_or("shutdown_requested"), true, false)
+            .await
     }
 
     fn missing_dependency_reason() -> String {
@@ -3107,8 +3549,11 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             marker = "server_registered",
             run_id = run.id.as_str(),
             generation = generation,
+            run_status = run.status.as_str(),
             "OpenCode runtime lifecycle registered"
         );
+        self.log_handle_inventory("handle_inventory", "server_registered")
+            .await;
 
         let event_stream_task = self.spawn_event_stream(
             run.id.clone(),
@@ -3700,11 +4145,14 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 
         if Self::should_use_completed_read_only_bootstrap(run.status.as_str()) {
             let cwd = self.resolve_read_only_fetch_cwd(run.worktree_id.as_deref());
+            let persistent_handle_present = self.handles.read().await.contains_key(run_id);
             info!(
                 target: "opencode.runtime",
                 marker = "completed_read_only_session_messages_ephemeral",
                 run_id = run_id,
                 session_id = session_id.as_str(),
+                run_status = run.status.as_str(),
+                persistent_handle_present = persistent_handle_present,
                 "OpenCode completed/read-only session message fetch using ephemeral path"
             );
             let result = self
@@ -3774,11 +4222,14 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 
         if Self::should_use_completed_read_only_bootstrap(run.status.as_str()) {
             let cwd = self.resolve_read_only_fetch_cwd(run.worktree_id.as_deref());
+            let persistent_handle_present = self.handles.read().await.contains_key(run_id);
             info!(
                 target: "opencode.runtime",
                 marker = "completed_read_only_session_todos_ephemeral",
                 run_id = run_id,
                 session_id = session_id.as_str(),
+                run_status = run.status.as_str(),
+                persistent_handle_present = persistent_handle_present,
                 "OpenCode completed/read-only session todo fetch using ephemeral path"
             );
             let result = self
@@ -4010,6 +4461,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         if Self::should_use_completed_read_only_bootstrap(run.status.as_str()) {
             let session_id = run.opencode_session_id.filter(|id| !id.trim().is_empty());
             let cwd = self.resolve_read_only_fetch_cwd(run.worktree_id.as_deref());
+            let persistent_handle_present = self.handles.read().await.contains_key(run_id);
             let (messages, todos) = if let Some(session_id) = session_id.as_ref() {
                 let session_id_for_fetch = session_id.clone();
                 info!(
@@ -4017,6 +4469,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     marker = "completed_read_only_bootstrap_ephemeral",
                     run_id = run_id,
                     session_id = session_id_for_fetch.as_str(),
+                    run_status = run.status.as_str(),
+                    persistent_handle_present = persistent_handle_present,
                     "OpenCode completed/read-only bootstrap using ephemeral path"
                 );
                 self.with_ephemeral_client(cwd, |client| {
@@ -4422,7 +4876,6 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 #[cfg(test)]
 mod tests {
     use super::{build_opencode_server_options, RunsOpenCodeService};
-    use chrono::{Duration as ChronoDuration, Utc};
     use crate::app::db::migrations::run_migrations;
     use crate::app::db::repositories::projects::ProjectsRepository;
     use crate::app::db::repositories::runs::RunsRepository;
@@ -4434,6 +4887,7 @@ mod tests {
     use crate::app::runs::status_transition_service::RunStatusTransitionService;
     use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
     use crate::app::worktrees::service::WorktreesService;
+    use chrono::{Duration as ChronoDuration, Utc};
     use opencode::{
         create_opencode_client, create_opencode_server, OpencodeClientConfig, OpencodeServerOptions,
     };
@@ -5600,8 +6054,8 @@ mod tests {
             .cloned()
             .unwrap();
         let mut lifecycle = handle.lifecycle.lock().unwrap();
-        lifecycle.last_interaction_at = (Utc::now() - ChronoDuration::minutes(minutes_ago))
-            .to_rfc3339();
+        lifecycle.last_interaction_at =
+            (Utc::now() - ChronoDuration::minutes(minutes_ago)).to_rfc3339();
     }
 
     #[tokio::test]
@@ -5909,7 +6363,9 @@ mod tests {
             .unwrap();
 
         {
-            let _guard = handle.acquire_active_operation_guard("test_operation").unwrap();
+            let _guard = handle
+                .acquire_active_operation_guard("test_operation")
+                .unwrap();
             let snapshot = handle.usage_snapshot().unwrap();
             assert_eq!(snapshot.active_operation_count, 1);
             assert_eq!(snapshot.viewer_count, 0);
@@ -6061,7 +6517,9 @@ mod tests {
         drop(viewer_lease);
 
         set_handle_last_interaction_minutes_ago(&opencode_service, "run-1", 10).await;
-        let _guard = handle.acquire_active_operation_guard("test_operation").unwrap();
+        let _guard = handle
+            .acquire_active_operation_guard("test_operation")
+            .unwrap();
         opencode_service.run_cleanup_pass().await.unwrap();
         assert!(opencode_service.handles.read().await.contains_key("run-1"));
     }
@@ -6093,6 +6551,51 @@ mod tests {
         opencode_service.run_cleanup_pass().await.unwrap();
 
         assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_pass_is_idempotent_after_reclaiming_terminal_run() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+        set_run_status(&pool, "run-1", "complete").await;
+
+        opencode_service.run_cleanup_pass().await.unwrap();
+        opencode_service.run_cleanup_pass().await.unwrap();
+
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_inventory_summary_reports_completed_handle_retention() {
+        let (runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "complete").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get("run-1")
+            .cloned()
+            .unwrap();
+        let run = runs_service.get_run("run-1").await.unwrap();
+        handle.sync_run_metadata(&run).unwrap();
+
+        let summary = opencode_service.summarize_tracked_handles().await;
+
+        assert_eq!(summary.total_handles, 1);
+        assert_eq!(summary.completed_handles, 1);
+        assert_eq!(summary.active_handles, 1);
+        assert_eq!(summary.completed_persistent_handles.len(), 1);
+        assert!(summary.completed_persistent_handles[0].contains("run-1"));
+        assert!(summary.completed_persistent_handles[0].contains("status=complete"));
     }
 
     #[tokio::test]

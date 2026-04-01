@@ -30,7 +30,10 @@ pub fn run() {
                 .clone();
             dependency_service.start_cleanup_supervisor();
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = dependency_service.get_opencode_dependency_status(true).await {
+                if let Err(err) = dependency_service
+                    .get_opencode_dependency_status(true)
+                    .await
+                {
                     warn!(
                         target: "opencode.runtime",
                         marker = "dependency_prewarm_failed",
