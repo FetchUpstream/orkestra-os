@@ -3,6 +3,7 @@ use crate::app::runs::diff_service::RunsDiffService;
 use crate::app::runs::merge_service::RunsMergeService;
 use crate::app::runs::opencode_service::RunsOpenCodeService;
 use crate::app::runs::service::RunsService;
+use crate::app::runs::status_transition_service::RunStatusTransitionService;
 use crate::app::state::AppState;
 use crate::app::tasks::service::TasksService;
 use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
@@ -25,6 +26,12 @@ pub fn task_status_transition_service(
 
 pub fn runs_service(state: &tauri::State<'_, AppState>) -> RunsService {
     state.runs_service.clone()
+}
+
+pub fn run_status_transition_service(
+    state: &tauri::State<'_, AppState>,
+) -> RunStatusTransitionService {
+    state.run_status_transition_service.clone()
 }
 
 pub fn runs_diff_service(state: &tauri::State<'_, AppState>) -> RunsDiffService {

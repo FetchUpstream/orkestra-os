@@ -249,7 +249,7 @@ impl RunsRepository {
                 cleanup_error_message
              FROM runs
              WHERE task_id = ?
-               AND status IN ('queued', 'preparing', 'running')
+               AND status IN ('queued', 'preparing', 'in_progress', 'idle')
              ORDER BY created_at DESC
              LIMIT 1",
         )
@@ -257,6 +257,53 @@ impl RunsRepository {
         .fetch_optional(&self.pool)
         .await
         .runs_db("loading latest active run")?;
+
+        Ok(row.map(Self::map_row_to_run))
+    }
+
+    pub async fn get_latest_reusable_run_for_task(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<Run>, AppError> {
+        let row = sqlx::query(
+            "SELECT
+                id,
+                task_id,
+                project_id,
+                target_repo_id,
+                status,
+                triggered_by,
+                created_at,
+                started_at,
+                finished_at,
+                summary,
+                error_message,
+                worktree_id,
+                agent_id,
+                provider_id,
+                model_id,
+                source_branch,
+                opencode_session_id,
+                initial_prompt_sent_at,
+                initial_prompt_client_request_id,
+                setup_state,
+                setup_started_at,
+                setup_finished_at,
+                setup_error_message,
+                cleanup_state,
+                cleanup_started_at,
+                cleanup_finished_at,
+                cleanup_error_message
+             FROM runs
+             WHERE task_id = ?
+               AND status IN ('queued', 'preparing', 'in_progress')
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )
+        .bind(task_id)
+        .fetch_optional(&self.pool)
+        .await
+        .runs_db("loading latest reusable run")?;
 
         Ok(row.map(Self::map_row_to_run))
     }
@@ -292,7 +339,7 @@ impl RunsRepository {
                 cleanup_finished_at,
                 cleanup_error_message
              FROM runs
-             WHERE status IN ('queued', 'preparing', 'running')
+             WHERE status IN ('queued', 'preparing', 'in_progress', 'idle')
              ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -312,7 +359,7 @@ impl RunsRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn transition_queued_to_running_and_mark_task_doing(
+    pub async fn transition_run_to_in_progress_and_mark_task_doing(
         &self,
         run_id: &str,
         started_at: &str,
@@ -325,16 +372,16 @@ impl RunsRepository {
 
         let run_update = sqlx::query(
             "UPDATE runs
-             SET status = 'running',
+             SET status = 'in_progress',
                  started_at = COALESCE(started_at, ?)
              WHERE id = ?
-               AND status = 'queued'",
+               AND status IN ('queued', 'preparing', 'idle')",
         )
         .bind(started_at)
         .bind(run_id)
         .execute(&mut *tx)
         .await
-        .runs_db("transitioning run to running")?;
+        .runs_db("transitioning run to in_progress")?;
 
         if run_update.rows_affected() == 0 {
             tx.commit()
@@ -360,6 +407,45 @@ impl RunsRepository {
             .await
             .runs_db("committing transition transaction")?;
         Ok(true)
+    }
+
+    pub async fn transition_run_to_in_progress(
+        &self,
+        run_id: &str,
+        started_at: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET status = 'in_progress',
+                 started_at = COALESCE(started_at, ?)
+             WHERE id = ?
+               AND status IN ('queued', 'preparing', 'idle')",
+        )
+        .bind(started_at)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await
+        .runs_db("transitioning run to in_progress")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn transition_run_to_idle(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET status = 'idle'
+             WHERE id = ?
+               AND status = 'in_progress'",
+        )
+        .bind(run_id)
+        .execute(&self.pool)
+        .await
+        .runs_db("transitioning run to idle")?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     pub async fn set_opencode_session_id_if_unset(
@@ -596,16 +682,16 @@ impl RunsRepository {
 
         let run_update = sqlx::query(
             "UPDATE runs
-             SET status = 'completed',
+             SET status = 'complete',
                  finished_at = COALESCE(finished_at, ?)
              WHERE id = ?
-               AND status != 'completed'",
+               AND status != 'complete'",
         )
         .bind(finished_at)
         .bind(run_id)
         .execute(&mut *tx)
         .await
-        .runs_db("marking run completed")?;
+        .runs_db("marking run complete")?;
 
         let task_update = sqlx::query(
             "UPDATE tasks
@@ -641,10 +727,10 @@ impl RunsRepository {
                  SELECT task_id
                  FROM runs
                  WHERE id = ?
-                   AND status IN ('queued', 'preparing', 'running')
-                   AND opencode_session_id = ?
-             )
-               AND status = 'doing'",
+                    AND status IN ('queued', 'preparing', 'in_progress', 'idle')
+                    AND opencode_session_id = ?
+              )
+                AND status = 'doing'",
         )
         .bind(updated_at)
         .bind(run_id)
@@ -749,6 +835,11 @@ mod tests {
     }
 
     async fn seed_run(pool: &SqlitePool, run_id: &str, status: &str, created_at: &str) {
+        let status = match status {
+            "running" => "in_progress",
+            "completed" => "complete",
+            other => other,
+        };
         sqlx::query(
             "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -771,19 +862,64 @@ mod tests {
         let pool = repository.pool.clone();
         seed_project_task_and_repository(&pool).await;
 
-        seed_run(&pool, "run-completed", "completed", "2024-01-01T00:00:00Z").await;
+        for (task_id, task_number) in [("task-2", 2_i64), ("task-3", 3_i64)] {
+            sqlx::query(
+                "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(task_id)
+            .bind("project-1")
+            .bind("repo-1")
+            .bind(task_number)
+            .bind("Task")
+            .bind(Option::<String>::None)
+            .bind("todo")
+            .bind("2024-01-01T00:00:00Z")
+            .bind("2024-01-01T00:00:00Z")
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        seed_run(&pool, "run-completed", "complete", "2024-01-01T00:00:00Z").await;
         seed_run(&pool, "run-queued", "queued", "2024-01-02T00:00:00Z").await;
         seed_run(&pool, "run-failed", "failed", "2024-01-03T00:00:00Z").await;
-        seed_run(&pool, "run-preparing", "preparing", "2024-01-04T00:00:00Z").await;
-        seed_run(&pool, "run-running", "running", "2024-01-05T00:00:00Z").await;
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-preparing")
+        .bind("task-2")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("preparing")
+        .bind("user")
+        .bind("2024-01-04T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-running")
+        .bind("task-3")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("in_progress")
+        .bind("user")
+        .bind("2024-01-05T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
         seed_run(&pool, "run-cancelled", "cancelled", "2024-01-06T00:00:00Z").await;
 
         let active_runs = repository.list_active_runs().await.unwrap();
 
         let ids: Vec<&str> = active_runs.iter().map(|run| run.id.as_str()).collect();
         assert_eq!(ids, vec!["run-running", "run-preparing", "run-queued"]);
-        assert!(active_runs
-            .iter()
-            .all(|run| matches!(run.status.as_str(), "queued" | "preparing" | "running")));
+        assert!(active_runs.iter().all(|run| {
+            matches!(run.status.as_str(), "queued" | "preparing" | "in_progress" | "idle")
+        }));
     }
 }

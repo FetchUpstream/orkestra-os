@@ -112,8 +112,9 @@ export const getValidTransitionTargets = (status: TaskStatus): TaskStatus[] =>
 export const formatRunStatus = (status: RunStatus) => {
   if (status === "queued") return "Queued";
   if (status === "preparing") return "Preparing";
-  if (status === "running") return "Running";
-  if (status === "completed") return "Completed";
+  if (status === "in_progress") return "In progress";
+  if (status === "idle") return "Idle";
+  if (status === "complete") return "Complete";
   if (status === "failed") return "Failed";
   return "Cancelled";
 };

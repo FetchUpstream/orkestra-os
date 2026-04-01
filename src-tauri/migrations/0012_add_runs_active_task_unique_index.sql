@@ -6,7 +6,7 @@ WITH ranked_active_runs AS (
       ORDER BY created_at DESC, id DESC
     ) AS active_rank
   FROM runs
-  WHERE status IN ('queued', 'preparing', 'running')
+  WHERE status IN ('queued', 'preparing', 'running', 'in_progress', 'idle')
 )
 UPDATE runs
 SET
@@ -23,4 +23,4 @@ WHERE id IN (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_single_active_per_task
 ON runs(task_id)
-WHERE status IN ('queued', 'preparing', 'running');
+WHERE status IN ('queued', 'preparing', 'running', 'in_progress', 'idle');

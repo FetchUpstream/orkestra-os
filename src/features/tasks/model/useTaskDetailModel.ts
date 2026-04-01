@@ -7,6 +7,7 @@ import {
   onMount,
 } from "solid-js";
 import { getProject } from "../../../app/lib/projects";
+import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
 import { subscribeToTaskStatusChanged } from "../../../app/lib/taskStatusEvents";
 import {
   addTaskDependency,
@@ -167,6 +168,7 @@ export const useTaskDetailModel = () => {
   let runSelectionOptionsRequestVersion = 0;
   let editMutationVersion = 0;
   let removeTaskStatusSubscription: (() => void) | null = null;
+  let removeRunStatusSubscription: (() => void) | null = null;
   let taskStatusSubscriptionDisposed = false;
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
   let autosaveMaxWaitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -892,11 +894,34 @@ export const useTaskDetailModel = () => {
 
       removeTaskStatusSubscription = unlisten;
     })();
+
+    void (async () => {
+      const unlisten = await subscribeToRunStatusChanged((event) => {
+        if (taskStatusSubscriptionDisposed) {
+          return;
+        }
+
+        const activeTaskId = params.taskId?.trim() ?? "";
+        if (!activeTaskId || event.taskId !== activeTaskId) {
+          return;
+        }
+
+        void refreshRuns(activeTaskId);
+      });
+
+      if (taskStatusSubscriptionDisposed) {
+        unlisten();
+        return;
+      }
+
+      removeRunStatusSubscription = unlisten;
+    })();
   });
 
   onCleanup(() => {
     taskStatusSubscriptionDisposed = true;
     removeTaskStatusSubscription?.();
+    removeRunStatusSubscription?.();
     clearTaskDetailsAutosaveState();
     editMutationVersion += 1;
   });

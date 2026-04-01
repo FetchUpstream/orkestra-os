@@ -682,6 +682,7 @@ const buildSubagentPanels = (
       messageOrder: session.messageOrder,
       pendingQuestionsById: {},
       pendingPermissionsById: {},
+      resolvedPermissionsById: {},
       failedPermissionsById: {},
       todos: [],
       diffSummary: null,
@@ -1042,7 +1043,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     );
   });
   const isRunCompleted = createMemo(
-    () => props.model.run()?.status === "completed",
+    () => props.model.run()?.status === "complete",
   );
   const isReadOnlyChatMode = createMemo(
     () => props.model.agent.chatMode?.() === "read_only",
@@ -1853,7 +1854,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                       <p class="run-chat-tool-rail__details">
                         {queuedPermissionRequests().length} more permission
                         request
-                        {queuedPermissionRequests().length === 1 ? "" : "s"}{" "}
+                        {queuedPermissionRequests().length === 1
+                          ? ""
+                          : "s"}{" "}
                         queued. They will appear after this one is resolved.
                       </p>
                     </Show>

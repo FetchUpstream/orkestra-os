@@ -32,6 +32,17 @@ pub struct RunDto {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RunStatusChangedEventDto {
+    pub run_id: String,
+    pub task_id: String,
+    pub project_id: String,
+    pub previous_status: String,
+    pub new_status: String,
+    pub transition_source: String,
+    pub timestamp: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunModelSelectionDto {
     pub provider_id: String,

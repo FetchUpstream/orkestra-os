@@ -124,7 +124,7 @@ impl RunsService {
 
         if let Some(existing) = self
             .repository
-            .get_latest_active_run_for_task(task_id)
+            .get_latest_reusable_run_for_task(task_id)
             .await?
         {
             info!(
@@ -152,7 +152,7 @@ impl RunsService {
                 );
                 if let Some(existing) = self
                     .repository
-                    .get_latest_active_run_for_task(task_id)
+                    .get_latest_reusable_run_for_task(task_id)
                     .await?
                 {
                     info!(
@@ -280,7 +280,7 @@ impl RunsService {
         Ok(())
     }
 
-    pub async fn transition_queued_to_running(&self, run_id: &str) -> Result<RunDto, AppError> {
+    pub async fn transition_run_to_in_progress(&self, run_id: &str) -> Result<RunDto, AppError> {
         let run_id = run_id.trim();
         if run_id.is_empty() {
             return Err(AppError::validation("run_id is required"));
@@ -288,21 +288,21 @@ impl RunsService {
 
         info!(
             subsystem = "runs",
-            operation = "transition_queued_to_running",
+            operation = "transition_run_to_in_progress",
             run_id = run_id,
-            "Transitioning run to running"
+            "Transitioning run to in_progress"
         );
 
         let started_at = Utc::now().to_rfc3339();
         let updated = self
             .repository
-            .transition_queued_to_running_and_mark_task_doing(run_id, &started_at)
+            .transition_run_to_in_progress_and_mark_task_doing(run_id, &started_at)
             .await?;
 
         if !updated {
             info!(
                 subsystem = "runs",
-                operation = "transition_queued_to_running",
+                operation = "transition_run_to_in_progress",
                 run_id = run_id,
                 updated = false,
                 "Run transition already applied"
@@ -312,10 +312,10 @@ impl RunsService {
 
         info!(
             subsystem = "runs",
-            operation = "transition_queued_to_running",
+            operation = "transition_run_to_in_progress",
             run_id = run_id,
             updated = true,
-            "Run transitioned to running"
+            "Run transitioned to in_progress"
         );
 
         self.get_run(run_id).await
@@ -589,6 +589,11 @@ mod tests {
     ) {
         let project_id = "project-1";
         let repository_id = "repo-1";
+        let task_number = task_id
+            .rsplit('-')
+            .next()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(1);
 
         sqlx::query(
             "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
@@ -613,7 +618,7 @@ mod tests {
         .bind(project_id)
         .bind("Main")
         .bind(repo_path.to_string_lossy().to_string())
-        .bind(1)
+        .bind(task_number)
         .bind("2024-01-01T00:00:00Z")
         .execute(pool)
         .await
@@ -689,6 +694,11 @@ mod tests {
     }
 
     async fn seed_run_with_status(pool: &SqlitePool, run_id: &str, task_id: &str, status: &str) {
+        let status = match status {
+            "running" => "in_progress",
+            "completed" => "complete",
+            other => other,
+        };
         sqlx::query(
             "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -804,7 +814,7 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        seed_run_with_status(&pool, "run-active", "task-1", "running").await;
+        seed_run_with_status(&pool, "run-active", "task-1", "in_progress").await;
 
         let result = service
             .create_run_with_defaults("task-1", None, None, None)
@@ -826,7 +836,7 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        seed_run_with_status(&pool, "run-active", "task-1", "running").await;
+        seed_run_with_status(&pool, "run-active", "task-1", "in_progress").await;
 
         let run = service
             .create_or_reuse_active_run_with_defaults("task-1", None, None, None)
@@ -887,7 +897,7 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        seed_run_with_status(&pool, "run-old", "task-1", "completed").await;
+        seed_run_with_status(&pool, "run-old", "task-1", "complete").await;
 
         let run = service
             .create_or_reuse_active_run_with_defaults("task-1", None, None, None)
@@ -897,7 +907,41 @@ mod tests {
         assert_ne!(run.id, "run-old");
         assert_eq!(run.status, "queued");
         let active_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM runs WHERE task_id = ? AND status IN ('queued','preparing','running')",
+            "SELECT COUNT(*) FROM runs WHERE task_id = ? AND status IN ('queued','preparing','in_progress','idle')",
+        )
+        .bind("task-1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(active_count, 1);
+    }
+
+    #[tokio::test]
+    async fn create_or_reuse_active_run_creates_new_when_latest_run_is_idle() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run_with_status(&pool, "run-idle", "task-1", "idle").await;
+
+        let run = service
+            .create_or_reuse_active_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
+
+        assert_ne!(run.id, "run-idle");
+        assert_eq!(run.status, "queued");
+
+        let idle_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE task_id = ? AND status = 'idle'")
+                .bind("task-1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(idle_count, 1);
+
+        let active_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runs WHERE task_id = ? AND status IN ('queued','preparing','in_progress')",
         )
         .bind("task-1")
         .fetch_one(&pool)
@@ -935,7 +979,7 @@ mod tests {
             .all(|run_id| run_id.as_str() == first_id.as_str()));
 
         let active_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM runs WHERE task_id = ? AND status IN ('queued','preparing','running')",
+            "SELECT COUNT(*) FROM runs WHERE task_id = ? AND status IN ('queued','preparing','in_progress','idle')",
         )
         .bind("task-1")
         .fetch_one(&pool)
@@ -974,7 +1018,7 @@ mod tests {
         .bind("task-1")
         .bind("project-1")
         .bind("repo-1")
-        .bind("running")
+        .bind("in_progress")
         .bind("user")
         .bind("2024-01-02T00:00:00Z")
         .execute(&pool)
@@ -1013,11 +1057,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_active_runs_returns_only_queued_preparing_running() {
+    async fn list_active_runs_returns_only_active_statuses() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
+        for (task_id, task_number) in [("task-2", 2_i64), ("task-3", 3_i64)] {
+            sqlx::query(
+                "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(task_id)
+            .bind("project-1")
+            .bind("repo-1")
+            .bind(task_number)
+            .bind("Task")
+            .bind(Option::<String>::None)
+            .bind("todo")
+            .bind("2024-01-01T00:00:00Z")
+            .bind("2024-01-01T00:00:00Z")
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
 
         sqlx::query(
             "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
@@ -1027,7 +1089,7 @@ mod tests {
         .bind("task-1")
         .bind("project-1")
         .bind("repo-1")
-        .bind("completed")
+        .bind("complete")
         .bind("user")
         .bind("2024-01-01T00:00:00Z")
         .execute(&pool)
@@ -1054,7 +1116,7 @@ mod tests {
              VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind("run-preparing")
-        .bind("task-1")
+        .bind("task-2")
         .bind("project-1")
         .bind("repo-1")
         .bind("preparing")
@@ -1069,10 +1131,10 @@ mod tests {
              VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind("run-running")
-        .bind("task-1")
+        .bind("task-3")
         .bind("project-1")
         .bind("repo-1")
-        .bind("running")
+        .bind("in_progress")
         .bind("user")
         .bind("2024-01-04T00:00:00Z")
         .execute(&pool)
@@ -1113,9 +1175,9 @@ mod tests {
         let ids: Vec<&str> = runs.iter().map(|run| run.id.as_str()).collect();
 
         assert_eq!(ids, vec!["run-running", "run-preparing", "run-queued"]);
-        assert!(runs
-            .iter()
-            .all(|run| matches!(run.status.as_str(), "queued" | "preparing" | "running")));
+        assert!(runs.iter().all(|run| {
+            matches!(run.status.as_str(), "queued" | "preparing" | "in_progress" | "idle")
+        }));
     }
 
     #[tokio::test]
@@ -1264,16 +1326,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transition_to_running_marks_todo_task_doing() {
+    async fn transition_to_in_progress_marks_todo_task_doing() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task_with_status(&pool, "task-1", &repo_path, "todo").await;
         seed_run(&pool, "run-1", "task-1").await;
 
-        let updated = service.transition_queued_to_running("run-1").await.unwrap();
+        let updated = service.transition_run_to_in_progress("run-1").await.unwrap();
 
-        assert_eq!(updated.status, "running");
+        assert_eq!(updated.status, "in_progress");
         let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
             .bind("task-1")
             .fetch_one(&pool)
@@ -1283,7 +1345,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transition_to_running_is_concurrent_single_winner_and_idempotent() {
+    async fn transition_to_in_progress_is_concurrent_single_winner_and_idempotent() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
@@ -1295,7 +1357,7 @@ mod tests {
             let service_clone = service.clone();
             tasks.push(tokio::spawn(async move {
                 service_clone
-                    .transition_queued_to_running("run-1")
+                    .transition_run_to_in_progress("run-1")
                     .await
                     .unwrap()
             }));
@@ -1303,7 +1365,7 @@ mod tests {
 
         for task in tasks {
             let run = task.await.unwrap();
-            assert_eq!(run.status, "running");
+            assert_eq!(run.status, "in_progress");
         }
 
         let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
@@ -1314,7 +1376,7 @@ mod tests {
         assert_eq!(task_status, "doing");
 
         let run_after = service.get_run_model("run-1").await.unwrap();
-        assert_eq!(run_after.status, "running");
+        assert_eq!(run_after.status, "in_progress");
         assert!(run_after.started_at.is_some());
     }
 
@@ -1327,7 +1389,7 @@ mod tests {
         seed_run(&pool, "run-1", "task-1").await;
 
         sqlx::query(
-            "UPDATE runs SET status = 'running', opencode_session_id = 'session-1' WHERE id = ?",
+            "UPDATE runs SET status = 'in_progress', opencode_session_id = 'session-1' WHERE id = ?",
         )
         .bind("run-1")
         .execute(&pool)
@@ -1357,7 +1419,7 @@ mod tests {
         seed_run(&pool, "run-1", "task-1").await;
 
         sqlx::query(
-            "UPDATE runs SET status = 'completed', opencode_session_id = 'session-1' WHERE id = ?",
+            "UPDATE runs SET status = 'complete', opencode_session_id = 'session-1' WHERE id = ?",
         )
         .bind("run-1")
         .execute(&pool)

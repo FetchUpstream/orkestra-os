@@ -37,6 +37,7 @@ export const formatGitStateLabel = (
       return "Merged";
     case "completing":
       return "Completing run";
+    case "complete":
     case "completed":
       return "Completed";
     case "unsupported":

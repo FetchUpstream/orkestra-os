@@ -32,6 +32,7 @@ import {
   type RunTerminalFrame,
   writeRunTerminal,
 } from "../../../app/lib/runs";
+import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
 import {
   getRunSelectionOptionsWithCache,
   readRunSelectionOptionsCache,
@@ -320,13 +321,14 @@ export const useRunDetailModel = () => {
     }
 
     return (
-      status === "queued" || status === "preparing" || status === "running"
+      status === "queued" ||
+      status === "preparing" ||
+      status === "in_progress" ||
+      status === "idle"
     );
   });
 
-  const isTerminalInputBlocked = createMemo(
-    () => run()?.status === "completed",
-  );
+  const isTerminalInputBlocked = createMemo(() => run()?.status === "complete");
 
   const getErrorMessage = (value: unknown): string => {
     if (value instanceof Error) {
@@ -1447,7 +1449,7 @@ export const useRunDetailModel = () => {
     return `${minutes}m ${seconds}s`;
   });
 
-  const isRunCompleted = createMemo(() => run()?.status === "completed");
+  const isRunCompleted = createMemo(() => run()?.status === "complete");
   const runDefaultProviderId = createMemo(
     () => run()?.providerId?.trim() || "",
   );
@@ -1716,7 +1718,7 @@ export const useRunDetailModel = () => {
       await refreshGitMergeStatus();
       if (result.status === "merged" || result.status === "completing") {
         await refreshRunDetails(runId);
-        if (run()?.status === "completed" && task()?.status === "done") {
+        if (run()?.status === "complete" && task()?.status === "done") {
           setPostMergeCompletionMessage(
             "Merge completed. Returning to board...",
           );
@@ -1741,6 +1743,38 @@ export const useRunDetailModel = () => {
       }
     }
   };
+
+  createEffect(() => {
+    const runId = params.runId?.trim() ?? "";
+    if (!runId) {
+      return;
+    }
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void (async () => {
+      const remove = await subscribeToRunStatusChanged((event) => {
+        if (disposed || params.runId !== runId || event.runId !== runId) {
+          return;
+        }
+
+        void refreshRunDetails(runId);
+      });
+
+      if (disposed) {
+        remove();
+        return;
+      }
+
+      unlisten = remove;
+    })();
+
+    onCleanup(() => {
+      disposed = true;
+      unlisten?.();
+    });
+  });
 
   createEffect(() => {
     const runId = params.runId;

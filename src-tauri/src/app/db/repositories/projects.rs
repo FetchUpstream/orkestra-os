@@ -821,7 +821,7 @@ mod tests {
         .bind("source-task-1")
         .bind("source-project")
         .bind(Option::<String>::None)
-        .bind("completed")
+        .bind("complete")
         .bind("user")
         .bind("2024-01-01T00:00:00Z")
         .bind(Option::<String>::None)

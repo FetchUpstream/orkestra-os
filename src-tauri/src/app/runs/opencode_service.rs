@@ -9,6 +9,7 @@ use crate::app::runs::dto::{
     RunSelectionCatalogResponseDto, StartRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::service::RunsService;
+use crate::app::runs::status_transition_service::RunStatusTransitionService;
 use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
 use anyhow::{Context, Error as AnyhowError};
@@ -514,6 +515,7 @@ pub struct RunsOpenCodeService {
     runs_service: RunsService,
     projects_service: ProjectsService,
     task_status_transition_service: TaskStatusTransitionService,
+    run_status_transition_service: RunStatusTransitionService,
     worktrees_root: PathBuf,
     handles: Arc<RwLock<HashMap<String, Arc<RunOpenCodeHandle>>>>,
     init_locks: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
@@ -574,6 +576,7 @@ impl RunsOpenCodeService {
         run_id: &str,
         session_id: &str,
         source_event: &str,
+        require_cleanup_ready: bool,
         session_runtime_state: &Arc<Mutex<SessionRuntimeState>>,
     ) -> Result<(), AppError> {
         let should_block = {
@@ -582,11 +585,13 @@ impl RunsOpenCodeService {
                 .map_err(|_| lock_error("OpenCode session runtime state"))?;
             if !state.pending_questions.is_empty()
                 || !state.pending_permissions.is_empty()
-                || !state.idle_cleanup_ready
+                || (require_cleanup_ready && !state.idle_cleanup_ready)
             {
                 true
             } else {
-                state.idle_cleanup_ready = false;
+                if require_cleanup_ready {
+                    state.idle_cleanup_ready = false;
+                }
                 false
             }
         };
@@ -607,6 +612,10 @@ impl RunsOpenCodeService {
         match cleanup_result {
             Ok(()) => {
                 let _ = self.runs_service.mark_cleanup_succeeded(run_id).await?;
+                let _ = self
+                    .run_status_transition_service
+                    .handle_agent_waiting(&run.task_id, run_id, session_id, source_event)
+                    .await?;
                 let _ = self
                     .task_status_transition_service
                     .handle_agent_turn_completed(&run.task_id, run_id, session_id, source_event)
@@ -816,6 +825,7 @@ impl RunsOpenCodeService {
                             run_id,
                             &session_id,
                             "session.status=idle",
+                            true,
                             session_runtime_state,
                         )
                         .await;
@@ -985,6 +995,7 @@ impl RunsOpenCodeService {
                     run_id,
                     &session_id,
                     "session.idle",
+                    false,
                     session_runtime_state,
                 )
                 .await
@@ -1006,11 +1017,11 @@ impl RunsOpenCodeService {
     }
 
     fn unsupported_reason_for_run_status(status: &str) -> Option<String> {
-        if matches!(status, "completed" | "failed" | "cancelled") {
+        if matches!(status, "complete" | "failed" | "cancelled") {
             return Some(format!("run status '{}' is not supported", status));
         }
 
-        if !matches!(status, "queued" | "preparing" | "running") {
+        if !matches!(status, "queued" | "preparing" | "in_progress" | "idle") {
             return Some(format!("run status '{}' is not supported", status));
         }
 
@@ -1374,12 +1385,14 @@ impl RunsOpenCodeService {
         runs_service: RunsService,
         projects_service: ProjectsService,
         task_status_transition_service: TaskStatusTransitionService,
+        run_status_transition_service: RunStatusTransitionService,
         app_data_dir: PathBuf,
     ) -> Self {
         Self {
             runs_service,
             projects_service,
             task_status_transition_service,
+            run_status_transition_service,
             worktrees_root: app_data_dir.join("worktrees"),
             handles: Arc::new(RwLock::new(HashMap::new())),
             init_locks: Arc::new(RwLock::new(HashMap::new())),
@@ -1937,10 +1950,10 @@ impl RunsOpenCodeService {
             handle.session_runtime_state.clone(),
         );
 
-        if run.status == "queued" {
+        if matches!(run.status.as_str(), "queued" | "preparing") {
             let _ = self
-                .runs_service
-                .transition_queued_to_running(&run.id)
+                .run_status_transition_service
+                .handle_run_started(&run.id)
                 .await?;
         }
 
@@ -2117,6 +2130,10 @@ impl RunsOpenCodeService {
             }
         }
 
+        let _ = self
+            .run_status_transition_service
+            .handle_user_replied(&run_defaults.task_id, run_id)
+            .await?;
         let _ = self
             .task_status_transition_service
             .handle_user_replied_to_agent(&run_defaults.task_id, run_id)
@@ -2692,7 +2709,7 @@ impl RunsOpenCodeService {
         let bootstrap_start = Instant::now();
         let run = self.runs_service.get_run_model(run_id).await?;
 
-        if run.status == "completed" {
+        if run.status == "complete" {
             let session_id = run.opencode_session_id.filter(|id| !id.trim().is_empty());
             let (messages, todos) = if let Some(session_id) = session_id.as_ref() {
                 let session_id_for_fetch = session_id.clone();
@@ -3072,6 +3089,7 @@ mod tests {
     use crate::app::projects::search_service::ProjectFileSearchService;
     use crate::app::projects::service::ProjectsService;
     use crate::app::runs::service::RunsService;
+    use crate::app::runs::status_transition_service::RunStatusTransitionService;
     use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
     use crate::app::worktrees::service::WorktreesService;
     use opencode::{
@@ -3104,10 +3122,13 @@ mod tests {
             TasksRepository::new(pool.clone()),
             None,
         );
+        let run_status_transition_service =
+            RunStatusTransitionService::new(RunsRepository::new(pool.clone()), None);
         let opencode_service = RunsOpenCodeService::new(
             runs_service.clone(),
             projects_service,
             task_status_transition_service,
+            run_status_transition_service,
             app_data_dir,
         );
 
@@ -3166,6 +3187,11 @@ mod tests {
     }
 
     async fn seed_run(pool: &SqlitePool, run_id: &str, task_id: &str, status: &str) {
+        let status = match status {
+            "running" => "in_progress",
+            "completed" => "complete",
+            other => other,
+        };
         sqlx::query(
             "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)",

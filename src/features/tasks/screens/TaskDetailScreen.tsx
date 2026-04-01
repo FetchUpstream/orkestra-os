@@ -69,10 +69,13 @@ const getRunSummaryFallback = (status: string) => {
   if (status === "preparing") {
     return "Preparing runtime context and workspace before execution.";
   }
-  if (status === "running") {
+  if (status === "in_progress") {
     return "Execution is in progress and actively processing steps.";
   }
-  if (status === "completed") {
+  if (status === "idle") {
+    return "Execution is waiting for user input, review, or merge.";
+  }
+  if (status === "complete") {
     return "Execution completed successfully and outputs are ready.";
   }
   if (status === "failed") {

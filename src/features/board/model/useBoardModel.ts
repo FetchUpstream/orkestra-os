@@ -11,6 +11,7 @@ import {
   type Project,
 } from "../../../app/lib/projects";
 import { subscribeToTaskStatusChanged } from "../../../app/lib/taskStatusEvents";
+import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
 import {
   listProjectTasks,
   searchProjectTasks,
@@ -39,8 +40,13 @@ import { canTransitionStatus } from "../../tasks/utils/taskDetail";
 import { groupTasksByStatus } from "../utils/board";
 import { isRunCommitPending } from "../../runs/model/commitUiState";
 
-const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "running"]);
-const FINISHED_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const ACTIVE_RUN_STATUSES = new Set([
+  "queued",
+  "preparing",
+  "in_progress",
+  "idle",
+]);
+const FINISHED_RUN_STATUSES = new Set(["complete", "failed", "cancelled"]);
 const BOARD_SELECTED_PROJECT_STORAGE_KEY = "board.selectedProjectId";
 
 const readRememberedBoardProjectId = (): string => {
@@ -134,8 +140,8 @@ const resolveTaskRunMiniCard = (
     return {
       runId: finishedRun.id,
       label:
-        finishedRun.status === "completed" ? "Waiting for merge" : "Waiting",
-      state: finishedRun.status === "completed" ? "waitingForMerge" : "waiting",
+        finishedRun.status === "complete" ? "Waiting for merge" : "Waiting",
+      state: finishedRun.status === "complete" ? "waitingForMerge" : "waiting",
       isNavigable: true,
     };
   }
@@ -205,6 +211,7 @@ export const useBoardModel = () => {
   let runSelectionOptionsRequestVersion = 0;
   let boardEventSubscriptionDisposed = false;
   let removeBoardEventSubscription: (() => void) | null = null;
+  let removeBoardRunStatusSubscription: (() => void) | null = null;
 
   const selectedProject = createMemo(
     () =>
@@ -765,6 +772,49 @@ export const useBoardModel = () => {
       removeBoardEventSubscription = unlisten;
     })();
 
+    void (async () => {
+      const unlisten = await subscribeToRunStatusChanged((event) => {
+        if (boardEventSubscriptionDisposed) {
+          return;
+        }
+
+        const currentProjectId = selectedProjectId();
+        if (!currentProjectId || event.projectId !== currentProjectId) {
+          return;
+        }
+
+        void (async () => {
+          const taskValue = tasks().find((task) => task.id === event.taskId);
+          if (!taskValue) {
+            return;
+          }
+
+          try {
+            const runs = await listTaskRuns(event.taskId);
+            const miniCard = resolveTaskRunMiniCard(taskValue, runs);
+            setTaskRunMiniCards((current) => {
+              const next = { ...current };
+              if (!miniCard) {
+                delete next[event.taskId];
+              } else {
+                next[event.taskId] = miniCard;
+              }
+              return next;
+            });
+          } catch {
+            // Ignore transient run refresh failures.
+          }
+        })();
+      });
+
+      if (boardEventSubscriptionDisposed) {
+        unlisten();
+        return;
+      }
+
+      removeBoardRunStatusSubscription = unlisten;
+    })();
+
     setError("");
     try {
       const loadedProjects = await listProjects();
@@ -797,6 +847,10 @@ export const useBoardModel = () => {
     if (removeBoardEventSubscription) {
       removeBoardEventSubscription();
       removeBoardEventSubscription = null;
+    }
+    if (removeBoardRunStatusSubscription) {
+      removeBoardRunStatusSubscription();
+      removeBoardRunStatusSubscription = null;
     }
   });
 

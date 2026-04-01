@@ -3,8 +3,9 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 export const RUN_STATUSES = [
   "queued",
   "preparing",
-  "running",
-  "completed",
+  "in_progress",
+  "idle",
+  "complete",
   "failed",
   "cancelled",
 ] as const;
@@ -980,6 +981,7 @@ const toRunGitMergeState = (state: unknown): RunGitMergeState => {
     case "merge_failed":
     case "merged":
     case "completing":
+    case "complete":
     case "completed":
     case "unsupported":
       return normalizedState as RunGitMergeState;
@@ -1701,7 +1703,11 @@ export const mergeRunWorktreeIntoSource = async (
   });
   const result = toRunGitActionResult(response);
 
-  if (result.status === "merged" || result.status === "completed") {
+  if (
+    result.status === "merged" ||
+    result.status === "complete" ||
+    result.status === "completed"
+  ) {
     return {
       status: "merged",
       message: result.message,

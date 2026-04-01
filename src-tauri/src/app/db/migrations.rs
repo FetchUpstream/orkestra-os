@@ -20,6 +20,7 @@ const MIGRATION_0011: &str =
 const MIGRATION_0012: &str =
     include_str!("../../../migrations/0012_add_runs_active_task_unique_index.sql");
 const MIGRATION_0015: &str = include_str!("../../../migrations/0015_add_task_search_fts.sql");
+const MIGRATION_0017: &str = include_str!("../../../migrations/0017_update_run_status_lifecycle.sql");
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(MIGRATION_0001).execute(pool).await?;
@@ -274,6 +275,27 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
         sqlx::query(MIGRATION_0015).execute(pool).await?;
     }
 
+    let runs_table_sql: Option<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runs' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+    let active_run_index_sql: Option<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_single_active_per_task' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let needs_run_status_lifecycle_migration = runs_table_sql.as_deref().is_some_and(|sql| {
+        sql.contains("'running'") || sql.contains("'completed'") || !sql.contains("'idle'")
+    }) || active_run_index_sql
+        .as_deref()
+        .is_some_and(|sql| sql.contains("'running'") || sql.contains("'idle'"));
+
+    if needs_run_status_lifecycle_migration {
+        sqlx::query(MIGRATION_0017).execute(pool).await?;
+    }
+
     Ok(())
 }
 
@@ -401,7 +423,7 @@ mod tests {
                 initial_prompt_claim_request_id
             ) VALUES
             ('run-old', 'task-1', 'proj-1', NULL, 'queued', 'system', '2026-01-01T00:00:00Z', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
-            ('run-new', 'task-1', 'proj-1', NULL, 'running', 'system', '2026-01-02T00:00:00Z', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            ('run-new', 'task-1', 'proj-1', NULL, 'in_progress', 'system', '2026-01-02T00:00:00Z', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
         )
         .execute(&pool)
         .await
@@ -410,7 +432,7 @@ mod tests {
         run_migrations(&pool).await.unwrap();
 
         let active_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM runs WHERE task_id = 'task-1' AND status IN ('queued', 'preparing', 'running')",
+            "SELECT COUNT(*) FROM runs WHERE task_id = 'task-1' AND status IN ('queued', 'preparing', 'in_progress', 'idle')",
         )
         .fetch_one(&pool)
         .await
@@ -418,7 +440,7 @@ mod tests {
         assert_eq!(active_count, 1);
 
         let kept_active_id: String = sqlx::query_scalar(
-            "SELECT id FROM runs WHERE task_id = 'task-1' AND status IN ('queued', 'preparing', 'running')",
+            "SELECT id FROM runs WHERE task_id = 'task-1' AND status IN ('queued', 'preparing', 'in_progress', 'idle')",
         )
         .fetch_one(&pool)
         .await
@@ -439,6 +461,131 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(index_exists, Some(1));
+    }
+
+    #[tokio::test]
+    async fn run_migrations_rebuilds_legacy_run_status_check_and_moves_existing_runs_to_idle() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+        sqlx::query(MIGRATION_0001).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0002).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0003).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0004).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0005).execute(&pool).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE runs (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                target_repo_id TEXT NULL,
+                status TEXT NOT NULL CHECK (status IN ('queued', 'preparing', 'running', 'completed', 'failed', 'cancelled')),
+                triggered_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                started_at TEXT NULL,
+                finished_at TEXT NULL,
+                summary TEXT NULL,
+                error_message TEXT NULL,
+                worktree_id TEXT NULL,
+                agent_id TEXT NULL,
+                source_branch TEXT NULL,
+                opencode_session_id TEXT NULL,
+                initial_prompt_sent_at TEXT NULL,
+                initial_prompt_client_request_id TEXT NULL,
+                initial_prompt_claimed_at TEXT NULL,
+                initial_prompt_claim_request_id TEXT NULL,
+                setup_state TEXT NOT NULL DEFAULT 'pending',
+                setup_started_at TEXT NULL,
+                setup_finished_at TEXT NULL,
+                setup_error_message TEXT NULL,
+                cleanup_state TEXT NOT NULL DEFAULT 'pending',
+                cleanup_started_at TEXT NULL,
+                cleanup_finished_at TEXT NULL,
+                cleanup_error_message TEXT NULL,
+                provider_id TEXT NULL,
+                model_id TEXT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE UNIQUE INDEX idx_runs_single_active_per_task ON runs(task_id)
+             WHERE status IN ('queued', 'preparing', 'running', 'completed')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES ('proj-1', 'Project 1', 'ORK', NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+             VALUES ('repo-1', 'proj-1', 'Repo 1', '/tmp/repo-1', 1, '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, title, description, implementation_guide, status, created_at, updated_at, task_number)
+             VALUES ('task-1', 'proj-1', 'repo-1', 'Task 1', NULL, NULL, 'doing', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, title, description, implementation_guide, status, created_at, updated_at, task_number)
+             VALUES ('task-2', 'proj-1', 'repo-1', 'Task 2', NULL, NULL, 'done', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 2)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at, setup_state, cleanup_state)
+             VALUES
+             ('run-queued', 'task-1', 'proj-1', NULL, 'queued', 'system', '2026-01-01T00:00:00Z', 'pending', 'pending'),
+             ('run-completed', 'task-2', 'proj-1', NULL, 'completed', 'system', '2026-01-02T00:00:00Z', 'pending', 'pending')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        run_migrations(&pool).await.unwrap();
+
+        let run_queued_status: String = sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-queued'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(run_queued_status, "idle");
+
+        let run_completed_status: String = sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-completed'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(run_completed_status, "complete");
+
+        let runs_table_sql: String = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runs' LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(runs_table_sql.contains("'in_progress'"));
+        assert!(runs_table_sql.contains("'idle'"));
+        assert!(runs_table_sql.contains("'complete'"));
+
+        let active_run_index_sql: String = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_single_active_per_task' LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(active_run_index_sql.contains("'in_progress'"));
+        assert!(!active_run_index_sql.contains("'idle'"));
     }
 
     #[tokio::test]

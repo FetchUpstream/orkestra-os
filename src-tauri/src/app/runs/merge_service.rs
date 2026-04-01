@@ -3,6 +3,7 @@ use crate::app::runs::dto::{
     RunMergeConflictDto, RunMergeResponseDto, RunMergeStatusDto, RunRebaseResponseDto,
 };
 use crate::app::runs::service::RunsService;
+use crate::app::runs::status_transition_service::RunStatusTransitionService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
 use git2::{
     build::CheckoutBuilder, AnnotatedCommit, BranchType, ErrorCode, Repository, RepositoryState,
@@ -15,6 +16,7 @@ use std::process::Command;
 #[derive(Clone, Debug)]
 pub struct RunsMergeService {
     runs_service: RunsService,
+    run_status_transition_service: RunStatusTransitionService,
     worktrees_root: PathBuf,
 }
 
@@ -45,6 +47,7 @@ impl MergeState {
 
 struct MergeContext {
     run_id: String,
+    task_id: String,
     run_status: String,
     source_branch: String,
     worktree_branch: String,
@@ -53,9 +56,14 @@ struct MergeContext {
 }
 
 impl RunsMergeService {
-    pub fn new(runs_service: RunsService, app_data_dir: PathBuf) -> Self {
+    pub fn new(
+        runs_service: RunsService,
+        run_status_transition_service: RunStatusTransitionService,
+        app_data_dir: PathBuf,
+    ) -> Self {
         Self {
             runs_service,
+            run_status_transition_service,
             worktrees_root: app_data_dir.join("worktrees"),
         }
     }
@@ -152,7 +160,7 @@ impl RunsMergeService {
         let source_oid = Self::branch_commit_oid(&context.source_repo, &context.source_branch)?;
         let worktree_oid = Self::branch_commit_oid(&context.repo, &context.worktree_branch)?;
         let should_finalize_existing_merge = source_oid == worktree_oid
-            && context.run_status != "completed"
+            && context.run_status != "complete"
             && context.run_status != "queued";
 
         if !status_before.can_merge && !should_finalize_existing_merge {
@@ -207,7 +215,10 @@ impl RunsMergeService {
             }
         }
 
-        let _ = self.runs_service.mark_run_completed(run_id).await?;
+        let _ = self
+            .run_status_transition_service
+            .handle_run_merged(&context.task_id, run_id)
+            .await?;
         let mut status = self.compute_status(&context)?;
         status.state = MergeState::Merged.as_str().to_string();
         status.can_merge = false;
@@ -247,6 +258,7 @@ impl RunsMergeService {
 
         Ok(MergeContext {
             run_id: run.id,
+            task_id: run.task_id,
             run_status: run.status,
             source_branch,
             worktree_branch,
@@ -279,7 +291,7 @@ impl RunsMergeService {
 
         let mut state = if is_rebase_in_progress {
             MergeState::RebaseInProgress
-        } else if context.run_status == "completed" {
+        } else if context.run_status == "complete" {
             MergeState::Merged
         } else if has_conflicts {
             MergeState::Conflicted
@@ -292,7 +304,7 @@ impl RunsMergeService {
         };
 
         if source_oid == worktree_oid && !matches!(state, MergeState::RebaseInProgress) {
-            state = if context.run_status == "completed" {
+            state = if context.run_status == "complete" {
                 MergeState::Merged
             } else {
                 MergeState::Clean
@@ -654,6 +666,7 @@ mod tests {
     use crate::app::db::migrations::run_migrations;
     use crate::app::db::repositories::runs::RunsRepository;
     use crate::app::errors::AppError;
+    use crate::app::runs::status_transition_service::RunStatusTransitionService;
     use crate::app::runs::service::RunsService;
     use crate::app::worktrees::service::WorktreesService;
     use git2::{Repository, Signature};
@@ -693,8 +706,13 @@ mod tests {
         let runs_repository = RunsRepository::new(pool.clone());
         let worktrees_service = WorktreesService::new(temp_dir.path().join("app-data"));
         let runs_service = RunsService::new(runs_repository, worktrees_service);
-        let merge_service =
-            RunsMergeService::new(runs_service.clone(), temp_dir.path().join("app-data"));
+        let run_status_transition_service =
+            RunStatusTransitionService::new(RunsRepository::new(pool.clone()), None);
+        let merge_service = RunsMergeService::new(
+            runs_service.clone(),
+            run_status_transition_service,
+            temp_dir.path().join("app-data"),
+        );
         (runs_service, merge_service, pool, temp_dir)
     }
 
@@ -838,7 +856,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
 
         append_commit(&repo_path, "README.md", "main-change\n", "main change");
         let status = merge_service.get_merge_status(&run.id).await.unwrap();
@@ -855,7 +876,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
         let worktree_path = temp_dir
             .path()
             .join("app-data")
@@ -892,7 +916,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
         let worktree_path = temp_dir
             .path()
             .join("app-data")
@@ -925,7 +952,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
 
         append_commit(&repo_path, "README.md", "main-change\n", "main change");
 
@@ -957,7 +987,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
 
         append_commit(&repo_path, "README.md", "main-change\n", "main change");
         let worktree_path = temp_dir
@@ -992,7 +1025,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
         let worktree_path = temp_dir
             .path()
             .join("app-data")
@@ -1018,7 +1054,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
         let worktree_path = temp_dir
             .path()
             .join("app-data")
@@ -1046,7 +1085,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
         let worktree_path = temp_dir
             .path()
             .join("app-data")
@@ -1079,7 +1121,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
         let worktree_path = temp_dir
             .path()
             .join("app-data")
@@ -1112,7 +1157,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
         let worktree_path = temp_dir
             .path()
             .join("app-data")
@@ -1140,7 +1188,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
         let worktree_path = temp_dir
             .path()
             .join("app-data")
@@ -1161,7 +1212,7 @@ mod tests {
         assert_eq!(merge_response.state, "completing");
 
         let run_after = runs_service.get_run_model(&run.id).await.unwrap();
-        assert_eq!(run_after.status, "completed");
+        assert_eq!(run_after.status, "complete");
         assert!(run_after.finished_at.is_some());
 
         let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
@@ -1197,7 +1248,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
         let worktree_path = temp_dir
             .path()
             .join("app-data")
@@ -1230,7 +1284,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
         let worktree_path = temp_dir
             .path()
             .join("app-data")
@@ -1263,7 +1320,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
 
         let response = merge_service
             .merge_into_source_branch(&run.id)
@@ -1272,7 +1332,7 @@ mod tests {
         assert_eq!(response.state, "clean");
 
         let run_after = runs_service.get_run_model(&run.id).await.unwrap();
-        assert_ne!(run_after.status, "completed");
+        assert_ne!(run_after.status, "complete");
         assert!(run_after.finished_at.is_none());
 
         let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
@@ -1289,7 +1349,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
         let worktree_path = temp_dir
             .path()
             .join("app-data")
@@ -1309,7 +1372,7 @@ mod tests {
             .unwrap();
         assert_eq!(first.state, "completing");
 
-        sqlx::query("UPDATE runs SET status = 'running' WHERE id = ?")
+        sqlx::query("UPDATE runs SET status = 'in_progress' WHERE id = ?")
             .bind(&run.id)
             .execute(&pool)
             .await
@@ -1327,7 +1390,7 @@ mod tests {
         assert_eq!(second.state, "completing");
 
         let run_after = runs_service.get_run_model(&run.id).await.unwrap();
-        assert_eq!(run_after.status, "completed");
+        assert_eq!(run_after.status, "complete");
         assert!(run_after.finished_at.is_some());
 
         let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
@@ -1344,7 +1407,10 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        let run = runs_service.create_run("task-1").await.unwrap();
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None)
+            .await
+            .unwrap();
         let worktree_path = temp_dir
             .path()
             .join("app-data")
@@ -1364,7 +1430,7 @@ mod tests {
             .unwrap();
         assert_eq!(first.state, "completing");
 
-        sqlx::query("UPDATE runs SET status = 'running', finished_at = NULL WHERE id = ?")
+        sqlx::query("UPDATE runs SET status = 'in_progress', finished_at = NULL WHERE id = ?")
             .bind(&run.id)
             .execute(&pool)
             .await
@@ -1382,7 +1448,7 @@ mod tests {
         assert_eq!(second.state, "completing");
 
         let run_after = runs_service.get_run_model(&run.id).await.unwrap();
-        assert_eq!(run_after.status, "completed");
+        assert_eq!(run_after.status, "complete");
         assert!(run_after.finished_at.is_some());
 
         let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
