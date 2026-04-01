@@ -2058,7 +2058,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         <RunChatUserMessage>
           <div class="space-y-2">
             <RunChatMarkdown content={pendingPromptItem.text} />
-            <p class="text-primary-content/75 text-[11px] font-medium tracking-[0.18em] uppercase">
+            <p class="text-[11px] font-medium tracking-[0.18em] text-white/75 uppercase">
               {pendingPromptItem.status === "failed"
                 ? "Send failed"
                 : chatSessionHealth() === "reconnecting"
