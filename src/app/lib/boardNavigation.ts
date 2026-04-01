@@ -11,6 +11,16 @@ export const buildBoardHref = (projectId?: string | null): string => {
     : BOARD_ROUTE_PATH;
 };
 
+export const resolveProjectBoardHref = (
+  ...projectIds: Array<string | null | undefined>
+): string => {
+  for (const projectId of projectIds) {
+    const normalizedProjectId = projectId?.trim();
+    if (normalizedProjectId) return buildBoardHref(normalizedProjectId);
+  }
+  return buildBoardHref();
+};
+
 export const readRememberedBoardProjectId = (): string => {
   if (typeof window === "undefined") return "";
   try {

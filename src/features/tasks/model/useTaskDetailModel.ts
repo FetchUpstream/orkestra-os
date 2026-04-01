@@ -6,7 +6,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import { buildBoardHref } from "../../../app/lib/boardNavigation";
+import { resolveProjectBoardHref } from "../../../app/lib/boardNavigation";
 import { getProject } from "../../../app/lib/projects";
 import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
 import { subscribeToTaskStatusChanged } from "../../../app/lib/taskStatusEvents";
@@ -325,18 +325,10 @@ export const useTaskDetailModel = () => {
     const searchParams = new URLSearchParams(location.search);
     return searchParams.get("runId")?.trim() || "";
   });
-  const backHref = createMemo(() => {
-    if (taskDetailOrigin() === "run" && taskDetailRunId()) {
-      return `/runs/${taskDetailRunId()}`;
-    }
-    if (taskDetailOrigin() === "board") return buildBoardHref(projectId());
-    return projectId() ? `/projects/${projectId()}` : "/projects";
-  });
-  const backLabel = createMemo(() => {
-    if (taskDetailOrigin() === "run" && taskDetailRunId()) return "run";
-    if (taskDetailOrigin() === "board") return "board";
-    return projectId() ? "project" : "projects";
-  });
+  const backHref = createMemo(() =>
+    resolveProjectBoardHref(projectId(), task()?.projectId, params.projectId),
+  );
+  const backLabel = createMemo(() => "board");
   const canMoveTask = createMemo(() => projectRepositories().length > 1);
   const isAnyRunStarting = createMemo(() => Boolean(startingRunId()));
   const validTransitionOptions = createMemo(() => {

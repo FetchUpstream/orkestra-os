@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useTaskDetailModel } from "../useTaskDetailModel";
 
 const paramsState = createMutable({ projectId: "project-1", taskId: "task-1" });
+const locationState = createMutable({ search: "" });
 
 const {
   navigateMock,
@@ -13,6 +14,7 @@ const {
   startRunOpenCodeMock,
   createRunMock,
   listTaskDependenciesMock,
+  deleteTaskMock,
   getRunSelectionOptionsWithCacheMock,
   readRunSelectionOptionsCacheMock,
 } = vi.hoisted(() => ({
@@ -23,6 +25,7 @@ const {
   startRunOpenCodeMock: vi.fn(),
   createRunMock: vi.fn(),
   listTaskDependenciesMock: vi.fn(),
+  deleteTaskMock: vi.fn(),
   getRunSelectionOptionsWithCacheMock: vi.fn(),
   readRunSelectionOptionsCacheMock: vi.fn(),
 }));
@@ -30,7 +33,7 @@ const {
 vi.mock("@solidjs/router", () => ({
   useNavigate: () => navigateMock,
   useParams: () => paramsState,
-  useLocation: () => ({ search: "" }),
+  useLocation: () => locationState,
 }));
 
 vi.mock("../../../../app/lib/projects", () => ({
@@ -43,7 +46,7 @@ vi.mock("../../../../app/lib/tasks", () => ({
   listProjectTasks: vi.fn(async () => []),
   createTask: vi.fn(),
   addTaskDependency: vi.fn(),
-  deleteTask: vi.fn(),
+  deleteTask: deleteTaskMock,
   moveTask: vi.fn(),
   removeTaskDependency: vi.fn(),
   setTaskStatus: vi.fn(),
@@ -62,6 +65,14 @@ vi.mock("../../../../app/lib/runSelectionOptionsCache", () => ({
   readRunSelectionOptionsCache: readRunSelectionOptionsCacheMock,
 }));
 
+vi.mock("../../../../app/lib/taskStatusEvents", () => ({
+  subscribeToTaskStatusChanged: vi.fn(async () => vi.fn()),
+}));
+
+vi.mock("../../../../app/lib/runStatusEvents", () => ({
+  subscribeToRunStatusChanged: vi.fn(async () => vi.fn()),
+}));
+
 vi.mock("../../../../app/contexts/OpenCodeDependencyContext", () => ({
   useOpenCodeDependency: () => ({
     state: () => "available",
@@ -78,12 +89,14 @@ describe("useTaskDetailModel start run", () => {
     paramsState.projectId = "project-1";
     paramsState.taskId = "task-1";
     navigateMock.mockReset();
+    locationState.search = "";
     getTaskMock.mockReset();
     getProjectMock.mockReset();
     listTaskRunsMock.mockReset();
     startRunOpenCodeMock.mockReset();
     createRunMock.mockReset();
     listTaskDependenciesMock.mockReset();
+    deleteTaskMock.mockReset();
     getRunSelectionOptionsWithCacheMock.mockReset();
     readRunSelectionOptionsCacheMock.mockReset();
 
@@ -927,5 +940,46 @@ describe("useTaskDetailModel start run", () => {
     await ref.current?.onStartRun("run-1");
 
     expect(startRunOpenCodeMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves task detail close destination to the current task project board", async () => {
+    locationState.search = "?origin=run&runId=run-9";
+    paramsState.projectId = "";
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    expect(ref.current?.backHref()).toBe("/board?projectId=project-1");
+    expect(ref.current?.backLabel()).toBe("board");
+  });
+
+  it("navigates to the current task project board after deleting", async () => {
+    deleteTaskMock.mockResolvedValue(undefined);
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    await ref.current?.onConfirmDeleteTask();
+
+    expect(deleteTaskMock).toHaveBeenCalledWith("task-1");
+    expect(navigateMock).toHaveBeenCalledWith("/board?projectId=project-1");
   });
 });

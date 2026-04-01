@@ -3333,19 +3333,20 @@ describe("app routing and shell", () => {
     });
   });
 
-  it("keeps non-board task detail back navigation unchanged", async () => {
+  it("returns to board for project-scoped task detail routes", async () => {
     renderAt("/projects/p-1/tasks/task-123");
 
     await waitFor(() => {
       expect(screen.getByText("Sample task")).toBeTruthy();
     });
 
-    await fireEvent.click(
-      screen.getByRole("link", { name: "Back to project" }),
-    );
+    expect(screen.getByRole("link", { name: "Back to board" })).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("link", { name: "Back to board" }));
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe("/projects/p-1");
+      expect(window.location.pathname).toBe("/board");
+      expect(window.location.search).toBe("?projectId=p-1");
     });
   });
 
@@ -3764,7 +3765,7 @@ describe("app routing and shell", () => {
     });
   });
 
-  it("returns to the same run when task detail is opened from run detail", async () => {
+  it("returns to the task project board when task detail is opened from run detail", async () => {
     renderAt("/runs/run-456");
 
     await waitFor(() => {
@@ -3775,9 +3776,14 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/projects/p-1/tasks/task-123");
-      expect(
-        screen.getByRole("link", { name: "Back to project" }),
-      ).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Back to board" })).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("link", { name: "Back to board" }));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/board");
+      expect(window.location.search).toBe("?projectId=p-1");
     });
   });
 

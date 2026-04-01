@@ -96,7 +96,6 @@ const getRunPrimaryLabel = (runItem: {
 
 const TaskDetailScreen: Component = () => {
   const {
-    params,
     task,
     projectName,
     projectKey,
@@ -258,7 +257,7 @@ const TaskDetailScreen: Component = () => {
               when={task()}
               fallback={
                 <TaskDetailNotFoundState
-                  paramsProjectId={params.projectId}
+                  backHref={backHref()}
                   backLabel={backLabel()}
                 />
               }

@@ -19,7 +19,7 @@ export const TaskDetailLoadingState: Component = () => (
 );
 
 export const TaskDetailNotFoundState: Component<{
-  paramsProjectId?: string;
+  backHref: string;
   backLabel: string;
 }> = (props) => (
   <section class="projects-panel task-detail-state-card">
@@ -27,13 +27,6 @@ export const TaskDetailNotFoundState: Component<{
     <p class="project-placeholder-text">
       This task may have been removed or the link is no longer valid.
     </p>
-    <BackIconLink
-      href={
-        props.paramsProjectId
-          ? `/projects/${props.paramsProjectId}`
-          : "/projects"
-      }
-      label={props.backLabel}
-    />
+    <BackIconLink href={props.backHref} label={props.backLabel} />
   </section>
 );
