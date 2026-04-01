@@ -2,6 +2,7 @@ mod app;
 
 use tauri::Emitter;
 use tauri::Manager;
+use tracing::warn;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -27,10 +28,16 @@ pub fn run() {
                 .state::<app::state::AppState>()
                 .runs_opencode_service
                 .clone();
+            dependency_service.start_cleanup_supervisor();
             tauri::async_runtime::spawn(async move {
-                let _ = dependency_service
-                    .get_opencode_dependency_status(true)
-                    .await;
+                if let Err(err) = dependency_service.get_opencode_dependency_status(true).await {
+                    warn!(
+                        target: "opencode.runtime",
+                        marker = "dependency_prewarm_failed",
+                        error = %err,
+                        "OpenCode dependency prewarm failed"
+                    );
+                }
             });
 
             if let Some(main_window) = app.get_webview_window("main") {

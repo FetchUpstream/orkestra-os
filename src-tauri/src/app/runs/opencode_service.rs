@@ -14,7 +14,7 @@ use crate::app::runs::status_transition_service::RunStatusTransitionService;
 use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
 use anyhow::{Context, Error as AnyhowError};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use git2::Repository;
 use opencode::{
     create_opencode_client, create_opencode_server, types::PartInput, OpencodeClient,
@@ -30,11 +30,11 @@ use tauri::ipc::Channel;
 use thiserror::Error;
 use tokio::process::Command;
 use tokio::sync::RwLock;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{sleep, Duration, Instant, MissedTickBehavior};
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Error)]
 enum OpenCodeServiceError {
@@ -552,6 +552,8 @@ const EVENT_BROADCAST_CAPACITY: usize = 512;
 const STREAM_RECONNECT_BASE_DELAY_MS: u64 = 250;
 const STREAM_RECONNECT_MAX_DELAY_MS: u64 = 8_000;
 const STREAM_MAX_RECONNECT_ATTEMPTS: u32 = 8;
+const RUN_SERVER_IDLE_GRACE_PERIOD: Duration = Duration::from_secs(5 * 60);
+const RUN_SERVER_CLEANUP_SUPERVISOR_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 pub struct RunsOpenCodeService {
@@ -567,6 +569,7 @@ pub struct RunsOpenCodeService {
     dependency_status: Arc<RwLock<Option<OpenCodeDependencyStatusDto>>>,
     dependency_check_lock: Arc<tokio::sync::Mutex<()>>,
     handle_generation: Arc<AtomicU64>,
+    cleanup_supervisor_started: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl std::fmt::Debug for RunsOpenCodeService {
@@ -592,6 +595,62 @@ struct RunOpenCodeHandle {
     event_stream_task: Arc<tokio::sync::Mutex<Option<JoinHandle<()>>>>,
     buffered_events: Arc<Mutex<VecDeque<RawAgentEvent>>>,
     session_runtime_state: Arc<Mutex<SessionRuntimeState>>,
+}
+
+#[derive(Clone, Debug)]
+struct RunOpenCodeLifecycleSnapshot {
+    state: RunOpenCodeLifecycleState,
+    viewer_count: usize,
+    active_operation_count: usize,
+    last_interaction_at: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunServerCleanupDecision {
+    Keep(RunServerKeepReason),
+    Shutdown(RunServerShutdownReason),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunServerKeepReason {
+    LifecycleNotActive,
+    ProtectedRunStatus,
+    ActiveViewers,
+    ActiveOperations,
+    IdleGracePeriod,
+    MissingInteractionTimestamp,
+    UnsupportedRunStatus,
+}
+
+impl RunServerKeepReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::LifecycleNotActive => "lifecycle_not_active",
+            Self::ProtectedRunStatus => "protected_run_status",
+            Self::ActiveViewers => "active_viewers",
+            Self::ActiveOperations => "active_operations",
+            Self::IdleGracePeriod => "idle_grace_period",
+            Self::MissingInteractionTimestamp => "missing_interaction_timestamp",
+            Self::UnsupportedRunStatus => "unsupported_run_status",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunServerShutdownReason {
+    IdleTimeout,
+    CompletedRunCleanup,
+    TerminalRunCleanup,
+}
+
+impl RunServerShutdownReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::IdleTimeout => "idle_timeout",
+            Self::CompletedRunCleanup => "completed_run_cleanup",
+            Self::TerminalRunCleanup => "terminal_run_cleanup",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -640,6 +699,10 @@ struct RunOpenCodeLifecycle {
 }
 
 impl RunOpenCodeHandle {
+    fn lifecycle_inactive_conflict() -> AppError {
+        AppError::conflict("OpenCode run runtime is shutting down and cannot accept new work")
+    }
+
     fn sync_run_metadata(&self, run: &RunDto) -> Result<(), AppError> {
         let mut lifecycle = self
             .lifecycle
@@ -648,6 +711,19 @@ impl RunOpenCodeHandle {
         lifecycle.run_status = Some(run.status.clone());
         lifecycle.is_read_only = matches!(run.status.as_str(), "complete" | "cancelled" | "failed");
         Ok(())
+    }
+
+    fn lifecycle_snapshot(&self) -> Result<RunOpenCodeLifecycleSnapshot, AppError> {
+        let lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        Ok(RunOpenCodeLifecycleSnapshot {
+            state: lifecycle.state,
+            viewer_count: lifecycle.active_viewer_ids.len(),
+            active_operation_count: lifecycle.active_operation_count,
+            last_interaction_at: lifecycle.last_interaction_at.clone(),
+        })
     }
 
     fn lifecycle_state(&self) -> Result<RunOpenCodeLifecycleState, AppError> {
@@ -677,7 +753,7 @@ impl RunOpenCodeHandle {
             .lock()
             .map_err(|_| lock_error("OpenCode lifecycle state"))?;
         lifecycle.last_interaction_at = Utc::now().to_rfc3339();
-        info!(
+        debug!(
             target: "opencode.runtime",
             marker = "interaction_touch",
             run_id = lifecycle.run_id.as_str(),
@@ -695,10 +771,13 @@ impl RunOpenCodeHandle {
             .lifecycle
             .lock()
             .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        if lifecycle.state != RunOpenCodeLifecycleState::Active {
+            return Err(Self::lifecycle_inactive_conflict());
+        }
         let now = Utc::now().to_rfc3339();
         lifecycle.last_interaction_at = now.clone();
         lifecycle.last_main_session_activity_at = Some(now);
-        info!(
+        debug!(
             target: "opencode.runtime",
             marker = "interaction_touch",
             run_id = lifecycle.run_id.as_str(),
@@ -724,11 +803,14 @@ impl RunOpenCodeHandle {
             .lifecycle
             .lock()
             .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        if lifecycle.state != RunOpenCodeLifecycleState::Active {
+            return Err(Self::lifecycle_inactive_conflict());
+        }
         let now = Utc::now().to_rfc3339();
         let inserted = lifecycle.active_viewer_ids.insert(subscriber_id.to_string());
         lifecycle.last_interaction_at = now.clone();
         lifecycle.last_viewer_activity_at = Some(now.clone());
-        info!(
+        debug!(
             target: "opencode.runtime",
             marker = if inserted { "viewer_acquired" } else { "viewer_refreshed" },
             run_id = lifecycle.run_id.as_str(),
@@ -757,11 +839,14 @@ impl RunOpenCodeHandle {
             .lifecycle
             .lock()
             .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        if lifecycle.state != RunOpenCodeLifecycleState::Active {
+            return Err(Self::lifecycle_inactive_conflict());
+        }
         let now = Utc::now().to_rfc3339();
         lifecycle.active_operation_count = lifecycle.active_operation_count.saturating_add(1);
         lifecycle.last_interaction_at = now.clone();
         lifecycle.last_backend_operation_at = Some(now);
-        info!(
+        debug!(
             target: "opencode.runtime",
             marker = "operation_guard_acquired",
             run_id = lifecycle.run_id.as_str(),
@@ -799,7 +884,7 @@ impl RunOpenCodeHandle {
         let now = Utc::now().to_rfc3339();
         lifecycle.last_interaction_at = now.clone();
         lifecycle.last_viewer_activity_at = Some(now);
-        info!(
+        debug!(
             target: "opencode.runtime",
             marker = if removed { "viewer_released" } else { "viewer_release_missing" },
             run_id = lifecycle.run_id.as_str(),
@@ -835,7 +920,7 @@ impl RunOpenCodeHandle {
         let now = Utc::now().to_rfc3339();
         lifecycle.last_interaction_at = now.clone();
         lifecycle.last_backend_operation_at = Some(now);
-        info!(
+        debug!(
             target: "opencode.runtime",
             marker = "operation_guard_released",
             run_id = lifecycle.run_id.as_str(),
@@ -861,6 +946,29 @@ impl RunOpenCodeHandle {
             .lifecycle
             .lock()
             .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+        lifecycle.shutdown_requested = true;
+        lifecycle.shutdown_reason = Some(reason.to_string());
+        lifecycle.state = RunOpenCodeLifecycleState::ShuttingDown;
+        lifecycle.last_interaction_at = Utc::now().to_rfc3339();
+        Ok(())
+    }
+
+    fn request_shutdown_if_unused(&self, reason: &str) -> Result<(), AppError> {
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| lock_error("OpenCode lifecycle state"))?;
+
+        if lifecycle.state != RunOpenCodeLifecycleState::Active {
+            return Err(Self::lifecycle_inactive_conflict());
+        }
+
+        if !lifecycle.active_viewer_ids.is_empty() || lifecycle.active_operation_count > 0 {
+            return Err(AppError::conflict(
+                "OpenCode run runtime is still in active use and cannot be shut down",
+            ));
+        }
+
         lifecycle.shutdown_requested = true;
         lifecycle.shutdown_reason = Some(reason.to_string());
         lifecycle.state = RunOpenCodeLifecycleState::ShuttingDown;
@@ -1012,9 +1120,7 @@ impl RunsOpenCodeService {
             {
                 true
             } else {
-                if require_cleanup_ready {
-                    state.idle_cleanup_ready = false;
-                }
+                state.idle_cleanup_ready = false;
                 false
             }
         };
@@ -1024,11 +1130,16 @@ impl RunsOpenCodeService {
         }
 
         let run = self.runs_service.get_run_model(run_id).await?;
+        if run.cleanup_state != "pending" {
+            return Ok(());
+        }
         let context = self
             .runs_service
             .get_run_initial_prompt_context(run_id)
             .await?;
-        let _ = self.runs_service.mark_cleanup_running(run_id).await?;
+        if !self.runs_service.mark_cleanup_running(run_id).await? {
+            return Ok(());
+        }
         let cleanup_result = self
             .run_lifecycle_script_in_worktree(run_id, context.cleanup_script.as_deref())
             .await;
@@ -1051,7 +1162,7 @@ impl RunsOpenCodeService {
                     .runs_service
                     .mark_cleanup_failed(run_id, &error_text)
                     .await?;
-                let _ = self
+                self
                     .submit_run_opencode_prompt(
                         run_id,
                         &failure_prompt,
@@ -1061,7 +1172,7 @@ impl RunsOpenCodeService {
                         None,
                         None,
                     )
-                    .await;
+                    .await?;
             }
         }
 
@@ -1903,7 +2014,203 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             dependency_status: Arc::new(RwLock::new(None)),
             dependency_check_lock: Arc::new(tokio::sync::Mutex::new(())),
             handle_generation: Arc::new(AtomicU64::new(1)),
+            cleanup_supervisor_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    fn is_terminal_run_status(status: &str) -> bool {
+        matches!(status, "complete" | "failed" | "cancelled")
+    }
+
+    fn cleanup_last_interaction_at(
+        snapshot: &RunOpenCodeLifecycleSnapshot,
+    ) -> Option<DateTime<Utc>> {
+        DateTime::parse_from_rfc3339(snapshot.last_interaction_at.as_str())
+            .ok()
+            .map(|timestamp| timestamp.with_timezone(&Utc))
+    }
+
+    pub fn start_cleanup_supervisor(&self) {
+        if self.cleanup_supervisor_started.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        let service = self.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(err) = service.run_cleanup_pass().await {
+                warn!(
+                    target: "opencode.runtime",
+                    marker = "cleanup_pass_failed",
+                    error = %err,
+                    "OpenCode cleanup supervisor startup pass failed"
+                );
+            }
+
+            let mut interval = tokio::time::interval(RUN_SERVER_CLEANUP_SUPERVISOR_INTERVAL);
+            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            interval.tick().await;
+
+            loop {
+                interval.tick().await;
+                if let Err(err) = service.run_cleanup_pass().await {
+                    warn!(
+                        target: "opencode.runtime",
+                        marker = "cleanup_pass_failed",
+                        error = %err,
+                        "OpenCode cleanup supervisor pass failed"
+                    );
+                }
+            }
+        });
+    }
+
+    async fn run_cleanup_pass(&self) -> Result<(), AppError> {
+        let handles: Vec<(String, Arc<RunOpenCodeHandle>)> = self
+            .handles
+            .read()
+            .await
+            .iter()
+            .map(|(run_id, handle)| (run_id.clone(), Arc::clone(handle)))
+            .collect();
+
+        info!(
+            target: "opencode.runtime",
+            marker = "cleanup_pass_started",
+            handle_count = handles.len(),
+            "OpenCode cleanup supervisor pass started"
+        );
+
+        for (run_id, handle) in handles {
+            match self.evaluate_cleanup_decision(&run_id, &handle).await {
+                Ok(RunServerCleanupDecision::Keep(reason)) => {
+                    debug!(
+                        target: "opencode.runtime",
+                        marker = "cleanup_handle_kept",
+                        run_id = run_id.as_str(),
+                        reason = reason.as_str(),
+                        "OpenCode cleanup supervisor kept runtime"
+                    );
+                }
+                Ok(RunServerCleanupDecision::Shutdown(shutdown_reason)) => {
+                    info!(
+                        target: "opencode.runtime",
+                        marker = "cleanup_handle_eligible",
+                        run_id = run_id.as_str(),
+                        reason = shutdown_reason.as_str(),
+                        "OpenCode cleanup supervisor marked runtime eligible"
+                    );
+
+                    match self
+                        .stop_run_opencode_internal(
+                            &run_id,
+                            shutdown_reason.as_str(),
+                            true,
+                            true,
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            info!(
+                                target: "opencode.runtime",
+                                marker = "cleanup_shutdown_succeeded",
+                                run_id = run_id.as_str(),
+                                reason = shutdown_reason.as_str(),
+                                "OpenCode cleanup supervisor shut down runtime"
+                            );
+                        }
+                        Err(err) => {
+                            warn!(
+                                target: "opencode.runtime",
+                                marker = "cleanup_shutdown_failed",
+                                run_id = run_id.as_str(),
+                                reason = shutdown_reason.as_str(),
+                                error = %err,
+                                "OpenCode cleanup supervisor failed to shut down runtime"
+                            );
+                        }
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        target: "opencode.runtime",
+                        marker = "cleanup_evaluation_failed",
+                        run_id = run_id.as_str(),
+                        error = %err,
+                        "OpenCode cleanup supervisor failed to evaluate runtime"
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn evaluate_cleanup_decision(
+        &self,
+        run_id: &str,
+        handle: &RunOpenCodeHandle,
+    ) -> Result<RunServerCleanupDecision, AppError> {
+        let run = self.runs_service.get_run(run_id).await?;
+        handle.sync_run_metadata(&run)?;
+        let snapshot = handle.lifecycle_snapshot()?;
+
+        if snapshot.state != RunOpenCodeLifecycleState::Active {
+            return Ok(RunServerCleanupDecision::Keep(
+                RunServerKeepReason::LifecycleNotActive,
+            ));
+        }
+
+        if matches!(run.status.as_str(), "queued" | "preparing" | "in_progress") {
+            return Ok(RunServerCleanupDecision::Keep(
+                RunServerKeepReason::ProtectedRunStatus,
+            ));
+        }
+
+        if snapshot.viewer_count > 0 {
+            return Ok(RunServerCleanupDecision::Keep(
+                RunServerKeepReason::ActiveViewers,
+            ));
+        }
+
+        if snapshot.active_operation_count > 0 {
+            return Ok(RunServerCleanupDecision::Keep(
+                RunServerKeepReason::ActiveOperations,
+            ));
+        }
+
+        if run.status == "idle" {
+            let Some(last_interaction_at) = Self::cleanup_last_interaction_at(&snapshot) else {
+                return Ok(RunServerCleanupDecision::Keep(
+                    RunServerKeepReason::MissingInteractionTimestamp,
+                ));
+            };
+
+            if Utc::now()
+                .signed_duration_since(last_interaction_at)
+                .to_std()
+                .unwrap_or_default()
+                < RUN_SERVER_IDLE_GRACE_PERIOD
+            {
+                return Ok(RunServerCleanupDecision::Keep(
+                    RunServerKeepReason::IdleGracePeriod,
+                ));
+            }
+
+            return Ok(RunServerCleanupDecision::Shutdown(
+                RunServerShutdownReason::IdleTimeout,
+            ));
+        }
+
+        if Self::is_terminal_run_status(run.status.as_str()) {
+            return Ok(RunServerCleanupDecision::Shutdown(match run.status.as_str() {
+                "complete" => RunServerShutdownReason::CompletedRunCleanup,
+                _ => RunServerShutdownReason::TerminalRunCleanup,
+            }));
+        }
+
+        Ok(RunServerCleanupDecision::Keep(
+            RunServerKeepReason::UnsupportedRunStatus,
+        ))
     }
 
     fn build_run_lifecycle(run: &RunDto) -> RunOpenCodeLifecycle {
@@ -1999,6 +2306,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         run_id: &str,
         reason: &str,
         abort_event_stream_task: bool,
+        require_unused: bool,
     ) -> Result<StopRunOpenCodeResponse, AppError> {
         let run_id = run_id.trim();
         if run_id.is_empty() {
@@ -2006,77 +2314,98 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let reason = reason.trim();
-        let reason = if reason.is_empty() {
-            "shutdown_requested"
+        let mut reason = if reason.is_empty() {
+            "shutdown_requested".to_string()
         } else {
-            reason
+            reason.to_string()
         };
+
+        if let Some(handle) = self.handles.read().await.get(run_id).cloned() {
+            if require_unused {
+                match self.evaluate_cleanup_decision(run_id, &handle).await? {
+                    RunServerCleanupDecision::Shutdown(current_reason) => {
+                        reason = current_reason.as_str().to_string();
+                        handle.request_shutdown_if_unused(reason.as_str())?;
+                    }
+                    RunServerCleanupDecision::Keep(_) => {
+                        return Err(AppError::conflict(
+                            "OpenCode run runtime is no longer eligible for cleanup shutdown",
+                        ));
+                    }
+                }
+            } else {
+                handle.request_shutdown(reason.as_str())?;
+            }
+        }
 
         self.mark_shutdown_requested(run_id).await;
         info!(
             target: "opencode.runtime",
             marker = "shutdown_requested",
             run_id = run_id,
-            reason = reason,
+            reason = reason.as_str(),
             "OpenCode runtime shutdown requested"
         );
 
-        let stopped_at = Utc::now().to_rfc3339();
-        let (handle, init_lock_removed) = self.remove_run_handle(run_id).await;
+        let result = async {
+            let stopped_at = Utc::now().to_rfc3339();
+            let (handle, init_lock_removed) = self.remove_run_handle(run_id).await;
 
-        let response = if let Some(handle) = handle {
-            handle.request_shutdown(reason)?;
+            let response = if let Some(handle) = handle {
+                if abort_event_stream_task {
+                    self.abort_event_stream_task(run_id, &handle).await;
+                }
 
-            if abort_event_stream_task {
-                self.abort_event_stream_task(run_id, &handle).await;
-            }
+                let _subscriber_count = self.abort_subscriber_tasks(run_id, &handle)?;
+                handle.mark_stopped()?;
 
-            let _subscriber_count = self.abort_subscriber_tasks(run_id, &handle)?;
-            handle.mark_stopped()?;
+                info!(
+                    target: "opencode.runtime",
+                    marker = "shutdown_handle_removed",
+                    run_id = run_id,
+                    reason = reason.as_str(),
+                    init_lock_removed = init_lock_removed,
+                    "OpenCode runtime handle removed"
+                );
 
-            info!(
-                target: "opencode.runtime",
-                marker = "shutdown_handle_removed",
-                run_id = run_id,
-                reason = reason,
-                init_lock_removed = init_lock_removed,
-                "OpenCode runtime handle removed"
-            );
+                drop(handle);
 
-            drop(handle);
+                info!(
+                    target: "opencode.runtime",
+                    marker = "shutdown_complete",
+                    run_id = run_id,
+                    reason = reason.as_str(),
+                    "OpenCode runtime teardown completed"
+                );
 
-            info!(
-                target: "opencode.runtime",
-                marker = "shutdown_complete",
-                run_id = run_id,
-                reason = reason,
-                "OpenCode runtime teardown completed"
-            );
+                StopRunOpenCodeResponse {
+                    state: "stopped".to_string(),
+                    reason: Some(reason.clone()),
+                    stopped_at,
+                }
+            } else {
+                info!(
+                    target: "opencode.runtime",
+                    marker = "shutdown_noop",
+                    run_id = run_id,
+                    reason = reason.as_str(),
+                    init_lock_removed = init_lock_removed,
+                    "OpenCode runtime shutdown found no active handle"
+                );
 
-            StopRunOpenCodeResponse {
-                state: "stopped".to_string(),
-                reason: Some(reason.to_string()),
-                stopped_at,
-            }
-        } else {
-            info!(
-                target: "opencode.runtime",
-                marker = "shutdown_noop",
-                run_id = run_id,
-                reason = reason,
-                init_lock_removed = init_lock_removed,
-                "OpenCode runtime shutdown found no active handle"
-            );
+                StopRunOpenCodeResponse {
+                    state: "stopped".to_string(),
+                    reason: Some(reason.clone()),
+                    stopped_at,
+                }
+            };
 
-            StopRunOpenCodeResponse {
-                state: "stopped".to_string(),
-                reason: Some(reason.to_string()),
-                stopped_at,
-            }
-        };
+            Ok(response)
+        }
+        .await;
 
         self.clear_shutdown_requested(run_id).await;
-        Ok(response)
+        result
     }
 
     pub async fn stop_run_opencode(
@@ -2084,8 +2413,13 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         run_id: &str,
         reason: Option<&str>,
     ) -> Result<StopRunOpenCodeResponse, AppError> {
-        self.stop_run_opencode_internal(run_id, reason.unwrap_or("shutdown_requested"), true)
-            .await
+        self.stop_run_opencode_internal(
+            run_id,
+            reason.unwrap_or("shutdown_requested"),
+            true,
+            false,
+        )
+        .await
     }
 
     fn missing_dependency_reason() -> String {
@@ -3159,10 +3493,32 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             .is_some_and(|script| !script.trim().is_empty())
             && run_state.setup_state != "succeeded"
         {
-            let _ = self
+            if !self
                 .runs_service
                 .mark_setup_running_if_pending(run_id)
-                .await?;
+                .await?
+            {
+                let run_state = self.runs_service.get_run_model(run_id).await?;
+                if run_state.setup_state == "failed" {
+                    return Ok(StartRunOpenCodeResponse {
+                        state: "error".to_string(),
+                        reason: Some(
+                            "Setup script failed. Please fix it before you continue.".to_string(),
+                        ),
+                        queued_at: Utc::now().to_rfc3339(),
+                        client_request_id: Self::initial_seed_request_id_for_run(&context.run_id),
+                        ready_phase: Some("setup_failed".to_string()),
+                    });
+                }
+
+                return Ok(StartRunOpenCodeResponse {
+                    state: "queued".to_string(),
+                    reason: None,
+                    queued_at: Utc::now().to_rfc3339(),
+                    client_request_id: Self::initial_seed_request_id_for_run(&context.run_id),
+                    ready_phase: Some("setup_running".to_string()),
+                });
+            }
             let setup_result = self
                 .run_lifecycle_script_in_worktree(run_id, context.setup_script.as_deref())
                 .await;
@@ -3751,6 +4107,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                                     &run_id,
                                     "stream_reconnect_exhausted",
                                     false,
+                                    false,
                                 )
                                 .await;
                             return;
@@ -3848,7 +4205,12 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                         .to_string(),
                     );
                     let _ = runs_opencode_service
-                        .stop_run_opencode_internal(&run_id, "stream_reconnect_exhausted", false)
+                        .stop_run_opencode_internal(
+                            &run_id,
+                            "stream_reconnect_exhausted",
+                            false,
+                            false,
+                        )
                         .await;
                     return;
                 }
@@ -3887,6 +4249,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 #[cfg(test)]
 mod tests {
     use super::{build_opencode_server_options, RunsOpenCodeService};
+    use chrono::{Duration as ChronoDuration, Utc};
     use crate::app::db::migrations::run_migrations;
     use crate::app::db::repositories::projects::ProjectsRepository;
     use crate::app::db::repositories::runs::RunsRepository;
@@ -4991,6 +5354,40 @@ mod tests {
             .unwrap()
     }
 
+    async fn fetch_run_cleanup_state(pool: &SqlitePool, run_id: &str) -> String {
+        sqlx::query_scalar("SELECT cleanup_state FROM runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn set_run_status(pool: &SqlitePool, run_id: &str, status: &str) {
+        sqlx::query("UPDATE runs SET status = ? WHERE id = ?")
+            .bind(status)
+            .bind(run_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn set_handle_last_interaction_minutes_ago(
+        opencode_service: &RunsOpenCodeService,
+        run_id: &str,
+        minutes_ago: i64,
+    ) {
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get(run_id)
+            .cloned()
+            .unwrap();
+        let mut lifecycle = handle.lifecycle.lock().unwrap();
+        lifecycle.last_interaction_at = (Utc::now() - ChronoDuration::minutes(minutes_ago))
+            .to_rfc3339();
+    }
+
     #[tokio::test]
     async fn session_idle_transitions_doing_task_to_review_for_matching_session() {
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
@@ -5305,6 +5702,246 @@ mod tests {
 
         let snapshot = handle.usage_snapshot().unwrap();
         assert_eq!(snapshot.active_operation_count, 0);
+    }
+
+    #[tokio::test]
+    async fn active_operation_guard_rejects_non_active_lifecycle() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get("run-1")
+            .cloned()
+            .unwrap();
+        handle.request_shutdown("test_shutdown").unwrap();
+
+        let err = handle
+            .acquire_active_operation_guard("test_operation")
+            .err()
+            .expect("guard acquisition should fail once shutdown begins");
+        assert!(err.to_string().contains("shutting down"));
+    }
+
+    #[tokio::test]
+    async fn session_status_idle_then_session_idle_runs_cleanup_once() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+        let worktree_id = "ALP/cleanup-once";
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(worktree_id);
+        fs::create_dir_all(&worktree_path).unwrap();
+        update_run_worktree_id(&pool, "run-1", worktree_id).await;
+
+        let marker_path = temp_dir.path().join("cleanup-count.txt");
+        update_repository_scripts(
+            &pool,
+            "repo-1",
+            None,
+            Some(&format!(
+                "count=$(cat \"{}\" 2>/dev/null || printf '0')\nprintf '%s' $((count + 1)) > \"{}\"",
+                marker_path.display(),
+                marker_path.display()
+            )),
+        )
+        .await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.status",
+                r#"{"sessionID":"session-1","status":"busy"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.status",
+                r#"{"sessionID":"session-1","status":"idle"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.idle",
+                r#"{"sessionID":"session-1"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fs::read_to_string(&marker_path).unwrap(), "1");
+        assert_eq!(fetch_run_cleanup_state(&pool, "run-1").await, "succeeded");
+    }
+
+    #[tokio::test]
+    async fn cleanup_pass_keeps_protected_active_run_statuses() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "queued").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+        set_handle_last_interaction_minutes_ago(&opencode_service, "run-1", 10).await;
+
+        opencode_service.run_cleanup_pass().await.unwrap();
+
+        assert!(opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_pass_stops_idle_runs_after_grace_period() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "idle").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+        set_handle_last_interaction_minutes_ago(&opencode_service, "run-1", 10).await;
+
+        opencode_service.run_cleanup_pass().await.unwrap();
+
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_pass_keeps_idle_runs_with_active_viewers_or_operations() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "idle").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+        set_handle_last_interaction_minutes_ago(&opencode_service, "run-1", 10).await;
+
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get("run-1")
+            .cloned()
+            .unwrap();
+        let viewer_lease = handle.acquire_viewer_lease("viewer-1").unwrap();
+        opencode_service.run_cleanup_pass().await.unwrap();
+        assert!(opencode_service.handles.read().await.contains_key("run-1"));
+        drop(viewer_lease);
+
+        set_handle_last_interaction_minutes_ago(&opencode_service, "run-1", 10).await;
+        let _guard = handle.acquire_active_operation_guard("test_operation").unwrap();
+        opencode_service.run_cleanup_pass().await.unwrap();
+        assert!(opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_pass_keeps_idle_runs_inside_grace_period() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "idle").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        opencode_service.run_cleanup_pass().await.unwrap();
+
+        assert!(opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_pass_stops_terminal_runs_when_unused() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+        set_run_status(&pool, "run-1", "complete").await;
+
+        opencode_service.run_cleanup_pass().await.unwrap();
+
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_shutdown_rechecks_status_and_clears_shutdown_request_on_error() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "idle").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+        set_run_status(&pool, "run-1", "in_progress").await;
+
+        let err = opencode_service
+            .stop_run_opencode_internal("run-1", "idle_timeout", true, true)
+            .await
+            .expect_err("cleanup shutdown should be rejected after status changes");
+
+        assert!(err
+            .to_string()
+            .contains("no longer eligible for cleanup shutdown"));
+        assert!(!opencode_service.is_shutdown_requested("run-1").await);
+        assert!(opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn start_run_opencode_runs_setup_script_once_when_called_concurrently() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "queued").await;
+
+        let worktree_id = "ALP/setup-once";
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(worktree_id);
+        fs::create_dir_all(&worktree_path).unwrap();
+        update_run_worktree_id(&pool, "run-1", worktree_id).await;
+
+        let marker_path = temp_dir.path().join("setup-count.txt");
+        update_repository_scripts(
+            &pool,
+            "repo-1",
+            Some(&format!(
+                "count=$(cat \"{}\" 2>/dev/null || printf '0')\nprintf '%s' $((count + 1)) > \"{}\"\nsleep 1",
+                marker_path.display(),
+                marker_path.display()
+            )),
+            None,
+        )
+        .await;
+
+        let (first, second) = tokio::join!(
+            opencode_service.start_run_opencode("run-1"),
+            opencode_service.start_run_opencode("run-1")
+        );
+        let first = first.unwrap();
+        let second = second.unwrap();
+
+        assert_eq!(fs::read_to_string(&marker_path).unwrap(), "1");
+        assert!(matches!(first.state.as_str(), "queued" | "ready"));
+        assert!(matches!(second.state.as_str(), "queued" | "ready"));
+        assert_eq!(fetch_run_setup_state(&pool, "run-1").await, "succeeded");
     }
 
     #[tokio::test]
