@@ -116,4 +116,54 @@ describe("RunChatToolRail", () => {
       ),
     ).toBeTruthy();
   });
+
+  it("renders only the last three subagent messages", () => {
+    const { queryByText, getByText } = render(() => (
+      <RunChatToolRail
+        items={[
+          {
+            id: "tool-1",
+            label: "Task",
+            summary: "-> Task Keep panel compact",
+            status: "running",
+            isTask: true,
+            subagents: [
+              {
+                id: "subagent-1",
+                label: "Trim transcript (@fixer)",
+                status: "running",
+                messages: [
+                  {
+                    id: "msg-1",
+                    role: "assistant",
+                    content: "Oldest message",
+                  },
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "Older message",
+                  },
+                  {
+                    id: "msg-3",
+                    role: "assistant",
+                    content: "Recent message",
+                  },
+                  {
+                    id: "msg-4",
+                    role: "assistant",
+                    content: "Newest message",
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+      />
+    ));
+
+    expect(queryByText("Oldest message")).toBeNull();
+    expect(getByText("Older message")).toBeTruthy();
+    expect(getByText("Recent message")).toBeTruthy();
+    expect(getByText("Newest message")).toBeTruthy();
+  });
 });

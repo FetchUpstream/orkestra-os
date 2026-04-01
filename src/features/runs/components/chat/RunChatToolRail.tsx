@@ -3,6 +3,8 @@ import RunInlineLoader from "../../../../components/ui/RunInlineLoader";
 import { AppIcon } from "../../../../components/ui/icons";
 import RunChatMarkdown from "./RunChatMarkdown";
 
+const SUBAGENT_VISIBLE_MESSAGE_LIMIT = 3;
+
 export type RunChatToolRailItem = {
   id: string;
   label: string;
@@ -180,6 +182,9 @@ const RunChatToolRail: Component<RunChatToolRailProps> = (props) => {
                           const subagentStatus = normalizeStatus(
                             subagent.status,
                           );
+                          const visibleMessages = subagent.messages.slice(
+                            -SUBAGENT_VISIBLE_MESSAGE_LIMIT,
+                          );
                           return (
                             <section
                               class={`run-chat-tool-rail__subagent-panel${subagentStatus ? ` run-chat-tool-rail__subagent-panel--${subagentStatus}` : ""}`}
@@ -191,7 +196,7 @@ const RunChatToolRail: Component<RunChatToolRailProps> = (props) => {
                                 </p>
                               </div>
                               <div class="run-chat-tool-rail__subagent-body">
-                                <For each={subagent.messages}>
+                                <For each={visibleMessages}>
                                   {(message) => (
                                     <article class="run-chat-tool-rail__subagent-message">
                                       <Show
