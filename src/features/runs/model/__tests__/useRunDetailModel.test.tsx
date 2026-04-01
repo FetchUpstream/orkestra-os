@@ -900,8 +900,8 @@ describe("useRunDetailModel startup ownership", () => {
     subscribeCall?.onOutputChannel?.({
       runId: "run-1",
       ts: "2026-01-01T00:00:00.000Z",
-      event: "stream.disconnected",
-      data: { reason: "socket_closed" },
+      event: "message",
+      data: { type: "server.disconnected", reason: "socket_closed" },
     });
 
     await waitFor(() => {
@@ -911,8 +911,8 @@ describe("useRunDetailModel startup ownership", () => {
     subscribeCall?.onOutputChannel?.({
       runId: "run-1",
       ts: "2026-01-01T00:00:01.000Z",
-      event: "stream.reconnected",
-      data: { reason: "socket_recovered" },
+      event: "message",
+      data: { type: "server.connected", reason: "socket_recovered" },
     });
 
     await waitFor(() => {

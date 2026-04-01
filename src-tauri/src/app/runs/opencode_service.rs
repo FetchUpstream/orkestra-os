@@ -1769,16 +1769,23 @@ impl RunsOpenCodeService {
 
     fn compute_stream_connected(buffered_events: &[RawAgentEvent]) -> bool {
         for event in buffered_events.iter().rev() {
-            match event.event_name.as_str() {
-                "stream.disconnected" | "stream.reconnecting" | "stream.terminated" => {
+            let runtime_event_name = if event.event_name == "message" || event.event_name == "unknown" {
+                Self::parse_payload_property(&event.payload, &["type"])
+                    .unwrap_or_else(|| event.event_name.clone())
+            } else {
+                event.event_name.clone()
+            };
+
+            match runtime_event_name.as_str() {
+                "server.connected" | "stream.connected" | "stream.reconnected" => return true,
+                "server.disconnected" | "stream.disconnected" | "stream.reconnecting" | "stream.terminated" => {
                     return false
                 }
-                "stream.reconnected" => return true,
                 _ => {}
             }
         }
 
-        true
+        false
     }
 
     async fn fetch_session_history_with_client(
@@ -5006,7 +5013,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 
 #[cfg(test)]
 mod tests {
-    use super::{build_opencode_server_options, RunsOpenCodeService};
+    use super::{build_opencode_server_options, RawAgentEvent, RunsOpenCodeService};
     use crate::app::db::migrations::run_migrations;
     use crate::app::db::repositories::projects::ProjectsRepository;
     use crate::app::db::repositories::runs::RunsRepository;
@@ -5041,6 +5048,38 @@ mod tests {
         assert_eq!(options.port, 0);
         assert_eq!(options.env, env);
         assert_eq!(options.config, Some(serde_json::json!({})));
+    }
+
+    fn raw_agent_event(event_name: &str, payload: serde_json::Value) -> RawAgentEvent {
+        RawAgentEvent {
+            timestamp: "2026-01-01T00:00:00.000Z".to_string(),
+            event_name: event_name.to_string(),
+            payload: payload.to_string(),
+        }
+    }
+
+    #[test]
+    fn compute_stream_connected_reads_server_connected_from_message_payload() {
+        let buffered = vec![raw_agent_event(
+            "message",
+            serde_json::json!({
+                "type": "server.connected",
+            }),
+        )];
+
+        assert!(RunsOpenCodeService::compute_stream_connected(&buffered));
+    }
+
+    #[test]
+    fn compute_stream_connected_defaults_to_false_without_connection_events() {
+        let buffered = vec![raw_agent_event(
+            "message",
+            serde_json::json!({
+                "type": "message.updated",
+            }),
+        )];
+
+        assert!(!RunsOpenCodeService::compute_stream_connected(&buffered));
     }
 
     async fn setup_services() -> (RunsService, RunsOpenCodeService, SqlitePool, TempDir) {

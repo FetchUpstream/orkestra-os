@@ -973,10 +973,22 @@ export const reduceOpenCodeEvent = (
 
   switch (event.type) {
     case "server.connected":
+    case "stream.connected":
+    case "stream.reconnected":
       return {
         ...nextState,
         streamConnected: true,
         status: nextState.status === "connecting" ? "idle" : nextState.status,
+        lastSyncAt: Date.now(),
+      };
+
+    case "server.disconnected":
+    case "stream.disconnected":
+    case "stream.reconnecting":
+    case "stream.terminated":
+      return {
+        ...nextState,
+        streamConnected: false,
         lastSyncAt: Date.now(),
       };
 

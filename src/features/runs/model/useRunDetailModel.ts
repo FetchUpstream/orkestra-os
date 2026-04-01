@@ -1183,6 +1183,21 @@ export const useRunDetailModel = () => {
     }
   };
 
+  const resolveLatestAgentConnectionStatus = (
+    events: RunOpenCodeEvent[],
+  ): RunOpenCodeConnectionStatus | null => {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const connectionStatus = resolveAgentConnectionStatus(
+        toOpenCodeBusEvent(events[index]!).type,
+      );
+      if (connectionStatus) {
+        return connectionStatus;
+      }
+    }
+
+    return null;
+  };
+
   const extractSessionIdFromMessages = (messages: unknown[]): string | null => {
     for (const item of messages) {
       if (!isRecord(item)) {
@@ -1329,6 +1344,12 @@ export const useRunDetailModel = () => {
         return reduceOpenCodeEvent(nextState, item);
       }, hydrated);
     });
+
+    const hydratedConnectionStatus =
+      resolveLatestAgentConnectionStatus(replaySource);
+    if (hydratedConnectionStatus) {
+      setAgentConnectionStatus(hydratedConnectionStatus);
+    }
   };
 
   const clearPendingAgentSnapshotHydrate = (): void => {

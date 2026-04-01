@@ -362,4 +362,20 @@ describe("agentReducer text/reasoning lifecycle", () => {
       status: "rejected",
     });
   });
+
+  it("stores connection state for server disconnect and reconnect events", () => {
+    const disconnected = reduceOpenCodeEvent(createEmptyAgentStore(null), {
+      type: "server.disconnected",
+      properties: { reason: "socket_closed" },
+    });
+
+    expect(disconnected.streamConnected).toBe(false);
+
+    const reconnected = reduceOpenCodeEvent(disconnected, {
+      type: "server.connected",
+      properties: { reason: "socket_recovered" },
+    });
+
+    expect(reconnected.streamConnected).toBe(true);
+  });
 });
