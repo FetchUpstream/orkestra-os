@@ -68,6 +68,7 @@ const createModelStub = (options?: {
     displayKey?: string | null;
     runNumber?: number | null;
     taskTitle?: string | null;
+    runState?: string | null;
     status?:
       | "queued"
       | "preparing"
@@ -166,6 +167,7 @@ const createModelStub = (options?: {
       runNumber:
         options?.run?.runNumber !== undefined ? options.run.runNumber : 123,
       taskTitle: options?.run?.taskTitle,
+      runState: options?.run?.runState,
     }),
     task: () => ({ title: options?.task?.title ?? "Ship redesign" }),
     backHref: () => "/tasks/task-1",
@@ -412,6 +414,37 @@ describe("NewRunDetailScreen git actions", () => {
           "Normal commit actions are unavailable until the rebase is completed or aborted.",
         ),
       ).toBeTruthy();
+      expect(screen.queryByText("Commit changes")).toBeNull();
+      expect(screen.queryByText("Rebase onto main")).toBeNull();
+      expect(screen.queryByText("Merge into main")).toBeNull();
+    });
+    topbar.cleanup();
+  });
+
+  it("disables the primary action from run state while rebase resolution is active", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        run: {
+          runState: "resolving_rebase_conflicts",
+        },
+        gitStatus: {
+          isWorktreeClean: false,
+          isRebaseAllowed: true,
+          isMergeAllowed: true,
+          requiresRebase: false,
+        },
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    await waitFor(() => {
+      const button = screen.getByRole("button", {
+        name: "Rebase in progress",
+      });
+      expect(button.hasAttribute("disabled")).toBe(true);
       expect(screen.queryByText("Commit changes")).toBeNull();
       expect(screen.queryByText("Rebase onto main")).toBeNull();
       expect(screen.queryByText("Merge into main")).toBeNull();

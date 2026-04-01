@@ -9,6 +9,7 @@ import {
   onCleanup,
   type Component,
 } from "solid-js";
+import type { RunState } from "../../../app/lib/runs";
 import NewRunChatWorkspace from "../components/NewRunChatWorkspace";
 import RunDiffDrawerPanel from "../components/RunDiffDrawerPanel";
 import { useRunDetailModel } from "../model/useRunDetailModel";
@@ -38,6 +39,7 @@ const LOG_NEAR_BOTTOM_THRESHOLD = 32;
 const LOG_NEW_ROW_HIGHLIGHT_MS = 1_000;
 const LOG_RENDER_CHUNK_SIZE = 100;
 const LOG_PREPEND_TRIGGER_THRESHOLD = 96;
+const REBASING_RUN_STATE: RunState = "resolving_rebase_conflicts";
 
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
@@ -263,6 +265,9 @@ const NewRunDetailScreen: Component = () => {
     overlaySize() === "maximized" ? "Restore panel" : "Maximize panel",
   );
   const gitStatus = createMemo(() => model.git.status());
+  const isRunRebaseResolving = createMemo(
+    () => model.run()?.runState === REBASING_RUN_STATE,
+  );
   const baseBranchName = createMemo(() => {
     const status = gitStatus();
     const name = status?.sourceBranch.name?.trim();
@@ -294,7 +299,7 @@ const NewRunDetailScreen: Component = () => {
       };
     }
 
-    if (status.isRebaseInProgress) {
+    if (isRunRebaseResolving() || status.isRebaseInProgress) {
       return {
         headline: "Rebase in progress",
         support:
@@ -382,10 +387,16 @@ const NewRunDetailScreen: Component = () => {
     const status = gitStatus();
     return status?.requiresRebase === true;
   });
-  const primaryAction = createMemo<"commit" | "rebase" | "merge" | null>(() => {
+  const primaryAction = createMemo<
+    "commit" | "rebase" | "merge" | "rebasing" | null
+  >(() => {
     const status = gitStatus();
     if (!status || isWorkflowCompleted()) {
       return null;
+    }
+
+    if (isRunRebaseResolving()) {
+      return "rebasing";
     }
 
     if (status.isRebaseInProgress) {
@@ -1438,6 +1449,16 @@ const NewRunDetailScreen: Component = () => {
                                   >
                                     MERGED
                                   </p>
+                                </Show>
+                                <Show when={primaryAction() === "rebasing"}>
+                                  <button
+                                    type="button"
+                                    class="run-chat-git-drawer__button"
+                                    disabled
+                                    aria-live="polite"
+                                  >
+                                    Rebase in progress
+                                  </button>
                                 </Show>
                                 <Show when={primaryAction() === "rebase"}>
                                   <button
