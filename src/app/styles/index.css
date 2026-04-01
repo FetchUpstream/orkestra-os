@@ -1321,11 +1321,10 @@ textarea::placeholder {
     -apple-system,
     "Segoe UI",
     sans-serif;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .project-task-repo {
@@ -1730,7 +1729,7 @@ textarea::placeholder {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   color: var(--text);
-  font-size: 1.5rem;
+  font-size: 0.75rem;
   line-height: 1.15;
   padding: 6px 8px;
   font-weight: 700;
