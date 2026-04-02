@@ -1,15 +1,60 @@
 # Orkestra OS
 
-Desktop app for orchestrating AI agents with OpenCode across projects, tasks, and runs.
+Orkestra OS is a desktop app for orchestrating AI coding agents across real software projects.
 
-> Official support is currently limited to **Ubuntu 24.04 LTS**. It should work on newer Ubuntu releases, but expect some instability while compatibility continues to be tested.
+It gives you a structured workspace for managing projects, planning tasks, running agents, reviewing changes, and shipping work — all from a local desktop app built around repeatable agent workflows.
 
-License: MIT OR Apache-2.0
+> Official support is currently limited to **Ubuntu 24.04 LTS**. It may work on newer Ubuntu releases, but compatibility outside Ubuntu 24.04 should still be considered experimental.
 
 > [!WARNING]
-> **Alpha software:** Orkestra OS is an active work in progress and is provided as-is. Behavior, workflows, data formats, and supported integrations may change at any time, and parts of the app may be incomplete, unstable, or replaced before a final release.
+> **Alpha software:** Orkestra OS is under active development and is provided as-is. Features, workflows, data formats, and integrations may change without notice. Expect rough edges, incomplete areas, and breaking changes while the product matures.
 
-## Quick installation
+## Why Orkestra OS?
+
+Most AI coding tools are optimized for single prompts and short-lived sessions.
+
+Orkestra OS is built for ongoing project execution:
+
+* multiple projects
+* structured task management
+* repeatable agent runs
+* code review before merge
+* local desktop workflows with source control built in
+
+It is designed for developers who want more control than a chat window, while still moving quickly with AI agents.
+
+## Current focus
+
+Today, Orkestra OS is focused on **OpenCode-powered** agent workflows.
+
+You can:
+
+* organize work by project, task, and run
+* define task notes and implementation context
+* launch agent runs against a repository
+* inspect logs, terminal activity, git changes, and diffs
+* commit, rebase, and merge through the run workflow
+
+Support for additional harnesses is planned later. Right now, **OpenCode is required** for agent execution.
+
+## Features
+
+* **Project workspaces** with repository settings, environment variables, and default run configuration
+* **Task management** with statuses, dependencies, repository targeting, and implementation notes
+* **Kanban board workflow** for moving tasks across execution states
+* **Run workspaces** with:
+
+  * chat
+  * logs
+  * terminal
+  * git views
+  * diff review
+  * commit / rebase / merge flow
+* **Local desktop app** packaging via Tauri
+
+## Quick install
+
+Install from Cloudsmith:
 
 ```bash
 curl -1sLf \
@@ -19,33 +64,35 @@ curl -1sLf \
 sudo apt-get install orkestraos=0.0.1
 ```
 
-## Features
-
-- Project workspace with repositories, environment variables, and default run settings
-- Task management with statuses, dependencies, repository targeting, and implementation notes
-- Kanban board for moving work across task states
-- Run workspace with chat, logs, terminal, git diff views, and commit/rebase flow
-- Local desktop packaging with Tauri
-
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/)
-- [Bun](https://bun.sh/)
-- [Rust](https://www.rust-lang.org/tools/install) and Cargo
-- [OpenCode](https://opencode.ai/)
+To use Orkestra OS effectively, install the following first:
 
-OpenCode is required for runs and agent workflows. Right now this project only supports OpenCode; support for additional harnesses is planned.
+* [Node.js](https://nodejs.org/)
+* [Bun](https://bun.sh/)
+* [Rust and Cargo](https://www.rust-lang.org/tools/install)
+* [OpenCode](https://opencode.ai/)
 
-After installing OpenCode, configure a provider and model before creating runs. Useful docs:
+## OpenCode setup
 
-- https://opencode.ai/docs/
-- https://opencode.ai/docs/providers/
-- https://opencode.ai/docs/models/
-- https://opencode.ai/docs/cli/
+Orkestra OS currently depends on OpenCode for agent runs.
+
+After installing OpenCode, make sure you configure:
+
+* a provider
+* a model
+* any required credentials for that provider
+
+Useful OpenCode docs:
+
+* [OpenCode documentation](https://opencode.ai/docs/)
+* [Providers](https://opencode.ai/docs/providers/)
+* [Models](https://opencode.ai/docs/models/)
+* [CLI documentation](https://opencode.ai/docs/cli/)
 
 ## Development
 
-Run the desktop app with Tauri:
+Run the desktop app in development mode:
 
 ```bash
 bun run tauri dev
@@ -59,7 +106,7 @@ Build the frontend:
 bun run build
 ```
 
-Build the desktop app bundle:
+Build the desktop application bundle:
 
 ```bash
 bun run tauri build
@@ -70,3 +117,25 @@ bun run tauri build
 ```bash
 bun run test
 ```
+
+## Status
+
+Orkestra OS is in **alpha**.
+
+That means:
+
+* APIs and internal data structures may change
+* workflows may be revised significantly
+* not all planned functionality is implemented yet
+* stability and compatibility are still improving
+
+This repository is being developed in public as the product takes shape.
+
+## License
+
+Licensed under either of:
+
+* [MIT](LICENSE-MIT)
+* [Apache-2.0](LICENSE-APACHE)
+
+at your option.
