@@ -15,8 +15,9 @@ use tracing::warn;
 
 pub fn map_app_error(error: AppError) -> String {
     let mapped_message = mapped_message_for_error(&error);
-    log_mapped_error(&error, &mapped_message);
-    maybe_capture_handled_error(&error);
+    let should_capture = should_capture_handled_error(&error);
+    log_mapped_error(&error, &mapped_message, should_capture);
+    maybe_capture_handled_error(&error, should_capture);
 
     mapped_message
 }
@@ -31,7 +32,7 @@ fn mapped_message_for_error(error: &AppError) -> String {
     }
 }
 
-fn log_mapped_error(error: &AppError, mapped_message: &str) {
+fn log_mapped_error(error: &AppError, mapped_message: &str, sentry_capture: bool) {
     let (error_kind, message_for_log) = match error {
         AppError::Validation(message) => ("validation", Some(message.as_str())),
         AppError::NotFound(message) => ("not_found", Some(message.as_str())),
@@ -45,15 +46,19 @@ fn log_mapped_error(error: &AppError, mapped_message: &str) {
         operation = "map_app_error",
         error_kind = error_kind,
         user_safe = error.is_user_safe(),
-        sentry_capture = !error.is_user_safe(),
+        sentry_capture = sentry_capture,
         safe_message = message_for_log.unwrap_or("<redacted>"),
         mapped_message = mapped_message,
         "Mapped top-level app error"
     );
 }
 
-fn maybe_capture_handled_error(error: &AppError) {
-    if !error.is_user_safe() {
+fn should_capture_handled_error(error: &AppError) -> bool {
+    crate::app::errors::sentry::should_capture_handled_error(error)
+}
+
+fn maybe_capture_handled_error(error: &AppError, should_capture: bool) {
+    if should_capture {
         crate::app::errors::sentry::capture_handled_error(error);
     }
 }
@@ -64,7 +69,7 @@ pub fn map_result<T>(result: Result<T, AppError>) -> Result<T, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{map_app_error, map_result};
+    use super::{map_app_error, map_result, should_capture_handled_error};
     use crate::app::errors::AppError;
 
     #[test]
@@ -136,5 +141,32 @@ mod tests {
         let mapped = map_result(result);
 
         assert_eq!(mapped, Err("missing name".to_string()));
+    }
+
+    #[test]
+    fn suppresses_routine_user_safe_validation_from_sentry() {
+        let err = AppError::validation("run_id is required");
+        assert!(!should_capture_handled_error(&err));
+    }
+
+    #[test]
+    fn captures_allowlisted_opencode_not_found_as_handled() {
+        let err = AppError::not_found("OpenCode run handle not found");
+        assert!(should_capture_handled_error(&err));
+    }
+
+    #[test]
+    fn maps_lifecycle_conflict_to_exact_message() {
+        let err = AppError::conflict("OpenCode run runtime shutdown is in progress");
+
+        let mapped = map_app_error(err);
+
+        assert_eq!(mapped, "OpenCode run runtime shutdown is in progress");
+    }
+
+    #[test]
+    fn suppresses_routine_user_safe_conflict_from_sentry() {
+        let err = AppError::conflict("project key already exists");
+        assert!(!should_capture_handled_error(&err));
     }
 }
