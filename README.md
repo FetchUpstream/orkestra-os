@@ -2,10 +2,22 @@
 
 Desktop app for orchestrating AI agents with OpenCode across projects, tasks, and runs.
 
+> Official support is currently limited to **Ubuntu 24.04 LTS**. It should work on newer Ubuntu releases, but expect some instability while compatibility continues to be tested.
+
 License: MIT OR Apache-2.0
 
 > [!WARNING]
 > **Alpha software:** Orkestra OS is an active work in progress and is provided as-is. Behavior, workflows, data formats, and supported integrations may change at any time, and parts of the app may be incomplete, unstable, or replaced before a final release.
+
+## Quick installation
+
+```bash
+curl -1sLf \
+  'https://dl.cloudsmith.io/public/fetchupstream/orkestra-os/setup.deb.sh' \
+  | sudo -E bash
+
+sudo apt-get install orkestraos=0.0.1
+```
 
 ## Features
 
