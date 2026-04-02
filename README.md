@@ -68,9 +68,6 @@ sudo apt-get install orkestraos
 
 To use Orkestra OS effectively, install the following first:
 
-* [Node.js](https://nodejs.org/)
-* [Bun](https://bun.sh/)
-* [Rust and Cargo](https://www.rust-lang.org/tools/install)
 * [OpenCode](https://opencode.ai/)
 
 ## OpenCode setup
@@ -91,6 +88,11 @@ Useful OpenCode docs:
 * [CLI documentation](https://opencode.ai/docs/cli/)
 
 ## Development
+
+
+* [Node.js](https://nodejs.org/)
+* [Bun](https://bun.sh/)
+* [Rust and Cargo](https://www.rust-lang.org/tools/install)
 
 Run the desktop app in development mode:
 
