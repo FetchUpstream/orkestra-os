@@ -12,6 +12,51 @@
 
 use thiserror::Error;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UserSafeTelemetryClass {
+    OpencodePermissionSessionMismatch,
+    OpencodeProjectRepoConfigDrift,
+    WorktreeConflictRetryExhausted,
+    OpencodeRuntimeNotFound,
+    MergeRebaseValidationFailure,
+    OpencodeLifecycleRaceConflict,
+}
+
+impl UserSafeTelemetryClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OpencodePermissionSessionMismatch => "opencode_permission_session_mismatch",
+            Self::OpencodeProjectRepoConfigDrift => "opencode_project_repo_config_drift",
+            Self::WorktreeConflictRetryExhausted => "worktree_conflict_retry_exhausted",
+            Self::OpencodeRuntimeNotFound => "opencode_runtime_not_found",
+            Self::MergeRebaseValidationFailure => "merge_rebase_validation_failure",
+            Self::OpencodeLifecycleRaceConflict => "opencode_lifecycle_race_conflict",
+        }
+    }
+
+    pub fn subsystem(self) -> &'static str {
+        match self {
+            Self::OpencodePermissionSessionMismatch => "opencode.runtime",
+            Self::OpencodeProjectRepoConfigDrift => "opencode.discovery",
+            Self::WorktreeConflictRetryExhausted => "worktrees",
+            Self::OpencodeRuntimeNotFound => "opencode.runtime",
+            Self::MergeRebaseValidationFailure => "runs.merge",
+            Self::OpencodeLifecycleRaceConflict => "opencode.runtime",
+        }
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::OpencodePermissionSessionMismatch => "permission_session_mismatch",
+            Self::OpencodeProjectRepoConfigDrift => "project_repo_config_drift",
+            Self::WorktreeConflictRetryExhausted => "worktree_conflict_retry_exhausted",
+            Self::OpencodeRuntimeNotFound => "runtime_handle_not_found",
+            Self::MergeRebaseValidationFailure => "merge_rebase_validation_failure",
+            Self::OpencodeLifecycleRaceConflict => "lifecycle_race_conflict",
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("{0}")]
@@ -118,10 +163,154 @@ impl AppError {
             Self::Validation(_) | Self::NotFound(_) | Self::Conflict(_)
         )
     }
+
+    pub fn user_safe_telemetry_class(&self) -> Option<UserSafeTelemetryClass> {
+        match self {
+            Self::Validation(message) => classify_user_safe_validation(message),
+            Self::NotFound(message) => classify_user_safe_not_found(message),
+            Self::Conflict(message) => classify_user_safe_conflict(message),
+            _ => None,
+        }
+    }
+}
+
+fn classify_user_safe_validation(message: &str) -> Option<UserSafeTelemetryClass> {
+    if message == "OpenCode session not initialized for run" {
+        return Some(UserSafeTelemetryClass::OpencodePermissionSessionMismatch);
+    }
+
+    if message.starts_with("project default repository ")
+        || message.starts_with("failed to canonicalize project git repository root")
+        || message.starts_with("failed to load OpenCode config:")
+        || message.starts_with("failed to list OpenCode providers:")
+    {
+        return Some(UserSafeTelemetryClass::OpencodeProjectRepoConfigDrift);
+    }
+
+    if message.contains("worktree creation retries exhausted due to repeated conflicts") {
+        return Some(UserSafeTelemetryClass::WorktreeConflictRetryExhausted);
+    }
+
+    if message.starts_with("failed to start rebase:")
+        || message.starts_with("rebase failed:")
+        || message.starts_with("failed to inspect rebase index:")
+        || message.starts_with("failed to commit rebase step:")
+        || message.starts_with("failed to finish rebase:")
+        || message.starts_with("failed to analyze merge:")
+        || message.starts_with("cannot merge: source repository HEAD must be on source branch")
+        || message.starts_with("failed to resolve source branch reference:")
+        || message.starts_with("failed to load worktree commit:")
+        || message.starts_with("failed to open worktree repository:")
+        || message.starts_with("failed to open source repository:")
+        || message.starts_with("failed to inspect repository HEAD:")
+        || message.starts_with("failed to execute git merge:")
+        || message.starts_with("failed to inspect worktree status:")
+        || message.starts_with("failed to inspect rebase conflicts:")
+    {
+        return Some(UserSafeTelemetryClass::MergeRebaseValidationFailure);
+    }
+
+    None
+}
+
+fn classify_user_safe_not_found(message: &str) -> Option<UserSafeTelemetryClass> {
+    if message == "OpenCode run handle not found" {
+        return Some(UserSafeTelemetryClass::OpencodeRuntimeNotFound);
+    }
+
+    None
+}
+
+fn classify_user_safe_conflict(message: &str) -> Option<UserSafeTelemetryClass> {
+    if message == "OpenCode run runtime is shutting down and cannot accept new work"
+        || message == "OpenCode service is shutting down and cannot accept new work"
+        || message == "OpenCode run runtime shutdown is in progress"
+        || message == "OpenCode run runtime is still in active use and cannot be shut down"
+        || message == "OpenCode run runtime is no longer eligible for cleanup shutdown"
+    {
+        return Some(UserSafeTelemetryClass::OpencodeLifecycleRaceConflict);
+    }
+
+    None
 }
 
 impl From<sqlx::Error> for AppError {
     fn from(value: sqlx::Error) -> Self {
         Self::Database(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppError, UserSafeTelemetryClass};
+
+    #[test]
+    fn classifies_opencode_permission_session_mismatch() {
+        let err = AppError::validation("OpenCode session not initialized for run");
+        assert_eq!(
+            err.user_safe_telemetry_class(),
+            Some(UserSafeTelemetryClass::OpencodePermissionSessionMismatch)
+        );
+    }
+
+    #[test]
+    fn classifies_project_repo_config_drift() {
+        let err = AppError::validation(
+            "project default repository path is invalid or stale: /tmp/repo (missing)",
+        );
+        assert_eq!(
+            err.user_safe_telemetry_class(),
+            Some(UserSafeTelemetryClass::OpencodeProjectRepoConfigDrift)
+        );
+    }
+
+    #[test]
+    fn classifies_worktree_conflict_retry_exhausted() {
+        let err = AppError::validation(
+            "failed to create worktree 'ABC/test': worktree creation retries exhausted due to repeated conflicts",
+        );
+        assert_eq!(
+            err.user_safe_telemetry_class(),
+            Some(UserSafeTelemetryClass::WorktreeConflictRetryExhausted)
+        );
+    }
+
+    #[test]
+    fn classifies_opencode_runtime_not_found() {
+        let err = AppError::not_found("OpenCode run handle not found");
+        assert_eq!(
+            err.user_safe_telemetry_class(),
+            Some(UserSafeTelemetryClass::OpencodeRuntimeNotFound)
+        );
+    }
+
+    #[test]
+    fn classifies_merge_rebase_validation_failure() {
+        let err = AppError::validation("failed to start rebase: lock failure");
+        assert_eq!(
+            err.user_safe_telemetry_class(),
+            Some(UserSafeTelemetryClass::MergeRebaseValidationFailure)
+        );
+    }
+
+    #[test]
+    fn classifies_opencode_lifecycle_race_conflict() {
+        let err = AppError::conflict("OpenCode run runtime shutdown is in progress");
+        assert_eq!(
+            err.user_safe_telemetry_class(),
+            Some(UserSafeTelemetryClass::OpencodeLifecycleRaceConflict)
+        );
+    }
+
+    #[test]
+    fn does_not_classify_routine_user_safe_validation() {
+        let err = AppError::validation("run_id is required");
+        assert_eq!(err.user_safe_telemetry_class(), None);
+    }
+
+    #[test]
+    fn does_not_classify_routine_user_safe_conflict() {
+        let err = AppError::conflict("project key already exists");
+        assert_eq!(err.user_safe_telemetry_class(), None);
     }
 }
