@@ -1,6 +1,6 @@
 # Orkestra OS
 
-Desktop app for planning projects, organizing tasks, and running agent-assisted workflows locally.
+Desktop app for orchestrating AI agents with OpenCode across projects, tasks, and runs.
 
 License: MIT OR Apache-2.0
 
