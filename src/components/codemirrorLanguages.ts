@@ -1,3 +1,15 @@
+// Copyright 2026 Louis Scheepers
+//
+// This file is dual-licensed under:
+//
+// 1. The MIT License (MIT)
+//    See: https://opensource.org/licenses/MIT
+//
+// 2. The Apache License, Version 2.0
+//    See: https://www.apache.org/licenses/LICENSE-2.0
+//
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
 import { javascript } from "@codemirror/lang-javascript";
