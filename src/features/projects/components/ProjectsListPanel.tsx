@@ -1,3 +1,15 @@
+// Copyright 2026 Louis Scheepers
+//
+// This file is dual-licensed under:
+//
+// 1. The MIT License (MIT)
+//    See: https://opensource.org/licenses/MIT
+//
+// 2. The Apache License, Version 2.0
+//    See: https://www.apache.org/licenses/LICENSE-2.0
+//
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 import { A } from "@solidjs/router";
 import { For, Show, type Component } from "solid-js";
 import type { Project } from "../../../app/lib/projects";
