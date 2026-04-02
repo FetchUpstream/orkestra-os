@@ -11,8 +11,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 export const SUPPORT_LINKS = {
-  githubRepository: "https://github.com/fetchupstream/orkestraos",
-  issueReporting:
-    "https://github.com/fetchupstream/orkestraos/issues/new/choose",
-  documentation: "https://github.com/fetchupstream/orkestraos",
+  githubRepository: "https://github.com/FetchUpstream/orkestra-os",
+  issueReporting: "https://github.com/FetchUpstream/orkestra-os/issues/new",
+  documentation: "https://github.com/FetchUpstream/orkestra-os",
 } as const;

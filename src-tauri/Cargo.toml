@@ -1,6 +1,6 @@
 [package]
 name = "orkestraos"
-version = "0.1.0"
+version = "0.0.1"
 description = "Desktop app for orchestrating AI agents with OpenCode across projects, tasks, and runs."
 authors = ["Louis Scheepers"]
 homepage = "https://github.com/FetchUpstream/orkestra-os"
