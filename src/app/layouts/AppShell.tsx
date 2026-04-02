@@ -115,6 +115,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   const [isMobile, setIsMobile] = createSignal(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = createSignal(false);
   const [projects, setProjects] = createSignal<Project[]>([]);
+  const [hasLoadedProjects, setHasLoadedProjects] = createSignal(false);
   const [boardSearchQuery, setBoardSearchQuery] = createSignal("");
   const [taskDetailTopbarConfig, setTaskDetailTopbarConfig] =
     createSignal<TaskDetailTopbarConfig | null>(null);
@@ -168,6 +169,8 @@ const AppShellContent: Component<AppShellProps> = (props) => {
       }
     } catch (error) {
       console.warn("Failed to load projects during startup", error);
+    } finally {
+      setHasLoadedProjects(true);
     }
 
     const onTaskDetailTopbarConfig = (event: Event) => {
@@ -339,6 +342,26 @@ const AppShellContent: Component<AppShellProps> = (props) => {
         detail: { query },
       }),
     );
+  };
+
+  const isStartupProjectSetupBlocked = () => {
+    const dependencyState = openCodeDependency.state();
+    if (
+      !hasLoadedProjects() ||
+      projects().length > 0 ||
+      location.pathname !== "/projects"
+    ) {
+      return false;
+    }
+    return dependencyState !== "available";
+  };
+
+  const isStartupProjectSetupBooting = () => {
+    if (!isStartupProjectSetupBlocked()) {
+      return false;
+    }
+    const dependencyState = openCodeDependency.state();
+    return dependencyState === "unknown" || dependencyState === "checking";
   };
 
   const shellTitle = () => {
@@ -778,8 +801,14 @@ const AppShellContent: Component<AppShellProps> = (props) => {
         onConfirm={() => void onConfirmCloseWarning()}
       />
       <OpenCodeRequiredModal
-        isOpen={openCodeDependency.isModalVisible}
-        isChecking={() => openCodeDependency.state() === "checking"}
+        isOpen={() =>
+          openCodeDependency.isModalVisible() || isStartupProjectSetupBlocked()
+        }
+        isChecking={() =>
+          openCodeDependency.state() === "checking" ||
+          openCodeDependency.state() === "unknown"
+        }
+        variant={() => (isStartupProjectSetupBooting() ? "booting" : "setup")}
         reason={openCodeDependency.reason}
         onRetry={() => {
           void openCodeDependency.refresh(true);

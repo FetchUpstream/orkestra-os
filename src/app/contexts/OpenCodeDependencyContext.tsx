@@ -45,6 +45,7 @@ export const OpenCodeDependencyProvider: Component<{
   const [state, setState] = createSignal<OpenCodeDependencyStatus>("unknown");
   const [reason, setReason] = createSignal("");
   const [isModalRequested, setIsModalRequested] = createSignal(false);
+  let inflightRefresh: Promise<OpenCodeDependencyStatus> | null = null;
 
   const isUnavailableState = (value: OpenCodeDependencyStatus): boolean =>
     value === "missing" || value === "failure" || value === "checking";
@@ -52,24 +53,35 @@ export const OpenCodeDependencyProvider: Component<{
   const refresh = async (
     forceRefresh = false,
   ): Promise<OpenCodeDependencyStatus> => {
-    setState("checking");
-    try {
-      const result = await getOpenCodeDependencyStatus(forceRefresh);
-      setState(result.state);
-      setReason(result.reason?.trim() ?? "");
-      if (result.state === "available") {
-        setIsModalRequested(false);
-      }
-      return result.state;
-    } catch (error) {
-      setState("failure");
-      setReason(
-        error instanceof Error
-          ? error.message.trim()
-          : "Failed to check whether OpenCode is available.",
-      );
-      return "failure";
+    if (inflightRefresh && !forceRefresh) {
+      return inflightRefresh;
     }
+
+    setState("checking");
+    const refreshPromise = (async () => {
+      try {
+        const result = await getOpenCodeDependencyStatus(forceRefresh);
+        setState(result.state);
+        setReason(result.reason?.trim() ?? "");
+        if (result.state === "available") {
+          setIsModalRequested(false);
+        }
+        return result.state;
+      } catch (error) {
+        setState("failure");
+        setReason(
+          error instanceof Error
+            ? error.message.trim()
+            : "Failed to check whether OpenCode is available.",
+        );
+        return "failure";
+      } finally {
+        inflightRefresh = null;
+      }
+    })();
+
+    inflightRefresh = refreshPromise;
+    return refreshPromise;
   };
 
   const ensureAvailableForRequiredFlow = async (): Promise<boolean> => {
@@ -79,7 +91,7 @@ export const OpenCodeDependencyProvider: Component<{
     }
 
     let nextState: OpenCodeDependencyStatus = currentState;
-    if (currentState === "unknown") {
+    if (currentState === "unknown" || currentState === "checking") {
       nextState = await refresh(false);
     }
 

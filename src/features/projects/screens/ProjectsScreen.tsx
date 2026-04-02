@@ -12,6 +12,7 @@
 
 import { useNavigate, useParams } from "@solidjs/router";
 import { Show, createEffect, type Component } from "solid-js";
+import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
 import CreateProjectPanel from "../components/CreateProjectPanel";
 import { useProjectsPageModel } from "../model/useProjectsPageModel";
 
@@ -19,6 +20,14 @@ const ProjectsScreen: Component = () => {
   const params = useParams();
   const navigate = useNavigate();
   const model = useProjectsPageModel();
+  const openCodeDependency = useOpenCodeDependency();
+
+  const shouldBlockCreatePanel = () => {
+    if ((params.projectId?.trim() ?? "") !== "") return false;
+    if (model.mode() !== "create") return false;
+    if (model.projects().length > 0) return false;
+    return openCodeDependency.state() !== "available";
+  };
 
   createEffect(() => {
     const projectId = params.projectId?.trim() ?? "";
@@ -39,50 +48,52 @@ const ProjectsScreen: Component = () => {
   return (
     <>
       <div>
-        <CreateProjectPanel
-          mode={model.mode}
-          name={model.name}
-          keyValue={model.key}
-          description={model.description}
-          envVars={model.envVars}
-          repositories={model.repositories}
-          defaultRepoIndex={model.defaultRepoIndex}
-          error={model.error}
-          runDefaultsError={model.runDefaultsError}
-          isSubmitting={model.isSubmitting}
-          isDeletingProject={model.isDeletingProject}
-          isLoadingRunDefaults={model.isLoadingRunDefaults}
-          hasRunSelectionOptions={model.hasRunSelectionOptions}
-          projectKeyError={model.projectKeyError}
-          defaultRunProvider={model.defaultRunProvider}
-          defaultRunAgent={model.defaultRunAgent}
-          defaultRunModel={model.defaultRunModel}
-          runAgentOptions={model.runAgentOptions}
-          runProviderOptions={model.runProviderOptions}
-          visibleRunModelOptions={model.visibleRunModelOptions}
-          runDefaultsValidationError={model.runDefaultsValidationError}
-          projectEnvVarError={model.projectEnvVarError}
-          setDescription={model.setDescription}
-          setTouched={model.setTouched}
-          setDefaultRepoIndex={model.setDefaultRepoIndex}
-          setDefaultRunProvider={model.setDefaultRunProvider}
-          setDefaultRunAgent={model.setDefaultRunAgent}
-          setDefaultRunModel={model.setDefaultRunModel}
-          updateName={model.updateName}
-          updateKey={model.updateKey}
-          addEnvVar={model.addEnvVar}
-          addRepository={model.addRepository}
-          removeEnvVar={model.removeEnvVar}
-          removeRepository={model.removeRepository}
-          updateEnvVar={model.updateEnvVar}
-          updateRepository={model.updateRepository}
-          onDeleteProject={model.onOpenDeleteCurrentProject}
-          resetToCreateMode={() => {
-            model.resetForm();
-            void navigate("/projects");
-          }}
-          onSubmit={model.onSubmit}
-        />
+        <Show when={!shouldBlockCreatePanel()}>
+          <CreateProjectPanel
+            mode={model.mode}
+            name={model.name}
+            keyValue={model.key}
+            description={model.description}
+            envVars={model.envVars}
+            repositories={model.repositories}
+            defaultRepoIndex={model.defaultRepoIndex}
+            error={model.error}
+            runDefaultsError={model.runDefaultsError}
+            isSubmitting={model.isSubmitting}
+            isDeletingProject={model.isDeletingProject}
+            isLoadingRunDefaults={model.isLoadingRunDefaults}
+            hasRunSelectionOptions={model.hasRunSelectionOptions}
+            projectKeyError={model.projectKeyError}
+            defaultRunProvider={model.defaultRunProvider}
+            defaultRunAgent={model.defaultRunAgent}
+            defaultRunModel={model.defaultRunModel}
+            runAgentOptions={model.runAgentOptions}
+            runProviderOptions={model.runProviderOptions}
+            visibleRunModelOptions={model.visibleRunModelOptions}
+            runDefaultsValidationError={model.runDefaultsValidationError}
+            projectEnvVarError={model.projectEnvVarError}
+            setDescription={model.setDescription}
+            setTouched={model.setTouched}
+            setDefaultRepoIndex={model.setDefaultRepoIndex}
+            setDefaultRunProvider={model.setDefaultRunProvider}
+            setDefaultRunAgent={model.setDefaultRunAgent}
+            setDefaultRunModel={model.setDefaultRunModel}
+            updateName={model.updateName}
+            updateKey={model.updateKey}
+            addEnvVar={model.addEnvVar}
+            addRepository={model.addRepository}
+            removeEnvVar={model.removeEnvVar}
+            removeRepository={model.removeRepository}
+            updateEnvVar={model.updateEnvVar}
+            updateRepository={model.updateRepository}
+            onDeleteProject={model.onOpenDeleteCurrentProject}
+            resetToCreateMode={() => {
+              model.resetForm();
+              void navigate("/projects");
+            }}
+            onSubmit={model.onSubmit}
+          />
+        </Show>
       </div>
       <Show when={model.isDeleteModalOpen()}>
         <div

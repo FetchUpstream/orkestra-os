@@ -12,6 +12,7 @@
 
 import { useNavigate } from "@solidjs/router";
 import { createMemo, createSignal, onMount, type JSX } from "solid-js";
+import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
 import { buildBoardHref } from "../../../app/lib/boardNavigation";
 import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
 import {
@@ -48,6 +49,8 @@ import {
 
 export const useProjectsPageModel = () => {
   const navigate = useNavigate();
+  const openCodeDependency = useOpenCodeDependency();
+  let runSelectionOptionsRequestVersion = 0;
   const [mode, setMode] = createSignal<"create" | "edit">("create");
   const [editingProjectId, setEditingProjectId] = createSignal<string | null>(
     null,
@@ -135,6 +138,9 @@ export const useProjectsPageModel = () => {
   );
 
   const runDefaultsValidationError = createMemo(() => {
+    if (openCodeDependency.state() !== "available") {
+      return "";
+    }
     if (runProviderOptions().length === 0) {
       return "No run providers are available. Configure providers before saving.";
     }
@@ -207,16 +213,34 @@ export const useProjectsPageModel = () => {
 
   const loadRunSelectionOptions = async () => {
     const projectId = editingProjectId()?.trim() || "";
-    if (!projectId) {
-      setRunAgentOptions([]);
-      setRunProviderOptions([]);
-      setRunModelOptions([]);
+    const catalogProjectId = projectId;
+    const requestVersion = ++runSelectionOptionsRequestVersion;
+    const isCurrentRequest = () =>
+      requestVersion === runSelectionOptionsRequestVersion &&
+      (editingProjectId()?.trim() || "") === projectId;
+
+    if (!projectId && openCodeDependency.state() !== "available") {
+      setIsLoadingRunDefaults(true);
       setRunDefaultsError("");
-      return;
+      const isAvailable =
+        await openCodeDependency.ensureAvailableForRequiredFlow();
+      if (!isCurrentRequest()) {
+        return;
+      }
+      if (!isAvailable) {
+        setRunAgentOptions([]);
+        setRunProviderOptions([]);
+        setRunModelOptions([]);
+        setIsLoadingRunDefaults(false);
+        return;
+      }
     }
 
-    const cachedOptions = readRunSelectionOptionsCache(projectId);
+    const cachedOptions = readRunSelectionOptionsCache(catalogProjectId);
     if (cachedOptions) {
+      if (!isCurrentRequest()) {
+        return;
+      }
       setRunProviderOptions(cachedOptions.providers);
       setRunAgentOptions(cachedOptions.agents);
       setRunModelOptions(cachedOptions.models);
@@ -232,7 +256,10 @@ export const useProjectsPageModel = () => {
     setIsLoadingRunDefaults(true);
     setRunDefaultsError("");
     try {
-      const options = await getRunSelectionOptionsWithCache(projectId);
+      const options = await getRunSelectionOptionsWithCache(catalogProjectId);
+      if (!isCurrentRequest()) {
+        return;
+      }
       setRunProviderOptions(options.providers);
       setRunAgentOptions(options.agents);
       setRunModelOptions(options.models);
@@ -242,12 +269,17 @@ export const useProjectsPageModel = () => {
         modelId: defaultRunModel(),
       });
     } catch {
+      if (!isCurrentRequest()) {
+        return;
+      }
       setRunAgentOptions([]);
       setRunProviderOptions([]);
       setRunModelOptions([]);
       setRunDefaultsError("Failed to load run defaults.");
     } finally {
-      setIsLoadingRunDefaults(false);
+      if (isCurrentRequest()) {
+        setIsLoadingRunDefaults(false);
+      }
     }
   };
 

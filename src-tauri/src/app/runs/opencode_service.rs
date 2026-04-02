@@ -3195,6 +3195,34 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         Ok(status)
     }
 
+    async fn wait_for_client_health(
+        client: &OpencodeClient,
+        context: &str,
+    ) -> Result<(), AppError> {
+        let max_health_wait = Duration::from_secs(10);
+        let health_retry_interval = Duration::from_millis(250);
+        let health_start = Instant::now();
+
+        loop {
+            match client.global().health(RequestOptions::default()).await {
+                Ok(_) => return Ok(()),
+                Err(err) => {
+                    let health_err = AnyhowError::new(OpenCodeServiceError::HealthCheck {
+                        source: err,
+                    })
+                    .context(context.to_string());
+                    if health_start.elapsed() >= max_health_wait {
+                        let elapsed_ms = health_start.elapsed().as_millis();
+                        return Err(app_error_from_anyhow(health_err.context(format!(
+                            "OpenCode health check failed after retries (elapsed_ms={elapsed_ms})"
+                        ))));
+                    }
+                    sleep(health_retry_interval).await;
+                }
+            }
+        }
+    }
+
     async fn with_ephemeral_client<T, F>(&self, cwd: PathBuf, op: F) -> Result<T, AppError>
     where
         F: for<'a> FnOnce(
@@ -3218,6 +3246,9 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         .map_err(|source| OpenCodeServiceError::ClientCreate { source })
         .context("while creating ephemeral OpenCode client")
         .map_err(app_error_from_anyhow)?;
+
+        Self::wait_for_client_health(&client, "while waiting for ephemeral OpenCode health")
+            .await?;
 
         op(&client).await
     }
@@ -3292,7 +3323,11 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         &self,
         project_id: &str,
     ) -> Result<RunSelectionCatalogResponseDto, AppError> {
-        let canonical_repo_root = self.resolve_project_repo_root(project_id).await?;
+        let canonical_repo_root = if project_id.trim().is_empty() {
+            self.fallback_ephemeral_cwd()
+        } else {
+            self.resolve_project_repo_root(project_id).await?
+        };
         info!(
             target: "opencode.discovery",
             marker = "start",
@@ -3610,30 +3645,11 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         .with_context(|| format!("while creating OpenCode client for run '{}'", run.id))
         .map_err(app_error_from_anyhow)?;
 
-        let max_health_wait = Duration::from_secs(10);
-        let health_retry_interval = Duration::from_millis(250);
-        let health_start = Instant::now();
-
-        loop {
-            match client.global().health(RequestOptions::default()).await {
-                Ok(_) => break,
-                Err(err) => {
-                    let health_err =
-                        AnyhowError::new(OpenCodeServiceError::HealthCheck { source: err })
-                            .context(format!(
-                                "while waiting for OpenCode health on run '{}'",
-                                run.id
-                            ));
-                    if health_start.elapsed() >= max_health_wait {
-                        let elapsed_ms = health_start.elapsed().as_millis();
-                        return Err(app_error_from_anyhow(health_err.context(format!(
-                            "OpenCode health check failed after retries (elapsed_ms={elapsed_ms})"
-                        ))));
-                    }
-                    sleep(health_retry_interval).await;
-                }
-            }
-        }
+        Self::wait_for_client_health(
+            &client,
+            &format!("while waiting for OpenCode health on run '{}'", run.id),
+        )
+        .await?;
 
         let (event_tx, _rx) = tokio::sync::broadcast::channel(EVENT_BROADCAST_CAPACITY);
         let subscribers = Arc::new(Mutex::new(HashMap::new()));

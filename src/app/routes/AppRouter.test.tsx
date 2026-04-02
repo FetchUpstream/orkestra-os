@@ -403,6 +403,9 @@ describe("app routing and shell", () => {
           ],
         });
       }
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
       return Promise.resolve(null);
     });
   });
@@ -2058,6 +2061,9 @@ describe("app routing and shell", () => {
           },
         ]);
       }
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
       return Promise.resolve(null);
     });
 
@@ -2192,6 +2198,9 @@ describe("app routing and shell", () => {
             created_at: "2026-01-02T00:00:00.000Z",
           },
         ]);
+      }
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
       }
       return Promise.resolve(null);
     });
@@ -2330,6 +2339,9 @@ describe("app routing and shell", () => {
           client_request_id: "req-1",
         });
       }
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
       return Promise.resolve(null);
     });
 
@@ -2435,6 +2447,9 @@ describe("app routing and shell", () => {
           queued_at: "2026-01-02T00:00:01.000Z",
           client_request_id: "req-11",
         });
+      }
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
       }
       return Promise.resolve(null);
     });
@@ -2756,6 +2771,9 @@ describe("app routing and shell", () => {
       if (command === "set_task_status") {
         return Promise.reject(new Error("save failed"));
       }
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
       return Promise.resolve(null);
     });
 
@@ -2843,6 +2861,9 @@ describe("app routing and shell", () => {
           status: "doing",
           display_key: "ALP-44",
         });
+      }
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
       }
       return Promise.resolve(null);
     });
@@ -3023,6 +3044,9 @@ describe("app routing and shell", () => {
       }
       if (command === "set_task_status") {
         return new Promise(() => {});
+      }
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
       }
       return Promise.resolve(null);
     });
@@ -4041,6 +4065,9 @@ describe("app routing and shell", () => {
           error_message: null,
         });
       }
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
       return Promise.resolve(null);
     });
 
@@ -4200,6 +4227,9 @@ describe("app routing and shell", () => {
           created_at: "2026-01-03T00:00:00.000Z",
         });
       }
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
       return Promise.resolve(null);
     });
 
@@ -4315,6 +4345,9 @@ describe("app routing and shell", () => {
           created_at: "2026-01-03T00:00:00.000Z",
         });
       }
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
       return Promise.resolve(null);
     });
 
@@ -4414,6 +4447,9 @@ describe("app routing and shell", () => {
         ]);
       }
       if (command === "delete_run") return Promise.resolve(null);
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
       return Promise.resolve(null);
     });
 
@@ -5164,6 +5200,113 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("keeps create-project run defaults blocked until OpenCode dependency check finishes", async () => {
+    let dependencyChecks = 0;
+    let resolveDependencyCheck:
+      | ((value: { state: string; reason?: string | null }) => void)
+      | undefined;
+
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") return Promise.resolve([]);
+      if (command === "get_opencode_dependency_status") {
+        dependencyChecks += 1;
+        if (dependencyChecks === 1) {
+          return new Promise<{ state: string; reason?: string | null }>(
+            (resolve) => {
+              resolveDependencyCheck = resolve;
+            },
+          );
+        }
+        return Promise.resolve({ state: "available" });
+      }
+      if (command === "get_project_opencode_selection_catalog") {
+        expect(args).toEqual({ projectId: "" });
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/projects");
+      expect(
+        screen.getByRole("heading", { name: "Getting OpenCode ready" }),
+      ).toBeTruthy();
+      expect(
+        screen.getByText("Just a moment while we prepare project setup."),
+      ).toBeTruthy();
+    });
+
+    expect(
+      screen.queryByRole("heading", { name: "Create Project" }),
+    ).toBeNull();
+    expect(screen.queryByText("Loading run defaults...")).toBeNull();
+    expect(
+      screen.queryByText(
+        "No run providers are available. Configure providers before saving.",
+      ),
+    ).toBeNull();
+
+    expect(resolveDependencyCheck).toBeTypeOf("function");
+    resolveDependencyCheck?.({ state: "available" });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Create Project" }),
+      ).toBeTruthy();
+      expect(screen.getByText("Loading run defaults...")).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText("Project default run provider"),
+      ).toBeTruthy();
+      expect(screen.getByRole("option", { name: "Provider A" })).toBeTruthy();
+      expect(screen.getByRole("option", { name: "Agent A" })).toBeTruthy();
+    });
+  });
+
+  it("shows OpenCode setup guidance when startup dependency check fails", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") return Promise.resolve([]);
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({
+          state: "failure",
+          reason: "OpenCode health check failed after retries.",
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Set up OpenCode to continue" }),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(
+          "Runs and agent workflows require OpenCode. It is not available on this system yet, so this part of the app stays locked until setup is complete.",
+        ),
+      ).toBeTruthy();
+    });
+
+    expect(
+      screen.queryByRole("heading", { name: "Create Project" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
+  });
+
   it("keeps shell content stable when startup project load fails", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     invokeMock.mockImplementation((command: string) => {
@@ -5231,6 +5374,9 @@ describe("app routing and shell", () => {
   it("loads project-create form with run selection catalog", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") return Promise.resolve([]);
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
       if (command === "get_project_opencode_selection_catalog") {
         return Promise.resolve({
           agents: [{ id: "agent-a", name: "Agent A" }],
@@ -5259,6 +5405,9 @@ describe("app routing and shell", () => {
   it("keeps project-create form interactive when backend create fails", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") return Promise.resolve([]);
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
       if (command === "get_project_opencode_selection_catalog")
         return Promise.resolve({
           agents: [{ id: "agent-a", name: "Agent A" }],
@@ -5288,6 +5437,9 @@ describe("app routing and shell", () => {
   it("keeps internal project-create failures from crashing the route", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") return Promise.resolve([]);
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
       if (command === "get_project_opencode_selection_catalog")
         return Promise.resolve({
           agents: [{ id: "agent-a", name: "Agent A" }],

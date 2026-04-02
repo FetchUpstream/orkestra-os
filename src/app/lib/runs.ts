@@ -1450,17 +1450,30 @@ export const ensureRunOpenCode = async (
 export const getOpenCodeDependencyStatus = async (
   forceRefresh = false,
 ): Promise<OpenCodeDependencyStatusResult> => {
-  const response = await invoke<{
-    state?: string | null;
-    reason?: string | null;
-  }>("get_opencode_dependency_status", { forceRefresh });
+  const response = await invoke<
+    | {
+        state?: string | null;
+        reason?: string | null;
+      }
+    | null
+    | undefined
+  >("get_opencode_dependency_status", { forceRefresh });
+
+  const state =
+    typeof response?.state === "string" ? response.state.trim() : "";
+  const reason =
+    typeof response?.reason === "string" ? response.reason.trim() : "";
+
+  if (state === "available" || state === "missing" || state === "failure") {
+    return {
+      state,
+      reason: reason || undefined,
+    };
+  }
 
   return {
-    state:
-      response.state === "missing" || response.state === "failure"
-        ? response.state
-        : "available",
-    reason: response.reason ?? undefined,
+    state: "failure",
+    reason: reason || "Failed to check whether OpenCode is available.",
   };
 };
 

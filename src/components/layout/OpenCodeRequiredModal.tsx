@@ -48,6 +48,7 @@ const OPENCODE_DOC_LINKS = [
 type OpenCodeRequiredModalProps = {
   isOpen: Accessor<boolean>;
   isChecking: Accessor<boolean>;
+  variant?: Accessor<"setup" | "booting">;
   reason: Accessor<string>;
   onRetry: () => void;
 };
@@ -55,6 +56,9 @@ type OpenCodeRequiredModalProps = {
 const OpenCodeRequiredModal: Component<OpenCodeRequiredModalProps> = (
   props,
 ) => {
+  const variant = () => props.variant?.() ?? "setup";
+  const isBooting = () => variant() === "booting";
+
   return (
     <Show when={props.isOpen()}>
       <div class="projects-modal-backdrop" role="presentation">
@@ -71,69 +75,82 @@ const OpenCodeRequiredModal: Component<OpenCodeRequiredModalProps> = (
               id="opencode-required-modal-title"
               class="task-delete-modal-title"
             >
-              Set up OpenCode to continue
+              {isBooting()
+                ? "Getting OpenCode ready"
+                : "Set up OpenCode to continue"}
             </h2>
           </div>
           <div id="opencode-required-modal-copy" class="space-y-4 text-sm">
-            <p class="project-placeholder-text m-0">
-              Runs and agent workflows require OpenCode. It is not available on
-              this system yet, so this part of the app stays locked until setup
-              is complete.
-            </p>
+            <Show
+              when={!isBooting()}
+              fallback={
+                <p class="project-placeholder-text m-0">
+                  Just a moment while we prepare project setup.
+                </p>
+              }
+            >
+              <>
+                <p class="project-placeholder-text m-0">
+                  Runs and agent workflows require OpenCode. It is not available
+                  on this system yet, so this part of the app stays locked until
+                  setup is complete.
+                </p>
 
-            <div class="border-base-content/10 bg-base-100/55 rounded-none border px-3 py-3">
-              <p class="text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
-                Setup steps
-              </p>
-              <ol class="project-placeholder-text mt-2 list-decimal space-y-2 pl-5">
-                <li>Install OpenCode on this machine.</li>
-                <li>Configure a provider and choose a model.</li>
-                <li>
-                  Or use OpenCode Zen for a simpler path with recommended
-                  models.
-                </li>
-                <li>Return here and click Check again.</li>
-              </ol>
-            </div>
-
-            <div class="border-base-content/10 bg-base-100/55 rounded-none border px-3 py-3">
-              <p class="text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
-                Helpful links
-              </p>
-              <ul class="mt-2 space-y-2">
-                <For each={OPENCODE_DOC_LINKS}>
-                  {(link) => (
-                    <li class="project-placeholder-text">
-                      <a
-                        href={link.href}
-                        class="link link-hover font-medium"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {link.label}
-                      </a>
-                      <span class="text-base-content/60">
-                        {" "}
-                        — {link.description}
-                      </span>
+                <div class="border-base-content/10 bg-base-100/55 rounded-none border px-3 py-3">
+                  <p class="text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                    Setup steps
+                  </p>
+                  <ol class="project-placeholder-text mt-2 list-decimal space-y-2 pl-5">
+                    <li>Install OpenCode on this machine.</li>
+                    <li>Configure a provider and choose a model.</li>
+                    <li>
+                      Or use OpenCode Zen for a simpler path with recommended
+                      models.
                     </li>
-                  )}
-                </For>
-              </ul>
-              <p class="project-placeholder-text mt-3">
-                Docs home:{" "}
-                <a
-                  href="https://opencode.ai/docs/"
-                  class="link link-hover"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  opencode.ai/docs
-                </a>
-              </p>
-            </div>
+                    <li>Return here and click Check again.</li>
+                  </ol>
+                </div>
+
+                <div class="border-base-content/10 bg-base-100/55 rounded-none border px-3 py-3">
+                  <p class="text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                    Helpful links
+                  </p>
+                  <ul class="mt-2 space-y-2">
+                    <For each={OPENCODE_DOC_LINKS}>
+                      {(link) => (
+                        <li class="project-placeholder-text">
+                          <a
+                            href={link.href}
+                            class="link link-hover font-medium"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {link.label}
+                          </a>
+                          <span class="text-base-content/60">
+                            {" "}
+                            — {link.description}
+                          </span>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                  <p class="project-placeholder-text mt-3">
+                    Docs home:{" "}
+                    <a
+                      href="https://opencode.ai/docs/"
+                      class="link link-hover"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      opencode.ai/docs
+                    </a>
+                  </p>
+                </div>
+              </>
+            </Show>
           </div>
-          <Show when={props.reason()}>
+          <Show when={!isBooting() && props.reason()}>
             {(message) => (
               <div class="projects-error border-error/35 bg-error/10 m-0 text-sm">
                 <p class="m-0 text-[11px] font-semibold tracking-[0.18em] uppercase">
@@ -143,16 +160,18 @@ const OpenCodeRequiredModal: Component<OpenCodeRequiredModalProps> = (
               </div>
             )}
           </Show>
-          <div class="task-delete-modal-actions">
-            <button
-              type="button"
-              class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
-              onClick={props.onRetry}
-              disabled={props.isChecking()}
-            >
-              {props.isChecking() ? "Checking..." : "Check again"}
-            </button>
-          </div>
+          <Show when={!isBooting()}>
+            <div class="task-delete-modal-actions">
+              <button
+                type="button"
+                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
+                onClick={props.onRetry}
+                disabled={props.isChecking()}
+              >
+                {props.isChecking() ? "Checking..." : "Check again"}
+              </button>
+            </div>
+          </Show>
         </section>
       </div>
     </Show>
