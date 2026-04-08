@@ -1,2 +1,9 @@
 node_modules
 dist
+.vscode/
+.idea/
+.fleet/
+*.code-workspace
+*.iws
+.zed/
+.history/
