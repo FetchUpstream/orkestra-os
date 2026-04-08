@@ -198,6 +198,7 @@ fn classify_user_safe_validation(message: &str) -> Option<UserSafeTelemetryClass
         || message.starts_with("failed to finish rebase:")
         || message.starts_with("failed to analyze merge:")
         || message.starts_with("cannot merge: source repository HEAD must be on source branch")
+        || message.starts_with("failed to fast-forward source branch '")
         || message.starts_with("failed to resolve source branch reference:")
         || message.starts_with("failed to load worktree commit:")
         || message.starts_with("failed to open worktree repository:")

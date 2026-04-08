@@ -212,13 +212,6 @@ impl RunsMergeService {
         let source_ref_name = Self::source_ref_name(&context.source_branch);
 
         if source_oid != worktree_oid {
-            Self::ensure_head_on_worktree_branch(&context.source_repo, &context.source_branch)
-                .map_err(|_| {
-                    AppError::validation(format!(
-                        "cannot merge: source repository HEAD must be on source branch '{}'",
-                        context.source_branch
-                    ))
-                })?;
             let mut source_ref = context
                 .source_repo
                 .find_reference(&source_ref_name)
@@ -246,7 +239,7 @@ impl RunsMergeService {
             }
 
             if analysis.is_fast_forward() {
-                Self::fast_forward_source_branch_worktree(
+                Self::fast_forward_source_branch(
                     &context.source_repo,
                     &context.source_branch,
                     worktree_oid,
@@ -510,11 +503,15 @@ impl RunsMergeService {
         Ok(())
     }
 
-    fn fast_forward_source_branch_worktree(
+    fn fast_forward_source_branch(
         repo: &Repository,
         branch_name: &str,
         target_oid: git2::Oid,
     ) -> Result<(), AppError> {
+        if !Self::is_head_on_branch(repo, branch_name)? {
+            return Self::update_branch_reference(repo, branch_name, target_oid);
+        }
+
         let workdir = repo.workdir().ok_or_else(|| {
             AppError::validation("source repository has no working directory".to_string())
         })?;
@@ -542,21 +539,60 @@ impl RunsMergeService {
         })
     }
 
+    fn update_branch_reference(
+        repo: &Repository,
+        branch_name: &str,
+        target_oid: git2::Oid,
+    ) -> Result<(), AppError> {
+        let ref_name = Self::source_ref_name(branch_name);
+        let mut reference = repo.find_reference(&ref_name).map_err(|err| {
+            AppError::validation(format!(
+                "failed to resolve source branch reference: {err}"
+            ))
+        })?;
+        reference
+            .set_target(
+                target_oid,
+                &format!("orkestra: fast-forward {branch_name} to {target_oid}"),
+            )
+            .map_err(|err| {
+                AppError::validation(format!(
+                    "failed to fast-forward source branch '{branch_name}': {err}"
+                ))
+            })?;
+        Ok(())
+    }
+
     fn source_merge_block_reason(context: &MergeContext) -> Result<Option<String>, AppError> {
+        if !Self::is_head_on_branch(&context.source_repo, &context.source_branch)? {
+            return Ok(None);
+        }
+
         if let Some(reason) = Self::dirty_worktree_disable_reason(&context.source_repo)? {
             return Ok(Some(format!("source branch worktree is dirty: {reason}")));
         }
 
-        if Self::ensure_head_on_worktree_branch(&context.source_repo, &context.source_branch)
-            .is_err()
-        {
-            return Ok(Some(format!(
-                "source repository HEAD must be on source branch '{}' before merge",
-                context.source_branch
-            )));
+        Ok(None)
+    }
+
+    fn is_head_on_branch(repo: &Repository, branch_name: &str) -> Result<bool, AppError> {
+        let head = match repo.head() {
+            Ok(head) => head,
+            Err(err) if matches!(err.code(), ErrorCode::UnbornBranch | ErrorCode::NotFound) => {
+                return Ok(false);
+            }
+            Err(err) => {
+                return Err(AppError::validation(format!(
+                    "failed to inspect repository HEAD: {err}"
+                )));
+            }
+        };
+
+        if !head.is_branch() {
+            return Ok(false);
         }
 
-        Ok(None)
+        Ok(head.shorthand().unwrap_or_default() == branch_name)
     }
 
     fn is_rebase_in_progress(state: RepositoryState) -> bool {
@@ -902,6 +938,14 @@ mod tests {
             .iter()
             .map(|entry| format!("{:?}", entry.status()))
             .collect()
+    }
+
+    fn create_and_checkout_branch(repo_path: &Path, branch_name: &str) {
+        let repo = Repository::open(repo_path).unwrap();
+        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch(branch_name, &head_commit, false).unwrap();
+        repo.set_head(&format!("refs/heads/{branch_name}")).unwrap();
+        repo.checkout_head(None).unwrap();
     }
 
     #[tokio::test]
@@ -1325,6 +1369,97 @@ mod tests {
         assert_eq!(head.target().unwrap(), worktree_oid);
         let statuses = repo_status_codes(&repo_path);
         assert!(statuses.is_empty(), "source repo statuses: {statuses:?}");
+    }
+
+    #[tokio::test]
+    async fn status_remains_mergeable_when_source_repo_has_other_branch_checked_out() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None, Some("main"))
+            .await
+            .unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        create_and_checkout_branch(&repo_path, "other-branch");
+        append_commit(
+            &worktree_path,
+            "README.md",
+            "worktree-change\n",
+            "worktree change",
+        );
+
+        let status = merge_service.get_merge_status(&run.id).await.unwrap();
+
+        assert_eq!(status.source_branch, "main");
+        assert_eq!(status.state, "mergeable");
+        assert!(status.can_merge);
+        assert_eq!(status.behind_count, 0);
+
+        let repo = Repository::open(&repo_path).unwrap();
+        let head = repo.head().unwrap();
+        assert_eq!(head.shorthand().unwrap_or_default(), "other-branch");
+    }
+
+    #[tokio::test]
+    async fn merge_succeeds_without_checking_out_selected_source_branch_in_main_repo() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None, Some("main"))
+            .await
+            .unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        create_and_checkout_branch(&repo_path, "other-branch");
+        write_unstaged_change(&repo_path, "README.md", "dirty-other-branch\n");
+        append_commit(
+            &worktree_path,
+            "README.md",
+            "worktree-change\n",
+            "worktree change",
+        );
+
+        let merge_response = merge_service
+            .merge_into_source_branch(&run.id)
+            .await
+            .unwrap();
+        assert_eq!(merge_response.state, "completing");
+
+        let repo = Repository::open(&repo_path).unwrap();
+        let main_oid = repo
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .target()
+            .unwrap();
+        let worktree_oid = repo
+            .find_reference(&format!("refs/heads/{}", run.worktree_id.unwrap()))
+            .unwrap()
+            .target()
+            .unwrap();
+        assert_eq!(main_oid, worktree_oid);
+
+        let head = repo.head().unwrap();
+        assert!(head.is_branch());
+        assert_eq!(head.shorthand().unwrap_or_default(), "other-branch");
+
+        let statuses = repo_status_codes(&repo_path);
+        assert!(
+            !statuses.is_empty(),
+            "expected unrelated checked-out branch to remain dirty"
+        );
     }
 
     #[tokio::test]
