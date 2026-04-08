@@ -11,7 +11,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::app::projects::dto::{
-    CloneProjectRequest, CreateProjectRequest, ProjectDetailsDto, ProjectDto,
+    CloneProjectRequest, CreateProjectRequest, LocalDirectorySearchResultDto,
+    ProjectDetailsDto, ProjectDto, SearchLocalDirectoriesRequest,
     SearchProjectFilesRequest, UpdateProjectRequest,
 };
 use crate::app::runs::dto::RunSelectionCatalogResponseDto;
@@ -82,6 +83,19 @@ pub async fn search_project_files(
                 &input.query,
                 input.limit,
             )
+            .await,
+    )
+}
+
+#[tauri::command]
+pub async fn search_local_directories(
+    state: tauri::State<'_, AppState>,
+    input: SearchLocalDirectoriesRequest,
+) -> Result<Vec<LocalDirectorySearchResultDto>, String> {
+    let service = context::projects_service(&state);
+    map_result(
+        service
+            .search_local_directories(&input.query, input.limit)
             .await,
     )
 }

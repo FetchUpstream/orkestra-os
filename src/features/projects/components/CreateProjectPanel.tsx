@@ -13,6 +13,7 @@
 import { For, Index, Show, type Component, type JSX } from "solid-js";
 import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
 import { AppIcon } from "../../../components/ui/icons";
+import RepositoryPathPicker from "./RepositoryPathPicker";
 import type { EnvVarInput, RepoInput } from "../utils/projectForm";
 
 type Props = {
@@ -62,6 +63,12 @@ type Props = {
     field: keyof RepoInput,
     value: string,
   ) => void;
+  searchRepositoryDirectories: (
+    query: string,
+    limit?: number,
+  ) => Promise<
+    Array<{ path: string; directoryName: string; parentPath: string }>
+  >;
   onDeleteProject: () => void;
   resetToCreateMode: () => void;
   onSubmit: JSX.EventHandler<HTMLFormElement, SubmitEvent>;
@@ -377,19 +384,15 @@ const CreateProjectPanel: Component<Props> = (props) => (
                     <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                       <span class="field-label-text">Repository path</span>
                     </span>
-                    <input
-                      placeholder="Repository path"
+                    <RepositoryPathPicker
                       value={repo().path}
-                      onInput={(event) =>
-                        props.updateRepository(
-                          index,
-                          "path",
-                          event.currentTarget.value,
-                        )
-                      }
+                      placeholder="Repository path"
+                      ariaLabel={`Repository ${index + 1} path`}
                       required
-                      aria-label={`Repository ${index + 1} path`}
-                      aria-required="true"
+                      onInput={(value) =>
+                        props.updateRepository(index, "path", value)
+                      }
+                      searchDirectories={props.searchRepositoryDirectories}
                     />
                   </label>
                   <label class="projects-field">

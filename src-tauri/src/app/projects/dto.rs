@@ -95,3 +95,16 @@ pub struct SearchProjectFilesRequest {
     pub query: String,
     pub limit: Option<usize>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SearchLocalDirectoriesRequest {
+    pub query: String,
+    pub limit: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LocalDirectorySearchResultDto {
+    pub path: String,
+    pub directory_name: String,
+    pub parent_path: String,
+}

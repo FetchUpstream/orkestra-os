@@ -16,6 +16,7 @@ import {
   createProject,
   deleteProject,
   getProject,
+  searchLocalDirectories,
   updateProject,
   type CreateProjectInput,
   type Project,
@@ -241,6 +242,33 @@ describe("projects contract", () => {
 
     expect(invokeMock).toHaveBeenCalledWith("delete_project", {
       id: "project-1",
+    });
+  });
+
+  it("sends search_local_directories payload and normalizes results", async () => {
+    invokeMock.mockResolvedValue([
+      {
+        path: "/Users/test/code/orkestra-os",
+        directory_name: "orkestra-os",
+        parent_path: "/Users/test/code",
+      },
+    ]);
+
+    await expect(
+      searchLocalDirectories({ query: "orkestra-os", limit: 12 }),
+    ).resolves.toEqual([
+      {
+        path: "/Users/test/code/orkestra-os",
+        directoryName: "orkestra-os",
+        parentPath: "/Users/test/code",
+      },
+    ]);
+
+    expect(invokeMock).toHaveBeenCalledWith("search_local_directories", {
+      input: {
+        query: "orkestra-os",
+        limit: 12,
+      },
     });
   });
 });

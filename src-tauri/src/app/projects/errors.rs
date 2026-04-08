@@ -51,6 +51,17 @@ pub enum ProjectFileSearchError {
 }
 
 #[derive(Debug, Error)]
+pub enum DirectorySearchError {
+    #[error("local directory search failed")]
+    TaskJoin {
+        #[source]
+        source: tokio::task::JoinError,
+    },
+    #[error("local directory matcher unavailable")]
+    MatcherUnavailable,
+}
+
+#[derive(Debug, Error)]
 pub enum ProjectsServiceError {
     #[error("{0}")]
     Validation(&'static str),
@@ -81,6 +92,11 @@ pub enum ProjectsServiceError {
         #[source]
         source: ProjectFileSearchError,
     },
+    #[error("failed to search local directories")]
+    SearchLocalDirectories {
+        #[source]
+        source: DirectorySearchError,
+    },
     #[error("failed to remove project artifacts")]
     RemoveProjectArtifacts {
         #[source]
@@ -101,6 +117,10 @@ impl From<ProjectsServiceError> for AppError {
                     AppError::validation(source.to_string())
                 }
             },
+            ProjectsServiceError::SearchLocalDirectories { source } => match source {
+                DirectorySearchError::MatcherUnavailable
+                | DirectorySearchError::TaskJoin { .. } => AppError::validation(source.to_string()),
+            },
             ProjectsServiceError::QueryProjectData { source }
             | ProjectsServiceError::PersistProjectData { source }
             | ProjectsServiceError::CloneProject { source }
@@ -115,7 +135,9 @@ impl From<ProjectsServiceError> for AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProjectFileSearchError, ProjectsRepositoryError, ProjectsServiceError};
+    use super::{
+        DirectorySearchError, ProjectFileSearchError, ProjectsRepositoryError, ProjectsServiceError,
+    };
     use crate::app::errors::AppError;
     use std::error::Error;
 
@@ -146,5 +168,15 @@ mod tests {
             app_error.to_string(),
             "repository path does not exist for 'main'"
         );
+    }
+
+    #[test]
+    fn local_directory_search_errors_remain_validation_messages() {
+        let err = ProjectsServiceError::SearchLocalDirectories {
+            source: DirectorySearchError::MatcherUnavailable,
+        };
+
+        let app_error = AppError::from(err);
+        assert_eq!(app_error.to_string(), "local directory matcher unavailable");
     }
 }
