@@ -458,10 +458,60 @@ fn create_worktree_with_new_branch(
     start_point: git2::Oid,
 ) -> Result<(), Error> {
     let start_commit = repo.find_commit(start_point)?;
-    let branch = repo.branch(worktree_id, &start_commit, false)?;
-    let mut options = WorktreeAddOptions::new();
-    options.reference(Some(branch.get()));
-    repo.worktree(worktree_id, worktree_path, Some(&mut options))?;
+    let worktree_add_result = {
+        let branch = repo.branch(worktree_id, &start_commit, false)?;
+        let mut options = WorktreeAddOptions::new();
+        options.reference(Some(branch.get()));
+        repo.worktree(worktree_id, worktree_path, Some(&mut options))
+    };
+
+    if let Err(worktree_add_error) = worktree_add_result {
+        warn!(
+            subsystem = "worktrees",
+            operation = "create",
+            phase = "rollback_start",
+            worktree_id,
+            branch_name = worktree_id,
+            worktree_path = %worktree_path.display(),
+            source = worktree_add_error.message(),
+            "Worktree add failed after branch creation; rolling back branch"
+        );
+
+        match cleanup_newly_created_branch(repo, worktree_id) {
+            Ok(()) => {
+                info!(
+                    subsystem = "worktrees",
+                    operation = "create",
+                    phase = "rollback_success",
+                    worktree_id,
+                    branch_name = worktree_id,
+                    "Rolled back newly created branch after worktree add failure"
+                );
+                return Err(worktree_add_error);
+            }
+            Err(rollback_error) => {
+                warn!(
+                    subsystem = "worktrees",
+                    operation = "create",
+                    phase = "rollback_failed",
+                    worktree_id,
+                    branch_name = worktree_id,
+                    worktree_path = %worktree_path.display(),
+                    source = rollback_error.message(),
+                    "Failed to roll back newly created branch after worktree add failure"
+                );
+                return Err(Error::from_str(&format!(
+                    "worktree add failed for '{}' at '{}': {}; branch rollback failed for '{}': {}",
+                    worktree_id,
+                    worktree_path.display(),
+                    worktree_add_error.message(),
+                    worktree_id,
+                    rollback_error.message()
+                )));
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1122,6 +1172,37 @@ mod tests {
         let linked_head = linked_repo.head().unwrap();
         let linked_commit = linked_head.peel_to_commit().unwrap();
         assert_eq!(linked_commit.id(), feature_commit_id);
+
+        let _ = fs::remove_dir_all(&temp_root);
+    }
+
+    #[test]
+    fn create_worktree_with_new_branch_rolls_back_branch_on_worktree_add_failure() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "orkestra-worktrees-create-rollback-branch-tests-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp_root).unwrap();
+
+        let repo_root = temp_root.join("repo");
+        let repo = seed_repo_with_initial_commit(&repo_root);
+        let start_point = repo.head().unwrap().peel_to_commit().unwrap().id();
+
+        let blocking_path = temp_root.join("blocking-file");
+        fs::write(&blocking_path, "not a directory").unwrap();
+
+        let worktree_id = "PRJ/failing-worktree";
+        let invalid_worktree_path = blocking_path.join("child");
+
+        let result = super::create_worktree_with_new_branch(
+            &repo,
+            worktree_id,
+            &invalid_worktree_path,
+            start_point,
+        );
+
+        assert!(result.is_err());
+        assert!(repo.find_branch(worktree_id, BranchType::Local).is_err());
 
         let _ = fs::remove_dir_all(&temp_root);
     }
