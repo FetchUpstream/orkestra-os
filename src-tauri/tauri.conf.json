@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "orkestraos",
+  "productName": "Orkestra OS",
   "version": "0.0.1+2",
   "identifier": "com.fetchupstream.orkestraos",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "orkestraos",
+        "title": "Orkestra OS",
         "width": 800,
         "height": 600,
         "maximized": true
