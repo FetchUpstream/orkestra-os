@@ -14,7 +14,7 @@ use crate::app::db::repositories::runs::RunsRepository;
 use crate::app::errors::AppError;
 use crate::app::runs::dto::RunDto;
 use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext};
-use crate::app::worktrees::dto::{CreateWorktreeRequest, RemoveWorktreeRequest};
+use crate::app::worktrees::dto::{CreateWorktreeRequest, LocalBranchDto, RemoveWorktreeRequest};
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
 use tracing::{info, warn};
@@ -39,6 +39,7 @@ impl RunsService {
         agent_id: Option<&str>,
         provider_id: Option<&str>,
         model_id: Option<&str>,
+        source_branch: Option<&str>,
     ) -> Result<RunDto, AppError> {
         let task_id = task_id.trim();
         if task_id.is_empty() {
@@ -55,6 +56,7 @@ impl RunsService {
         let selected_agent_id = normalize_optional_nonempty(agent_id);
         let selected_provider_id = normalize_optional_nonempty(provider_id);
         let selected_model_id = normalize_optional_nonempty(model_id);
+        let selected_source_branch = normalize_optional_nonempty(source_branch);
         let (provider_id, model_id) = match (selected_provider_id, selected_model_id) {
             (Some(provider_id), Some(model_id)) => (Some(provider_id), Some(model_id)),
             _ => (None, None),
@@ -71,6 +73,7 @@ impl RunsService {
             project_key: task_context.project_key,
             repo_path: repo_path.clone(),
             branch_title: task_context.branch_title,
+            source_branch: selected_source_branch,
         })?;
 
         let new_run = NewRun {
@@ -123,8 +126,27 @@ impl RunsService {
         provider_id: Option<&str>,
         model_id: Option<&str>,
     ) -> Result<RunDto, AppError> {
-        self.create_run_with_defaults(task_id, agent_id, provider_id, model_id)
+        self.create_run_with_defaults(task_id, agent_id, provider_id, model_id, None)
             .await
+    }
+
+    pub async fn list_task_source_branches(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<LocalBranchDto>, AppError> {
+        let task_id = task_id.trim();
+        if task_id.is_empty() {
+            return Err(AppError::validation("task_id is required"));
+        }
+
+        let task_context = self
+            .repository
+            .get_task_run_context(task_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("task not found"))?;
+
+        self.worktrees_service
+            .list_local_branches(&task_context.repository_path)
     }
 
     pub async fn list_task_runs(&self, task_id: &str) -> Result<Vec<RunDto>, AppError> {
@@ -649,7 +671,7 @@ mod tests {
         seed_task(&pool, "task-1", &repo_path).await;
 
         let run = service
-            .create_run_with_defaults("task-1", None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None)
             .await
             .unwrap();
 
@@ -680,7 +702,13 @@ mod tests {
         seed_task(&pool, "task-1", &repo_path).await;
 
         let run = service
-            .create_run_with_defaults("task-1", Some("build"), Some("provider-a"), Some("model-a"))
+            .create_run_with_defaults(
+                "task-1",
+                Some("build"),
+                Some("provider-a"),
+                Some("model-a"),
+                None,
+            )
             .await
             .unwrap();
 
@@ -697,7 +725,7 @@ mod tests {
         seed_task(&pool, "task-1", &repo_path).await;
 
         let run = service
-            .create_run_with_defaults("task-1", Some("build"), Some("provider-a"), None)
+            .create_run_with_defaults("task-1", Some("build"), Some("provider-a"), None, None)
             .await
             .unwrap();
 
@@ -711,7 +739,7 @@ mod tests {
         let (service, _, _) = setup_service().await;
 
         let result = service
-            .create_run_with_defaults("missing-task", None, None, None)
+            .create_run_with_defaults("missing-task", None, None, None, None)
             .await;
 
         match result {
@@ -725,7 +753,7 @@ mod tests {
         let (service, _, _) = setup_service().await;
 
         let result = service
-            .create_run_with_defaults("   ", None, None, None)
+            .create_run_with_defaults("   ", None, None, None, None)
             .await;
 
         match result {
@@ -743,7 +771,7 @@ mod tests {
         seed_run_with_status(&pool, "run-active", "task-1", "in_progress").await;
 
         let result = service
-            .create_run_with_defaults("task-1", None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None)
             .await;
         assert!(result.is_err(), "expected uniqueness failure");
 

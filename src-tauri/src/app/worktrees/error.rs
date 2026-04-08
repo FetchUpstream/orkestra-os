@@ -82,6 +82,30 @@ pub enum WorktreesServiceError {
         #[source]
         source: git2::Error,
     },
+    #[error("source branch '{branch_name}' does not exist")]
+    SourceBranchNotFound { branch_name: String },
+    #[error("failed to resolve source branch '{branch_name}'")]
+    ResolveSourceBranch {
+        branch_name: String,
+        #[source]
+        source: git2::Error,
+    },
+    #[error("failed to resolve source branch commit '{branch_name}'")]
+    ResolveSourceBranchCommit {
+        branch_name: String,
+        #[source]
+        source: git2::Error,
+    },
+    #[error("failed to enumerate local branches")]
+    ListLocalBranches {
+        #[source]
+        source: git2::Error,
+    },
+    #[error("failed to resolve local branch name")]
+    ResolveLocalBranchName {
+        #[source]
+        source: git2::Error,
+    },
     #[error("invalid worktree path")]
     InvalidWorktreePath,
     #[error("failed to create worktree parent directory '{path}'")]

@@ -17,6 +17,7 @@ pub struct CreateWorktreeRequest {
     pub project_key: String,
     pub repo_path: String,
     pub branch_title: String,
+    pub source_branch: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -31,4 +32,10 @@ pub struct CreateWorktreeResponse {
 pub struct RemoveWorktreeRequest {
     pub repo_path: String,
     pub worktree_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LocalBranchDto {
+    pub name: String,
+    pub is_checked_out: bool,
 }

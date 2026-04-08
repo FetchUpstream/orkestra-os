@@ -12,15 +12,16 @@
 
 use crate::app::errors::AppError;
 use crate::app::worktrees::dto::{
-    CreateWorktreeRequest, CreateWorktreeResponse, RemoveWorktreeRequest,
+    CreateWorktreeRequest, CreateWorktreeResponse, LocalBranchDto, RemoveWorktreeRequest,
 };
 use crate::app::worktrees::error::WorktreesServiceError;
 use crate::app::worktrees::pathing::{
     choose_unique_worktree_id, parse_worktree_id_typed, sanitize_branch_segment,
     validate_project_key_segment_typed,
 };
-use git2::{BranchType, Error, ErrorCode, Repository, WorktreePruneOptions};
+use git2::{BranchType, Error, ErrorCode, Repository, WorktreeAddOptions, WorktreePruneOptions};
 use std::io::ErrorKind;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use tracing::{debug, info, warn};
@@ -50,6 +51,12 @@ impl WorktreesService {
         input.project_key = input.project_key.trim().to_string();
         input.repo_path = input.repo_path.trim().to_string();
         input.branch_title = input.branch_title.trim().to_string();
+        input.source_branch = input
+            .source_branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
 
         validate_project_key_segment_typed(&input.project_key)?;
         if input.repo_path.is_empty() {
@@ -76,18 +83,8 @@ impl WorktreesService {
             return Err(WorktreesServiceError::BareRepository);
         }
 
-        let head = repo
-            .head()
-            .map_err(|source| WorktreesServiceError::ResolveHeadRef { source })?;
-        let source_branch = if head.is_branch() {
-            head.shorthand().map(str::to_string)
-        } else {
-            None
-        };
-        let head_commit = head
-            .peel_to_commit()
-            .map_err(|source| WorktreesServiceError::ResolveHeadCommit { source })?;
-        let start_point = head_commit.id().to_string();
+        let (source_branch, start_point) =
+            resolve_source_branch(&repo, input.source_branch.as_deref())?;
 
         let branch_slug = sanitize_branch_segment(&input.branch_title);
         for attempt in 0..CREATE_WORKTREE_MAX_RETRIES {
@@ -107,6 +104,18 @@ impl WorktreesService {
                     .unwrap_or_default(),
                 source,
             })?;
+            prepare_worktree_metadata_parent(&repo, &worktree_id).map_err(|source| {
+                WorktreesServiceError::PrepareWorktreeMetadataDir {
+                    path: repo
+                        .path()
+                        .join("worktrees")
+                        .join(&worktree_id)
+                        .parent()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default(),
+                    source,
+                }
+            })?;
 
             debug!(
                 subsystem = "worktrees",
@@ -117,17 +126,13 @@ impl WorktreesService {
                 worktree_id = worktree_id.as_str(),
                 worktree_path = %worktree_path.display(),
                 branch_name = branch_name.as_str(),
-                start_point = start_point.as_str(),
+                start_point = start_point.to_string(),
                 attempt = attempt + 1,
-                "Creating worktree via git worktree add -b"
+                "Creating worktree via git2"
             );
 
-            match run_git_worktree_add_with_new_branch(
-                &repo,
-                &worktree_id,
-                &worktree_path,
-                &start_point,
-            ) {
+            match create_worktree_with_new_branch(&repo, &worktree_id, &worktree_path, start_point)
+            {
                 Ok(()) => {
                     info!(
                         subsystem = "worktrees",
@@ -216,6 +221,62 @@ impl WorktreesService {
 
     pub fn remove(&self, input: RemoveWorktreeRequest) -> Result<(), AppError> {
         self.remove_typed(input).map_err(|err| err.to_app_error())
+    }
+
+    pub fn list_local_branches(&self, repo_path: &str) -> Result<Vec<LocalBranchDto>, AppError> {
+        self.list_local_branches_typed(repo_path)
+            .map_err(|err| err.to_app_error())
+    }
+
+    fn list_local_branches_typed(
+        &self,
+        repo_path: &str,
+    ) -> Result<Vec<LocalBranchDto>, WorktreesServiceError> {
+        let repo_path = repo_path.trim();
+        if repo_path.is_empty() {
+            return Err(WorktreesServiceError::RepoPathRequired);
+        }
+
+        let repo = Repository::open(repo_path).map_err(|source| {
+            WorktreesServiceError::OpenRepository {
+                repo_path: repo_path.to_string(),
+                source,
+            }
+        })?;
+        if repo.is_bare() {
+            return Err(WorktreesServiceError::BareRepository);
+        }
+
+        let mut branches = Vec::new();
+        let branch_iter = repo
+            .branches(Some(BranchType::Local))
+            .map_err(|source| WorktreesServiceError::ListLocalBranches { source })?;
+
+        for branch_entry in branch_iter {
+            let (branch, _) = branch_entry
+                .map_err(|source| WorktreesServiceError::ListLocalBranches { source })?;
+            let branch_name = branch
+                .name()
+                .map_err(|source| WorktreesServiceError::ResolveLocalBranchName { source })?
+                .map(str::to_string)
+                .ok_or_else(|| WorktreesServiceError::ResolveLocalBranchName {
+                    source: Error::from_str("local branch name is not valid UTF-8"),
+                })?;
+
+            branches.push(LocalBranchDto {
+                name: branch_name,
+                is_checked_out: branch.is_head(),
+            });
+        }
+
+        branches.sort_by(|left, right| {
+            right
+                .is_checked_out
+                .cmp(&left.is_checked_out)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+
+        Ok(branches)
     }
 
     fn remove_typed(&self, mut input: RemoveWorktreeRequest) -> Result<(), WorktreesServiceError> {
@@ -345,54 +406,84 @@ impl WorktreesService {
     }
 }
 
-fn run_git_worktree_add_with_new_branch(
+fn resolve_source_branch(
     repo: &Repository,
-    worktree_id: &str,
-    worktree_path: &PathBuf,
-    start_point: &str,
-) -> Result<(), Error> {
-    let Some(repo_root) = repo.workdir() else {
-        return Err(Error::from_str(
-            "failed to create linked worktree: repository workdir unavailable",
-        ));
-    };
-
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .arg("worktree")
-        .arg("add")
-        .arg("-b")
-        .arg(worktree_id)
-        .arg(worktree_path)
-        .arg(start_point)
-        .output()
-        .map_err(|err| {
-            Error::from_str(&format!(
-                "failed to execute git worktree add -b for '{}' at '{}': {}",
-                worktree_id,
-                worktree_path.display(),
-                err
-            ))
+    requested_source_branch: Option<&str>,
+) -> Result<(Option<String>, git2::Oid), WorktreesServiceError> {
+    if let Some(branch_name) = requested_source_branch {
+        let branch_name = branch_name.trim();
+        let branch = repo
+            .find_branch(branch_name, BranchType::Local)
+            .map_err(|source| {
+                if source.code() == ErrorCode::NotFound {
+                    WorktreesServiceError::SourceBranchNotFound {
+                        branch_name: branch_name.to_string(),
+                    }
+                } else {
+                    WorktreesServiceError::ResolveSourceBranch {
+                        branch_name: branch_name.to_string(),
+                        source,
+                    }
+                }
+            })?;
+        let branch_commit = branch.get().peel_to_commit().map_err(|source| {
+            WorktreesServiceError::ResolveSourceBranchCommit {
+                branch_name: branch_name.to_string(),
+                source,
+            }
         })?;
 
-    if output.status.success() {
-        return Ok(());
+        return Ok((Some(branch_name.to_string()), branch_commit.id()));
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Err(Error::from_str(&format!(
-        "git worktree add -b failed for '{}' at '{}': status={} stdout='{}' stderr='{}'",
-        worktree_id,
-        worktree_path.display(),
-        output.status,
-        stdout.trim(),
-        stderr.trim()
-    )))
+    let head = repo
+        .head()
+        .map_err(|source| WorktreesServiceError::ResolveHeadRef { source })?;
+    let source_branch = if head.is_branch() {
+        head.shorthand().map(str::to_string)
+    } else {
+        None
+    };
+    let head_commit = head
+        .peel_to_commit()
+        .map_err(|source| WorktreesServiceError::ResolveHeadCommit { source })?;
+
+    Ok((source_branch, head_commit.id()))
+}
+
+fn create_worktree_with_new_branch(
+    repo: &Repository,
+    worktree_id: &str,
+    worktree_path: &Path,
+    start_point: git2::Oid,
+) -> Result<(), Error> {
+    let start_commit = repo.find_commit(start_point)?;
+    let branch = repo.branch(worktree_id, &start_commit, false)?;
+    let mut options = WorktreeAddOptions::new();
+    options.reference(Some(branch.get()));
+    repo.worktree(worktree_id, worktree_path, Some(&mut options))?;
+    Ok(())
+}
+
+fn prepare_worktree_metadata_parent(
+    repo: &Repository,
+    worktree_id: &str,
+) -> Result<(), std::io::Error> {
+    let metadata_path = repo.path().join("worktrees").join(worktree_id);
+    if let Some(parent) = metadata_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(())
 }
 
 fn is_retryable_git_worktree_add_conflict(err: &Error) -> bool {
+    if err.code() == ErrorCode::Exists {
+        let message = err.message().to_ascii_lowercase();
+        return message.contains("a branch named")
+            || message.contains("could not lock ref")
+            || message.contains("a reference with that name already exists");
+    }
+
     if err.code() != ErrorCode::GenericError {
         return false;
     }
@@ -442,13 +533,15 @@ fn run_git_worktree_cleanup(repo: &Repository, worktree_path: &PathBuf) -> Resul
     if !remove_output.status.success() {
         let stderr = String::from_utf8_lossy(&remove_output.stderr);
         let stdout = String::from_utf8_lossy(&remove_output.stdout);
-        return Err(Error::from_str(&format!(
-            "git worktree remove failed for '{}': status={} stdout='{}' stderr='{}'",
-            worktree_path.display(),
-            remove_output.status,
-            stdout.trim(),
-            stderr.trim()
-        )));
+        if !stderr.contains("is not a working tree") {
+            return Err(Error::from_str(&format!(
+                "git worktree remove failed for '{}': status={} stdout='{}' stderr='{}'",
+                worktree_path.display(),
+                remove_output.status,
+                stdout.trim(),
+                stderr.trim()
+            )));
+        }
     }
 
     let prune_output = Command::new("git")
@@ -765,6 +858,7 @@ mod tests {
             project_key: "alp".to_string(),
             repo_path: "/path/that/does/not/matter/yet".to_string(),
             branch_title: "branch".to_string(),
+            source_branch: None,
         });
 
         match result {
@@ -870,6 +964,7 @@ mod tests {
 
         let mut options = git2::WorktreeAddOptions::new();
         options.reference(Some(branch.get()));
+        super::prepare_worktree_metadata_parent(&repo, worktree_id).unwrap();
         repo.worktree(worktree_id, &worktree_path, Some(&mut options))
             .unwrap();
 
@@ -927,6 +1022,7 @@ mod tests {
 
         let mut options = git2::WorktreeAddOptions::new();
         options.reference(Some(branch.get()));
+        super::prepare_worktree_metadata_parent(&repo, actual_worktree_id).unwrap();
         repo.worktree(actual_worktree_id, &worktree_path, Some(&mut options))
             .unwrap();
 
@@ -945,5 +1041,110 @@ mod tests {
         assert!(!worktree_path.exists());
 
         let _ = fs::remove_dir_all(&temp_root);
+    }
+
+    #[test]
+    fn list_local_branches_marks_checked_out_branch() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "orkestra-worktrees-branch-list-tests-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp_root).unwrap();
+
+        let repo = seed_repo_with_initial_commit(&temp_root);
+        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("feature/a", &head_commit, false).unwrap();
+
+        let service = WorktreesService::new(temp_root.join("app-data"));
+        let branches = service
+            .list_local_branches_typed(&temp_root.display().to_string())
+            .unwrap();
+        let checked_out_branch = repo.head().unwrap().shorthand().unwrap().to_string();
+
+        assert!(branches
+            .iter()
+            .any(|branch| branch.name == checked_out_branch && branch.is_checked_out));
+        assert!(branches
+            .iter()
+            .any(|branch| branch.name == "feature/a" && !branch.is_checked_out));
+
+        let _ = fs::remove_dir_all(&temp_root);
+    }
+
+    #[test]
+    fn create_uses_selected_source_branch_without_switching_head() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "orkestra-worktrees-create-source-branch-tests-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp_root).unwrap();
+
+        let repo_root = temp_root.join("repo");
+        let repo = seed_repo_with_initial_commit(&repo_root);
+        let checked_out_branch = repo.head().unwrap().shorthand().unwrap().to_string();
+        let master_commit = repo.head().unwrap().peel_to_commit().unwrap();
+
+        fs::write(repo_root.join("feature.txt"), "feature\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("feature.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let signature = Signature::now("orkestra", "orkestra@example.com").unwrap();
+        let feature_commit_id = repo
+            .commit(
+                Some("refs/heads/feature/source"),
+                &signature,
+                &signature,
+                "feature commit",
+                &tree,
+                &[&master_commit],
+            )
+            .unwrap();
+
+        let service = WorktreesService::new(temp_root.join("app-data"));
+        let created = service
+            .create_typed(CreateWorktreeRequest {
+                project_key: "PRJ".to_string(),
+                repo_path: repo_root.display().to_string(),
+                branch_title: "Run branch".to_string(),
+                source_branch: Some("feature/source".to_string()),
+            })
+            .unwrap();
+
+        assert_eq!(created.source_branch.as_deref(), Some("feature/source"));
+        assert_eq!(
+            repo.head().unwrap().shorthand(),
+            Some(checked_out_branch.as_str())
+        );
+
+        let linked_repo = Repository::open(&created.path).unwrap();
+        let linked_head = linked_repo.head().unwrap();
+        let linked_commit = linked_head.peel_to_commit().unwrap();
+        assert_eq!(linked_commit.id(), feature_commit_id);
+
+        let _ = fs::remove_dir_all(&temp_root);
+    }
+
+    fn seed_repo_with_initial_commit(repo_root: &Path) -> Repository {
+        let repo = Repository::init(repo_root).unwrap();
+        fs::write(repo_root.join("README.md"), "seed\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("README.md")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let signature = Signature::now("orkestra", "orkestra@example.com").unwrap();
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "initial commit",
+            &tree,
+            &[],
+        )
+        .unwrap();
+        drop(tree);
+        repo
     }
 }

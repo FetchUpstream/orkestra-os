@@ -15,6 +15,7 @@ import {
   bootstrapRunOpenCode,
   createRun,
   getRun,
+  listTaskRunSourceBranches,
   getRunSelectionOptions,
   getRunGitMergeStatus,
   getRunOpenCodeSessionMessages,
@@ -59,6 +60,7 @@ describe("runs contract", () => {
         agentId: undefined,
         providerId: undefined,
         modelId: undefined,
+        sourceBranch: undefined,
       },
     });
   });
@@ -85,8 +87,51 @@ describe("runs contract", () => {
         agentId: "agent-1",
         providerId: "provider-1",
         modelId: "model-1",
+        sourceBranch: undefined,
       },
     });
+  });
+
+  it("passes source branch into create_run request", async () => {
+    invokeMock.mockResolvedValue({
+      id: "run-3",
+      task_id: "task-3",
+      project_id: "project-1",
+      status: "queued" satisfies RunStatus,
+      triggered_by: "user",
+      created_at: "2026-01-01T00:00:00.000Z",
+    });
+
+    await createRun("task-3", {
+      sourceBranch: "feature/source",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("create_run", {
+      request: {
+        taskId: "task-3",
+        agentId: undefined,
+        providerId: undefined,
+        modelId: undefined,
+        sourceBranch: "feature/source",
+      },
+    });
+  });
+
+  it("normalizes run source branch list payload", async () => {
+    invokeMock.mockResolvedValueOnce([
+      { name: "feature/a", is_checked_out: false },
+      { branch_name: "main", isCheckedOut: true },
+    ]);
+
+    const branches = await listTaskRunSourceBranches("task-1");
+
+    expect(invokeMock).toHaveBeenCalledWith("list_task_run_source_branches", {
+      taskId: "task-1",
+    });
+    expect(branches).toEqual([
+      { name: "feature/a", isCheckedOut: false },
+      { name: "main", isCheckedOut: true },
+    ]);
   });
 
   it("normalizes run selection options payload", async () => {

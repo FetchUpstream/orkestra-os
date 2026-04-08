@@ -14,10 +14,17 @@ import {
   For,
   Show,
   createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
   type Accessor,
   type Component,
 } from "solid-js";
-import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
+import type {
+  RunModelOption,
+  RunSelectionOption,
+  RunSourceBranchOption,
+} from "../../../app/lib/runs";
 import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
 
 type RunSettingsModalProps = {
@@ -26,20 +33,158 @@ type RunSettingsModalProps = {
   actionError: Accessor<string>;
   hasRunSelectionOptions: Accessor<boolean>;
   isLoadingRunSelectionOptions: Accessor<boolean>;
+  isLoadingRunSourceBranches: Accessor<boolean>;
   runSelectionOptionsError: Accessor<string>;
+  runSourceBranchError: Accessor<string>;
   runAgentOptions: Accessor<RunSelectionOption[]>;
   runProviderOptions: Accessor<RunSelectionOption[]>;
+  runSourceBranchOptions: Accessor<RunSourceBranchOption[]>;
   visibleRunModelOptions: Accessor<RunModelOption[]>;
   selectedRunAgentId: Accessor<string>;
   selectedRunProviderId: Accessor<string>;
   selectedRunModelId: Accessor<string>;
+  selectedRunSourceBranch: Accessor<string>;
   setSelectedRunAgentId: (value: string) => void;
   setSelectedRunProviderId: (value: string) => void;
   setSelectedRunModelId: (value: string) => void;
+  setSelectedRunSourceBranch: (value: string) => void;
   isOpenCodeMissing?: Accessor<boolean>;
   openCodeDependencyReason?: Accessor<string>;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
+};
+
+const RunSourceBranchSelect: Component<{
+  options: Accessor<RunSourceBranchOption[]>;
+  selectedValue: Accessor<string>;
+  disabled: Accessor<boolean>;
+  onChange: (value: string) => void;
+}> = (props) => {
+  const [isOpen, setIsOpen] = createSignal(false);
+  const [search, setSearch] = createSignal("");
+  let containerRef: HTMLDivElement | undefined;
+
+  const filteredOptions = createMemo(() => {
+    const query = search().trim().toLowerCase();
+    if (!query) {
+      return props.options();
+    }
+
+    return props
+      .options()
+      .filter((option) => option.name.toLowerCase().includes(query));
+  });
+
+  const selectedOption = createMemo(() => {
+    const selectedValue = props.selectedValue().trim();
+    return (
+      props.options().find((option) => option.name === selectedValue) ?? null
+    );
+  });
+
+  const close = () => {
+    setIsOpen(false);
+    setSearch("");
+  };
+
+  const handlePointerDown = (event: PointerEvent) => {
+    if (
+      containerRef &&
+      event.target instanceof Node &&
+      !containerRef.contains(event.target)
+    ) {
+      close();
+    }
+  };
+
+  if (typeof document !== "undefined") {
+    document.addEventListener("pointerdown", handlePointerDown);
+    onCleanup(() =>
+      document.removeEventListener("pointerdown", handlePointerDown),
+    );
+  }
+
+  return (
+    <div ref={containerRef} class="relative">
+      <button
+        type="button"
+        class="select select-sm border-base-content/15 bg-base-100 text-base-content flex h-10 min-h-10 w-full items-center justify-between rounded-none border px-3 pr-8 text-xs font-medium"
+        onClick={() => {
+          if (props.disabled()) return;
+          setIsOpen((current) => !current);
+        }}
+        disabled={props.disabled()}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen()}
+      >
+        <span class="truncate pr-3 text-left">
+          {selectedOption()?.name ||
+            props.selectedValue().trim() ||
+            "Select branch"}
+        </span>
+        <span class="text-base-content/45 mr-3 text-[10px] tracking-[0.18em] uppercase">
+          Branch
+        </span>
+      </button>
+      <Show when={isOpen()}>
+        <div class="border-base-content/15 bg-base-100 absolute z-20 mt-1 w-full rounded-none border shadow-lg">
+          <div class="border-base-content/10 border-b p-2">
+            <input
+              type="search"
+              value={search()}
+              onInput={(event) => setSearch(event.currentTarget.value)}
+              class="input input-sm border-base-content/15 bg-base-100 text-base-content h-9 min-h-9 w-full rounded-none border px-3 text-xs"
+              placeholder="Search branches"
+              aria-label="Search branches"
+            />
+          </div>
+          <div
+            class="max-h-64 overflow-y-auto py-1"
+            role="listbox"
+            aria-label="Source branches"
+          >
+            <Show
+              when={filteredOptions().length > 0}
+              fallback={
+                <p class="text-base-content/55 px-3 py-2 text-xs">
+                  No matching branches.
+                </p>
+              }
+            >
+              <For each={filteredOptions()}>
+                {(option) => (
+                  <button
+                    type="button"
+                    class="hover:bg-base-200 flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs"
+                    onClick={() => {
+                      props.onChange(option.name);
+                      close();
+                    }}
+                  >
+                    <span class="min-w-0 flex-1 truncate font-medium">
+                      {option.name}
+                    </span>
+                    <div class="flex shrink-0 items-center gap-2">
+                      <Show when={option.isCheckedOut}>
+                        <span class="text-base-content/55 border-base-content/15 bg-base-200 rounded-none border px-2 py-0.5 text-[10px] font-semibold tracking-[0.14em] uppercase">
+                          Checked out
+                        </span>
+                      </Show>
+                      <Show when={props.selectedValue().trim() === option.name}>
+                        <span class="border-primary/35 bg-primary/10 text-primary rounded-none border px-2 py-0.5 text-[10px] font-semibold tracking-[0.14em] uppercase">
+                          Selected
+                        </span>
+                      </Show>
+                    </div>
+                  </button>
+                )}
+              </For>
+            </Show>
+          </div>
+        </div>
+      </Show>
+    </div>
+  );
 };
 
 const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
@@ -141,6 +286,21 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
                 </label>
               </div>
             </Show>
+            <label class="projects-field task-runs-default-field">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                <span class="field-label-text">Source branch</span>
+              </span>
+              <RunSourceBranchSelect
+                options={props.runSourceBranchOptions}
+                selectedValue={props.selectedRunSourceBranch}
+                onChange={props.setSelectedRunSourceBranch}
+                disabled={() =>
+                  props.isSubmitting() ||
+                  props.isLoadingRunSourceBranches() ||
+                  props.runSourceBranchOptions().length === 0
+                }
+              />
+            </label>
             <Show
               when={
                 !props.hasRunSelectionOptions() &&
@@ -163,6 +323,18 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
               </p>
             </Show>
             <Show when={props.runSelectionOptionsError()}>
+              {(message) => (
+                <p class="projects-error border-error/35 bg-error/10 m-0 text-sm">
+                  {message()}
+                </p>
+              )}
+            </Show>
+            <Show when={props.isLoadingRunSourceBranches()}>
+              <p class="project-placeholder-text text-sm">
+                Loading source branches...
+              </p>
+            </Show>
+            <Show when={props.runSourceBranchError()}>
               {(message) => (
                 <p class="projects-error border-error/35 bg-error/10 m-0 text-sm">
                   {message()}
@@ -207,7 +379,12 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
                 type="button"
                 class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                 onClick={() => void props.onConfirm()}
-                disabled={props.isSubmitting() || !!props.isOpenCodeMissing?.()}
+                disabled={
+                  props.isSubmitting() ||
+                  !!props.isOpenCodeMissing?.() ||
+                  props.isLoadingRunSourceBranches() ||
+                  !!props.runSourceBranchError()
+                }
               >
                 {props.isSubmitting() ? "Starting..." : "Create run"}
               </button>

@@ -175,6 +175,11 @@ export type RunModelOption = RunSelectionOption & {
   providerId?: string;
 };
 
+export type RunSourceBranchOption = {
+  name: string;
+  isCheckedOut: boolean;
+};
+
 export type RunSelectionOptions = {
   agents: RunSelectionOption[];
   providers: RunSelectionOption[];
@@ -461,6 +466,13 @@ type StartRunOpenCodeResponse = {
   clientRequestId?: string;
   ready_phase?: string | null;
   readyPhase?: string | null;
+};
+
+type RunSourceBranchResponse = {
+  name?: string;
+  branch_name?: string;
+  is_checked_out?: boolean;
+  isCheckedOut?: boolean;
 };
 
 type RunResponse = {
@@ -1270,6 +1282,7 @@ export const createRun = async (
     agentId?: string;
     providerId?: string;
     modelId?: string;
+    sourceBranch?: string;
   },
 ): Promise<Run> => {
   const response = await invoke<RunResponse>("create_run", {
@@ -1278,9 +1291,31 @@ export const createRun = async (
       agentId: defaults?.agentId,
       providerId: defaults?.providerId,
       modelId: defaults?.modelId,
+      sourceBranch: defaults?.sourceBranch,
     },
   });
   return toRun(response);
+};
+
+export const listTaskRunSourceBranches = async (
+  taskId: string,
+): Promise<RunSourceBranchOption[]> => {
+  const response = await invoke<RunSourceBranchResponse[]>(
+    "list_task_run_source_branches",
+    { taskId },
+  );
+  return toUnknownArray(response).map((branch) => {
+    const record =
+      branch && typeof branch === "object"
+        ? (branch as RunSourceBranchResponse)
+        : {};
+    const name =
+      pick(record.name, record.branch_name)?.trim() || "Unknown branch";
+    return {
+      name,
+      isCheckedOut: pick(record.isCheckedOut, record.is_checked_out) ?? false,
+    };
+  });
 };
 
 export const getRunSelectionOptions = async (
