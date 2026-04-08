@@ -5493,6 +5493,66 @@ describe("app routing and shell", () => {
     ).toBe("");
   });
 
+  it("regenerates the create-project key after the user clears it and changes the name", async () => {
+    renderAt("/projects");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Create Project" }),
+      ).toBeTruthy();
+    });
+
+    const nameInput = screen.getByLabelText("Project name") as HTMLInputElement;
+    const keyInput = screen.getByPlaceholderText(
+      "e.g., PROJ",
+    ) as HTMLInputElement;
+
+    await fireEvent.input(nameInput, {
+      target: { value: "Alpha" },
+    });
+    expect(keyInput.value).toBe("ALP");
+
+    await fireEvent.input(keyInput, {
+      target: { value: "" },
+    });
+    expect(keyInput.value).toBe("");
+
+    await fireEvent.input(nameInput, {
+      target: { value: "Beta" },
+    });
+    expect(keyInput.value).toBe("BET");
+  });
+
+  it("preserves a custom non-empty create-project key when the name changes", async () => {
+    renderAt("/projects");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Create Project" }),
+      ).toBeTruthy();
+    });
+
+    const nameInput = screen.getByLabelText("Project name") as HTMLInputElement;
+    const keyInput = screen.getByPlaceholderText(
+      "e.g., PROJ",
+    ) as HTMLInputElement;
+
+    await fireEvent.input(nameInput, {
+      target: { value: "Alpha" },
+    });
+    expect(keyInput.value).toBe("ALP");
+
+    await fireEvent.input(keyInput, {
+      target: { value: "XYZ" },
+    });
+    expect(keyInput.value).toBe("XYZ");
+
+    await fireEvent.input(nameInput, {
+      target: { value: "Beta" },
+    });
+    expect(keyInput.value).toBe("XYZ");
+  });
+
   it("loads project settings form from the board settings button", async () => {
     renderAt("/board?projectId=p-1");
 
@@ -5516,6 +5576,34 @@ describe("app routing and shell", () => {
     expect(
       (screen.getByLabelText("Repository 1 path") as HTMLInputElement).value,
     ).toBe("/repo/main");
+  });
+
+  it("regenerates the edit-project key after the user clears it and changes the name", async () => {
+    renderAt("/projects/p-1");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Edit Project" }),
+      ).toBeTruthy();
+    });
+
+    const nameInput = screen.getByLabelText("Project name") as HTMLInputElement;
+    const keyInput = screen.getByPlaceholderText(
+      "e.g., PROJ",
+    ) as HTMLInputElement;
+
+    expect(nameInput.value).toBe("Alpha");
+    expect(keyInput.value).toBe("ALP");
+
+    await fireEvent.input(keyInput, {
+      target: { value: "" },
+    });
+    expect(keyInput.value).toBe("");
+
+    await fireEvent.input(nameInput, {
+      target: { value: "Beta" },
+    });
+    expect(keyInput.value).toBe("BET");
   });
 
   it("saves the edited project from project settings", async () => {

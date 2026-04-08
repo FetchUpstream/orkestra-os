@@ -345,14 +345,15 @@ export const useProjectsPageModel = () => {
 
   const updateName = (value: string) => {
     setName(value);
-    if (!isKeyEdited()) {
+    if (!isKeyEdited() || !key().trim()) {
       setKey(recommendProjectKey(value));
     }
   };
 
   const updateKey = (value: string) => {
-    setIsKeyEdited(true);
-    setKey(normalizeProjectKey(value));
+    const normalizedKey = normalizeProjectKey(value);
+    setIsKeyEdited(normalizedKey.length > 0);
+    setKey(normalizedKey);
     setTouched((prev) => ({ ...prev, key: true }));
   };
 
@@ -536,7 +537,7 @@ export const useProjectsPageModel = () => {
       setDefaultRepoIndex(
         defaultRepositoryIndex >= 0 ? defaultRepositoryIndex : 0,
       );
-      setIsKeyEdited(true);
+      setIsKeyEdited(projectDetails.key.trim().length > 0);
       setTouched({});
     } catch (loadError) {
       const backendMessage = getCreateProjectErrorMessage(loadError);
