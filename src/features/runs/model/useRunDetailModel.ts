@@ -128,6 +128,88 @@ export type PendingRunPrompt = {
 };
 
 const PENDING_PROMPT_ACK_TIMEOUT_MS = 8000;
+const UUID_LIKE_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HEX_INTERNAL_ID_PATTERN = /^[0-9a-f]{24,}$/i;
+
+const isInternalAttributionId = (value: string): boolean => {
+  return UUID_LIKE_PATTERN.test(value) || HEX_INTERNAL_ID_PATTERN.test(value);
+};
+
+const sanitizePermissionSourceLabel = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  if (!normalized || isInternalAttributionId(normalized)) {
+    return null;
+  }
+  return normalized;
+};
+
+const sanitizePermissionSourceModelLabel = (value: unknown): string | null => {
+  const normalized = sanitizePermissionSourceLabel(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const slashParts = normalized.split("/").map((segment) => segment.trim());
+  const slashTail = slashParts[slashParts.length - 1];
+  if (slashParts.length > 1 && slashTail) {
+    return isInternalAttributionId(slashTail) ? null : slashTail;
+  }
+
+  const colonParts = normalized.split(":").map((segment) => segment.trim());
+  const colonTail = colonParts[colonParts.length - 1];
+  if (colonParts.length > 1 && colonTail) {
+    return isInternalAttributionId(colonTail) ? null : colonTail;
+  }
+
+  return normalized;
+};
+
+const readPermissionSourceAttribution = (
+  value: unknown,
+): { agent: string | null; model: string | null } => {
+  if (!value || typeof value !== "object") {
+    return { agent: null, model: null };
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    agent:
+      sanitizePermissionSourceLabel(
+        record.agent ?? record.agentID ?? record.agentId ?? record.agent_id,
+      ) ?? null,
+    model:
+      sanitizePermissionSourceModelLabel(
+        record.model ??
+          record.modelID ??
+          record.modelId ??
+          record.model_id ??
+          record.modelName ??
+          record.model_name,
+      ) ?? null,
+  };
+};
+
+const formatPermissionSourceLabel = (
+  title: string | null,
+  agent: string | null,
+  model: string | null,
+): string => {
+  const normalizedTitle = title?.trim();
+  if (normalizedTitle) {
+    return model?.trim() ? `${normalizedTitle} - ${model}` : normalizedTitle;
+  }
+  if (agent?.trim()) {
+    return agent.startsWith("@") ? agent : `@${agent}`;
+  }
+  if (model?.trim()) {
+    return model;
+  }
+  return "Subagent";
+};
 
 const getUiMessageText = (message: UiMessage): string => {
   const textParts: string[] = [];
@@ -582,17 +664,144 @@ export const useRunDetailModel = () => {
     });
   };
 
+  const permissionSourceLabelsBySessionId = createMemo<Record<string, string>>(
+    () => {
+      const labels: Record<string, string> = {};
+      const events = agentStore().rawEvents;
+
+      for (const event of events) {
+        if (
+          event.type !== "session.updated" &&
+          event.type !== "message.updated"
+        ) {
+          continue;
+        }
+
+        const properties =
+          event.properties && typeof event.properties === "object"
+            ? (event.properties as Record<string, unknown>)
+            : {};
+        const infoCandidate =
+          properties.info && typeof properties.info === "object"
+            ? (properties.info as Record<string, unknown>)
+            : properties;
+        const sessionIdValue =
+          infoCandidate.sessionID ??
+          infoCandidate.sessionId ??
+          properties.sessionID ??
+          properties.sessionId;
+        const sessionId =
+          typeof sessionIdValue === "string" ? sessionIdValue.trim() : "";
+        if (!sessionId) {
+          continue;
+        }
+
+        const rawTitle =
+          sanitizePermissionSourceLabel(infoCandidate.title) ||
+          sanitizePermissionSourceLabel(infoCandidate.slug) ||
+          null;
+        const attribution = readPermissionSourceAttribution(infoCandidate);
+        const rawAgent =
+          attribution.agent ||
+          (typeof infoCandidate.mode === "string"
+            ? sanitizePermissionSourceLabel(infoCandidate.mode)
+            : null);
+        const label = formatPermissionSourceLabel(
+          rawTitle,
+          rawAgent,
+          attribution.model,
+        );
+
+        if (label) {
+          labels[sessionId] = label;
+        }
+      }
+
+      return labels;
+    },
+  );
+
+  const knownSubagentSessionIds = createMemo<Set<string>>(() => {
+    const sessionIds = new Set<string>();
+
+    for (const event of agentStore().rawEvents) {
+      if (event.type !== "session.updated") {
+        continue;
+      }
+
+      const properties =
+        event.properties && typeof event.properties === "object"
+          ? (event.properties as Record<string, unknown>)
+          : {};
+      const infoCandidate =
+        properties.info && typeof properties.info === "object"
+          ? (properties.info as Record<string, unknown>)
+          : properties;
+      const sessionIdValue =
+        infoCandidate.sessionID ??
+        infoCandidate.sessionId ??
+        properties.sessionID ??
+        properties.sessionId;
+      const parentSessionIdValue =
+        infoCandidate.parentID ??
+        infoCandidate.parentId ??
+        properties.parentID ??
+        properties.parentId;
+      const sessionId =
+        typeof sessionIdValue === "string" ? sessionIdValue.trim() : "";
+      const parentSessionId =
+        typeof parentSessionIdValue === "string"
+          ? parentSessionIdValue.trim()
+          : "";
+
+      if (sessionId && parentSessionId && sessionId !== parentSessionId) {
+        sessionIds.add(sessionId);
+      }
+    }
+
+    return sessionIds;
+  });
+
+  const withPermissionSource = (
+    permission: UiPermissionRequest,
+  ): UiPermissionRequest => {
+    const rootSessionId = agentStore().sessionId?.trim() ?? "";
+    const permissionSessionId = permission.sessionId?.trim() ?? "";
+    const derivedSourceLabel =
+      permissionSourceLabelsBySessionId()[permissionSessionId] || "";
+    const sourceKind = knownSubagentSessionIds().has(permissionSessionId)
+      ? "subagent"
+      : rootSessionId
+        ? permissionSessionId === rootSessionId
+          ? "main"
+          : "subagent"
+        : derivedSourceLabel
+          ? "subagent"
+          : "main";
+    const sourceLabel =
+      sourceKind === "main" ? "Main agent" : derivedSourceLabel || "Subagent";
+
+    return {
+      ...permission,
+      sourceKind,
+      sourceLabel,
+    };
+  };
+
   const permissionState = createMemo<AgentPermissionState>(() => {
     const store = agentStore();
-    const pendingRequests = Object.values(store.pendingPermissionsById);
+    const pendingRequests = sortPermissionRequests(
+      Object.values(store.pendingPermissionsById),
+      "receivedAt",
+    ).map(withPermissionSource);
     const resolvedRequests = sortPermissionRequests(
       Object.values(store.resolvedPermissionsById),
       "resolvedAt",
-    );
+    ).map(withPermissionSource);
     const failedRequests = sortPermissionRequests(
       Object.values(store.failedPermissionsById),
       "resolvedAt",
-    );
+    ).map(withPermissionSource);
 
     return {
       activeRequest: pendingRequests[0] ?? null,
@@ -2775,7 +2984,7 @@ export const useRunDetailModel = () => {
       setPermissionReplyError("Finish the current permission request first.");
       return false;
     }
-    if (!pending || !sessionId || pending.sessionId !== sessionId) {
+    if (!pending || !sessionId) {
       if (pending) {
         markPermissionRequestFailed(normalizedRequestId);
       }
@@ -2784,7 +2993,7 @@ export const useRunDetailModel = () => {
         runId,
         requestId: normalizedRequestId,
         hasPending: Boolean(pending),
-        sessionId,
+        sessionId: sessionId || null,
         pendingSessionId: pending?.sessionId,
         pendingCount: Object.keys(store.pendingPermissionsById).length,
       });

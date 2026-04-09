@@ -201,6 +201,33 @@ describe("NewRunChatWorkspace", () => {
     ).toBeTruthy();
   });
 
+  it("shows subagent source context in permission prompts without raw ids", () => {
+    const { model } = createModelStub("running", true, {}, "interactive", {
+      pendingPermissionsById: {
+        "perm-1": {
+          requestId: "perm-1",
+          sessionId: "session-child",
+          sourceKind: "subagent",
+          sourceLabel: "Docs lookup - k2p5",
+          kind: "write",
+          pathPatterns: ["src/**/*.ts"],
+        },
+      },
+    });
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(
+      screen.getByText((content, element) => {
+        return (
+          element?.textContent?.replace(/\s+/g, " ").trim() ===
+          "Source: Docs lookup - k2p5"
+        );
+      }),
+    ).toBeTruthy();
+    expect(screen.queryByText(/session-child/i)).toBeNull();
+  });
+
   it("shows queued permission count and advances when first request resolves", () => {
     const pendingPermissions: Record<string, unknown> = {
       "perm-1": {

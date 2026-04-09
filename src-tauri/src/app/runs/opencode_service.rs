@@ -1616,13 +1616,6 @@ impl RunsOpenCodeService {
                     permission_type = permission_kind.as_deref().unwrap_or(""),
                     "Received OpenCode permission event"
                 );
-                if !self
-                    .event_matches_current_run_session(run_id, &session_id)
-                    .await?
-                {
-                    return Ok(());
-                }
-
                 let Some(request_id) = Self::parse_permission_request_id(payload) else {
                     return Ok(());
                 };
@@ -1669,23 +1662,17 @@ impl RunsOpenCodeService {
                     request_id_fields = "requestID|requestId|id|permissionID|permissionId",
                     "Received OpenCode permission resolution event"
                 );
-                if !self
-                    .event_matches_current_run_session(run_id, &session_id)
-                    .await?
-                {
-                    return Ok(());
-                }
-
                 let Some(request_id) = Self::parse_permission_request_id(payload) else {
                     return Ok(());
                 };
-                let (removed, pending_count) = {
+                let (removed, pending_count, has_pending_questions) = {
                     let mut state = session_runtime_state
                         .lock()
                         .map_err(|_| lock_error("OpenCode session runtime state"))?;
                     let removed = state.pending_permissions.remove(&request_id);
                     let pending_count = state.pending_permissions.len();
-                    (removed, pending_count)
+                    let has_pending_questions = !state.pending_questions.is_empty();
+                    (removed, pending_count, has_pending_questions)
                 };
                 info!(
                     target: "opencode.runtime",
@@ -1698,10 +1685,12 @@ impl RunsOpenCodeService {
                     removed = removed,
                     "Cleared pending permission request from runtime state"
                 );
-                let _ = self
-                    .run_state_service
-                    .handle_permission_resolved(run_id)
-                    .await?;
+                if removed && pending_count == 0 && !has_pending_questions {
+                    let _ = self
+                        .run_state_service
+                        .handle_permission_resolved(run_id)
+                        .await?;
+                }
                 Ok(())
             }
             "session.idle" => {
@@ -6438,6 +6427,65 @@ mod tests {
         assert!(guard
             .pending_permissions
             .contains("per_d42b2cd3e001QDIROGPkXz54d3"));
+    }
+
+    #[tokio::test]
+    async fn subagent_permission_asked_tracks_request_id_for_child_session() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"permission.asked","properties":{"id":"perm-sub-1","permission":"external_directory","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        let guard = state.lock().unwrap();
+        assert!(guard.pending_permissions.contains("perm-sub-1"));
+    }
+
+    #[tokio::test]
+    async fn subagent_permission_resolution_clears_tracked_request_id_for_child_session() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"permission.asked","properties":{"id":"perm-sub-2","permission":"external_directory","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"permission.replied","properties":{"requestID":"perm-sub-2","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        let guard = state.lock().unwrap();
+        assert!(!guard.pending_permissions.contains("perm-sub-2"));
     }
 
     #[tokio::test]

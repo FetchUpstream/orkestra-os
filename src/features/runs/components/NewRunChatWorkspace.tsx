@@ -877,6 +877,8 @@ const parsePermissionCardData = (
 ): {
   requestId: string;
   kind: string;
+  sourceLabel: string;
+  sourceKind: "main" | "subagent";
   pathPatterns: string[];
   metadata: Array<{ key: string; value: string }>;
   failureMessage: string;
@@ -940,6 +942,10 @@ const parsePermissionCardData = (
   return {
     requestId: permission.requestId,
     kind,
+    sourceLabel:
+      toSingleLine(permission.sourceLabel, 80) ||
+      (permission.sourceKind === "subagent" ? "Subagent" : "Main agent"),
+    sourceKind: permission.sourceKind === "subagent" ? "subagent" : "main",
     pathPatterns,
     metadata,
     failureMessage:
@@ -1885,6 +1891,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                         Permission required: {card.kind}
                       </span>
                     </div>
+                    <p class="run-chat-tool-rail__details">
+                      <strong>Source:</strong> {card.sourceLabel}
+                    </p>
                     <Show
                       when={card.pathPatterns.length > 0}
                       fallback={
@@ -2035,6 +2044,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                     </span>
                   </span>
                 </div>
+                <p class="run-chat-tool-rail__details">
+                  <strong>Source:</strong> {card.sourceLabel}
+                </p>
                 <p class="run-chat-tool-rail__details">{card.failureMessage}</p>
                 <Show
                   when={card.pathPatterns.length > 0}
