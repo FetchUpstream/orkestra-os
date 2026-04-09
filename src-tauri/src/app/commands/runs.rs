@@ -44,6 +44,7 @@ pub struct CreateRunRequest {
     pub agent_id: Option<String>,
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
+    pub source_branch: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,9 +70,19 @@ pub async fn create_run(
                 request.agent_id.as_deref(),
                 request.provider_id.as_deref(),
                 request.model_id.as_deref(),
+                request.source_branch.as_deref(),
             )
             .await,
     )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn list_task_run_source_branches(
+    state: tauri::State<'_, AppState>,
+    task_id: String,
+) -> Result<Vec<crate::app::worktrees::dto::LocalBranchDto>, String> {
+    let service = context::runs_service(&state);
+    map_result(service.list_task_source_branches(&task_id).await)
 }
 
 #[tauri::command]

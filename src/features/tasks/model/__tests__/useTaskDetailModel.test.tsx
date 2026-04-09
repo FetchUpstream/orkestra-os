@@ -23,6 +23,7 @@ const {
   getProjectMock,
   getTaskMock,
   listTaskRunsMock,
+  listTaskRunSourceBranchesMock,
   startRunOpenCodeMock,
   createRunMock,
   listTaskDependenciesMock,
@@ -34,6 +35,7 @@ const {
   getProjectMock: vi.fn(),
   getTaskMock: vi.fn(),
   listTaskRunsMock: vi.fn(),
+  listTaskRunSourceBranchesMock: vi.fn(),
   startRunOpenCodeMock: vi.fn(),
   createRunMock: vi.fn(),
   listTaskDependenciesMock: vi.fn(),
@@ -69,6 +71,7 @@ vi.mock("../../../../app/lib/runs", () => ({
   createRun: createRunMock,
   deleteRun: vi.fn(),
   listTaskRuns: listTaskRunsMock,
+  listTaskRunSourceBranches: listTaskRunSourceBranchesMock,
   startRunOpenCode: startRunOpenCodeMock,
 }));
 
@@ -105,6 +108,7 @@ describe("useTaskDetailModel start run", () => {
     getTaskMock.mockReset();
     getProjectMock.mockReset();
     listTaskRunsMock.mockReset();
+    listTaskRunSourceBranchesMock.mockReset();
     startRunOpenCodeMock.mockReset();
     createRunMock.mockReset();
     listTaskDependenciesMock.mockReset();
@@ -153,6 +157,10 @@ describe("useTaskDetailModel start run", () => {
       readyPhase: "warm_handle",
     });
     readRunSelectionOptionsCacheMock.mockReturnValue(null);
+    listTaskRunSourceBranchesMock.mockResolvedValue([
+      { name: "main", isCheckedOut: true },
+      { name: "feature/source", isCheckedOut: false },
+    ]);
     getRunSelectionOptionsWithCacheMock.mockResolvedValue({
       agents: [],
       providers: [{ id: "provider-1", label: "OpenAI" }],
@@ -231,12 +239,19 @@ describe("useTaskDetailModel start run", () => {
       expect(ref.current?.task()).toBeTruthy();
     });
 
+    ref.current?.onOpenRunSettingsModal();
+
+    await waitFor(() => {
+      expect(ref.current?.selectedRunSourceBranch()).toBe("main");
+    });
+
     await ref.current?.onConfirmCreateRun();
 
     expect(createRunMock).toHaveBeenCalledWith("task-1", {
       agentId: undefined,
       providerId: "provider-1",
       modelId: "model-1",
+      sourceBranch: "main",
     });
     expect(startRunOpenCodeMock).toHaveBeenCalledWith("run-created");
   });

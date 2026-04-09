@@ -41,10 +41,12 @@ import {
   createRun,
   deleteRun,
   listTaskRuns,
+  listTaskRunSourceBranches,
   startRunOpenCode,
   type RunSelectionOption,
   type RunModelOption,
   type Run,
+  type RunSourceBranchOption,
 } from "../../../app/lib/runs";
 import {
   getRunSelectionOptionsWithCache,
@@ -63,6 +65,10 @@ import {
   isDependencyCandidateLinkable,
 } from "../utils/taskDetail";
 import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
+import {
+  getDefaultRunSourceBranch,
+  isRunSourceBranchAvailable,
+} from "../../runs/utils/sourceBranches";
 import {
   dependencyBadgeState,
   isTaskBlocked,
@@ -156,6 +162,12 @@ export const useTaskDetailModel = () => {
     createSignal("");
   const [isLoadingRunSelectionOptions, setIsLoadingRunSelectionOptions] =
     createSignal(false);
+  const [runSourceBranchOptions, setRunSourceBranchOptions] = createSignal<
+    RunSourceBranchOption[]
+  >([]);
+  const [runSourceBranchError, setRunSourceBranchError] = createSignal("");
+  const [isLoadingRunSourceBranches, setIsLoadingRunSourceBranches] =
+    createSignal(false);
   const [projectRunDefaultsError, setProjectRunDefaultsError] =
     createSignal("");
   const [projectDefaultRunAgentId, setProjectDefaultRunAgentId] =
@@ -168,6 +180,8 @@ export const useTaskDetailModel = () => {
   const [selectedRunProviderId, setSelectedRunProviderIdSignal] =
     createSignal("");
   const [selectedRunModelId, setSelectedRunModelIdSignal] = createSignal("");
+  const [selectedRunSourceBranch, setSelectedRunSourceBranch] =
+    createSignal("");
   const [
     pendingRunSettingsDefaultsInitialization,
     setPendingRunSettingsDefaultsInitialization,
@@ -179,6 +193,7 @@ export const useTaskDetailModel = () => {
     Record<string, string>
   >({});
   let runSelectionOptionsRequestVersion = 0;
+  let runSourceBranchesRequestVersion = 0;
   let editMutationVersion = 0;
   let removeTaskStatusSubscription: (() => void) | null = null;
   let removeRunStatusSubscription: (() => void) | null = null;
@@ -447,6 +462,20 @@ export const useTaskDetailModel = () => {
     );
   });
 
+  createEffect(() => {
+    const agentId = selectedRunAgentId().trim();
+    const availableAgentOptions = runAgentOptions();
+    if (!agentId || availableAgentOptions.length === 0) {
+      return;
+    }
+
+    if (availableAgentOptions.some((option) => option.id === agentId)) {
+      return;
+    }
+
+    setSelectedRunAgentId("");
+  });
+
   const setSelectedRunProviderId = (providerId: string) => {
     setPendingRunSettingsDefaultsInitialization(false);
     setSelectedRunProviderIdSignal(providerId);
@@ -626,6 +655,48 @@ export const useTaskDetailModel = () => {
         params.taskId === activeTaskId
       ) {
         setIsLoadingRunSelectionOptions(false);
+      }
+    }
+  };
+
+  const refreshRunSourceBranches = async (activeTaskId: string) => {
+    const normalizedTaskId = activeTaskId.trim();
+    if (!normalizedTaskId) {
+      setRunSourceBranchOptions([]);
+      setRunSourceBranchError("Missing task context for source branches.");
+      setIsLoadingRunSourceBranches(false);
+      return;
+    }
+
+    const requestVersion = ++runSourceBranchesRequestVersion;
+    setIsLoadingRunSourceBranches(true);
+    setRunSourceBranchError("");
+    try {
+      const branches = await listTaskRunSourceBranches(normalizedTaskId);
+      if (requestVersion !== runSourceBranchesRequestVersion) {
+        return;
+      }
+
+      setRunSourceBranchOptions(branches);
+      if (branches.length === 0) {
+        setSelectedRunSourceBranch("");
+        setRunSourceBranchError("No local branches are available.");
+        return;
+      }
+
+      const currentSelection = selectedRunSourceBranch();
+      if (!isRunSourceBranchAvailable(currentSelection, branches)) {
+        setSelectedRunSourceBranch(getDefaultRunSourceBranch(branches));
+      }
+    } catch {
+      if (requestVersion !== runSourceBranchesRequestVersion) {
+        return;
+      }
+      setRunSourceBranchOptions([]);
+      setRunSourceBranchError("Failed to load local branches.");
+    } finally {
+      if (requestVersion === runSourceBranchesRequestVersion) {
+        setIsLoadingRunSourceBranches(false);
       }
     }
   };
@@ -1052,6 +1123,7 @@ export const useTaskDetailModel = () => {
           selectedRunModelId().trim() ||
           resolvedSelections.modelId ||
           undefined,
+        sourceBranch: selectedRunSourceBranch().trim() || undefined,
       });
       await refreshRuns(taskValue.id);
       return createdRun;
@@ -1073,6 +1145,7 @@ export const useTaskDetailModel = () => {
       setPendingRunSettingsDefaultsInitialization(!hasRunSelectionOptions());
       initializeRunSettingsSelectionsFromProjectDefaults();
       setIsRunSettingsModalOpen(true);
+      void refreshRunSourceBranches(params.taskId);
     };
 
     if (openCodeDependency.state() === "available") {
@@ -1222,12 +1295,16 @@ export const useTaskDetailModel = () => {
     runSelectionOptionsError,
     projectRunDefaultsError,
     isLoadingRunSelectionOptions,
+    runSourceBranchOptions,
+    runSourceBranchError,
+    isLoadingRunSourceBranches,
     hasRunSelectionOptions,
     isOpenCodeMissing: () => openCodeDependency.state() !== "available",
     openCodeDependencyReason: openCodeDependency.reason,
     selectedRunAgentId,
     selectedRunProviderId,
     selectedRunModelId,
+    selectedRunSourceBranch,
     removingDependencyKey,
     editTitle,
     editDescription,
@@ -1264,6 +1341,7 @@ export const useTaskDetailModel = () => {
     setSelectedRunAgentId: setSelectedRunAgentIdForSelection,
     setSelectedRunProviderId,
     setSelectedRunModelId,
+    setSelectedRunSourceBranch,
     setEditImplementationGuide,
     onEditTitleInput,
     onEditDescriptionInput,

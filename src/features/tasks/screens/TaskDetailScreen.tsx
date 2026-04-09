@@ -138,11 +138,15 @@ const TaskDetailScreen: Component = () => {
     runSelectionOptionsError,
     projectRunDefaultsError,
     isLoadingRunSelectionOptions,
+    isLoadingRunSourceBranches,
+    runSourceBranchOptions,
+    runSourceBranchError,
     hasRunSelectionOptions,
     isOpenCodeMissing,
     selectedRunAgentId,
     selectedRunProviderId,
     selectedRunModelId,
+    selectedRunSourceBranch,
     openCodeDependencyReason,
     removingDependencyKey,
     autosaveState,
@@ -179,6 +183,7 @@ const TaskDetailScreen: Component = () => {
     setSelectedRunAgentId,
     setSelectedRunProviderId,
     setSelectedRunModelId,
+    setSelectedRunSourceBranch,
     onEditTitleInput,
     onEditDescriptionInput,
     setMoveRepositoryId,
@@ -834,19 +839,24 @@ const TaskDetailScreen: Component = () => {
         hasRunSelectionOptions={hasRunSelectionOptions}
         isOpenCodeMissing={isOpenCodeMissing}
         isLoadingRunSelectionOptions={isLoadingRunSelectionOptions}
+        isLoadingRunSourceBranches={isLoadingRunSourceBranches}
         openCodeDependencyReason={openCodeDependencyReason}
         runSelectionOptionsError={() =>
           projectRunDefaultsError() || runSelectionOptionsError()
         }
+        runSourceBranchError={runSourceBranchError}
         runAgentOptions={runAgentOptions}
         runProviderOptions={runProviderOptions}
+        runSourceBranchOptions={runSourceBranchOptions}
         visibleRunModelOptions={visibleRunModelOptions}
         selectedRunAgentId={selectedRunAgentId}
         selectedRunProviderId={selectedRunProviderId}
         selectedRunModelId={selectedRunModelId}
+        selectedRunSourceBranch={selectedRunSourceBranch}
         setSelectedRunAgentId={setSelectedRunAgentId}
         setSelectedRunProviderId={setSelectedRunProviderId}
         setSelectedRunModelId={setSelectedRunModelId}
+        setSelectedRunSourceBranch={setSelectedRunSourceBranch}
         onCancel={onCancelRunSettingsModal}
         onConfirm={onConfirmCreateRun}
       />

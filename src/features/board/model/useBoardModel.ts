@@ -40,9 +40,11 @@ import {
 import {
   createRun,
   listTaskRuns,
+  listTaskRunSourceBranches,
   startRunOpenCode,
   type Run,
   type RunState,
+  type RunSourceBranchOption,
 } from "../../../app/lib/runs";
 import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
 import {
@@ -56,6 +58,10 @@ import {
   resolveProjectRunDefaults,
 } from "../../../app/lib/projectRunDefaults";
 import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
+import {
+  getDefaultRunSourceBranch,
+  isRunSourceBranchAvailable,
+} from "../../runs/utils/sourceBranches";
 import { canTransitionStatus } from "../../tasks/utils/taskDetail";
 import { groupTasksByStatus } from "../utils/board";
 const ACTIVE_RUN_STATUSES = new Set([
@@ -317,10 +323,18 @@ export const useBoardModel = () => {
     createSignal("");
   const [isLoadingRunSelectionOptions, setIsLoadingRunSelectionOptions] =
     createSignal(false);
+  const [runSourceBranchOptions, setRunSourceBranchOptions] = createSignal<
+    RunSourceBranchOption[]
+  >([]);
+  const [runSourceBranchError, setRunSourceBranchError] = createSignal("");
+  const [isLoadingRunSourceBranches, setIsLoadingRunSourceBranches] =
+    createSignal(false);
   const [selectedRunAgentId, setSelectedRunAgentId] = createSignal("");
   const [selectedRunProviderId, setSelectedRunProviderIdSignal] =
     createSignal("");
   const [selectedRunModelId, setSelectedRunModelIdSignal] = createSignal("");
+  const [selectedRunSourceBranch, setSelectedRunSourceBranch] =
+    createSignal("");
   const [projectDefaultRunAgentId, setProjectDefaultRunAgentId] =
     createSignal("");
   const [projectDefaultRunProviderId, setProjectDefaultRunProviderId] =
@@ -336,6 +350,7 @@ export const useBoardModel = () => {
   let activeTaskRunsRequestVersion = 0;
   let activeTaskSearchRequestVersion = 0;
   let runSelectionOptionsRequestVersion = 0;
+  let runSourceBranchesRequestVersion = 0;
   const taskRunRequestVersions: Record<string, number> = {};
   let boardEventSubscriptionDisposed = false;
   let removeBoardEventSubscription: (() => void) | null = null;
@@ -529,6 +544,20 @@ export const useBoardModel = () => {
     applyProjectRunDefaults();
   });
 
+  createEffect(() => {
+    const agentId = selectedRunAgentId().trim();
+    const availableAgentOptions = runAgentOptions();
+    if (!agentId || availableAgentOptions.length === 0) {
+      return;
+    }
+
+    if (availableAgentOptions.some((option) => option.id === agentId)) {
+      return;
+    }
+
+    setSelectedRunAgentId("");
+  });
+
   const refreshRunSelectionOptions = async () => {
     const projectId = selectedProjectId().trim();
     if (!projectId) {
@@ -573,6 +602,48 @@ export const useBoardModel = () => {
     } finally {
       if (requestVersion === runSelectionOptionsRequestVersion) {
         setIsLoadingRunSelectionOptions(false);
+      }
+    }
+  };
+
+  const refreshRunSourceBranches = async (taskId: string) => {
+    const normalizedTaskId = taskId.trim();
+    if (!normalizedTaskId) {
+      setRunSourceBranchOptions([]);
+      setRunSourceBranchError("Missing task context for source branches.");
+      setIsLoadingRunSourceBranches(false);
+      return;
+    }
+
+    const requestVersion = ++runSourceBranchesRequestVersion;
+    setIsLoadingRunSourceBranches(true);
+    setRunSourceBranchError("");
+    try {
+      const branches = await listTaskRunSourceBranches(normalizedTaskId);
+      if (requestVersion !== runSourceBranchesRequestVersion) {
+        return;
+      }
+
+      setRunSourceBranchOptions(branches);
+      if (branches.length === 0) {
+        setSelectedRunSourceBranch("");
+        setRunSourceBranchError("No local branches are available.");
+        return;
+      }
+
+      const currentSelection = selectedRunSourceBranch();
+      if (!isRunSourceBranchAvailable(currentSelection, branches)) {
+        setSelectedRunSourceBranch(getDefaultRunSourceBranch(branches));
+      }
+    } catch {
+      if (requestVersion !== runSourceBranchesRequestVersion) {
+        return;
+      }
+      setRunSourceBranchOptions([]);
+      setRunSourceBranchError("Failed to load local branches.");
+    } finally {
+      if (requestVersion === runSourceBranchesRequestVersion) {
+        setIsLoadingRunSourceBranches(false);
       }
     }
   };
@@ -960,6 +1031,7 @@ export const useBoardModel = () => {
       setPendingInProgressTaskId(taskId);
       setIsRunSettingsModalOpen(true);
       void refreshRunSelectionOptions();
+      void refreshRunSourceBranches(taskId);
     };
 
     if (openCodeDependency.state() === "available") {
@@ -1012,6 +1084,7 @@ export const useBoardModel = () => {
           providerId:
             selectedRunProviderId().trim() || resolved.providerId || undefined,
           modelId: selectedRunModelId().trim() || resolved.modelId || undefined,
+          sourceBranch: selectedRunSourceBranch().trim() || undefined,
         });
         const createdRunMiniCard = runToBoardTaskRunMiniCard(createdRun);
         if (createdRunMiniCard) {
@@ -1192,6 +1265,9 @@ export const useBoardModel = () => {
     hasRunSelectionOptions,
     isLoadingRunSelectionOptions,
     runSelectionOptionsError,
+    runSourceBranchOptions,
+    runSourceBranchError,
+    isLoadingRunSourceBranches,
     runAgentOptions,
     runProviderOptions,
     visibleRunModelOptions,
@@ -1201,6 +1277,7 @@ export const useBoardModel = () => {
     selectedRunAgentId,
     selectedRunProviderId,
     selectedRunModelId,
+    selectedRunSourceBranch,
     onProjectChange,
     refreshSelectedProjectTasks,
     isTaskStatusUpdating,
@@ -1210,6 +1287,7 @@ export const useBoardModel = () => {
     setSelectedRunAgentId: setSelectedRunAgentIdForSelection,
     setSelectedRunProviderId,
     setSelectedRunModelId,
+    setSelectedRunSourceBranch,
     onRequestMoveTaskToInProgress,
     onCancelMoveTaskToInProgress,
     onConfirmMoveTaskToInProgress,

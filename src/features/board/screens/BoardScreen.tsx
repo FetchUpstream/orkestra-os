@@ -258,17 +258,22 @@ const BoardScreen: Component = () => {
         hasRunSelectionOptions={model.hasRunSelectionOptions}
         isOpenCodeMissing={model.isOpenCodeMissing}
         isLoadingRunSelectionOptions={model.isLoadingRunSelectionOptions}
+        isLoadingRunSourceBranches={model.isLoadingRunSourceBranches}
         openCodeDependencyReason={model.openCodeDependencyReason}
         runSelectionOptionsError={model.runSelectionOptionsError}
+        runSourceBranchError={model.runSourceBranchError}
         runAgentOptions={model.runAgentOptions}
         runProviderOptions={model.runProviderOptions}
+        runSourceBranchOptions={model.runSourceBranchOptions}
         visibleRunModelOptions={model.visibleRunModelOptions}
         selectedRunAgentId={model.selectedRunAgentId}
         selectedRunProviderId={model.selectedRunProviderId}
         selectedRunModelId={model.selectedRunModelId}
+        selectedRunSourceBranch={model.selectedRunSourceBranch}
         setSelectedRunAgentId={model.setSelectedRunAgentId}
         setSelectedRunProviderId={model.setSelectedRunProviderId}
         setSelectedRunModelId={model.setSelectedRunModelId}
+        setSelectedRunSourceBranch={model.setSelectedRunSourceBranch}
         onCancel={model.onCancelMoveTaskToInProgress}
         onConfirm={model.onConfirmMoveTaskToInProgress}
       />

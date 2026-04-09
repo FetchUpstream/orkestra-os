@@ -20,6 +20,7 @@ const {
   listProjectTasksMock,
   searchProjectTasksMock,
   listTaskRunsMock,
+  listTaskRunSourceBranchesMock,
   getRunSelectionOptionsWithCacheMock,
   readRunSelectionOptionsCacheMock,
 } = vi.hoisted(() => ({
@@ -28,6 +29,7 @@ const {
   listProjectTasksMock: vi.fn(),
   searchProjectTasksMock: vi.fn(),
   listTaskRunsMock: vi.fn(),
+  listTaskRunSourceBranchesMock: vi.fn(),
   getRunSelectionOptionsWithCacheMock: vi.fn(),
   readRunSelectionOptionsCacheMock: vi.fn(),
 }));
@@ -50,6 +52,7 @@ vi.mock("../../../../app/lib/tasks", () => ({
 vi.mock("../../../../app/lib/runs", () => ({
   createRun: vi.fn(),
   listTaskRuns: listTaskRunsMock,
+  listTaskRunSourceBranches: listTaskRunSourceBranchesMock,
   startRunOpenCode: vi.fn(),
 }));
 
@@ -76,6 +79,7 @@ describe("useBoardModel run settings defaults", () => {
     listProjectTasksMock.mockReset();
     searchProjectTasksMock.mockReset();
     listTaskRunsMock.mockReset();
+    listTaskRunSourceBranchesMock.mockReset();
     getRunSelectionOptionsWithCacheMock.mockReset();
     readRunSelectionOptionsCacheMock.mockReset();
 
@@ -105,6 +109,10 @@ describe("useBoardModel run settings defaults", () => {
     ]);
     searchProjectTasksMock.mockResolvedValue([]);
     listTaskRunsMock.mockResolvedValue([]);
+    listTaskRunSourceBranchesMock.mockResolvedValue([
+      { name: "main", isCheckedOut: true },
+      { name: "feature/source", isCheckedOut: false },
+    ]);
     readRunSelectionOptionsCacheMock.mockReturnValue(null);
     getRunSelectionOptionsWithCacheMock.mockResolvedValue({
       agents: [{ id: "agent-1", label: "Agent 1" }],
@@ -133,6 +141,7 @@ describe("useBoardModel run settings defaults", () => {
       expect(ref.current?.selectedRunAgentId()).toBe("agent-1");
       expect(ref.current?.selectedRunProviderId()).toBe("provider-1");
       expect(ref.current?.selectedRunModelId()).toBe("model-1");
+      expect(ref.current?.selectedRunSourceBranch()).toBe("main");
     });
   });
 
