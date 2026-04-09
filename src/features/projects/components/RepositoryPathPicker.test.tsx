@@ -170,4 +170,49 @@ describe("RepositoryPathPicker", () => {
       ),
     );
   });
+
+  it("closes the first dropdown when focus moves to a second picker", async () => {
+    const searchDirectories = vi.fn().mockResolvedValue([]);
+
+    const TestHarness = () => {
+      const [firstValue, setFirstValue] = createSignal("");
+      const [secondValue, setSecondValue] = createSignal("");
+
+      return (
+        <>
+          <RepositoryPathPicker
+            value={firstValue()}
+            ariaLabel="First repository path"
+            onInput={setFirstValue}
+            searchDirectories={searchDirectories}
+          />
+          <RepositoryPathPicker
+            value={secondValue()}
+            ariaLabel="Second repository path"
+            onInput={setSecondValue}
+            searchDirectories={searchDirectories}
+          />
+        </>
+      );
+    };
+
+    render(() => <TestHarness />);
+
+    const firstInput = screen.getByRole("textbox", {
+      name: "First repository path",
+    });
+    const secondInput = screen.getByRole("textbox", {
+      name: "Second repository path",
+    });
+
+    fireEvent.focusIn(firstInput);
+    expect(firstInput.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.focusOut(firstInput, { relatedTarget: secondInput });
+    fireEvent.focusIn(secondInput);
+    await Promise.resolve();
+
+    expect(firstInput.getAttribute("aria-expanded")).toBe("false");
+    expect(secondInput.getAttribute("aria-expanded")).toBe("true");
+  });
 });

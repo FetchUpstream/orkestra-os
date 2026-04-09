@@ -51,6 +51,7 @@ const RepositoryPathPicker: Component<Props> = (props) => {
   const dropdownId = `repository-path-picker-${props.ariaLabel
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")}`;
+  let containerRef: HTMLDivElement | undefined;
 
   const hasQuery = () => props.value.trim().length > 0;
   const isOpen = () => isFocused();
@@ -122,11 +123,12 @@ const RepositoryPathPicker: Component<Props> = (props) => {
 
   return (
     <div
+      ref={containerRef}
       class="repository-path-picker"
       onFocusIn={() => setIsFocused(true)}
       onFocusOut={() => {
         queueMicrotask(() => {
-          if (!document.activeElement?.closest(".repository-path-picker")) {
+          if (!containerRef?.contains(document.activeElement)) {
             setIsFocused(false);
           }
         });
