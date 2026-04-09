@@ -179,19 +179,22 @@ impl LocalDirectorySearchService {
         let mut seen = HashSet::new();
         let mut indexed = Vec::new();
         let mut queue = VecDeque::new();
+        let mut enqueued_directories = 0usize;
 
         for root in &self.roots {
             if !root.exists() || !root.is_dir() {
                 continue;
             }
-            queue.push_back((root.clone(), 0usize));
-        }
 
-        while let Some((path, depth)) = queue.pop_front() {
-            if indexed.len() >= MAX_INDEXED_DIRECTORIES {
+            if enqueued_directories >= MAX_INDEXED_DIRECTORIES {
                 break;
             }
 
+            queue.push_back((root.clone(), 0usize));
+            enqueued_directories += 1;
+        }
+
+        while let Some((path, depth)) = queue.pop_front() {
             let key = path.to_string_lossy().into_owned();
             if !seen.insert(key.clone()) {
                 continue;
@@ -227,7 +230,12 @@ impl LocalDirectorySearchService {
                     continue;
                 }
 
+                if enqueued_directories >= MAX_INDEXED_DIRECTORIES {
+                    break;
+                }
+
                 queue.push_back((child_path, depth + 1));
+                enqueued_directories += 1;
             }
         }
 
@@ -404,5 +412,30 @@ mod tests {
         });
 
         assert_eq!(home_dir, Some(PathBuf::from(r"C:\Users\orkestra")));
+    }
+
+    #[test]
+    fn traversal_budget_limits_enqueued_roots() {
+        let base = std::env::temp_dir().join(format!(
+            "orkestra-repo-search-enqueue-budget-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+
+        let mut roots = Vec::new();
+        for index in 0..=MAX_INDEXED_DIRECTORIES {
+            let root = base.join(format!("plain-{index}"));
+            std::fs::create_dir_all(&root).unwrap();
+            roots.push(root);
+        }
+
+        let repo_root = base.join("target-repo");
+        std::fs::create_dir_all(repo_root.join(".git")).unwrap();
+        roots.push(repo_root.clone());
+
+        let service = LocalDirectorySearchService::new_with_roots(roots);
+        let indexed = service.build_index();
+
+        assert!(indexed.iter().all(|entry| entry.path != repo_root.to_string_lossy()));
     }
 }
