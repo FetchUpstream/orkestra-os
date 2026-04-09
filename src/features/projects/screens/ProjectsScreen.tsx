@@ -11,8 +11,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { useNavigate, useParams } from "@solidjs/router";
-import { Show, createEffect, type Component } from "solid-js";
+import { Show, createEffect, onCleanup, type Component } from "solid-js";
 import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
+import { buildBoardHref } from "../../../app/lib/boardNavigation";
 import CreateProjectPanel from "../components/CreateProjectPanel";
 import { useProjectsPageModel } from "../model/useProjectsPageModel";
 
@@ -31,18 +32,34 @@ const ProjectsScreen: Component = () => {
 
   createEffect(() => {
     const projectId = params.projectId?.trim() ?? "";
-    if (!projectId) {
-      if (model.mode() !== "create") {
-        model.resetForm();
-      }
+    void model.syncProjectRoute(projectId);
+  });
+
+  createEffect(() => {
+    const projectId = params.projectId?.trim() ?? "";
+    if (!projectId || model.mode() !== "edit") {
+      window.dispatchEvent(new CustomEvent("project-settings:topbar-clear"));
       return;
     }
 
-    if (model.editingProjectId() === projectId && model.mode() === "edit") {
-      return;
-    }
+    window.dispatchEvent(
+      new CustomEvent("project-settings:topbar-config", {
+        detail: {
+          autosaveState: model.autosaveState(),
+          hasPendingChanges: model.hasPendingProjectChanges(),
+          closeHref: buildBoardHref(projectId),
+          closeLabel: "board",
+          onRequestClose: async () => {
+            await model.resetFormWithAutosave();
+            await navigate(buildBoardHref(projectId));
+          },
+        },
+      }),
+    );
+  });
 
-    void model.onEditProject(projectId);
+  onCleanup(() => {
+    window.dispatchEvent(new CustomEvent("project-settings:topbar-clear"));
   });
 
   return (
@@ -61,6 +78,7 @@ const ProjectsScreen: Component = () => {
             runDefaultsError={model.runDefaultsError}
             isSubmitting={model.isSubmitting}
             isDeletingProject={model.isDeletingProject}
+            isLoadingProjectForEdit={model.isLoadingProjectForEdit}
             isLoadingRunDefaults={model.isLoadingRunDefaults}
             hasRunSelectionOptions={model.hasRunSelectionOptions}
             projectKeyError={model.projectKeyError}
@@ -87,11 +105,10 @@ const ProjectsScreen: Component = () => {
             updateEnvVar={model.updateEnvVar}
             updateRepository={model.updateRepository}
             searchRepositoryDirectories={model.searchRepositoryDirectories}
-            onDeleteProject={model.onOpenDeleteCurrentProject}
-            resetToCreateMode={() => {
-              model.resetForm();
-              void navigate("/projects");
+            flushAutosave={() => {
+              void model.flushProjectSettingsAutosaveNow();
             }}
+            onDeleteProject={model.onOpenDeleteCurrentProject}
             onSubmit={model.onSubmit}
           />
         </Show>

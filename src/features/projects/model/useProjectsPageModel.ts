@@ -11,7 +11,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { useNavigate } from "@solidjs/router";
-import { createMemo, createSignal, onMount, type JSX } from "solid-js";
+import {
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+  type JSX,
+} from "solid-js";
 import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
 import { buildBoardHref } from "../../../app/lib/boardNavigation";
 import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
@@ -23,6 +29,7 @@ import {
   listProjects,
   searchLocalDirectories,
   updateProject,
+  type CreateProjectInput,
   type Project,
 } from "../../../app/lib/projects";
 import {
@@ -49,9 +56,13 @@ import {
 } from "../utils/projectForm";
 
 export const useProjectsPageModel = () => {
+  const AUTOSAVE_DEBOUNCE_MS = 900;
+  const AUTOSAVE_MAX_WAIT_MS = 5000;
   const navigate = useNavigate();
   const openCodeDependency = useOpenCodeDependency();
   let runSelectionOptionsRequestVersion = 0;
+  let projectRouteSyncVersion = 0;
+  let projectLoadRequestVersion = 0;
   const [mode, setMode] = createSignal<"create" | "edit">("create");
   const [editingProjectId, setEditingProjectId] = createSignal<string | null>(
     null,
@@ -67,6 +78,11 @@ export const useProjectsPageModel = () => {
   ]);
   const [defaultRepoIndex, setDefaultRepoIndex] = createSignal(0);
   const [error, setError] = createSignal("");
+  const [autosaveState, setAutosaveState] = createSignal<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [hasPendingProjectChanges, setHasPendingProjectChanges] =
+    createSignal(false);
   const [runDefaultsError, setRunDefaultsError] = createSignal("");
   const [isSubmitting, setIsSubmitting] = createSignal(false);
   const [isLoadingRunDefaults, setIsLoadingRunDefaults] = createSignal(false);
@@ -108,6 +124,13 @@ export const useProjectsPageModel = () => {
     createSignal("");
   const [deleteError, setDeleteError] = createSignal("");
   const [isDeletingProject, setIsDeletingProject] = createSignal(false);
+  let editMutationVersion = 0;
+  let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let autosaveMaxWaitTimer: ReturnType<typeof setTimeout> | null = null;
+  let autosaveInFlight = false;
+  let autosaveQueued = false;
+  let lastPersistedDraftSignature = "";
+  let currentAutosavePromise: Promise<boolean> | null = null;
 
   const loadProjects = async () => {
     const nextProjects = await listProjects();
@@ -326,6 +349,7 @@ export const useProjectsPageModel = () => {
   };
 
   const resetForm = () => {
+    clearProjectSettingsAutosaveState();
     setMode("create");
     setEditingProjectId(null);
     setLoadedProjectName("");
@@ -344,84 +368,158 @@ export const useProjectsPageModel = () => {
     resetDeleteModalState();
   };
 
-  const updateName = (value: string) => {
-    setName(value);
-    if (!isKeyEdited() || !key().trim()) {
-      setKey(recommendProjectKey(value));
+  const normalizeOptionalValue = (value: string | null | undefined) => {
+    const normalized = value?.trim() || "";
+    return normalized.length > 0 ? normalized : undefined;
+  };
+
+  const normalizePersistedRepositoryName = (
+    repository: Project["repositories"][number],
+  ) => {
+    const normalizedName = normalizeOptionalValue(repository.name);
+    const normalizedPath = repository.path.trim();
+    if (!normalizedName || normalizedName === normalizedPath) {
+      return undefined;
+    }
+    return normalizedName;
+  };
+
+  const toProjectPayloadFromPersisted = (
+    project: Project,
+  ): CreateProjectInput => {
+    const normalizedEnvVars = normalizeProjectEnvVars(project.envVars ?? []);
+    return {
+      name: project.name.trim(),
+      key: normalizeProjectKey(project.key),
+      description: normalizeOptionalValue(project.description),
+      defaultRunProvider: project.defaultRunProvider?.trim() || "",
+      defaultRunModel: project.defaultRunModel?.trim() || "",
+      defaultRunAgent: normalizeOptionalValue(project.defaultRunAgent),
+      envVars: normalizedEnvVars.length > 0 ? normalizedEnvVars : undefined,
+      repositories: project.repositories.map((repository) => ({
+        id: repository.id,
+        path: repository.path.trim(),
+        name: normalizePersistedRepositoryName(repository),
+        is_default: repository.is_default === true,
+        setup_script: normalizeOptionalValue(repository.setup_script),
+        cleanup_script: normalizeOptionalValue(repository.cleanup_script),
+      })),
+    };
+  };
+
+  const draftSignature = (payload: CreateProjectInput) =>
+    JSON.stringify(payload);
+
+  const clearProjectSettingsAutosaveTimers = () => {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = null;
+    }
+    if (autosaveMaxWaitTimer) {
+      clearTimeout(autosaveMaxWaitTimer);
+      autosaveMaxWaitTimer = null;
     }
   };
 
-  const updateKey = (value: string) => {
-    const normalizedKey = normalizeProjectKey(value);
-    setIsKeyEdited(normalizedKey.length > 0);
-    setKey(normalizedKey);
-    setTouched((prev) => ({ ...prev, key: true }));
+  const clearProjectSettingsAutosaveState = () => {
+    clearProjectSettingsAutosaveTimers();
+    autosaveQueued = false;
+    setAutosaveState("idle");
+    setHasPendingProjectChanges(false);
+    lastPersistedDraftSignature = "";
   };
 
-  const addRepository = () => {
-    setRepositories((prev) => [...prev, emptyRepo()]);
-  };
+  const applyProjectToForm = (project: Project) => {
+    const nextRepositories = project.repositories.map((repository) => ({
+      id: repository.id,
+      path: repository.path,
+      name: normalizePersistedRepositoryName(repository) ?? "",
+      setupScript: repository.setup_script ?? "",
+      cleanupScript: repository.cleanup_script ?? "",
+    }));
 
-  const addEnvVar = () => {
-    setEnvVars((prev) => [...prev, emptyEnvVar()]);
-  };
-
-  const removeEnvVar = (index: number) => {
-    setEnvVars((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
-  };
-
-  const updateEnvVar = (
-    index: number,
-    field: keyof EnvVarInput,
-    value: string,
-  ) => {
-    setEnvVars((prev) =>
-      prev.map((entry, itemIndex) =>
-        itemIndex === index ? { ...entry, [field]: value } : entry,
-      ),
+    setMode("edit");
+    setEditingProjectId(project.id);
+    setLoadedProjectName(project.name);
+    setName(project.name);
+    setKey(project.key);
+    setDescription(project.description ?? "");
+    setEnvVars(project.envVars ?? []);
+    setRepositories(
+      nextRepositories.length > 0 ? nextRepositories : [emptyRepo()],
     );
-  };
-
-  const removeRepository = (index: number) => {
-    setRepositories((prev) => {
-      if (prev.length <= 1) return prev;
-      return prev.filter((_, itemIndex) => itemIndex !== index);
+    applyResolvedRunDefaults({
+      agentId: project.defaultRunAgent,
+      providerId: project.defaultRunProvider,
+      modelId: project.defaultRunModel,
     });
-    setDefaultRepoIndex((prev) => {
-      if (prev === index) return -1;
-      if (prev > index) return prev - 1;
-      return prev;
-    });
-  };
-
-  const updateRepository = (
-    index: number,
-    field: keyof RepoInput,
-    value: string,
-  ) => {
-    setRepositories((prev) =>
-      prev.map((repo, itemIndex) =>
-        itemIndex === index ? { ...repo, [field]: value } : repo,
-      ),
+    const defaultRepositoryIndex = project.repositories.findIndex(
+      (repository) => repository.is_default,
     );
+    setDefaultRepoIndex(
+      defaultRepositoryIndex >= 0 ? defaultRepositoryIndex : 0,
+    );
+    setIsKeyEdited(project.key.trim().length > 0);
+    setTouched({});
   };
 
-  const onSubmit: JSX.EventHandler<HTMLFormElement, SubmitEvent> = async (
-    event,
-  ) => {
-    event.preventDefault();
+  const syncPersistedProject = (project: Project) => {
+    const persistedSignature = draftSignature(
+      toProjectPayloadFromPersisted(project),
+    );
+    lastPersistedDraftSignature = persistedSignature;
+    setLoadedProjectName(project.name);
     setError("");
+    setProjects((currentProjects) => {
+      let found = false;
+      const nextProjects = currentProjects.map((currentProject) => {
+        if (currentProject.id !== project.id) return currentProject;
+        found = true;
+        return project;
+      });
+      return found ? nextProjects : currentProjects;
+    });
 
-    if (!name().trim()) {
-      setError("Project name is required.");
-      setTouched((prev) => ({ ...prev, name: true }));
-      return;
+    const { payload: currentPayload } = buildProjectPayload();
+    if (!currentPayload) {
+      setHasPendingProjectChanges(true);
+      return persistedSignature;
     }
 
-    if (projectKeyError() || !key().trim()) {
-      setError(projectKeyError() || "Project key is required.");
-      setTouched((prev) => ({ ...prev, key: true }));
-      return;
+    const currentSignature = draftSignature(currentPayload);
+    setHasPendingProjectChanges(currentSignature !== persistedSignature);
+    return persistedSignature;
+  };
+
+  const buildProjectPayload = (markTouched = false) => {
+    if (!name().trim()) {
+      if (markTouched) {
+        setTouched((prev) => ({ ...prev, name: true }));
+      }
+      return {
+        payload: null,
+        validationError: "Project name is required.",
+      };
+    }
+
+    if (!key().trim()) {
+      if (markTouched) {
+        setTouched((prev) => ({ ...prev, key: true }));
+      }
+      return {
+        payload: null,
+        validationError: "Project key is required.",
+      };
+    }
+
+    if (projectKeyError()) {
+      if (markTouched) {
+        setTouched((prev) => ({ ...prev, key: true }));
+      }
+      return {
+        payload: null,
+        validationError: projectKeyError(),
+      };
     }
 
     const normalizedRepositories = repositories().map((repo) => ({
@@ -434,28 +532,35 @@ export const useProjectsPageModel = () => {
     const normalizedEnvVars = normalizeProjectEnvVars(envVars());
 
     if (normalizedRepositories.some((repo) => !repo.path)) {
-      setError("Repository path is required for each entry.");
-      return;
+      return {
+        payload: null,
+        validationError: "Repository path is required for each entry.",
+      };
     }
 
     if (hasInvalidDefaultRepo()) {
-      setError("Select exactly one default repository.");
-      return;
+      return {
+        payload: null,
+        validationError: "Select exactly one default repository.",
+      };
     }
 
     if (runDefaultsValidationError()) {
-      setError(runDefaultsValidationError());
-      return;
+      return {
+        payload: null,
+        validationError: runDefaultsValidationError(),
+      };
     }
 
     if (projectEnvVarError()) {
-      setError(projectEnvVarError());
-      return;
+      return {
+        payload: null,
+        validationError: projectEnvVarError(),
+      };
     }
 
-    setIsSubmitting(true);
-    try {
-      const payload = {
+    return {
+      payload: {
         name: name().trim(),
         key: normalizeProjectKey(key()),
         description: description().trim() || undefined,
@@ -471,16 +576,254 @@ export const useProjectsPageModel = () => {
           setup_script: repo.setup_script || undefined,
           cleanup_script: repo.cleanup_script || undefined,
         })),
-      };
-      const activeEditProjectId = editingProjectId();
+      } satisfies CreateProjectInput,
+      validationError: "",
+    };
+  };
 
-      if (mode() === "edit" && activeEditProjectId) {
-        await updateProject(activeEditProjectId, payload);
-        await loadProjects();
-        navigate(buildBoardHref(activeEditProjectId));
-        return;
+  const markProjectSettingsDirty = () => {
+    if (mode() !== "edit") return;
+    setHasPendingProjectChanges(true);
+    setError("");
+    if (autosaveState() === "saved" || autosaveState() === "error") {
+      setAutosaveState("idle");
+    }
+    scheduleProjectSettingsAutosave();
+  };
+
+  const flushProjectSettingsAutosaveNow = async () => {
+    if (mode() !== "edit") return true;
+    return flushProjectSettingsAutosave("submit");
+  };
+
+  const flushProjectSettingsAutosave = async (
+    _reason: "debounced" | "max-wait" | "submit" | "route-change" | "unmount",
+  ): Promise<boolean> => {
+    clearProjectSettingsAutosaveTimers();
+
+    if (mode() !== "edit") return true;
+
+    const activeProjectId = editingProjectId()?.trim() || "";
+    if (!activeProjectId) return true;
+
+    const { payload, validationError } = buildProjectPayload(true);
+    if (!payload) {
+      setAutosaveState("error");
+      setError(validationError);
+      return false;
+    }
+
+    const nextSignature = draftSignature(payload);
+    if (nextSignature === lastPersistedDraftSignature) {
+      setHasPendingProjectChanges(false);
+      setAutosaveState("idle");
+      setError("");
+      return true;
+    }
+
+    if (autosaveInFlight) {
+      autosaveQueued = true;
+      return currentAutosavePromise ?? false;
+    }
+
+    const requestVersion = ++editMutationVersion;
+    autosaveInFlight = true;
+    setAutosaveState("saving");
+    let didPersist = false;
+
+    const requestPromise = (async () => {
+      try {
+        const updatedProject = await updateProject(activeProjectId, payload);
+
+        if (requestVersion !== editMutationVersion) return false;
+        if ((editingProjectId()?.trim() || "") !== activeProjectId)
+          return false;
+
+        const persistedSignature = syncPersistedProject(updatedProject);
+        const { payload: currentPayload } = buildProjectPayload();
+        const currentSignature = currentPayload
+          ? draftSignature(currentPayload)
+          : null;
+        if (currentSignature === persistedSignature) {
+          setAutosaveState("saved");
+        }
+        didPersist = true;
+      } catch (submitError) {
+        if (requestVersion !== editMutationVersion) return false;
+        if ((editingProjectId()?.trim() || "") !== activeProjectId)
+          return false;
+        const backendMessage = getCreateProjectErrorMessage(submitError);
+        setAutosaveState("error");
+        setError(
+          backendMessage
+            ? `Failed to autosave project settings. ${backendMessage}`
+            : "Failed to autosave project settings.",
+        );
+      } finally {
+        if (requestVersion === editMutationVersion) {
+          autosaveInFlight = false;
+        }
       }
 
+      if (requestVersion !== editMutationVersion) return false;
+
+      if (autosaveQueued) {
+        autosaveQueued = false;
+        return flushProjectSettingsAutosave("debounced");
+      }
+
+      return didPersist;
+    })();
+
+    currentAutosavePromise = requestPromise;
+
+    try {
+      return await requestPromise;
+    } finally {
+      if (currentAutosavePromise === requestPromise) {
+        currentAutosavePromise = null;
+      }
+    }
+  };
+
+  const scheduleProjectSettingsAutosave = () => {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+    }
+    autosaveTimer = setTimeout(() => {
+      void flushProjectSettingsAutosave("debounced");
+    }, AUTOSAVE_DEBOUNCE_MS);
+
+    if (!autosaveMaxWaitTimer) {
+      autosaveMaxWaitTimer = setTimeout(() => {
+        void flushProjectSettingsAutosave("max-wait");
+      }, AUTOSAVE_MAX_WAIT_MS);
+    }
+  };
+
+  const flushQueuedProjectSettingsAutosave = async (): Promise<boolean> => {
+    return flushProjectSettingsAutosave("debounced");
+  };
+
+  const syncProjectRoute = async (projectId: string) => {
+    const requestVersion = ++projectRouteSyncVersion;
+    const nextProjectId = projectId.trim();
+
+    if (!nextProjectId) {
+      if (mode() !== "create") {
+        await flushQueuedProjectSettingsAutosave();
+        if (requestVersion !== projectRouteSyncVersion) return;
+        resetForm();
+      }
+      return;
+    }
+
+    if (mode() === "edit" && editingProjectId() === nextProjectId) {
+      return;
+    }
+
+    if (mode() === "edit" && editingProjectId()) {
+      await flushQueuedProjectSettingsAutosave();
+      if (requestVersion !== projectRouteSyncVersion) return;
+    }
+
+    await onEditProject(nextProjectId);
+  };
+
+  const resetFormWithAutosave = async () => {
+    await flushQueuedProjectSettingsAutosave();
+    resetForm();
+  };
+
+  const updateName = (value: string) => {
+    setName(value);
+    if (!isKeyEdited() || !key().trim()) {
+      setKey(recommendProjectKey(value));
+    }
+    markProjectSettingsDirty();
+  };
+
+  const updateKey = (value: string) => {
+    const normalizedKey = normalizeProjectKey(value);
+    setIsKeyEdited(normalizedKey.length > 0);
+    setKey(normalizedKey);
+    setTouched((prev) => ({ ...prev, key: true }));
+    markProjectSettingsDirty();
+  };
+
+  const addRepository = () => {
+    setRepositories((prev) => [...prev, emptyRepo()]);
+    markProjectSettingsDirty();
+  };
+
+  const addEnvVar = () => {
+    setEnvVars((prev) => [...prev, emptyEnvVar()]);
+    markProjectSettingsDirty();
+  };
+
+  const removeEnvVar = (index: number) => {
+    setEnvVars((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+    markProjectSettingsDirty();
+  };
+
+  const updateEnvVar = (
+    index: number,
+    field: keyof EnvVarInput,
+    value: string,
+  ) => {
+    setEnvVars((prev) =>
+      prev.map((entry, itemIndex) =>
+        itemIndex === index ? { ...entry, [field]: value } : entry,
+      ),
+    );
+    markProjectSettingsDirty();
+  };
+
+  const removeRepository = (index: number) => {
+    setRepositories((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((_, itemIndex) => itemIndex !== index);
+    });
+    setDefaultRepoIndex((prev) => {
+      if (prev === index) return -1;
+      if (prev > index) return prev - 1;
+      return prev;
+    });
+    markProjectSettingsDirty();
+  };
+
+  const updateRepository = (
+    index: number,
+    field: keyof RepoInput,
+    value: string,
+  ) => {
+    setRepositories((prev) =>
+      prev.map((repo, itemIndex) =>
+        itemIndex === index ? { ...repo, [field]: value } : repo,
+      ),
+    );
+    markProjectSettingsDirty();
+  };
+
+  const onSubmit: JSX.EventHandler<HTMLFormElement, SubmitEvent> = async (
+    event,
+  ) => {
+    event.preventDefault();
+    setError("");
+
+    if (mode() === "edit") {
+      await flushQueuedProjectSettingsAutosave();
+      return;
+    }
+
+    const { payload, validationError } = buildProjectPayload(true);
+    if (!payload) {
+      setError(validationError);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
       const createdProject = await createProject(payload);
       await loadProjects();
       resetForm();
@@ -505,45 +848,24 @@ export const useProjectsPageModel = () => {
     searchLocalDirectories({ query, limit });
 
   const onEditProject = async (projectId: string) => {
+    const requestVersion = ++projectLoadRequestVersion;
     setError("");
+    clearProjectSettingsAutosaveTimers();
+    autosaveQueued = false;
+    setAutosaveState("idle");
+    setHasPendingProjectChanges(false);
     setIsLoadingProjectForEdit(true);
     setEditingProjectId(projectId);
     try {
       await loadRunSelectionOptions();
       const projectDetails = await getProject(projectId);
-      const nextRepositories = projectDetails.repositories.map(
-        (repository) => ({
-          id: repository.id,
-          path: repository.path,
-          name: repository.name ?? "",
-          setupScript: repository.setup_script ?? "",
-          cleanupScript: repository.cleanup_script ?? "",
-        }),
-      );
-
-      setMode("edit");
-      setLoadedProjectName(projectDetails.name);
-      setName(projectDetails.name);
-      setKey(projectDetails.key);
-      setDescription(projectDetails.description ?? "");
-      setEnvVars(projectDetails.envVars ?? []);
-      setRepositories(
-        nextRepositories.length > 0 ? nextRepositories : [emptyRepo()],
-      );
-      applyResolvedRunDefaults({
-        agentId: projectDetails.defaultRunAgent,
-        providerId: projectDetails.defaultRunProvider,
-        modelId: projectDetails.defaultRunModel,
-      });
-      const defaultRepositoryIndex = projectDetails.repositories.findIndex(
-        (repository) => repository.is_default,
-      );
-      setDefaultRepoIndex(
-        defaultRepositoryIndex >= 0 ? defaultRepositoryIndex : 0,
-      );
-      setIsKeyEdited(projectDetails.key.trim().length > 0);
-      setTouched({});
+      if (requestVersion !== projectLoadRequestVersion) return;
+      if ((editingProjectId()?.trim() || "") !== projectId.trim()) return;
+      applyProjectToForm(projectDetails);
+      syncPersistedProject(projectDetails);
     } catch (loadError) {
+      if (requestVersion !== projectLoadRequestVersion) return;
+      if ((editingProjectId()?.trim() || "") !== projectId.trim()) return;
       const backendMessage = getCreateProjectErrorMessage(loadError);
       setError(
         backendMessage
@@ -553,8 +875,12 @@ export const useProjectsPageModel = () => {
       setMode("create");
       setEditingProjectId(null);
       setLoadedProjectName("");
+      setAutosaveState("idle");
+      setHasPendingProjectChanges(false);
     } finally {
-      setIsLoadingProjectForEdit(false);
+      if (requestVersion === projectLoadRequestVersion) {
+        setIsLoadingProjectForEdit(false);
+      }
     }
   };
 
@@ -640,9 +966,11 @@ export const useProjectsPageModel = () => {
     setIsDeleteModalOpen(true);
   };
 
-  const onOpenDeleteCurrentProject = () => {
+  const onOpenDeleteCurrentProject = async () => {
     const projectId = editingProjectId()?.trim() ?? "";
     if (!projectId || mode() !== "edit") return;
+
+    await flushQueuedProjectSettingsAutosave();
 
     onOpenDeleteModal({
       id: projectId,
@@ -702,6 +1030,15 @@ export const useProjectsPageModel = () => {
     }
   };
 
+  onCleanup(() => {
+    projectRouteSyncVersion += 1;
+    if (mode() === "edit" && hasPendingProjectChanges()) {
+      void flushQueuedProjectSettingsAutosave();
+    } else {
+      clearProjectSettingsAutosaveTimers();
+    }
+  });
+
   return {
     mode,
     editingProjectId,
@@ -713,6 +1050,8 @@ export const useProjectsPageModel = () => {
     repositories,
     defaultRepoIndex,
     error,
+    autosaveState,
+    hasPendingProjectChanges,
     runDefaultsError,
     isSubmitting,
     isLoadingRunDefaults,
@@ -746,13 +1085,29 @@ export const useProjectsPageModel = () => {
     projectKeyError,
     cloneProjectKeyError,
     cloneRepositoryDestinationError,
-    setDescription,
+    setDescription: (value: string) => {
+      setDescription(value);
+      markProjectSettingsDirty();
+    },
     setTouched,
-    setDefaultRunProvider: setDefaultRunProviderAndValidate,
-    setDefaultRunAgent,
-    setDefaultRunModel,
+    setDefaultRunProvider: (value: string) => {
+      setDefaultRunProviderAndValidate(value);
+      markProjectSettingsDirty();
+    },
+    setDefaultRunAgent: (value: string) => {
+      setDefaultRunAgent(value);
+      markProjectSettingsDirty();
+    },
+    setDefaultRunModel: (value: string) => {
+      setDefaultRunModel(value);
+      markProjectSettingsDirty();
+    },
     setCloneTouched,
-    setDefaultRepoIndex,
+    setDefaultRepoIndex: (index: number) => {
+      setDefaultRepoIndex(index);
+      markProjectSettingsDirty();
+    },
+    flushProjectSettingsAutosaveNow,
     setCloneRepositoryDestination,
     setDeleteConfirmationInput,
     updateName,
@@ -766,6 +1121,8 @@ export const useProjectsPageModel = () => {
     updateRepository,
     searchRepositoryDirectories,
     resetForm,
+    resetFormWithAutosave,
+    syncProjectRoute,
     onEditProject,
     onOpenCloneModal,
     closeCloneModal,

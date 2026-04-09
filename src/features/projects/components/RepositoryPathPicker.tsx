@@ -32,6 +32,7 @@ type Props = {
   required?: boolean;
   disabled?: boolean;
   onInput: (value: string) => void;
+  onBlur?: () => void;
   searchDirectories: (
     query: string,
     limit?: number,
@@ -175,6 +176,7 @@ const RepositoryPathPicker: Component<Props> = (props) => {
         aria-autocomplete="list"
         aria-controls={dropdownId}
         disabled={props.disabled}
+        onBlur={() => props.onBlur?.()}
       />
       <p class="field-help">
         Search common local Git repositories, or enter a path manually.

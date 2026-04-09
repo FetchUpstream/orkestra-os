@@ -5340,6 +5340,10 @@ describe("app routing and shell", () => {
   it("enforces default repository selection on create form", async () => {
     renderAt("/projects");
 
+    await waitFor(() => {
+      expect(screen.getByLabelText("Project name")).toBeTruthy();
+    });
+
     await fireEvent.input(screen.getByLabelText("Project name"), {
       target: { value: "Demo Project" },
     });
@@ -5606,8 +5610,11 @@ describe("app routing and shell", () => {
     expect(keyInput.value).toBe("BET");
   });
 
-  it("saves the edited project from project settings", async () => {
-    invokeMock.mockImplementation((command: string) => {
+  it("autosaves the edited project from project settings", async () => {
+    vi.useFakeTimers();
+    let savedProjectName = "Alpha Updated";
+
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
       if (command === "list_projects") {
         return Promise.resolve([
           {
@@ -5642,10 +5649,13 @@ describe("app routing and shell", () => {
         });
       }
       if (command === "update_project") {
+        savedProjectName =
+          (args as { input?: { name?: string } } | undefined)?.input?.name ??
+          savedProjectName;
         return Promise.resolve({
           project: {
             id: "p-1",
-            name: "Alpha Updated",
+            name: savedProjectName,
             key: "ALP",
             description: "Original description",
             default_run_agent: null,
@@ -5678,58 +5688,85 @@ describe("app routing and shell", () => {
       return Promise.resolve(null);
     });
 
-    renderAt("/projects/p-1");
+    try {
+      renderAt("/projects/p-1");
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole("heading", { name: "Edit Project" }),
-      ).toBeTruthy();
-      expect(
-        (screen.getByLabelText("Project name") as HTMLInputElement).value,
-      ).toBe("Alpha");
-      expect(
-        (
-          screen.getByLabelText(
-            "Project default run provider",
-          ) as HTMLSelectElement
-        ).value,
-      ).toBe("provider-a");
-      expect(
-        (
-          screen.getByLabelText(
-            "Project default run model",
-          ) as HTMLSelectElement
-        ).value,
-      ).toBe("model-a");
-    });
-
-    await fireEvent.input(screen.getByLabelText("Project name"), {
-      target: { value: "Alpha Updated" },
-    });
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("update_project", {
-        id: "p-1",
-        input: expect.objectContaining({
-          name: "Alpha Updated",
-          key: "ALP",
-          description: "Original description",
-          default_run_provider: "provider-a",
-          default_run_model: "model-a",
-          repositories: [
-            expect.objectContaining({
-              id: "r-1",
-              repo_path: "/repo/main",
-              name: "Main",
-              is_default: true,
-            }),
-          ],
-        }),
+      await waitFor(() => {
+        expect(
+          screen.getByRole("heading", { name: "Edit Project" }),
+        ).toBeTruthy();
+        expect(
+          (screen.getByLabelText("Project name") as HTMLInputElement).value,
+        ).toBe("Alpha");
+        expect(
+          (
+            screen.getByLabelText(
+              "Project default run provider",
+            ) as HTMLSelectElement
+          ).value,
+        ).toBe("provider-a");
+        expect(
+          (
+            screen.getByLabelText(
+              "Project default run model",
+            ) as HTMLSelectElement
+          ).value,
+        ).toBe("model-a");
       });
-      expect(window.location.pathname).toBe("/board");
-      expect(window.location.search).toBe("?projectId=p-1");
-    });
+
+      expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+
+      await fireEvent.input(screen.getByLabelText("Project name"), {
+        target: { value: "Alpha Updated" },
+      });
+      await fireEvent.input(screen.getByLabelText("Project name"), {
+        target: { value: "Alpha Updated Again" },
+      });
+
+      expect(screen.getByText("Unsaved changes")).toBeTruthy();
+      expect(
+        invokeMock.mock.calls.filter(
+          ([command]) => command === "update_project",
+        ),
+      ).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(900);
+
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith("update_project", {
+          id: "p-1",
+          input: expect.objectContaining({
+            name: "Alpha Updated Again",
+            key: "ALP",
+            description: "Original description",
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+            repositories: [
+              expect.objectContaining({
+                id: "r-1",
+                repo_path: "/repo/main",
+                name: "Main",
+                is_default: true,
+              }),
+            ],
+          }),
+        });
+      });
+
+      expect(
+        invokeMock.mock.calls.filter(
+          ([command]) => command === "update_project",
+        ),
+      ).toHaveLength(1);
+
+      await waitFor(() => {
+        expect(screen.getByText("Saved")).toBeTruthy();
+        expect(window.location.pathname).toBe("/projects/p-1");
+        expect(window.location.search).toBe("");
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("requires typed confirmation before deleting a project and redirects to the next board", async () => {
