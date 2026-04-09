@@ -134,7 +134,10 @@ const RepositoryPathPicker: Component<Props> = (props) => {
     >
       <input
         value={props.value}
-        onInput={(event) => props.onInput(event.currentTarget.value)}
+        onInput={(event) => {
+          setIsFocused(true);
+          props.onInput(event.currentTarget.value);
+        }}
         onKeyDown={(event) => {
           const nextResults = results();
           if (!isOpen()) return;
@@ -217,9 +220,6 @@ const RepositoryPathPicker: Component<Props> = (props) => {
                     </span>
                     <span class="repository-path-picker-subtitle">
                       {result.parentPath}
-                    </span>
-                    <span class="repository-path-picker-path">
-                      {result.path}
                     </span>
                   </button>
                 )}

@@ -112,4 +112,62 @@ describe("RepositoryPathPicker", () => {
       );
     });
   });
+
+  it("restarts search when editing after selection", async () => {
+    const searchDirectories = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          path: "/Users/test/code/orkestra-os",
+          directoryName: "orkestra-os",
+          parentPath: "/Users/test/code",
+        },
+      ])
+      .mockResolvedValue([
+        {
+          path: "/Users/test/code/orkestra",
+          directoryName: "orkestra",
+          parentPath: "/Users/test/code",
+        },
+      ]);
+
+    const TestHarness = () => {
+      const [value, setValue] = createSignal("");
+      return (
+        <RepositoryPathPicker
+          value={value()}
+          ariaLabel="Repository path"
+          onInput={setValue}
+          searchDirectories={searchDirectories}
+        />
+      );
+    };
+
+    render(() => <TestHarness />);
+    const input = screen.getByRole("textbox", { name: "Repository path" });
+
+    fireEvent.focusIn(input);
+    fireEvent.input(input, { target: { value: "orkestra-os" } });
+    await vi.advanceTimersByTimeAsync(200);
+    await waitFor(() =>
+      expect(searchDirectories).toHaveBeenCalledWith("orkestra-os", 24),
+    );
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => {
+      expect((input as HTMLInputElement).value).toBe(
+        "/Users/test/code/orkestra-os",
+      );
+    });
+
+    fireEvent.input(input, { target: { value: "/Users/test/code/orkestra" } });
+    await vi.advanceTimersByTimeAsync(200);
+
+    await waitFor(() =>
+      expect(searchDirectories).toHaveBeenLastCalledWith(
+        "/Users/test/code/orkestra",
+        24,
+      ),
+    );
+  });
 });

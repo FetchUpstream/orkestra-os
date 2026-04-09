@@ -2040,8 +2040,7 @@ textarea::placeholder {
 }
 
 .repository-path-picker-title,
-.repository-path-picker-subtitle,
-.repository-path-picker-path {
+.repository-path-picker-subtitle {
   display: block;
 }
 
@@ -2049,8 +2048,7 @@ textarea::placeholder {
   font-weight: 600;
 }
 
-.repository-path-picker-subtitle,
-.repository-path-picker-path {
+.repository-path-picker-subtitle {
   color: color-mix(in srgb, var(--text) 70%, transparent);
   word-break: break-all;
 }
