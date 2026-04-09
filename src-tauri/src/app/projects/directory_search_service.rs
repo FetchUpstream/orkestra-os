@@ -237,7 +237,7 @@ impl LocalDirectorySearchService {
 
     fn default_roots() -> Vec<PathBuf> {
         let mut roots = Vec::new();
-        let Some(home_dir) = std::env::var_os("HOME").map(PathBuf::from) else {
+        let Some(home_dir) = Self::resolve_home_dir() else {
             return roots;
         };
 
@@ -267,6 +267,33 @@ impl LocalDirectorySearchService {
         }
 
         roots
+    }
+
+    fn resolve_home_dir() -> Option<PathBuf> {
+        Self::resolve_home_dir_for_platform(cfg!(windows), |key| std::env::var_os(key))
+    }
+
+    fn resolve_home_dir_for_platform<F>(is_windows: bool, mut get_env: F) -> Option<PathBuf>
+    where
+        F: FnMut(&str) -> Option<std::ffi::OsString>,
+    {
+        let home_dir = if is_windows {
+            get_env("HOME")
+                .or_else(|| get_env("USERPROFILE"))
+                .or_else(|| match (get_env("HOMEDRIVE"), get_env("HOMEPATH")) {
+                    (Some(mut drive), Some(path)) => {
+                        drive.push(path);
+                        Some(drive)
+                    }
+                    _ => None,
+                })
+        } else {
+            get_env("HOME")
+        };
+
+        home_dir
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
     }
 
     fn should_skip_directory(path: &Path) -> bool {
@@ -350,5 +377,32 @@ mod tests {
         assert!(results.iter().any(|item| item.path.ends_with("repo-root")));
         assert!(!results.iter().any(|item| item.path.ends_with("plain-directory")));
         assert!(!results.iter().any(|item| item.path.ends_with("src")));
+    }
+
+    #[test]
+    fn resolves_windows_home_from_userprofile_when_home_is_unset() {
+        let home_dir = LocalDirectorySearchService::resolve_home_dir_for_platform(true, |key| {
+            match key {
+                "HOME" => None,
+                "USERPROFILE" => Some(r"C:\Users\orkestra".into()),
+                _ => None,
+            }
+        });
+
+        assert_eq!(home_dir, Some(PathBuf::from(r"C:\Users\orkestra")));
+    }
+
+    #[test]
+    fn resolves_windows_home_from_home_drive_and_path_when_needed() {
+        let home_dir = LocalDirectorySearchService::resolve_home_dir_for_platform(true, |key| {
+            match key {
+                "HOME" | "USERPROFILE" => None,
+                "HOMEDRIVE" => Some("C:".into()),
+                "HOMEPATH" => Some(r"\Users\orkestra".into()),
+                _ => None,
+            }
+        });
+
+        assert_eq!(home_dir, Some(PathBuf::from(r"C:\Users\orkestra")));
     }
 }
