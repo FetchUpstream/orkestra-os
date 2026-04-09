@@ -1993,6 +1993,66 @@ textarea::placeholder {
   background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
+.repository-path-picker {
+  position: relative;
+}
+
+.repository-path-picker-dropdown {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 85%, #000 15%);
+  box-shadow: 0 10px 22px rgb(0 0 0 / 24%);
+}
+
+.repository-path-picker-row {
+  display: block;
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.repository-path-picker-row--error {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger-subtle) 80%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--danger) 70%, transparent);
+}
+
+.repository-path-picker-row--empty {
+  color: color-mix(in srgb, var(--text) 72%, transparent);
+}
+
+.repository-path-picker-option {
+  border: none;
+  background: transparent;
+}
+
+.repository-path-picker-option.is-highlighted {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.repository-path-picker-title,
+.repository-path-picker-subtitle {
+  display: block;
+}
+
+.repository-path-picker-title {
+  font-weight: 600;
+}
+
+.repository-path-picker-subtitle {
+  color: color-mix(in srgb, var(--text) 70%, transparent);
+  word-break: break-all;
+}
+
 .task-detail-page .task-guide-crepe .milkdown,
 .task-detail-page .task-guide-crepe .milkdown .ProseMirror {
   background: var(--task-writing-surface-bg);

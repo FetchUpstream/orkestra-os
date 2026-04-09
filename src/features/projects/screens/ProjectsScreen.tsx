@@ -86,6 +86,7 @@ const ProjectsScreen: Component = () => {
             removeRepository={model.removeRepository}
             updateEnvVar={model.updateEnvVar}
             updateRepository={model.updateRepository}
+            searchRepositoryDirectories={model.searchRepositoryDirectories}
             onDeleteProject={model.onOpenDeleteCurrentProject}
             resetToCreateMode={() => {
               model.resetForm();

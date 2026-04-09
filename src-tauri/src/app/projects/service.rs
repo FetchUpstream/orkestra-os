@@ -12,9 +12,10 @@
 
 use crate::app::db::repositories::projects::ProjectsRepository;
 use crate::app::errors::AppError;
+use crate::app::projects::directory_search_service::LocalDirectorySearchService;
 use crate::app::projects::dto::{
-    CloneProjectRequest, CreateProjectRequest, ProjectDetailsDto, ProjectDto, ProjectRepositoryDto,
-    UpdateProjectRequest,
+    CloneProjectRequest, CreateProjectRequest, LocalDirectorySearchResultDto,
+    ProjectDetailsDto, ProjectDto, ProjectRepositoryDto, UpdateProjectRequest,
 };
 use crate::app::projects::env::{normalize_project_env_vars, project_env_var_map};
 use crate::app::projects::errors::ProjectsServiceError;
@@ -22,12 +23,15 @@ use crate::app::projects::models::{NewProject, NewProjectRepository, UpsertProje
 use crate::app::projects::search_service::ProjectFileSearchService;
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
+use git2::Repository;
 use std::collections::HashMap;
+use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub struct ProjectsService {
     repository: ProjectsRepository,
     file_search_service: ProjectFileSearchService,
+    directory_search_service: LocalDirectorySearchService,
     worktrees_service: WorktreesService,
 }
 
@@ -40,8 +44,21 @@ impl ProjectsService {
         Self {
             repository,
             file_search_service,
+            directory_search_service: LocalDirectorySearchService::new(),
             worktrees_service,
         }
+    }
+
+    pub async fn search_local_directories(
+        &self,
+        query: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<LocalDirectorySearchResultDto>, AppError> {
+        self.directory_search_service
+            .search_directories(query, limit)
+            .await
+            .map_err(|source| ProjectsServiceError::SearchLocalDirectories { source })
+            .map_err(AppError::from)
     }
 
     pub async fn search_project_files(
@@ -524,6 +541,35 @@ impl ProjectsService {
             ));
         }
 
+        for repository in repositories {
+            let repo_path = repository.repo_path.trim();
+            if repo_path.is_empty() {
+                return Err(ProjectsServiceError::Validation("repository path is required"));
+            }
+
+            let path = Path::new(repo_path);
+            if !path.exists() {
+                return Err(ProjectsServiceError::Validation("repository path must exist"));
+            }
+            if !path.is_dir() {
+                return Err(ProjectsServiceError::Validation(
+                    "repository path must be a directory",
+                ));
+            }
+
+            let Ok(repository) = Repository::open(path) else {
+                return Err(ProjectsServiceError::Validation(
+                    "repository path must point to a Git repository",
+                ));
+            };
+
+            if repository.is_bare() {
+                return Err(ProjectsServiceError::Validation(
+                    "repository path must point to a Git repository",
+                ));
+            }
+        }
+
         let default_count = repositories
             .iter()
             .filter(|repository| repository.is_default)
@@ -597,9 +643,34 @@ mod tests {
         )
     }
 
+    fn make_git_repository(name: &str) -> String {
+        let repo_path =
+            std::env::temp_dir().join(format!("orkestra-project-repo-{name}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&repo_path).unwrap();
+        Repository::init(&repo_path).unwrap();
+        repo_path.to_string_lossy().to_string()
+    }
+
+    fn make_repository_request(
+        name: &str,
+        repo_path: String,
+        is_default: bool,
+    ) -> crate::app::projects::dto::CreateProjectRepositoryRequest {
+        crate::app::projects::dto::CreateProjectRepositoryRequest {
+            id: None,
+            name: name.to_string(),
+            repo_path,
+            is_default,
+            setup_script: None,
+            cleanup_script: None,
+        }
+    }
+
     #[tokio::test]
     async fn clone_project_rejects_multi_repository_source() {
         let service = setup_service().await;
+        let main_repo_path = make_git_repository("clone-multi-main");
+        let docs_repo_path = make_git_repository("clone-multi-docs");
 
         let source = service
             .create_project(CreateProjectRequest {
@@ -611,22 +682,8 @@ mod tests {
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
                 repositories: vec![
-                    crate::app::projects::dto::CreateProjectRepositoryRequest {
-                        id: None,
-                        name: "Main".to_string(),
-                        repo_path: "/repo/main".to_string(),
-                        is_default: true,
-                        setup_script: None,
-                        cleanup_script: None,
-                    },
-                    crate::app::projects::dto::CreateProjectRepositoryRequest {
-                        id: None,
-                        name: "Docs".to_string(),
-                        repo_path: "/repo/docs".to_string(),
-                        is_default: false,
-                        setup_script: None,
-                        cleanup_script: None,
-                    },
+                    make_repository_request("Main", main_repo_path, true),
+                    make_repository_request("Docs", docs_repo_path, false),
                 ],
             })
             .await
@@ -653,6 +710,7 @@ mod tests {
     #[tokio::test]
     async fn clone_project_rejects_zero_repository_source() {
         let service = setup_service().await;
+        let repo_path = make_git_repository("clone-zero-main");
 
         let source = service
             .create_project(CreateProjectRequest {
@@ -663,14 +721,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
-                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
-                    id: None,
-                    name: "Main".to_string(),
-                    repo_path: "/repo/main".to_string(),
-                    is_default: true,
-                    setup_script: None,
-                    cleanup_script: None,
-                }],
+                repositories: vec![make_repository_request("Main", repo_path, true)],
             })
             .await
             .unwrap();
@@ -714,6 +765,7 @@ mod tests {
     #[tokio::test]
     async fn clone_project_rejects_empty_name() {
         let service = setup_service().await;
+        let repo_path = make_git_repository("clone-empty-name");
 
         let source = service
             .create_project(CreateProjectRequest {
@@ -724,14 +776,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
-                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
-                    id: None,
-                    name: "Main".to_string(),
-                    repo_path: "/repo/main".to_string(),
-                    is_default: true,
-                    setup_script: None,
-                    cleanup_script: None,
-                }],
+                repositories: vec![make_repository_request("Main", repo_path, true)],
             })
             .await
             .unwrap();
@@ -754,6 +799,7 @@ mod tests {
     #[tokio::test]
     async fn create_project_persists_repository_setup_and_cleanup_scripts() {
         let service = setup_service().await;
+        let repo_path = make_git_repository("scripts-main");
 
         let created = service
             .create_project(CreateProjectRequest {
@@ -767,7 +813,7 @@ mod tests {
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
                     id: None,
                     name: "Main".to_string(),
-                    repo_path: "/repo/main".to_string(),
+                    repo_path,
                     is_default: true,
                     setup_script: Some("bun install".to_string()),
                     cleanup_script: Some("bun test".to_string()),
@@ -790,6 +836,7 @@ mod tests {
     #[tokio::test]
     async fn create_project_persists_and_resolves_project_env_vars() {
         let service = setup_service().await;
+        let repo_path = make_git_repository("env-main");
 
         let created = service
             .create_project(CreateProjectRequest {
@@ -809,14 +856,7 @@ mod tests {
                         value: "".to_string(),
                     },
                 ]),
-                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
-                    id: None,
-                    name: "Main".to_string(),
-                    repo_path: "/repo/main".to_string(),
-                    is_default: true,
-                    setup_script: None,
-                    cleanup_script: None,
-                }],
+                repositories: vec![make_repository_request("Main", repo_path, true)],
             })
             .await
             .unwrap();
@@ -843,6 +883,7 @@ mod tests {
     #[tokio::test]
     async fn delete_project_removes_project_records_and_worktree_artifacts() {
         let service = setup_service().await;
+        let repo_path = make_git_repository("delete-main");
 
         let created = service
             .create_project(CreateProjectRequest {
@@ -853,14 +894,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
-                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
-                    id: None,
-                    name: "Main".to_string(),
-                    repo_path: "/repo/main".to_string(),
-                    is_default: true,
-                    setup_script: None,
-                    cleanup_script: None,
-                }],
+                repositories: vec![make_repository_request("Main", repo_path, true)],
             })
             .await
             .unwrap();
@@ -940,6 +974,7 @@ mod tests {
     #[tokio::test]
     async fn delete_project_allows_legacy_worktree_prefix_after_key_rename() {
         let service = setup_service().await;
+        let repo_path = make_git_repository("legacy-main");
 
         let created = service
             .create_project(CreateProjectRequest {
@@ -950,14 +985,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
-                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
-                    id: None,
-                    name: "Main".to_string(),
-                    repo_path: "/repo/main".to_string(),
-                    is_default: true,
-                    setup_script: None,
-                    cleanup_script: None,
-                }],
+                repositories: vec![make_repository_request("Main", repo_path.clone(), true)],
             })
             .await
             .unwrap();
@@ -976,7 +1004,7 @@ mod tests {
                     repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
                         id: Some(created.repositories[0].id.clone()),
                         name: "Main".to_string(),
-                        repo_path: "/repo/main".to_string(),
+                        repo_path,
                         is_default: true,
                         setup_script: None,
                         cleanup_script: None,
@@ -1042,6 +1070,8 @@ mod tests {
     #[tokio::test]
     async fn search_project_files_rejects_repository_outside_project() {
         let service = setup_service().await;
+        let first_repo_path = make_git_repository("search-first");
+        let second_repo_path = make_git_repository("search-second");
 
         let first = service
             .create_project(CreateProjectRequest {
@@ -1052,14 +1082,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
-                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
-                    id: None,
-                    name: "Main".to_string(),
-                    repo_path: "/repo/first".to_string(),
-                    is_default: true,
-                    setup_script: None,
-                    cleanup_script: None,
-                }],
+                repositories: vec![make_repository_request("Main", first_repo_path, true)],
             })
             .await
             .unwrap();
@@ -1073,14 +1096,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
-                repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
-                    id: None,
-                    name: "Main".to_string(),
-                    repo_path: "/repo/second".to_string(),
-                    is_default: true,
-                    setup_script: None,
-                    cleanup_script: None,
-                }],
+                repositories: vec![make_repository_request("Main", second_repo_path, true)],
             })
             .await
             .unwrap();
@@ -1098,6 +1114,60 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "repository not found for project"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_project_rejects_missing_repository_path() {
+        let service = setup_service().await;
+
+        let result = service
+            .create_project(CreateProjectRequest {
+                name: "Orkestra".to_string(),
+                description: None,
+                key: "ORK".to_string(),
+                default_run_agent: None,
+                default_run_provider: "provider-a".to_string(),
+                default_run_model: "model-a".to_string(),
+                env_vars: None,
+                repositories: vec![make_repository_request(
+                    "Main",
+                    "/tmp/definitely-missing-repo".to_string(),
+                    true,
+                )],
+            })
+            .await;
+
+        assert_eq!(result.unwrap_err().to_string(), "repository path must exist");
+    }
+
+    #[tokio::test]
+    async fn create_project_rejects_non_git_repository_paths() {
+        let service = setup_service().await;
+        let plain_dir =
+            std::env::temp_dir().join(format!("orkestra-plain-dir-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&plain_dir).unwrap();
+
+        let result = service
+            .create_project(CreateProjectRequest {
+                name: "Orkestra".to_string(),
+                description: None,
+                key: "ORK".to_string(),
+                default_run_agent: None,
+                default_run_provider: "provider-a".to_string(),
+                default_run_model: "model-a".to_string(),
+                env_vars: None,
+                repositories: vec![make_repository_request(
+                    "Main",
+                    plain_dir.to_string_lossy().to_string(),
+                    true,
+                )],
+            })
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "repository path must point to a Git repository"
         );
     }
 }

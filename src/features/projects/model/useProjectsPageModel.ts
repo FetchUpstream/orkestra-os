@@ -21,6 +21,7 @@ import {
   deleteProject,
   getProject,
   listProjects,
+  searchLocalDirectories,
   updateProject,
   type Project,
 } from "../../../app/lib/projects";
@@ -500,6 +501,9 @@ export const useProjectsPageModel = () => {
     }
   };
 
+  const searchRepositoryDirectories = (query: string, limit?: number) =>
+    searchLocalDirectories({ query, limit });
+
   const onEditProject = async (projectId: string) => {
     setError("");
     setIsLoadingProjectForEdit(true);
@@ -760,6 +764,7 @@ export const useProjectsPageModel = () => {
     removeRepository,
     updateEnvVar,
     updateRepository,
+    searchRepositoryDirectories,
     resetForm,
     onEditProject,
     onOpenCloneModal,

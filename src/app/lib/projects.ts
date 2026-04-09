@@ -64,6 +64,12 @@ export type CloneProjectInput = {
   repository_destination: string;
 };
 
+export type LocalDirectorySearchResult = {
+  path: string;
+  directoryName: string;
+  parentPath: string;
+};
+
 type ProjectDetailsResponse = {
   project: {
     id: string;
@@ -277,4 +283,28 @@ export const searchProjectFiles = async (input: {
       limit: input.limit,
     },
   });
+};
+
+export const searchLocalDirectories = async (input: {
+  query: string;
+  limit?: number;
+}): Promise<LocalDirectorySearchResult[]> => {
+  const response = await invoke<
+    Array<{
+      path: string;
+      directory_name: string;
+      parent_path: string;
+    }>
+  >("search_local_directories", {
+    input: {
+      query: input.query,
+      limit: input.limit,
+    },
+  });
+
+  return response.map((entry) => ({
+    path: entry.path,
+    directoryName: entry.directory_name,
+    parentPath: entry.parent_path,
+  }));
 };
