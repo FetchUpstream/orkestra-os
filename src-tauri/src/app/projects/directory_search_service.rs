@@ -20,6 +20,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 static DIRECTORY_MATCHER: Lazy<Mutex<Matcher>> =
     Lazy::new(|| Mutex::new(Matcher::new(Config::DEFAULT)));
@@ -34,6 +36,11 @@ const CACHE_TTL: Duration = Duration::from_secs(30);
 pub struct LocalDirectorySearchService {
     roots: Vec<PathBuf>,
     cache: Arc<Mutex<Option<DirectoryIndexCache>>>,
+    index_build_guard: Arc<Mutex<()>>,
+    #[cfg(test)]
+    build_index_calls: Arc<AtomicUsize>,
+    #[cfg(test)]
+    build_index_delay_ms: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +73,11 @@ impl LocalDirectorySearchService {
         Self {
             roots,
             cache: Arc::new(Mutex::new(None)),
+            index_build_guard: Arc::new(Mutex::new(())),
+            #[cfg(test)]
+            build_index_calls: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
+            build_index_delay_ms: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -155,12 +167,17 @@ impl LocalDirectorySearchService {
     }
 
     fn indexed_directories(&self) -> Result<Vec<IndexedDirectory>, DirectorySearchError> {
-        if let Ok(cache) = self.cache.lock() {
-            if let Some(cache) = cache.as_ref() {
-                if cache.indexed_at.elapsed() <= CACHE_TTL {
-                    return Ok(cache.candidates.clone());
-                }
-            }
+        if let Some(cached) = self.cached_candidates_if_fresh() {
+            return Ok(cached);
+        }
+
+        let _index_build_guard = self
+            .index_build_guard
+            .lock()
+            .map_err(|_| DirectorySearchError::MatcherUnavailable)?;
+
+        if let Some(cached) = self.cached_candidates_if_fresh() {
+            return Ok(cached);
         }
 
         let candidates = self.build_index();
@@ -175,7 +192,26 @@ impl LocalDirectorySearchService {
         Ok(candidates)
     }
 
+    fn cached_candidates_if_fresh(&self) -> Option<Vec<IndexedDirectory>> {
+        let cache = self.cache.lock().ok()?;
+        let cache = cache.as_ref()?;
+        if cache.indexed_at.elapsed() <= CACHE_TTL {
+            Some(cache.candidates.clone())
+        } else {
+            None
+        }
+    }
+
     fn build_index(&self) -> Vec<IndexedDirectory> {
+        #[cfg(test)]
+        {
+            self.build_index_calls.fetch_add(1, Ordering::SeqCst);
+            let delay_ms = self.build_index_delay_ms.load(Ordering::SeqCst);
+            if delay_ms > 0 {
+                std::thread::sleep(Duration::from_millis(delay_ms));
+            }
+        }
+
         let mut seen = HashSet::new();
         let mut indexed = Vec::new();
         let mut queue = VecDeque::new();
@@ -342,6 +378,17 @@ impl LocalDirectorySearchService {
             parent_path: entry.parent_path,
         }
     }
+
+    #[cfg(test)]
+    fn build_index_call_count(&self) -> usize {
+        self.build_index_calls.load(Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
+    fn set_build_index_test_delay(&self, delay: Duration) {
+        self.build_index_delay_ms
+            .store(delay.as_millis() as u64, Ordering::SeqCst);
+    }
 }
 
 #[cfg(test)]
@@ -437,5 +484,33 @@ mod tests {
         let indexed = service.build_index();
 
         assert!(indexed.iter().all(|entry| entry.path != repo_root.to_string_lossy()));
+    }
+
+    #[tokio::test]
+    async fn concurrent_callers_share_single_cold_cache_build() {
+        let base = std::env::temp_dir().join(format!(
+            "orkestra-repo-search-concurrent-build-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let repo = base.join("repo-root");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+
+        let service = LocalDirectorySearchService::new_with_roots(vec![base]);
+        service.set_build_index_test_delay(Duration::from_millis(120));
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let service = service.clone();
+            handles.push(tokio::spawn(async move {
+                service.search_directories("repo", Some(10)).await
+            }));
+        }
+
+        for handle in handles {
+            let result = handle.await.unwrap().unwrap();
+            assert!(result.iter().any(|entry| entry.path.ends_with("repo-root")));
+        }
+
+        assert_eq!(service.build_index_call_count(), 1);
     }
 }
