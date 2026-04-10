@@ -223,7 +223,7 @@ impl RunsService {
             .ok_or_else(|| AppError::not_found("run repository not found"))
     }
 
-    pub async fn delete_run(&self, run_id: &str) -> Result<(), AppError> {
+    pub async fn prepare_run_for_deletion(&self, run_id: &str) -> Result<(), AppError> {
         let run_id = run_id.trim();
         if run_id.is_empty() {
             return Err(AppError::validation("run_id is required"));
@@ -235,8 +235,16 @@ impl RunsService {
             .await?
             .ok_or_else(|| AppError::not_found("run not found"))?;
 
-        self.begin_delete_run_lifecycle(&run).await?;
-        let deleted = self.orchestrate_run_deletion(&run).await?;
+        self.begin_delete_run_lifecycle(&run).await
+    }
+
+    pub async fn hard_delete_run(&self, run_id: &str) -> Result<(), AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let deleted = self.repository.hard_delete_run(run_id).await?;
         if !deleted {
             return Err(AppError::not_found("run not found"));
         }
@@ -280,12 +288,6 @@ impl RunsService {
         }
 
         Ok(())
-    }
-
-    async fn orchestrate_run_deletion(&self, run: &Run) -> Result<bool, AppError> {
-        // Future delete orchestration steps (for example OpenCode runtime teardown)
-        // should be added here after the run has been transitioned out of any active state.
-        self.repository.hard_delete_run(&run.id).await
     }
 
     fn requires_delete_lifecycle_transition(status: &str) -> bool {
@@ -1225,7 +1227,8 @@ mod tests {
         seed_task(&pool, "task-1", &repo_path).await;
         seed_run(&pool, "run-1", "task-1").await;
 
-        let result = service.delete_run("run-1").await;
+        service.prepare_run_for_deletion("run-1").await.unwrap();
+        let result = service.hard_delete_run("run-1").await;
 
         assert!(result.is_ok());
         let found = service.get_run("run-1").await;
@@ -1269,7 +1272,7 @@ mod tests {
     async fn delete_run_returns_not_found_for_missing_run() {
         let (service, _, _) = setup_service().await;
 
-        let result = service.delete_run("missing-run").await;
+        let result = service.prepare_run_for_deletion("missing-run").await;
 
         match result {
             Err(AppError::NotFound(message)) => assert_eq!(message, "run not found"),

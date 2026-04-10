@@ -108,7 +108,7 @@ pub async fn get_run(state: tauri::State<'_, AppState>, run_id: String) -> Resul
 
 #[tauri::command]
 pub async fn delete_run(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), String> {
-    let service = context::runs_service(&state);
+    let service = context::runs_delete_service(&state);
     map_result(service.delete_run(&run_id).await)
 }
 

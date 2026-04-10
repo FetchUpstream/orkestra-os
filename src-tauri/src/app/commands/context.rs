@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::app::projects::service::ProjectsService;
+use crate::app::runs::delete_service::RunsDeleteService;
 use crate::app::runs::diff_service::RunsDiffService;
 use crate::app::runs::merge_service::RunsMergeService;
 use crate::app::runs::opencode_service::RunsOpenCodeService;
@@ -37,6 +38,10 @@ pub fn task_status_transition_service(
 
 pub fn runs_service(state: &tauri::State<'_, AppState>) -> RunsService {
     state.runs_service.clone()
+}
+
+pub fn runs_delete_service(state: &tauri::State<'_, AppState>) -> RunsDeleteService {
+    state.runs_delete_service.clone()
 }
 
 pub fn runs_diff_service(state: &tauri::State<'_, AppState>) -> RunsDiffService {

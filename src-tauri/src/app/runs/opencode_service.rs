@@ -1065,6 +1065,14 @@ struct RunOpenCodeUsageSnapshot {
     last_interaction_at: String,
 }
 
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub(crate) struct RunOpenCodeTrackedState {
+    pub has_event_stream_task: bool,
+    pub subscriber_count: usize,
+    pub subscriber_task_count: usize,
+}
+
 struct RunOpenCodeViewerLease {
     lifecycle: Arc<Mutex<RunOpenCodeLifecycle>>,
     subscriber_id: String,
@@ -3439,6 +3447,112 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             .await
     }
 
+    #[cfg(test)]
+    pub async fn has_run_handle(&self, run_id: &str) -> bool {
+        self.handles.read().await.contains_key(run_id)
+    }
+
+    #[cfg(test)]
+    pub async fn tracked_run_state(&self, run_id: &str) -> Option<RunOpenCodeTrackedState> {
+        let handle = self.handles.read().await.get(run_id).cloned()?;
+        let has_event_stream_task = handle.event_stream_task.lock().await.is_some();
+        let subscriber_count = handle.subscribers.lock().ok()?.len();
+        let subscriber_task_count = handle.subscriber_tasks.lock().ok()?.len();
+
+        Some(RunOpenCodeTrackedState {
+            has_event_stream_task,
+            subscriber_count,
+            subscriber_task_count,
+        })
+    }
+
+    #[cfg(test)]
+    pub async fn insert_test_running_handle(
+        &self,
+        run_id: &str,
+        task_id: &str,
+        repo_path: &std::path::Path,
+    ) {
+        let server = create_opencode_server(Some(OpencodeServerOptions {
+            cwd: Some(repo_path.to_path_buf()),
+            port: 0,
+            config: Some(serde_json::json!({})),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+
+        let client = create_opencode_client(Some(OpencodeClientConfig {
+            base_url: server.url.clone(),
+            directory: Some(repo_path.to_string_lossy().to_string()),
+            ..Default::default()
+        }))
+        .unwrap();
+
+        let (event_tx, _rx) = tokio::sync::broadcast::channel(8);
+        let handle = Arc::new(RunOpenCodeHandle {
+            generation: 1,
+            _server: Arc::new(tokio::sync::Mutex::new(server)),
+            client,
+            lifecycle: Arc::new(Mutex::new(Self::build_run_lifecycle(&RunDto {
+                id: run_id.to_string(),
+                task_id: task_id.to_string(),
+                project_id: "project-1".to_string(),
+                target_repo_id: None,
+                status: "in_progress".to_string(),
+                run_state: None,
+                triggered_by: "user".to_string(),
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+                started_at: None,
+                finished_at: None,
+                summary: None,
+                error_message: None,
+                worktree_id: None,
+                agent_id: None,
+                provider_id: None,
+                model_id: None,
+                source_branch: None,
+                initial_prompt_sent_at: None,
+                initial_prompt_client_request_id: None,
+                setup_state: "pending".to_string(),
+                setup_started_at: None,
+                setup_finished_at: None,
+                setup_error_message: None,
+                cleanup_state: "pending".to_string(),
+                cleanup_started_at: None,
+                cleanup_finished_at: None,
+                cleanup_error_message: None,
+            }))),
+            session_id: Arc::new(Mutex::new(None)),
+            session_init_lock: tokio::sync::Mutex::new(()),
+            subscribers: Arc::new(Mutex::new(HashMap::new())),
+            subscriber_tasks: Arc::new(Mutex::new(HashMap::new())),
+            subscriber_generation: AtomicU64::new(1),
+            subscriber_lifecycle_lock: tokio::sync::Mutex::new(()),
+            event_tx,
+            event_stream_task: Arc::new(tokio::sync::Mutex::new(None)),
+            buffered_events: Arc::new(Mutex::new(VecDeque::new())),
+            session_runtime_state: Arc::new(Mutex::new(SessionRuntimeState::default())),
+        });
+
+        self.handles
+            .write()
+            .await
+            .insert(run_id.to_string(), handle);
+    }
+
+    #[cfg(test)]
+    pub async fn poison_subscriber_tasks_lock(&self, run_id: &str) {
+        let handle = self.handles.read().await.get(run_id).cloned().unwrap();
+        let subscriber_tasks = handle.subscriber_tasks.clone();
+        let join_result = std::thread::spawn(move || {
+            let _guard = subscriber_tasks.lock().unwrap();
+            panic!("poison OpenCode subscriber tasks lock for test");
+        })
+        .join();
+        assert!(join_result.is_err());
+    }
+
     fn missing_dependency_reason() -> String {
         "OpenCode is required for run and agent workflows, but it was not detected on this system. Install OpenCode and check again.".to_string()
     }
@@ -5409,7 +5523,9 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 
 #[cfg(test)]
 mod tests {
-    use super::{build_opencode_server_options, RawAgentEvent, RunsOpenCodeService};
+    use super::{
+        build_opencode_server_options, RawAgentEvent, RunsOpenCodeService, SubscriberTaskEntry,
+    };
     use crate::app::db::migrations::run_migrations;
     use crate::app::db::repositories::projects::ProjectsRepository;
     use crate::app::db::repositories::runs::RunsRepository;
@@ -5431,6 +5547,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicU64;
     use std::sync::{Arc, Mutex};
+    use tauri::ipc::Channel;
     use uuid::Uuid;
 
     #[test]
@@ -6037,16 +6154,18 @@ mod tests {
 
     #[test]
     fn classify_effective_agents_prefers_project_scope_over_global_name_collision() {
-        let temp_root = std::env::temp_dir().join(format!(
-            "orkestra-agent-discovery-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let temp_root =
+            std::env::temp_dir().join(format!("orkestra-agent-discovery-{}", uuid::Uuid::new_v4()));
         let project_root = temp_root.join("project");
         let global_root = temp_root.join("global");
 
         std::fs::create_dir_all(project_root.join(".opencode/agents")).unwrap();
         std::fs::create_dir_all(global_root.join("agents")).unwrap();
-        std::fs::write(project_root.join(".opencode/agents/reviewer.md"), "# reviewer").unwrap();
+        std::fs::write(
+            project_root.join(".opencode/agents/reviewer.md"),
+            "# reviewer",
+        )
+        .unwrap();
         std::fs::write(global_root.join("agents/reviewer.md"), "# reviewer").unwrap();
         std::fs::write(global_root.join("agents/global-only.md"), "# global-only").unwrap();
 
@@ -6601,6 +6720,51 @@ mod tests {
         assert!(!opencode_service.handles.read().await.contains_key("run-1"));
     }
 
+    #[tokio::test]
+    async fn stop_run_opencode_cleans_up_event_stream_and_subscribers() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get("run-1")
+            .cloned()
+            .unwrap();
+        *handle.event_stream_task.lock().await =
+            Some(tauri::async_runtime::spawn(std::future::pending::<()>()));
+        handle
+            .subscribers
+            .lock()
+            .unwrap()
+            .insert("subscriber-1".to_string(), Channel::new(|_| Ok(())));
+        handle.subscriber_tasks.lock().unwrap().insert(
+            "subscriber-1".to_string(),
+            SubscriberTaskEntry {
+                generation: 1,
+                handle: tauri::async_runtime::spawn(std::future::pending::<()>()),
+                _viewer_lease: None,
+            },
+        );
+
+        let before = opencode_service.tracked_run_state("run-1").await.unwrap();
+        assert!(before.has_event_stream_task);
+        assert_eq!(before.subscriber_count, 1);
+        assert_eq!(before.subscriber_task_count, 1);
+
+        opencode_service
+            .stop_run_opencode("run-1", Some("test_delete_shutdown"))
+            .await
+            .unwrap();
+
+        assert!(!opencode_service.has_run_handle("run-1").await);
+    }
+
     async fn set_run_session_id(pool: &SqlitePool, run_id: &str, session_id: &str) {
         sqlx::query("UPDATE runs SET opencode_session_id = ? WHERE id = ?")
             .bind(session_id)
@@ -7036,7 +7200,10 @@ mod tests {
             let guard = handle.session_runtime_state.lock().unwrap();
             assert!(guard.pending_permissions.contains("perm-sub-3"));
         }
-        assert_eq!(fetch_run_state(&pool, "run-1").await.as_deref(), Some("permission_requested"));
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("permission_requested")
+        );
 
         opencode_service
             .reply_run_opencode_permission("run-1", "session-root", "perm-sub-3", "once", false)
@@ -7046,7 +7213,10 @@ mod tests {
         let guard = handle.session_runtime_state.lock().unwrap();
         assert!(!guard.pending_permissions.contains("perm-sub-3"));
         drop(guard);
-        assert_eq!(fetch_run_state(&pool, "run-1").await.as_deref(), Some("busy_coding"));
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("busy_coding")
+        );
     }
 
     #[tokio::test]
