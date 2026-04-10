@@ -272,12 +272,33 @@ impl RunsRepository {
         Ok(rows.into_iter().map(Self::map_row_to_run).collect())
     }
 
-    pub async fn delete_run(&self, run_id: &str) -> Result<bool, AppError> {
+    pub async fn hard_delete_run(&self, run_id: &str) -> Result<bool, AppError> {
         let result = sqlx::query("DELETE FROM runs WHERE id = ?")
             .bind(run_id)
             .execute(&self.pool)
             .await
             .runs_db("deleting run")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn transition_run_to_cancelled(
+        &self,
+        run_id: &str,
+        finished_at: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET status = 'cancelled',
+                 finished_at = COALESCE(finished_at, ?)
+             WHERE id = ?
+               AND status IN ('queued', 'preparing', 'in_progress', 'idle')",
+        )
+        .bind(finished_at)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await
+        .runs_db("transitioning run to cancelled")?;
 
         Ok(result.rows_affected() > 0)
     }
