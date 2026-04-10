@@ -213,8 +213,12 @@ const extractSessionEventInfo = (
     properties.sessionID ??
     properties.sessionId;
   const parentSessionIdValue =
+    info.parentSessionId ??
+    info.parentSessionID ??
     info.parentID ??
     info.parentId ??
+    properties.parentSessionId ??
+    properties.parentSessionID ??
     properties.parentID ??
     properties.parentId;
   const sessionId =
@@ -739,7 +743,14 @@ export const useRunDetailModel = () => {
           attribution.model,
         );
 
-        if (label) {
+        if (
+          label &&
+          !(
+            label === "Subagent" &&
+            labels[sessionId] &&
+            labels[sessionId] !== "Subagent"
+          )
+        ) {
           labels[sessionId] = label;
         }
       }

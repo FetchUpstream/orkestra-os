@@ -684,7 +684,7 @@ export const useProjectsPageModel = () => {
           );
         }
       } finally {
-        if (!isDisposed && requestVersion === editMutationVersion) {
+        if (requestVersion === editMutationVersion) {
           autosaveInFlight = false;
         }
       }
@@ -693,7 +693,10 @@ export const useProjectsPageModel = () => {
 
       if (autosaveQueued) {
         autosaveQueued = false;
-        return flushProjectSettingsAutosave("debounced", suppressSignalUpdates);
+        return flushProjectSettingsAutosave(
+          "debounced",
+          suppressSignalUpdates || isDisposed,
+        );
       }
 
       return didPersist;
@@ -735,7 +738,8 @@ export const useProjectsPageModel = () => {
 
     if (!nextProjectId) {
       if (mode() !== "create") {
-        await flushQueuedProjectSettingsAutosave();
+        const flushed = await flushQueuedProjectSettingsAutosave();
+        if (!flushed) return;
         if (requestVersion !== projectRouteSyncVersion) return;
         resetForm();
       }
@@ -747,7 +751,8 @@ export const useProjectsPageModel = () => {
     }
 
     if (mode() === "edit" && editingProjectId()) {
-      await flushQueuedProjectSettingsAutosave();
+      const flushed = await flushQueuedProjectSettingsAutosave();
+      if (!flushed) return;
       if (requestVersion !== projectRouteSyncVersion) return;
     }
 
@@ -755,7 +760,8 @@ export const useProjectsPageModel = () => {
   };
 
   const resetFormWithAutosave = async () => {
-    await flushQueuedProjectSettingsAutosave();
+    const flushed = await flushQueuedProjectSettingsAutosave();
+    if (!flushed) return;
     resetForm();
   };
 

@@ -4204,12 +4204,22 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             });
         }
 
-        {
+        let (removed, pending_count, has_pending_questions) = {
             let mut state = handle
                 .session_runtime_state
                 .lock()
                 .map_err(|_| lock_error("OpenCode session runtime state"))?;
-            state.pending_permissions.remove(request_id);
+            let removed = state.pending_permissions.remove(request_id);
+            let pending_count = state.pending_permissions.len();
+            let has_pending_questions = !state.pending_questions.is_empty();
+            (removed, pending_count, has_pending_questions)
+        };
+
+        if removed && pending_count == 0 && !has_pending_questions {
+            let _ = self
+                .run_state_service
+                .handle_permission_resolved(run_id)
+                .await?;
         }
 
         Ok(ReplyRunOpenCodePermissionResponse {
@@ -6282,6 +6292,14 @@ mod tests {
             .unwrap()
     }
 
+    async fn fetch_run_state(pool: &SqlitePool, run_id: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT run_state FROM runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
     async fn set_run_status(pool: &SqlitePool, run_id: &str, status: &str) {
         sqlx::query("UPDATE runs SET status = ? WHERE id = ?")
             .bind(status)
@@ -6562,37 +6580,47 @@ mod tests {
         assert!(!guard.pending_permissions.contains("perm-sub-2"));
     }
 
-    /// Verifies that a `session.idle` runtime event causes a running run's task to transition to `review`.
+    /// Verifies that a canonical permission reply clears a tracked child-session request.
     ///
-    /// This test seeds a repository, task, and run with a persisted session id, sends a `session.idle`
-    /// event wrapped in an envelope that includes `sessionID`, and asserts the task status becomes `review`.
+    /// This test seeds a repository and running run, records the root session on the handle, then uses
+    /// `process_runtime_event` with a wrapped envelope plus `SessionRuntimeState` to track a child-session
+    /// permission request. It then sends the canonical permission reply through
+    /// `reply_run_opencode_permission`, which forwards the wrapped `permission.reply` envelope with the
+    /// canonical root session and resolves the matching child-session request. It asserts the request id
+    /// is removed from `SessionRuntimeState` and the run state leaves `permission_requested`.
     ///
     /// # Examples
     ///
     /// ```
-    /// // Arrange: create services, repo, task, run and set session/task state
+    /// // Arrange: create services, repo, task, run, handle, and runtime state
     /// let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
     /// let repo_path = temp_dir.path().join("repo");
     /// fs::create_dir_all(&repo_path).unwrap();
     /// seed_task(&pool, "task-1", &repo_path).await;
     /// seed_run(&pool, "run-1", "task-1", "running").await;
-    /// set_run_session_id(&pool, "run-1", "session-1").await;
-    /// set_task_status(&pool, "task-1", "doing").await;
-    ///
-    /// // Act: send wrapped session.idle event
+    /// set_run_session_id(&pool, "run-1", "session-root").await;
+    /// insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
     /// let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+    ///
+    /// // Act: track a child-session permission request, then send the canonical reply command
     /// opencode_service
     ///     .process_runtime_event(
     ///         "run-1",
-    ///         "session.idle",
-    ///         r#"{"type":"session.idle","properties":{"sessionID":"session-1"}}"#,
+    ///         "message",
+    ///         r#"{"type":"permission.asked","properties":{"id":"perm-sub-3","permission":"external_directory","sessionID":"session-child"}}"#,
     ///         &state,
     ///     )
     ///     .await
     ///     .unwrap();
+    /// opencode_service
+    ///     .reply_run_opencode_permission("run-1", "session-root", "perm-sub-3", "once", false)
+    ///     .await
+    ///     .unwrap();
     ///
-    /// // Assert: task moved to review
-    /// assert_eq!(fetch_task_status(&pool, "task-1").await, "review");
+    /// // Assert: the child-session request was cleared and the run state advanced
+    /// let guard = state.lock().unwrap();
+    /// assert!(!guard.pending_permissions.contains("perm-sub-3"));
+    /// assert_eq!(fetch_run_state(&pool, "run-1").await.as_deref(), Some("busy_coding"));
     /// ```
     #[tokio::test]
     async fn canonical_permission_reply_clears_tracked_child_session_request_id() {
@@ -6631,6 +6659,7 @@ mod tests {
             let guard = handle.session_runtime_state.lock().unwrap();
             assert!(guard.pending_permissions.contains("perm-sub-3"));
         }
+        assert_eq!(fetch_run_state(&pool, "run-1").await.as_deref(), Some("permission_requested"));
 
         opencode_service
             .reply_run_opencode_permission("run-1", "session-root", "perm-sub-3", "once", false)
@@ -6639,6 +6668,8 @@ mod tests {
 
         let guard = handle.session_runtime_state.lock().unwrap();
         assert!(!guard.pending_permissions.contains("perm-sub-3"));
+        drop(guard);
+        assert_eq!(fetch_run_state(&pool, "run-1").await.as_deref(), Some("busy_coding"));
     }
 
     #[tokio::test]
