@@ -1050,6 +1050,7 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
   const [draftRequestId, setDraftRequestId] = createSignal("");
   const [draftAnswersByQuestionIndex, setDraftAnswersByQuestionIndex] =
     createSignal<QuestionWizardDraftAnswer[]>([]);
+  const hasReviewStep = createMemo(() => props.card.prompts.length > 1);
 
   createEffect(() => {
     if (draftRequestId() === props.card.requestId) {
@@ -1062,9 +1063,11 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
     );
   });
 
-  const reviewStepIndex = createMemo(() => props.card.prompts.length);
+  const reviewStepIndex = createMemo(() =>
+    hasReviewStep() ? props.card.prompts.length : -1,
+  );
   const isReviewStep = createMemo(
-    () => activeStepIndex() === reviewStepIndex(),
+    () => hasReviewStep() && activeStepIndex() === reviewStepIndex(),
   );
   const currentPrompt = createMemo(
     () => props.card.prompts[activeStepIndex()] ?? null,
@@ -1108,7 +1111,7 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
     if (targetStepIndex <= activeStepIndex()) {
       return true;
     }
-    if (targetStepIndex === reviewStepIndex()) {
+    if (hasReviewStep() && targetStepIndex === reviewStepIndex()) {
       return isAllComplete();
     }
     return targetStepIndex <= maxUnlockedQuestionStep();
@@ -1146,14 +1149,17 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
     }
     return `Question ${activeStepIndex() + 1} of ${props.card.prompts.length}`;
   });
+  const currentQuestionKey = createMemo(
+    () => `${props.card.requestId}:${activeStepIndex()}`,
+  );
 
   return (
     <section
-      class="run-chat-tool-rail border-base-content/10 bg-base-100/95 border p-4"
+      class="run-chat-tool-rail border-base-content/10 bg-base-100 relative z-10 overflow-hidden rounded-none border shadow-sm"
       aria-label="Question composer takeover"
     >
-      <div class="space-y-4">
-        <div class="border-base-content/10 space-y-2 border-b pb-3">
+      <div class="bg-base-100 space-y-4 p-4">
+        <div class="border-base-content/10 bg-base-100 space-y-2 border-b pb-3">
           <div class="run-chat-tool-rail__row">
             <span class="run-chat-tool-rail__line">
               {toSingleLine(props.card.prompts[0]?.header, 80) ||
@@ -1172,7 +1178,7 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
           </Show>
         </div>
 
-        <div class="flex flex-wrap gap-2">
+        <div class="bg-base-100 flex flex-wrap gap-2">
           <For each={props.card.prompts}>
             {(prompt, promptIndex) => (
               <button
@@ -1182,7 +1188,7 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
                     ? "border-primary/50 bg-primary/10 text-primary"
                     : isQuestionComplete(promptIndex())
                       ? "border-base-content/20 bg-base-100 text-base-content"
-                      : "border-base-content/10 bg-base-100/60 text-base-content/55"
+                      : "border-base-content/10 bg-base-100 text-base-content/55"
                 }`}
                 disabled={props.isReplying || !canOpenStep(promptIndex())}
                 onClick={() => setActiveStepIndex(promptIndex())}
@@ -1191,24 +1197,26 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
               </button>
             )}
           </For>
-          <button
-            type="button"
-            class={`rounded-none border px-3 py-1 text-xs font-medium ${
-              isReviewStep()
-                ? "border-primary/50 bg-primary/10 text-primary"
-                : "border-base-content/10 bg-base-100/60 text-base-content/55"
-            }`}
-            disabled={props.isReplying || !canOpenStep(reviewStepIndex())}
-            onClick={() => setActiveStepIndex(reviewStepIndex())}
-          >
-            Review
-          </button>
+          <Show when={hasReviewStep()}>
+            <button
+              type="button"
+              class={`rounded-none border px-3 py-1 text-xs font-medium ${
+                isReviewStep()
+                  ? "border-primary/50 bg-primary/10 text-primary"
+                  : "border-base-content/10 bg-base-100 text-base-content/55"
+              }`}
+              disabled={props.isReplying || !canOpenStep(reviewStepIndex())}
+              onClick={() => setActiveStepIndex(reviewStepIndex())}
+            >
+              Review
+            </button>
+          </Show>
         </div>
 
         <Show
           when={!isReviewStep() && currentPrompt()}
           fallback={
-            <div class="border-base-content/10 bg-base-100/70 space-y-3 border p-4">
+            <div class="border-base-content/10 bg-base-100 space-y-3 border p-4">
               <p class="text-sm font-semibold">Review answers</p>
               <For each={reviewSummary()}>
                 {(item, summaryIndex) => (
@@ -1241,139 +1249,158 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
           }
         >
           {(prompt) => (
-            <div class="border-base-content/10 bg-base-100/70 space-y-4 border p-4">
-              <div class="space-y-1">
-                <p class="text-sm font-semibold">{prompt().header}</p>
-                <p class="text-base-content/90 text-sm leading-6">
-                  {prompt().question}
-                </p>
-              </div>
+            <Show keyed when={currentQuestionKey()}>
+              {() => {
+                const isOptionChecked = (label: string) =>
+                  currentDraft().selectedOptionLabels.includes(label);
+                const isCustomChecked = () => currentDraft().useCustomAnswer;
 
-              <div class="space-y-2">
-                <For each={prompt().options}>
-                  {(option) => {
-                    const checked =
-                      currentDraft().selectedOptionLabels.includes(
-                        option.label,
-                      );
-                    return (
+                return (
+                  <div class="border-base-content/10 bg-base-100 space-y-4 border p-4">
+                    <div class="space-y-1">
+                      <p class="text-sm font-semibold">{prompt().header}</p>
+                      <p class="text-base-content/90 text-sm leading-6">
+                        {prompt().question}
+                      </p>
+                    </div>
+
+                    <div class="space-y-2">
+                      <For each={prompt().options}>
+                        {(option) => {
+                          const checked = () => isOptionChecked(option.label);
+                          return (
+                            <button
+                              type="button"
+                              aria-label={option.label}
+                              data-checked={checked() ? "true" : "false"}
+                              class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
+                                checked()
+                                  ? "border-primary/50 bg-base-100"
+                                  : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
+                              }`}
+                              disabled={props.isReplying}
+                              onClick={() => {
+                                updateDraftAt(activeStepIndex(), (draft) =>
+                                  toggleQuestionWizardOption(
+                                    prompt(),
+                                    draft,
+                                    option.label,
+                                  ),
+                                );
+                              }}
+                            >
+                              <span
+                                class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
+                                  checked()
+                                    ? "border-primary bg-primary text-primary-content"
+                                    : "border-base-content/30 bg-base-100"
+                                }`}
+                                aria-hidden="true"
+                              >
+                                <Show when={checked()}>✓</Show>
+                              </span>
+                              <span>
+                                <span class="block text-sm font-medium">
+                                  {option.label}
+                                </span>
+                                <Show when={option.description.length > 0}>
+                                  <span class="text-base-content/70 mt-1 block text-xs">
+                                    {option.description}
+                                  </span>
+                                </Show>
+                              </span>
+                            </button>
+                          );
+                        }}
+                      </For>
+
                       <button
                         type="button"
-                        aria-label={option.label}
+                        aria-label="Type your own answer"
+                        data-checked={isCustomChecked() ? "true" : "false"}
                         class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
-                          checked
-                            ? "border-primary/50 bg-primary/10"
+                          isCustomChecked()
+                            ? "border-primary/50 bg-base-100"
                             : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
                         }`}
                         disabled={props.isReplying}
                         onClick={() => {
                           updateDraftAt(activeStepIndex(), (draft) =>
-                            toggleQuestionWizardOption(
-                              prompt(),
-                              draft,
-                              option.label,
-                            ),
+                            toggleQuestionWizardCustomAnswer(prompt(), draft),
                           );
                         }}
                       >
                         <span
-                          class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${checked ? "border-primary bg-primary text-primary-content" : "border-base-content/30 bg-base-100"}`}
+                          class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
+                            isCustomChecked()
+                              ? "border-primary bg-primary text-primary-content"
+                              : "border-base-content/30 bg-base-100"
+                          }`}
                           aria-hidden="true"
                         >
-                          <Show when={checked}>✓</Show>
+                          <Show when={isCustomChecked()}>✓</Show>
                         </span>
-                        <span>
-                          <span class="block text-sm font-medium">
-                            {option.label}
-                          </span>
-                          <Show when={option.description.length > 0}>
-                            <span class="text-base-content/70 mt-1 block text-xs">
-                              {option.description}
-                            </span>
-                          </Show>
+                        <span class="block text-sm font-medium">
+                          Type your own answer
                         </span>
                       </button>
-                    );
-                  }}
-                </For>
+                    </div>
 
-                <button
-                  type="button"
-                  aria-label="Type your own answer"
-                  class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
-                    currentDraft().useCustomAnswer
-                      ? "border-primary/50 bg-primary/10"
-                      : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
-                  }`}
-                  disabled={props.isReplying}
-                  onClick={() => {
-                    updateDraftAt(activeStepIndex(), (draft) =>
-                      toggleQuestionWizardCustomAnswer(prompt(), draft),
-                    );
-                  }}
-                >
-                  <span
-                    class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${currentDraft().useCustomAnswer ? "border-primary bg-primary text-primary-content" : "border-base-content/30 bg-base-100"}`}
-                    aria-hidden="true"
-                  >
-                    <Show when={currentDraft().useCustomAnswer}>✓</Show>
-                  </span>
-                  <span class="block text-sm font-medium">
-                    Type your own answer
-                  </span>
-                </button>
-              </div>
-
-              <Show when={currentDraft().useCustomAnswer}>
-                <div class="space-y-2">
-                  <label
-                    class="text-base-content/60 text-xs font-semibold tracking-[0.18em] uppercase"
-                    for={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
-                  >
-                    Your answer
-                  </label>
-                  <textarea
-                    id={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
-                    class="textarea textarea-bordered bg-base-100 min-h-[96px] w-full rounded-none text-sm leading-6"
-                    value={currentDraft().customText}
-                    placeholder="Type your answer"
-                    disabled={props.isReplying}
-                    rows={4}
-                    onInput={(event) => {
-                      updateDraftAt(activeStepIndex(), (draft) =>
-                        updateQuestionWizardCustomText(
-                          draft,
-                          event.currentTarget.value,
-                        ),
-                      );
-                    }}
-                  />
-                  <p class="text-base-content/60 text-xs">
-                    Type your own answer if none of the options fit.
-                  </p>
-                </div>
-              </Show>
-            </div>
+                    <Show when={isCustomChecked()}>
+                      <div class="bg-base-100 space-y-2">
+                        <label
+                          class="text-base-content/60 text-xs font-semibold tracking-[0.18em] uppercase"
+                          for={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
+                        >
+                          Your answer
+                        </label>
+                        <textarea
+                          id={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
+                          class="textarea textarea-bordered bg-base-100 min-h-[96px] w-full rounded-none text-sm leading-6"
+                          value={currentDraft().customText}
+                          placeholder="Type your answer"
+                          disabled={props.isReplying}
+                          rows={4}
+                          onInput={(event) => {
+                            updateDraftAt(activeStepIndex(), (draft) =>
+                              updateQuestionWizardCustomText(
+                                draft,
+                                event.currentTarget.value,
+                              ),
+                            );
+                          }}
+                        />
+                        <p class="text-base-content/60 text-xs">
+                          Type your own answer if none of the options fit.
+                        </p>
+                      </div>
+                    </Show>
+                  </div>
+                );
+              }}
+            </Show>
           )}
         </Show>
 
         <Show
           when={stepValidationError().length > 0 || props.replyError.length > 0}
         >
-          <p
-            class={
-              props.replyError.length > 0
-                ? "projects-error"
-                : "project-placeholder-text"
-            }
-          >
-            {props.replyError.length > 0
-              ? props.replyError
-              : stepValidationError()}
-          </p>
+          <div class="bg-base-100">
+            <p
+              class={
+                props.replyError.length > 0
+                  ? "projects-error"
+                  : "project-placeholder-text"
+              }
+            >
+              {props.replyError.length > 0
+                ? props.replyError
+                : stepValidationError()}
+            </p>
+          </div>
         </Show>
 
-        <div class="flex items-center justify-between gap-2">
+        <div class="border-base-content/10 bg-base-100 flex items-center justify-between gap-2 border-t pt-3">
           <button
             type="button"
             class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
@@ -1385,16 +1412,18 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
             {props.isReplying ? "Sending..." : "Dismiss"}
           </button>
           <div class="flex items-center gap-2">
-            <button
-              type="button"
-              class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
-              disabled={props.isReplying || activeStepIndex() === 0}
-              onClick={() =>
-                setActiveStepIndex(Math.max(0, activeStepIndex() - 1))
-              }
-            >
-              Back
-            </button>
+            <Show when={hasReviewStep() || activeStepIndex() > 0}>
+              <button
+                type="button"
+                class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+                disabled={props.isReplying || activeStepIndex() === 0}
+                onClick={() =>
+                  setActiveStepIndex(Math.max(0, activeStepIndex() - 1))
+                }
+              >
+                Back
+              </button>
+            </Show>
             <Show
               when={!isReviewStep()}
               fallback={
@@ -1416,11 +1445,19 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
                 disabled={
                   props.isReplying || !isQuestionComplete(activeStepIndex())
                 }
-                onClick={() => setActiveStepIndex(activeStepIndex() + 1)}
+                onClick={() => {
+                  if (!hasReviewStep()) {
+                    void props.onReply(props.card.requestId, finalAnswers());
+                    return;
+                  }
+                  setActiveStepIndex(activeStepIndex() + 1);
+                }}
               >
-                {activeStepIndex() === props.card.prompts.length - 1
-                  ? "Review answers"
-                  : "Next"}
+                {!hasReviewStep()
+                  ? "Send answer"
+                  : activeStepIndex() === props.card.prompts.length - 1
+                    ? "Review answers"
+                    : "Next"}
               </button>
             </Show>
           </div>

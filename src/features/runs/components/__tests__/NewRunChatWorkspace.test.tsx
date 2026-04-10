@@ -255,7 +255,7 @@ describe("NewRunChatWorkspace", () => {
     expect(screen.queryByText(/session-child/i)).toBeNull();
   });
 
-  it("renders the question wizard in the composer area and hides the normal composer", () => {
+  it("renders a single-question takeover without a review step", () => {
     const { model } = createModelStub("running", false, {}, "interactive", {
       pendingQuestionsById: {
         "question-1": {
@@ -277,7 +277,11 @@ describe("NewRunChatWorkspace", () => {
 
     render(() => <NewRunChatWorkspace model={model} />);
 
-    expect(screen.getByLabelText("Question composer takeover")).toBeTruthy();
+    const takeover = screen.getByLabelText("Question composer takeover");
+    expect(takeover).toBeTruthy();
+    expect(takeover.className).toContain("bg-base-100");
+    expect(takeover.className).toContain("overflow-hidden");
+    expect(takeover.className).toContain("relative");
     expect(screen.queryByLabelText("Question request")).toBeNull();
     expect(screen.getByText("Question 1 of 1")).toBeTruthy();
     expect(screen.getByText("Which action should I take?")).toBeTruthy();
@@ -286,16 +290,16 @@ describe("NewRunChatWorkspace", () => {
       screen.getByRole("button", { name: "Type your own answer" }),
     ).toBeTruthy();
     expect(screen.queryByLabelText("Your answer")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Send answer" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Review" })).toBeNull();
     expect(
       screen
-        .getByRole("button", { name: "Review answers" })
+        .getByRole("button", { name: "Send answer" })
         .getAttribute("disabled"),
     ).not.toBeNull();
     expect(screen.queryByLabelText("Message agent")).toBeNull();
   });
 
-  it("navigates to review and sends structured answers", async () => {
+  it("submits a single-question answer directly", async () => {
     const replyQuestionMock = vi.fn(async () => true);
     const rejectQuestionMock = vi.fn(async () => true);
     const { model } = createModelStub("running", false, {}, "interactive", {
@@ -318,23 +322,101 @@ describe("NewRunChatWorkspace", () => {
     model.agent.rejectQuestion = rejectQuestionMock;
     render(() => <NewRunChatWorkspace model={model} />);
 
-    await fireEvent.click(screen.getByRole("button", { name: "Apply patch" }));
+    const optionButton = screen.getByRole("button", { name: "Apply patch" });
+    await fireEvent.click(optionButton);
+    expect(optionButton.getAttribute("data-checked")).toBe("true");
     expect(screen.queryByLabelText("Your answer")).toBeNull();
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Review answers" }),
-    );
-    expect(screen.getAllByText("Review answers").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
     expect(replyQuestionMock).toHaveBeenCalledWith("question-1", [
       ["Apply patch"],
     ]);
 
-    await fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    expect(screen.getByText("Question 1 of 1")).toBeTruthy();
-
     await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(rejectQuestionMock).toHaveBeenCalledWith("question-1");
+  });
+
+  it("renders checked option state immediately", async () => {
+    const { model } = createModelStub("running", false, {}, "interactive", {
+      pendingQuestionsById: {
+        "question-1": {
+          requestId: "question-1",
+          sessionId: "session-1",
+          questions: [
+            {
+              header: "Choose action",
+              question: "Which action should I take?",
+              options: [
+                { label: "Apply patch", description: "Modify files" },
+                { label: "Explain first", description: "Describe approach" },
+              ],
+              custom: true,
+            },
+          ],
+        },
+      },
+    });
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Apply patch" }));
+    expect(
+      screen
+        .getByRole("button", { name: "Apply patch" })
+        .getAttribute("data-checked"),
+    ).toBe("true");
+    expect(
+      screen
+        .getByRole("button", { name: "Explain first" })
+        .getAttribute("data-checked"),
+    ).toBe("false");
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Explain first" }),
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "Apply patch" })
+        .getAttribute("data-checked"),
+    ).toBe("false");
+    expect(
+      screen
+        .getByRole("button", { name: "Explain first" })
+        .getAttribute("data-checked"),
+    ).toBe("true");
+  });
+
+  it("keeps nested question surfaces opaque", () => {
+    const { model } = createModelStub("running", false, {}, "interactive", {
+      pendingQuestionsById: {
+        "question-1": {
+          requestId: "question-1",
+          sessionId: "session-1",
+          questions: [
+            {
+              header: "Choose action",
+              question: "Which action should I take?",
+              options: [{ label: "Apply patch", description: "Modify files" }],
+              custom: true,
+            },
+            {
+              header: "Reason",
+              question: "Why?",
+              options: [],
+              custom: true,
+            },
+          ],
+        },
+      },
+    });
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    const bgBase100Count = (container.innerHTML.match(/bg-base-100/g) ?? [])
+      .length;
+    expect(bgBase100Count).toBeGreaterThan(5);
+    expect(container.innerHTML.includes("bg-base-100/70")).toBe(false);
+    expect(container.innerHTML.includes("bg-base-100/60")).toBe(false);
   });
 
   it("shows queued question count and failure state", () => {
