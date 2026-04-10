@@ -48,6 +48,13 @@ const ProjectsScreen: Component = () => {
           autosaveState: model.autosaveState(),
           hasPendingChanges: model.hasPendingProjectChanges(),
           onRequestClose: async () => {
+            const shouldFlushPendingChanges =
+              model.hasPendingProjectChanges() ||
+              model.autosaveState() === "saving";
+            if (shouldFlushPendingChanges) {
+              const didFlush = await model.flushProjectSettingsAutosaveNow();
+              if (!didFlush) return;
+            }
             await navigate(buildBoardHref(projectId));
           },
         },

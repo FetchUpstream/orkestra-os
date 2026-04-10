@@ -94,6 +94,8 @@ const normalizeStatus = (
   return undefined;
 };
 
+const TERMINAL_SUBAGENT_STATUSES = new Set(["completed", "failed"]);
+
 const RunChatToolRail: Component<RunChatToolRailProps> = (props) => {
   return (
     <section
@@ -322,7 +324,10 @@ const RunChatToolRail: Component<RunChatToolRailProps> = (props) => {
                                 <Show
                                   when={
                                     subagent.status &&
-                                    subagentStatus !== "running"
+                                    !!subagentStatus &&
+                                    TERMINAL_SUBAGENT_STATUSES.has(
+                                      subagentStatus,
+                                    )
                                   }
                                 >
                                   <div class="run-chat-tool-rail__subagent-status-row">

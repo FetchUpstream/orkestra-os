@@ -10,8 +10,8 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-pub mod dto;
 pub mod directory_search_service;
+pub mod dto;
 pub mod env;
 pub mod errors;
 pub mod models;

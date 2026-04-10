@@ -131,6 +131,17 @@ export const useProjectsPageModel = () => {
   let autosaveQueued = false;
   let lastPersistedDraftSignature = "";
   let currentAutosavePromise: Promise<boolean> | null = null;
+  let isDisposed = false;
+
+  const shouldSkipAutosaveSignalUpdates = (requestVersion?: number) => {
+    if (
+      requestVersion !== undefined &&
+      requestVersion !== editMutationVersion
+    ) {
+      return true;
+    }
+    return false;
+  };
 
   const loadProjects = async () => {
     const nextProjects = await listProjects();
@@ -598,9 +609,11 @@ export const useProjectsPageModel = () => {
 
   const flushProjectSettingsAutosave = async (
     _reason: "debounced" | "max-wait" | "submit" | "route-change" | "unmount",
+    suppressSignalUpdates = false,
   ): Promise<boolean> => {
     clearProjectSettingsAutosaveTimers();
 
+    if (isDisposed && !suppressSignalUpdates) return false;
     if (mode() !== "edit") return true;
 
     const activeProjectId = editingProjectId()?.trim() || "";
@@ -608,6 +621,7 @@ export const useProjectsPageModel = () => {
 
     const { payload, validationError } = buildProjectPayload(true);
     if (!payload) {
+      if (isDisposed || suppressSignalUpdates) return false;
       setAutosaveState("error");
       setError(validationError);
       return false;
@@ -615,6 +629,7 @@ export const useProjectsPageModel = () => {
 
     const nextSignature = draftSignature(payload);
     if (nextSignature === lastPersistedDraftSignature) {
+      if (isDisposed || suppressSignalUpdates) return true;
       setHasPendingProjectChanges(false);
       setError("");
       return true;
@@ -627,48 +642,58 @@ export const useProjectsPageModel = () => {
 
     const requestVersion = ++editMutationVersion;
     autosaveInFlight = true;
-    setAutosaveState("saving");
+    if (!suppressSignalUpdates) {
+      setAutosaveState("saving");
+    }
     let didPersist = false;
 
     const requestPromise = (async () => {
       try {
         const updatedProject = await updateProject(activeProjectId, payload);
 
-        if (requestVersion !== editMutationVersion) return false;
+        if (shouldSkipAutosaveSignalUpdates(requestVersion)) return false;
         if ((editingProjectId()?.trim() || "") !== activeProjectId)
           return false;
 
-        const persistedSignature = syncPersistedProject(updatedProject);
-        const { payload: currentPayload } = buildProjectPayload();
-        const currentSignature = currentPayload
-          ? draftSignature(currentPayload)
-          : null;
-        if (currentSignature === persistedSignature) {
-          setAutosaveState("saved");
+        if (isDisposed || suppressSignalUpdates) {
+          lastPersistedDraftSignature = nextSignature;
+        } else {
+          const persistedSignature = syncPersistedProject(updatedProject);
+          const { payload: currentPayload } = buildProjectPayload();
+          const currentSignature = currentPayload
+            ? draftSignature(currentPayload)
+            : null;
+          if (currentSignature === persistedSignature) {
+            if (shouldSkipAutosaveSignalUpdates(requestVersion)) return false;
+            setAutosaveState("saved");
+          }
         }
         didPersist = true;
       } catch (submitError) {
-        if (requestVersion !== editMutationVersion) return false;
+        if (shouldSkipAutosaveSignalUpdates(requestVersion) || isDisposed)
+          return false;
         if ((editingProjectId()?.trim() || "") !== activeProjectId)
           return false;
         const backendMessage = getCreateProjectErrorMessage(submitError);
-        setAutosaveState("error");
-        setError(
-          backendMessage
-            ? `Failed to autosave project settings. ${backendMessage}`
-            : "Failed to autosave project settings.",
-        );
+        if (!suppressSignalUpdates) {
+          setAutosaveState("error");
+          setError(
+            backendMessage
+              ? `Failed to autosave project settings. ${backendMessage}`
+              : "Failed to autosave project settings.",
+          );
+        }
       } finally {
-        if (requestVersion === editMutationVersion) {
+        if (!isDisposed && requestVersion === editMutationVersion) {
           autosaveInFlight = false;
         }
       }
 
-      if (requestVersion !== editMutationVersion) return false;
+      if (shouldSkipAutosaveSignalUpdates(requestVersion)) return false;
 
       if (autosaveQueued) {
         autosaveQueued = false;
-        return flushProjectSettingsAutosave("debounced");
+        return flushProjectSettingsAutosave("debounced", suppressSignalUpdates);
       }
 
       return didPersist;
@@ -829,10 +854,7 @@ export const useProjectsPageModel = () => {
       navigate(`/projects/${createdProject.id}`);
     } catch (submitError) {
       const backendMessage = getCreateProjectErrorMessage(submitError);
-      const prefix =
-        mode() === "edit"
-          ? "Failed to save project."
-          : "Failed to create project.";
+      const prefix = "Failed to create project.";
       setError(
         backendMessage
           ? `${prefix} ${backendMessage}`
@@ -1030,9 +1052,10 @@ export const useProjectsPageModel = () => {
   };
 
   onCleanup(() => {
+    isDisposed = true;
     projectRouteSyncVersion += 1;
     if (mode() === "edit" && hasPendingProjectChanges()) {
-      void flushQueuedProjectSettingsAutosave();
+      void flushProjectSettingsAutosave("unmount", true);
     } else {
       clearProjectSettingsAutosaveTimers();
     }

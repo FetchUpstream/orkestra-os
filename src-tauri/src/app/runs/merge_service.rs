@@ -546,9 +546,7 @@ impl RunsMergeService {
     ) -> Result<(), AppError> {
         let ref_name = Self::source_ref_name(branch_name);
         let mut reference = repo.find_reference(&ref_name).map_err(|err| {
-            AppError::validation(format!(
-                "failed to resolve source branch reference: {err}"
-            ))
+            AppError::validation(format!("failed to resolve source branch reference: {err}"))
         })?;
         reference
             .set_target(

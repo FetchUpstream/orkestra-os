@@ -14,8 +14,8 @@ use crate::app::db::repositories::projects::ProjectsRepository;
 use crate::app::errors::AppError;
 use crate::app::projects::directory_search_service::LocalDirectorySearchService;
 use crate::app::projects::dto::{
-    CloneProjectRequest, CreateProjectRequest, LocalDirectorySearchResultDto,
-    ProjectDetailsDto, ProjectDto, ProjectRepositoryDto, UpdateProjectRequest,
+    CloneProjectRequest, CreateProjectRequest, LocalDirectorySearchResultDto, ProjectDetailsDto,
+    ProjectDto, ProjectRepositoryDto, UpdateProjectRequest,
 };
 use crate::app::projects::env::{normalize_project_env_vars, project_env_var_map};
 use crate::app::projects::errors::ProjectsServiceError;
@@ -544,12 +544,16 @@ impl ProjectsService {
         for repository in repositories {
             let repo_path = repository.repo_path.trim();
             if repo_path.is_empty() {
-                return Err(ProjectsServiceError::Validation("repository path is required"));
+                return Err(ProjectsServiceError::Validation(
+                    "repository path is required",
+                ));
             }
 
             let path = Path::new(repo_path);
             if !path.exists() {
-                return Err(ProjectsServiceError::Validation("repository path must exist"));
+                return Err(ProjectsServiceError::Validation(
+                    "repository path must exist",
+                ));
             }
             if !path.is_dir() {
                 return Err(ProjectsServiceError::Validation(
@@ -644,8 +648,10 @@ mod tests {
     }
 
     fn make_git_repository(name: &str) -> String {
-        let repo_path =
-            std::env::temp_dir().join(format!("orkestra-project-repo-{name}-{}", uuid::Uuid::new_v4()));
+        let repo_path = std::env::temp_dir().join(format!(
+            "orkestra-project-repo-{name}-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&repo_path).unwrap();
         Repository::init(&repo_path).unwrap();
         repo_path.to_string_lossy().to_string()
@@ -1138,7 +1144,10 @@ mod tests {
             })
             .await;
 
-        assert_eq!(result.unwrap_err().to_string(), "repository path must exist");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "repository path must exist"
+        );
     }
 
     #[tokio::test]

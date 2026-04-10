@@ -177,19 +177,59 @@ const readPermissionSourceAttribution = (
 
   const record = value as Record<string, unknown>;
   return {
-    agent:
-      sanitizePermissionSourceLabel(
-        record.agent ?? record.agentID ?? record.agentId ?? record.agent_id,
-      ) ?? null,
-    model:
-      sanitizePermissionSourceModelLabel(
-        record.model ??
-          record.modelID ??
-          record.modelId ??
-          record.model_id ??
-          record.modelName ??
-          record.model_name,
-      ) ?? null,
+    agent: sanitizePermissionSourceLabel(
+      record.agent ?? record.agentID ?? record.agentId ?? record.agent_id,
+    ),
+    model: sanitizePermissionSourceModelLabel(
+      record.model ??
+        record.modelID ??
+        record.modelId ??
+        record.model_id ??
+        record.modelName ??
+        record.model_name,
+    ),
+  };
+};
+
+const extractSessionEventInfo = (
+  event: OpenCodeBusEvent,
+): {
+  info: Record<string, unknown>;
+  sessionId: string;
+  parentSessionId: string;
+} | null => {
+  if (!event.properties || typeof event.properties !== "object") {
+    return null;
+  }
+
+  const properties = event.properties as Record<string, unknown>;
+  const info =
+    properties.info && typeof properties.info === "object"
+      ? (properties.info as Record<string, unknown>)
+      : properties;
+  const sessionIdValue =
+    info.sessionID ??
+    info.sessionId ??
+    properties.sessionID ??
+    properties.sessionId;
+  const parentSessionIdValue =
+    info.parentID ??
+    info.parentId ??
+    properties.parentID ??
+    properties.parentId;
+  const sessionId =
+    typeof sessionIdValue === "string" ? sessionIdValue.trim() : "";
+  const parentSessionId =
+    typeof parentSessionIdValue === "string" ? parentSessionIdValue.trim() : "";
+
+  if (!sessionId) {
+    return null;
+  }
+
+  return {
+    info,
+    sessionId,
+    parentSessionId,
   };
 };
 
@@ -677,34 +717,21 @@ export const useRunDetailModel = () => {
           continue;
         }
 
-        const properties =
-          event.properties && typeof event.properties === "object"
-            ? (event.properties as Record<string, unknown>)
-            : {};
-        const infoCandidate =
-          properties.info && typeof properties.info === "object"
-            ? (properties.info as Record<string, unknown>)
-            : properties;
-        const sessionIdValue =
-          infoCandidate.sessionID ??
-          infoCandidate.sessionId ??
-          properties.sessionID ??
-          properties.sessionId;
-        const sessionId =
-          typeof sessionIdValue === "string" ? sessionIdValue.trim() : "";
-        if (!sessionId) {
+        const sessionEventInfo = extractSessionEventInfo(event);
+        if (!sessionEventInfo) {
           continue;
         }
+        const { info, sessionId } = sessionEventInfo;
 
         const rawTitle =
-          sanitizePermissionSourceLabel(infoCandidate.title) ||
-          sanitizePermissionSourceLabel(infoCandidate.slug) ||
+          sanitizePermissionSourceLabel(info.title) ||
+          sanitizePermissionSourceLabel(info.slug) ||
           null;
-        const attribution = readPermissionSourceAttribution(infoCandidate);
+        const attribution = readPermissionSourceAttribution(info);
         const rawAgent =
           attribution.agent ||
-          (typeof infoCandidate.mode === "string"
-            ? sanitizePermissionSourceLabel(infoCandidate.mode)
+          (typeof info.mode === "string"
+            ? sanitizePermissionSourceLabel(info.mode)
             : null);
         const label = formatPermissionSourceLabel(
           rawTitle,
@@ -729,30 +756,11 @@ export const useRunDetailModel = () => {
         continue;
       }
 
-      const properties =
-        event.properties && typeof event.properties === "object"
-          ? (event.properties as Record<string, unknown>)
-          : {};
-      const infoCandidate =
-        properties.info && typeof properties.info === "object"
-          ? (properties.info as Record<string, unknown>)
-          : properties;
-      const sessionIdValue =
-        infoCandidate.sessionID ??
-        infoCandidate.sessionId ??
-        properties.sessionID ??
-        properties.sessionId;
-      const parentSessionIdValue =
-        infoCandidate.parentID ??
-        infoCandidate.parentId ??
-        properties.parentID ??
-        properties.parentId;
-      const sessionId =
-        typeof sessionIdValue === "string" ? sessionIdValue.trim() : "";
-      const parentSessionId =
-        typeof parentSessionIdValue === "string"
-          ? parentSessionIdValue.trim()
-          : "";
+      const sessionEventInfo = extractSessionEventInfo(event);
+      if (!sessionEventInfo) {
+        continue;
+      }
+      const { sessionId, parentSessionId } = sessionEventInfo;
 
       if (sessionId && parentSessionId && sessionId !== parentSessionId) {
         sessionIds.add(sessionId);
@@ -769,15 +777,18 @@ export const useRunDetailModel = () => {
     const permissionSessionId = permission.sessionId?.trim() ?? "";
     const derivedSourceLabel =
       permissionSourceLabelsBySessionId()[permissionSessionId] || "";
-    const sourceKind = knownSubagentSessionIds().has(permissionSessionId)
-      ? "subagent"
-      : rootSessionId
-        ? permissionSessionId === rootSessionId
-          ? "main"
-          : "subagent"
-        : derivedSourceLabel
-          ? "subagent"
-          : "main";
+    let sourceKind: "main" | "subagent";
+
+    if (knownSubagentSessionIds().has(permissionSessionId)) {
+      sourceKind = "subagent";
+    } else if (rootSessionId) {
+      sourceKind = permissionSessionId === rootSessionId ? "main" : "subagent";
+    } else if (derivedSourceLabel) {
+      sourceKind = "subagent";
+    } else {
+      sourceKind = "main";
+    }
+
     const sourceLabel =
       sourceKind === "main" ? "Main agent" : derivedSourceLabel || "Subagent";
 

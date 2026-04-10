@@ -220,7 +220,12 @@ const CreateProjectPanel: Component<Props> = (props) =>
                         <button
                           type="button"
                           class="btn btn-ghost btn-xs text-error hover:bg-error/10 hover:text-error absolute top-3 right-3 h-7 min-h-7 w-7 rounded-none p-0"
-                          onClick={() => props.removeEnvVar(index)}
+                          onClick={() => {
+                            if (isFormDisabled()) return;
+                            props.removeEnvVar(index);
+                          }}
+                          disabled={isFormDisabled()}
+                          aria-disabled={isFormDisabled()}
                           aria-label={`Remove environment variable ${index + 1}`}
                           title="Remove environment variable"
                         >

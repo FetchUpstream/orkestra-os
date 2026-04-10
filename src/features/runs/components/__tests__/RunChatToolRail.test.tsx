@@ -123,9 +123,7 @@ describe("RunChatToolRail", () => {
       ).length,
     ).toBe(0);
     expect(
-      container.querySelector(
-        ".run-chat-tool-rail__subagent-status-row .run-inline-spinner",
-      ),
+      container.querySelector(".run-chat-tool-rail__subagent-status-row"),
     ).toBeNull();
   });
 

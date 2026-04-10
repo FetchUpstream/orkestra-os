@@ -1452,7 +1452,7 @@ describe("useRunDetailModel startup ownership", () => {
     );
   });
 
-  it("replies to subagent permission using the subagent session context", async () => {
+  it("replies to subagent permission using the canonical root session", async () => {
     bootstrapRunOpenCodeMock.mockResolvedValueOnce({
       state: "running",
       chatMode: "interactive",

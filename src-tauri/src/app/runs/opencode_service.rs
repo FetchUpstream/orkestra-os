@@ -1824,18 +1824,20 @@ impl RunsOpenCodeService {
 
     fn compute_stream_connected(buffered_events: &[RawAgentEvent]) -> bool {
         for event in buffered_events.iter().rev() {
-            let runtime_event_name = if event.event_name == "message" || event.event_name == "unknown" {
-                Self::parse_payload_property(&event.payload, &["type"])
-                    .unwrap_or_else(|| event.event_name.clone())
-            } else {
-                event.event_name.clone()
-            };
+            let runtime_event_name =
+                if event.event_name == "message" || event.event_name == "unknown" {
+                    Self::parse_payload_property(&event.payload, &["type"])
+                        .unwrap_or_else(|| event.event_name.clone())
+                } else {
+                    event.event_name.clone()
+                };
 
             match runtime_event_name.as_str() {
                 "server.connected" | "stream.connected" | "stream.reconnected" => return true,
-                "server.disconnected" | "stream.disconnected" | "stream.reconnecting" | "stream.terminated" => {
-                    return false
-                }
+                "server.disconnected"
+                | "stream.disconnected"
+                | "stream.reconnecting"
+                | "stream.terminated" => return false,
                 _ => {}
             }
         }
@@ -3250,10 +3252,9 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             match client.global().health(RequestOptions::default()).await {
                 Ok(_) => return Ok(()),
                 Err(err) => {
-                    let health_err = AnyhowError::new(OpenCodeServiceError::HealthCheck {
-                        source: err,
-                    })
-                    .context(context.to_string());
+                    let health_err =
+                        AnyhowError::new(OpenCodeServiceError::HealthCheck { source: err })
+                            .context(context.to_string());
                     if health_start.elapsed() >= max_health_wait {
                         let elapsed_ms = health_start.elapsed().as_millis();
                         return Err(app_error_from_anyhow(health_err.context(format!(
@@ -4201,6 +4202,14 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 reason: response_reason,
                 replied_at: Utc::now().to_rfc3339(),
             });
+        }
+
+        {
+            let mut state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_permissions.remove(request_id);
         }
 
         Ok(ReplyRunOpenCodePermissionResponse {
@@ -6585,6 +6594,53 @@ mod tests {
     /// // Assert: task moved to review
     /// assert_eq!(fetch_task_status(&pool, "task-1").await, "review");
     /// ```
+    #[tokio::test]
+    async fn canonical_permission_reply_clears_tracked_child_session_request_id() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get("run-1")
+            .cloned()
+            .unwrap();
+
+        {
+            let mut session_id = handle.session_id.lock().unwrap();
+            *session_id = Some("session-root".to_string());
+        }
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"permission.asked","properties":{"id":"perm-sub-3","permission":"external_directory","sessionID":"session-child"}}"#,
+                &handle.session_runtime_state,
+            )
+            .await
+            .unwrap();
+
+        {
+            let guard = handle.session_runtime_state.lock().unwrap();
+            assert!(guard.pending_permissions.contains("perm-sub-3"));
+        }
+
+        opencode_service
+            .reply_run_opencode_permission("run-1", "session-root", "perm-sub-3", "once", false)
+            .await
+            .unwrap();
+
+        let guard = handle.session_runtime_state.lock().unwrap();
+        assert!(!guard.pending_permissions.contains("perm-sub-3"));
+    }
+
     #[tokio::test]
     async fn wrapped_session_idle_payload_transitions_task_to_review() {
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
