@@ -11,8 +11,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { For, Index, Show, type Component, type JSX } from "solid-js";
-import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
+import type {
+  RunAgentOption,
+  RunModelOption,
+  RunSelectionOption,
+} from "../../../app/lib/runs";
 import { AppIcon } from "../../../components/ui/icons";
+import RunAgentSelectOptions from "../../runs/components/RunAgentSelectOptions";
 import RepositoryPathPicker from "./RepositoryPathPicker";
 import type { EnvVarInput, RepoInput } from "../utils/projectForm";
 
@@ -35,7 +40,7 @@ type Props = {
   defaultRunProvider: () => string;
   defaultRunAgent: () => string;
   defaultRunModel: () => string;
-  runAgentOptions: () => RunSelectionOption[];
+  runAgentOptions: () => RunAgentOption[];
   runProviderOptions: () => RunSelectionOption[];
   visibleRunModelOptions: () => RunModelOption[];
   runDefaultsValidationError: () => string;
@@ -305,12 +310,10 @@ const CreateProjectPanel: Component<Props> = (props) =>
                     disabled={isFormDisabled()}
                     aria-label="Project default run agent"
                   >
-                    <option value="">System default agent</option>
-                    <For each={props.runAgentOptions()}>
-                      {(option) => (
-                        <option value={option.id}>{option.label}</option>
-                      )}
-                    </For>
+                    <RunAgentSelectOptions
+                      options={props.runAgentOptions()}
+                      includeSystemDefaultOption
+                    />
                   </select>
                 </label>
                 <label class="projects-field task-runs-default-field">

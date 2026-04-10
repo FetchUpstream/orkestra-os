@@ -171,6 +171,16 @@ export type RunSelectionOption = {
   label: string;
 };
 
+export type RunAgentScope = "project" | "global" | "inherited";
+
+export type RunAgentMode = "primary" | "subagent" | "all";
+
+export type RunAgentOption = RunSelectionOption & {
+  scope: RunAgentScope;
+  mode: RunAgentMode;
+  selectable: boolean;
+};
+
 export type RunModelOption = RunSelectionOption & {
   providerId?: string;
 };
@@ -181,7 +191,7 @@ export type RunSourceBranchOption = {
 };
 
 export type RunSelectionOptions = {
-  agents: RunSelectionOption[];
+  agents: RunAgentOption[];
   providers: RunSelectionOption[];
   models: RunModelOption[];
 };
@@ -549,6 +559,9 @@ type RunSelectionItemResponse = {
   displayName?: string;
   provider_id?: string;
   providerId?: string;
+  scope?: string;
+  mode?: string;
+  selectable?: boolean;
 };
 
 type RunSelectionOptionsResponse = {
@@ -957,6 +970,49 @@ const toSelectionOptions = (
     .filter((item): item is RunSelectionOption => item !== null);
 };
 
+const toRunAgentScope = (value: unknown): RunAgentScope => {
+  if (value === "project" || value === "global") {
+    return value;
+  }
+  return "inherited";
+};
+
+const toRunAgentMode = (value: unknown): RunAgentMode => {
+  if (value === "all" || value === "subagent") {
+    return value;
+  }
+  return "primary";
+};
+
+const toAgentSelectionOptions = (source: unknown): RunAgentOption[] => {
+  if (!Array.isArray(source)) {
+    return [];
+  }
+  return source
+    .map((item): RunAgentOption | null => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const value = item as RunSelectionItemResponse;
+      const id =
+        toSelectionId(value) || toOptionalTrimmedString(value.name) || "";
+      if (!id) {
+        return null;
+      }
+      return {
+        id,
+        label:
+          toOptionalTrimmedString(
+            value.label ?? value.name ?? value.display_name,
+          ) || id,
+        scope: toRunAgentScope(value.scope),
+        mode: toRunAgentMode(value.mode),
+        selectable: value.selectable ?? true,
+      };
+    })
+    .filter((item): item is RunAgentOption => item !== null);
+};
+
 const toModelSelectionOptions = (source: unknown): RunModelOption[] => {
   if (!Array.isArray(source)) {
     return [];
@@ -1001,7 +1057,7 @@ const unwrapRunSelectionOptionsPayload = (
 const toRunSelectionOptions = (response: unknown): RunSelectionOptions => {
   const payload = unwrapRunSelectionOptionsPayload(response);
   return {
-    agents: toSelectionOptions(payload.agents, "Agent"),
+    agents: toAgentSelectionOptions(payload.agents),
     providers: toSelectionOptions(payload.providers, "Provider"),
     models: toModelSelectionOptions(payload.models),
   };
@@ -1328,7 +1384,6 @@ export const getRunSelectionOptions = async (
     },
   );
 
-  const agentsPayload = toSelectionList(selectionCatalog, "agents");
   const providersPayload = toSelectionList(selectionCatalog, "providers");
 
   const providers = toSelectionOptions(providersPayload, "Provider");
@@ -1350,7 +1405,7 @@ export const getRunSelectionOptions = async (
   );
 
   return toRunSelectionOptions({
-    agents: agentsPayload,
+    agents: toSelectionList(selectionCatalog, "agents"),
     providers,
     models,
   });

@@ -32,6 +32,7 @@ import {
   type RunChatToolRailItem,
   type RunChatToolRailSubagentItem,
 } from "./chat";
+import RunAgentSelectOptions from "./RunAgentSelectOptions";
 import type {
   AgentStore,
   OpenCodeBusEvent,
@@ -2536,11 +2537,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                   }}
                   aria-label="Prompt override agent"
                 >
-                  <For each={runAgentOptions()}>
-                    {(option: { id: string; label: string }) => (
-                      <option value={option.id}>{option.label}</option>
-                    )}
-                  </For>
+                  <RunAgentSelectOptions options={runAgentOptions()} />
                 </select>
               </label>
             </div>

@@ -34,7 +34,7 @@ use opencode::{
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::async_runtime::JoinHandle;
@@ -469,6 +469,7 @@ fn merge_provider_options(sources: Vec<Vec<RunProviderDto>>) -> Vec<RunProviderD
     merged
 }
 
+#[cfg(test)]
 fn parse_agents_from_config_payload(value: &serde_json::Value) -> Vec<RunAgentDto> {
     fn parse_agent_entry(
         entry: &serde_json::Value,
@@ -484,9 +485,15 @@ fn parse_agents_from_config_payload(value: &serde_json::Value) -> Vec<RunAgentDt
                 }
             },
         )?;
-        let name = parse_string_field(entry, &["name", "title", "displayName", "display_name"])
-            .or_else(|| fallback_id.and_then(|v| to_nonempty_trimmed_string(Some(v))));
-        Some(RunAgentDto { id, name })
+        Some(RunAgentDto {
+            label: parse_string_field(entry, &["name", "title", "displayName", "display_name"])
+                .or_else(|| fallback_id.and_then(|v| to_nonempty_trimmed_string(Some(v))))
+                .unwrap_or_else(|| id.clone()),
+            id,
+            mode: "primary".to_string(),
+            scope: "inherited".to_string(),
+            selectable: true,
+        })
     }
 
     let mut agents = Vec::new();
@@ -541,6 +548,7 @@ fn parse_agents_from_config_payload(value: &serde_json::Value) -> Vec<RunAgentDt
     agents
 }
 
+#[cfg(test)]
 fn dedupe_agents(agents: Vec<RunAgentDto>) -> Vec<RunAgentDto> {
     let mut seen = HashSet::new();
     let mut deduped = Vec::new();
@@ -550,6 +558,289 @@ fn dedupe_agents(agents: Vec<RunAgentDto>) -> Vec<RunAgentDto> {
         }
     }
     deduped
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiscoveredAgentMode {
+    Primary,
+    Subagent,
+    All,
+}
+
+impl DiscoveredAgentMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "primary" => Some(Self::Primary),
+            "subagent" => Some(Self::Subagent),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Primary => "primary",
+            Self::Subagent => "subagent",
+            Self::All => "all",
+        }
+    }
+
+    fn is_selectable_for_main_agent(self) -> bool {
+        matches!(self, Self::Primary | Self::All)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiscoveredAgentScope {
+    Project,
+    Global,
+    Inherited,
+}
+
+impl DiscoveredAgentScope {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Global => "global",
+            Self::Inherited => "inherited",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AuthoritativeAgentDescriptor {
+    id: String,
+    label: String,
+    mode: DiscoveredAgentMode,
+    hidden: bool,
+}
+
+fn parse_authoritative_agents_from_app_payload(
+    value: &serde_json::Value,
+) -> Vec<AuthoritativeAgentDescriptor> {
+    let Some(entries) = value.as_array() else {
+        return Vec::new();
+    };
+
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let id = parse_string_field(entry, &["name"])?;
+            let mode = parse_string_field(entry, &["mode"])
+                .and_then(|mode| DiscoveredAgentMode::parse(&mode))?;
+            let hidden = entry
+                .as_object()
+                .and_then(|object| object.get("hidden"))
+                .and_then(|candidate| candidate.as_bool())
+                .unwrap_or(false);
+
+            Some(AuthoritativeAgentDescriptor {
+                label: id.clone(),
+                id,
+                mode,
+                hidden,
+            })
+        })
+        .collect()
+}
+
+fn dedupe_authoritative_agents(
+    agents: Vec<AuthoritativeAgentDescriptor>,
+) -> Vec<AuthoritativeAgentDescriptor> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::new();
+    for agent in agents {
+        if seen.insert(agent.id.clone()) {
+            deduped.push(agent);
+        }
+    }
+    deduped
+}
+
+fn parse_agent_names_from_config_payload(value: &serde_json::Value) -> HashSet<String> {
+    fn collect_agent_names(
+        value: &serde_json::Value,
+        fallback_id: Option<&str>,
+        allow_fallback_id: bool,
+    ) -> Option<String> {
+        parse_string_field(value, &["name", "id", "agentID", "agentId"]).or_else(|| {
+            if allow_fallback_id {
+                fallback_id.and_then(|candidate| to_nonempty_trimmed_string(Some(candidate)))
+            } else {
+                None
+            }
+        })
+    }
+
+    let mut names = HashSet::new();
+
+    if let Some(object) = value.as_object() {
+        for section in ["agent", "agents"] {
+            let Some(section_value) = object.get(section) else {
+                continue;
+            };
+
+            if let Some(array) = section_value.as_array() {
+                for entry in array {
+                    if let Some(name) = collect_agent_names(entry, None, false) {
+                        names.insert(name);
+                    }
+                }
+                continue;
+            }
+
+            if let Some(section_object) = section_value.as_object() {
+                for (key, entry) in section_object {
+                    if !entry.is_object() {
+                        continue;
+                    }
+                    if let Some(name) = collect_agent_names(entry, Some(key), true) {
+                        names.insert(name);
+                    }
+                }
+            }
+        }
+    }
+
+    names
+}
+
+fn read_agent_names_from_config_file(path: &Path) -> HashSet<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+        .map(|value| parse_agent_names_from_config_payload(&value))
+        .unwrap_or_default()
+}
+
+fn collect_markdown_agent_names_from_dir(path: &Path) -> HashSet<String> {
+    fn visit(path: &Path, root: &Path, names: &mut HashSet<String>) {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                visit(&entry_path, root, names);
+                continue;
+            }
+
+            let is_markdown = entry_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("md"));
+            if !is_markdown {
+                continue;
+            }
+
+            let Some(relative) = entry_path.strip_prefix(root).ok() else {
+                continue;
+            };
+            let relative_without_extension = relative.with_extension("");
+            let Some(without_extension) = relative_without_extension.to_str() else {
+                continue;
+            };
+            let normalized = without_extension.replace('\\', "/");
+            if let Some(name) = to_nonempty_trimmed_string(Some(&normalized)) {
+                names.insert(name);
+            }
+        }
+    }
+
+    let mut names = HashSet::new();
+    if path.is_dir() {
+        visit(path, path, &mut names);
+    }
+    names
+}
+
+fn modern_global_opencode_root(project_env: &HashMap<String, String>) -> Option<PathBuf> {
+    let env_config_dir = project_env
+        .get("OPENCODE_CONFIG_DIR")
+        .and_then(|value| to_nonempty_trimmed_string(Some(value)))
+        .or_else(|| {
+            std::env::var("OPENCODE_CONFIG_DIR")
+                .ok()
+                .and_then(|value| to_nonempty_trimmed_string(Some(&value)))
+        });
+    if let Some(config_dir) = env_config_dir {
+        return Some(PathBuf::from(config_dir));
+    }
+
+    let home = std::env::var("HOME")
+        .ok()
+        .and_then(|value| to_nonempty_trimmed_string(Some(&value)))?;
+    let xdg_config_home = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .and_then(|value| to_nonempty_trimmed_string(Some(&value)));
+
+    Some(match xdg_config_home {
+        Some(root) => PathBuf::from(root).join("opencode"),
+        None => PathBuf::from(home).join(".config").join("opencode"),
+    })
+}
+
+fn legacy_global_opencode_root() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .and_then(|value| to_nonempty_trimmed_string(Some(&value)))
+        .map(|home| PathBuf::from(home).join(".opencode"))
+}
+
+fn collect_agent_names_from_scope_paths(paths: &[PathBuf]) -> HashSet<String> {
+    let mut names = HashSet::new();
+
+    for root in paths {
+        let config_path = root.join("opencode.json");
+        names.extend(read_agent_names_from_config_file(&config_path));
+        names.extend(collect_markdown_agent_names_from_dir(&root.join("agent")));
+        names.extend(collect_markdown_agent_names_from_dir(&root.join("agents")));
+    }
+
+    names
+}
+
+fn classify_effective_agents(
+    agents: Vec<AuthoritativeAgentDescriptor>,
+    canonical_repo_root: &Path,
+    project_env: &HashMap<String, String>,
+) -> Vec<RunAgentDto> {
+    let project_agent_names = collect_agent_names_from_scope_paths(&[
+        canonical_repo_root.to_path_buf(),
+        canonical_repo_root.join(".opencode"),
+    ]);
+
+    let mut global_scope_paths = Vec::new();
+    if let Some(path) = modern_global_opencode_root(project_env) {
+        global_scope_paths.push(path);
+    }
+    if let Some(path) = legacy_global_opencode_root() {
+        global_scope_paths.push(path);
+    }
+    let global_agent_names = collect_agent_names_from_scope_paths(&global_scope_paths);
+
+    agents
+        .into_iter()
+        .filter(|agent| !agent.hidden && agent.mode.is_selectable_for_main_agent())
+        .map(|agent| {
+            let scope = if project_agent_names.contains(&agent.id) {
+                DiscoveredAgentScope::Project
+            } else if global_agent_names.contains(&agent.id) {
+                DiscoveredAgentScope::Global
+            } else {
+                DiscoveredAgentScope::Inherited
+            };
+
+            RunAgentDto {
+                id: agent.id,
+                label: agent.label,
+                mode: agent.mode.as_str().to_string(),
+                scope: scope.as_str().to_string(),
+                selectable: true,
+            }
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3267,7 +3558,12 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
     }
 
-    async fn with_ephemeral_client<T, F>(&self, cwd: PathBuf, op: F) -> Result<T, AppError>
+    async fn with_ephemeral_client<T, F>(
+        &self,
+        cwd: PathBuf,
+        project_env: HashMap<String, String>,
+        op: F,
+    ) -> Result<T, AppError>
     where
         F: for<'a> FnOnce(
             &'a OpencodeClient,
@@ -3275,7 +3571,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             Box<dyn std::future::Future<Output = Result<T, AppError>> + Send + 'a>,
         >,
     {
-        let options = build_opencode_server_options(cwd, HashMap::new());
+        let options = build_opencode_server_options(cwd.clone(), project_env);
 
         let server = create_opencode_server(Some(options))
             .await
@@ -3284,6 +3580,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             .map_err(app_error_from_anyhow)?;
         let client = create_opencode_client(Some(OpencodeClientConfig {
             base_url: server.url.clone(),
+            directory: Some(cwd.to_string_lossy().to_string()),
             timeout: Duration::from_secs(30),
             ..Default::default()
         }))
@@ -3367,10 +3664,18 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         &self,
         project_id: &str,
     ) -> Result<RunSelectionCatalogResponseDto, AppError> {
-        let canonical_repo_root = if project_id.trim().is_empty() {
+        let trimmed_project_id = project_id.trim();
+        let canonical_repo_root = if trimmed_project_id.is_empty() {
             self.fallback_ephemeral_cwd()
         } else {
-            self.resolve_project_repo_root(project_id).await?
+            self.resolve_project_repo_root(trimmed_project_id).await?
+        };
+        let project_env = if trimmed_project_id.is_empty() {
+            HashMap::new()
+        } else {
+            self.projects_service
+                .resolve_project_env_vars(trimmed_project_id)
+                .await?
         };
         info!(
             target: "opencode.discovery",
@@ -3381,8 +3686,9 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         );
 
         let detection_started = Instant::now();
+        let classification_repo_root = canonical_repo_root.clone();
         let result = self
-            .with_ephemeral_client(canonical_repo_root.clone(), |client| {
+            .with_ephemeral_client(canonical_repo_root.clone(), project_env.clone(), |client| {
                 Box::pin(async move {
                     let provider_list_response = client
                         .provider()
@@ -3427,12 +3733,12 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                         parse_providers_from_payload(&config_providers_response.data),
                         parse_providers_from_payload(&config_response.data),
                     ]);
-                    let agents = dedupe_agents(
-                        [
-                            parse_agents_from_config_payload(&app_agents_response.data),
-                            parse_agents_from_config_payload(&config_response.data),
-                        ]
-                        .concat(),
+                    let agents = classify_effective_agents(
+                        dedupe_authoritative_agents(parse_authoritative_agents_from_app_payload(
+                            &app_agents_response.data,
+                        )),
+                        &classification_repo_root,
+                        &project_env,
                     );
 
                     Ok(RunSelectionCatalogResponseDto { agents, providers })
@@ -4384,7 +4690,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 "OpenCode completed/read-only session message fetch using ephemeral path"
             );
             let result = self
-                .with_ephemeral_client(cwd, |client| {
+                .with_ephemeral_client(cwd, HashMap::new(), |client| {
                     Box::pin(async move {
                         let request = RequestOptions::default().with_path("id", session_id.clone());
                         let response = client
@@ -4461,7 +4767,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 "OpenCode completed/read-only session todo fetch using ephemeral path"
             );
             let result = self
-                .with_ephemeral_client(cwd, |client| {
+                .with_ephemeral_client(cwd, HashMap::new(), |client| {
                     Box::pin(async move {
                         let request = RequestOptions::default().with_path("id", session_id.clone());
                         let response = client
@@ -4701,7 +5007,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     persistent_handle_present = persistent_handle_present,
                     "OpenCode completed/read-only bootstrap using ephemeral path"
                 );
-                self.with_ephemeral_client(cwd, |client| {
+                self.with_ephemeral_client(cwd, HashMap::new(), |client| {
                     Box::pin(async move {
                         Self::fetch_session_history_with_client(client, &session_id_for_fetch).await
                     })
@@ -5702,6 +6008,77 @@ mod tests {
         assert_eq!(agents[0].id, "build");
         assert_eq!(agents[1].id, "review");
         assert_eq!(agents[2].id, "plan");
+    }
+
+    #[test]
+    fn parse_authoritative_agents_filters_by_mode_and_hidden_state() {
+        let app_agents = serde_json::json!([
+            { "name": "project-primary", "mode": "primary", "hidden": false },
+            { "name": "project-shared", "mode": "all", "hidden": false },
+            { "name": "worker-only", "mode": "subagent", "hidden": false },
+            { "name": "summary", "mode": "primary", "hidden": true }
+        ]);
+
+        let discovered = super::parse_authoritative_agents_from_app_payload(&app_agents);
+        let classified = super::classify_effective_agents(
+            discovered,
+            std::path::Path::new("/definitely-missing-project-root"),
+            &HashMap::new(),
+        );
+
+        assert_eq!(classified.len(), 2);
+        assert_eq!(classified[0].id, "project-primary");
+        assert_eq!(classified[0].mode, "primary");
+        assert_eq!(classified[0].scope, "inherited");
+        assert!(classified[0].selectable);
+        assert_eq!(classified[1].id, "project-shared");
+        assert_eq!(classified[1].mode, "all");
+    }
+
+    #[test]
+    fn classify_effective_agents_prefers_project_scope_over_global_name_collision() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "orkestra-agent-discovery-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let project_root = temp_root.join("project");
+        let global_root = temp_root.join("global");
+
+        std::fs::create_dir_all(project_root.join(".opencode/agents")).unwrap();
+        std::fs::create_dir_all(global_root.join("agents")).unwrap();
+        std::fs::write(project_root.join(".opencode/agents/reviewer.md"), "# reviewer").unwrap();
+        std::fs::write(global_root.join("agents/reviewer.md"), "# reviewer").unwrap();
+        std::fs::write(global_root.join("agents/global-only.md"), "# global-only").unwrap();
+
+        let agents = vec![
+            super::AuthoritativeAgentDescriptor {
+                id: "reviewer".to_string(),
+                label: "reviewer".to_string(),
+                mode: super::DiscoveredAgentMode::Primary,
+                hidden: false,
+            },
+            super::AuthoritativeAgentDescriptor {
+                id: "global-only".to_string(),
+                label: "global-only".to_string(),
+                mode: super::DiscoveredAgentMode::Primary,
+                hidden: false,
+            },
+        ];
+        let mut project_env = HashMap::new();
+        project_env.insert(
+            "OPENCODE_CONFIG_DIR".to_string(),
+            global_root.to_string_lossy().to_string(),
+        );
+
+        let classified = super::classify_effective_agents(agents, &project_root, &project_env);
+
+        assert_eq!(classified.len(), 2);
+        assert_eq!(classified[0].id, "reviewer");
+        assert_eq!(classified[0].scope, "project");
+        assert_eq!(classified[1].id, "global-only");
+        assert_eq!(classified[1].scope, "global");
+
+        std::fs::remove_dir_all(temp_root).unwrap();
     }
 
     #[test]

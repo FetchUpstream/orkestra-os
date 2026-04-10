@@ -93,7 +93,10 @@ pub struct RunProvidersResponseDto {
 #[serde(rename_all = "camelCase")]
 pub struct RunAgentDto {
     pub id: String,
-    pub name: Option<String>,
+    pub label: String,
+    pub mode: String,
+    pub scope: String,
+    pub selectable: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
