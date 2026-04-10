@@ -1437,6 +1437,24 @@ impl RunsOpenCodeService {
         )
     }
 
+    /// Extracts a non-empty, trimmed status hint from a JSON payload.
+    ///
+    /// The function looks for a `status` field at the top level and then inside an optional
+    /// `properties` object. `status` may be a string or an object with a `type` string; the
+    /// first non-empty trimmed value found is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let p1 = r#"{"status":" busy "}"#;
+    /// assert_eq!(parse_status_hint(p1), Some("busy".to_string()));
+    ///
+    /// let p2 = r#"{"properties": {"status": {"type":"idle"}}}"#;
+    /// assert_eq!(parse_status_hint(p2), Some("idle".to_string()));
+    ///
+    /// let p3 = r#"{"status":""}"#;
+    /// assert_eq!(parse_status_hint(p3), None);
+    /// ```
     fn parse_status_hint(payload: &str) -> Option<String> {
         let value: serde_json::Value = serde_json::from_str(payload).ok()?;
         let object = value.as_object()?;
@@ -1473,12 +1491,12 @@ impl RunsOpenCodeService {
         None
     }
 
-    /// Process a runtime event emitted by an OpenCode runtime, updating the provided
-    /// session runtime state and invoking run/task state transitions as needed.
+    /// Handle a runtime event emitted by an OpenCode runtime, updating the provided
+    /// session runtime state and triggering run/task state transitions as needed.
     ///
-    /// Supported events and effects:
-    /// - `session.status`: updates the last status hint and `idle_cleanup_ready`; when the
-    ///   status becomes `idle` triggers idle cleanup handling.
+    /// Supported event effects:
+    /// - `session.status`: updates the last status hint and `idle_cleanup_ready`; when
+    ///   the status becomes `idle` triggers idle cleanup handling.
     /// - `question.asked`: records a pending question and notifies the run state service
     ///   that input is awaited.
     /// - `question.replied` / `question.rejected`: clears the pending question and notifies
@@ -1490,11 +1508,9 @@ impl RunsOpenCodeService {
     ///   notifies the run state service that permissions have been resolved.
     /// - `session.idle`: triggers idle cleanup handling without requiring `idle_cleanup_ready`.
     ///
-    /// Events that include a `sessionID`/`sessionId` are ignored if the session does not
-    /// match the run's current persisted session (except permission events are tracked
-    /// even for child/subagent sessions where appropriate). The function acquires the
-    /// `session_runtime_state` lock to update in-memory pending sets and returns any
-    /// encountered `AppError` from service calls or poisoned locks.
+    /// Events that include a `sessionID` / `sessionId` are ignored when the session does
+    /// not match the run's current persisted session; permission events are still parsed
+    /// and tracked for child/subagent sessions when a request id can be extracted.
     ///
     /// # Returns
     ///
@@ -1507,7 +1523,7 @@ impl RunsOpenCodeService {
     /// # // a SessionRuntimeState wrapped in Arc<Mutex<_>>, and a Tokio runtime.
     /// # async fn _example() {
     /// #     // let svc: RunsOpenCodeService = ...;
-    /// #     // let state = Arc::new(Mutex::new(SessionRuntimeState::default()));
+    /// #     // let state = Arc::new(tokio::sync::Mutex::new(SessionRuntimeState::default()));
     /// #     // svc.process_runtime_event("run1", "session.status", r#"{"sessionID":"s","status":"idle"}"#, &state).await.unwrap();
     /// # }
     /// ```
@@ -6492,16 +6508,16 @@ mod tests {
         assert!(guard.pending_permissions.contains("perm-sub-1"));
     }
 
-    /// Verifies that permission requests for a child session are tracked and cleared when a reply for that session is received.
+    /// Confirms that a permission request issued for a child (non-root) session is tracked and removed when a matching reply arrives.
     ///
-    /// This test sends a `permission.asked` event for a non-root (child) session and then a matching `permission.replied` event,
+    /// Sends a `permission.asked` event for a non-root session and then a `permission.replied` event for the same request/session,
     /// and asserts that the request id is removed from `SessionRuntimeState::pending_permissions`.
     ///
     /// # Examples
     ///
     /// ```
-    /// // Sends a permission.asked for session-child and then a permission.replied for the same request/session,
-    /// // expecting the pending permission id to be removed from the session runtime state.
+    /// // Send a `permission.asked` for a child session then a matching `permission.replied`,
+    /// // expecting the pending permission id to be cleared from the session runtime state.
     /// ```
     #[tokio::test]
     async fn subagent_permission_resolution_clears_tracked_request_id_for_child_session() {
@@ -6537,6 +6553,38 @@ mod tests {
         assert!(!guard.pending_permissions.contains("perm-sub-2"));
     }
 
+    /// Verifies that a `session.idle` runtime event causes a running run's task to transition to `review`.
+    ///
+    /// This test seeds a repository, task, and run with a persisted session id, sends a `session.idle`
+    /// event wrapped in an envelope that includes `sessionID`, and asserts the task status becomes `review`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Arrange: create services, repo, task, run and set session/task state
+    /// let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+    /// let repo_path = temp_dir.path().join("repo");
+    /// fs::create_dir_all(&repo_path).unwrap();
+    /// seed_task(&pool, "task-1", &repo_path).await;
+    /// seed_run(&pool, "run-1", "task-1", "running").await;
+    /// set_run_session_id(&pool, "run-1", "session-1").await;
+    /// set_task_status(&pool, "task-1", "doing").await;
+    ///
+    /// // Act: send wrapped session.idle event
+    /// let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+    /// opencode_service
+    ///     .process_runtime_event(
+    ///         "run-1",
+    ///         "session.idle",
+    ///         r#"{"type":"session.idle","properties":{"sessionID":"session-1"}}"#,
+    ///         &state,
+    ///     )
+    ///     .await
+    ///     .unwrap();
+    ///
+    /// // Assert: task moved to review
+    /// assert_eq!(fetch_task_status(&pool, "task-1").await, "review");
+    /// ```
     #[tokio::test]
     async fn wrapped_session_idle_payload_transitions_task_to_review() {
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
