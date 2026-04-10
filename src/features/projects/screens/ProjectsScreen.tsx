@@ -47,10 +47,7 @@ const ProjectsScreen: Component = () => {
         detail: {
           autosaveState: model.autosaveState(),
           hasPendingChanges: model.hasPendingProjectChanges(),
-          closeHref: buildBoardHref(projectId),
-          closeLabel: "board",
           onRequestClose: async () => {
-            await model.resetFormWithAutosave();
             await navigate(buildBoardHref(projectId));
           },
         },

@@ -96,9 +96,7 @@ type RunDetailTopbarConfig = {
 type ProjectSettingsTopbarConfig = {
   autosaveState: "idle" | "saving" | "saved" | "error";
   hasPendingChanges: boolean;
-  closeHref: string;
-  closeLabel: string;
-  onRequestClose: () => void | Promise<void>;
+  onRequestClose?: () => void | Promise<void>;
 };
 
 type AppShellProps = {
@@ -749,36 +747,40 @@ const AppShellContent: Component<AppShellProps> = (props) => {
                     </div>
                   );
                 })()
-              ) : location.pathname.startsWith("/projects/") &&
-                projectSettingsTopbarConfig() ? (
+              ) : settingsProjectId() ? (
                 (() => {
-                  const config = projectSettingsTopbarConfig()!;
+                  const projectId = settingsProjectId()!;
+                  const config = projectSettingsTopbarConfig();
                   return (
                     <div class="flex items-center gap-2">
                       <Show
                         when={
-                          config.autosaveState !== "idle" ||
-                          config.hasPendingChanges
+                          !!config &&
+                          (config.autosaveState !== "idle" ||
+                            config.hasPendingChanges)
                         }
                       >
                         <span class="task-detail-autosave-indicator text-[11px] tracking-[0.08em] uppercase">
-                          {config.autosaveState === "saving"
+                          {config?.autosaveState === "saving"
                             ? "Saving…"
-                            : config.autosaveState === "error"
+                            : config?.autosaveState === "error"
                               ? "Autosave failed"
-                              : config.hasPendingChanges
+                              : config?.hasPendingChanges
                                 ? "Unsaved changes"
-                                : config.autosaveState === "saved"
+                                : config?.autosaveState === "saved"
                                   ? "Saved"
                                   : ""}
                         </span>
                       </Show>
                       <a
-                        href={config.closeHref}
-                        class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border"
-                        aria-label={`Back to ${config.closeLabel}`}
-                        title={`Back to ${config.closeLabel}`}
+                        href={buildBoardHref(projectId)}
+                        class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
+                        aria-label="Close project settings"
+                        title="Close project settings"
                         onClick={(event) => {
+                          if (!config?.onRequestClose) {
+                            return;
+                          }
                           event.preventDefault();
                           void config.onRequestClose();
                         }}
@@ -854,15 +856,6 @@ const AppShellContent: Component<AppShellProps> = (props) => {
                     </a>
                   ) : null}
                 </>
-              ) : settingsProjectId() ? (
-                <a
-                  href={buildBoardHref(settingsProjectId())}
-                  class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
-                  aria-label="Close project settings"
-                  title="Close project settings"
-                >
-                  <AppIcon name="panel.close" size={16} stroke={1.75} />
-                </a>
               ) : undefined
             }
           />

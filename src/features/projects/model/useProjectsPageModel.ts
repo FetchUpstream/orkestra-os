@@ -616,7 +616,6 @@ export const useProjectsPageModel = () => {
     const nextSignature = draftSignature(payload);
     if (nextSignature === lastPersistedDraftSignature) {
       setHasPendingProjectChanges(false);
-      setAutosaveState("idle");
       setError("");
       return true;
     }
