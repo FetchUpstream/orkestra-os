@@ -123,10 +123,8 @@ describe("RunChatToolRail", () => {
       ).length,
     ).toBe(0);
     expect(
-      container.querySelector(
-        ".run-chat-tool-rail__subagent-status-row .run-inline-spinner",
-      ),
-    ).toBeTruthy();
+      container.querySelector(".run-chat-tool-rail__subagent-status-row"),
+    ).toBeNull();
   });
 
   it("renders only the last three subagent messages", () => {

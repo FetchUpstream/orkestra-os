@@ -1452,6 +1452,203 @@ describe("useRunDetailModel startup ownership", () => {
     );
   });
 
+  it("replies to subagent permission using the canonical root session", async () => {
+    bootstrapRunOpenCodeMock.mockResolvedValueOnce({
+      state: "running",
+      chatMode: "interactive",
+      bufferedEvents: [],
+      messages: [],
+      todos: [],
+      streamConnected: true,
+      sessionId: "session-root",
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "session.updated",
+      data: {
+        info: {
+          sessionID: "session-sub-1",
+          parentID: "session-root",
+          title: "Docs lookup",
+          agent: "explorer",
+          model: "provider/k2p5",
+        },
+      },
+    });
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:01.000Z",
+      event: "permission.asked",
+      data: {
+        requestID: "perm-sub-1",
+        sessionID: "session-sub-1",
+        kind: "write",
+      },
+    });
+
+    await waitFor(() => {
+      expect(
+        modelRef!.agent.store().pendingPermissionsById["perm-sub-1"],
+      ).toBeTruthy();
+    });
+
+    expect(modelRef!.agent.permissionState().activeRequest).toMatchObject({
+      requestId: "perm-sub-1",
+      sessionId: "session-sub-1",
+      sourceKind: "subagent",
+      sourceLabel: "Docs lookup - k2p5",
+    });
+
+    const accepted = await modelRef!.agent.replyPermission(
+      "perm-sub-1",
+      "once",
+    );
+
+    expect(accepted).toBe(true);
+    expect(replyRunOpenCodePermissionMock).toHaveBeenCalledWith({
+      runId: "run-1",
+      sessionId: "session-root",
+      requestId: "perm-sub-1",
+      decision: "once",
+      remember: false,
+    });
+  });
+
+  it("keeps main-agent permissions classified as main when message parents are present", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "message.updated",
+      data: {
+        info: {
+          id: "msg-1",
+          sessionID: "session-1",
+          parentID: "msg-root",
+          role: "assistant",
+        },
+      },
+    });
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:01.000Z",
+      event: "permission.asked",
+      data: {
+        requestID: "perm-main-1",
+        sessionID: "session-1",
+        kind: "bash",
+      },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.permissionState().activeRequest).toMatchObject({
+        requestId: "perm-main-1",
+        sourceKind: "main",
+        sourceLabel: "Main agent",
+      });
+    });
+  });
+
+  it("sanitizes unsafe subagent titles in permission source labels", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "session.updated",
+      data: {
+        info: {
+          sessionID: "session-sub-2",
+          parentID: "session-root",
+          title: "abcdef012345abcdef012345",
+        },
+      },
+    });
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:01.000Z",
+      event: "permission.asked",
+      data: {
+        requestID: "perm-sub-2",
+        sessionID: "session-sub-2",
+        kind: "write",
+      },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.permissionState().activeRequest).toMatchObject({
+        requestId: "perm-sub-2",
+        sourceKind: "subagent",
+        sourceLabel: "Subagent",
+      });
+    });
+  });
+
   it("stores and updates draft review comments in app state", async () => {
     let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
     render(() => {

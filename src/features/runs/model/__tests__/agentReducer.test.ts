@@ -375,6 +375,24 @@ describe("agentReducer text/reasoning lifecycle", () => {
     });
   });
 
+  it("keeps subagent permission requests even when session differs from root", () => {
+    const next = reduceOpenCodeEvent(createEmptyAgentStore("session-root"), {
+      type: "permission.asked",
+      properties: {
+        requestID: "perm-sub-1",
+        sessionID: "session-child",
+        kind: "bash",
+      },
+    });
+
+    expect(next.pendingPermissionsById["perm-sub-1"]).toMatchObject({
+      requestId: "perm-sub-1",
+      sessionId: "session-child",
+      kind: "bash",
+    });
+    expect(next.sessionId).toBe("session-root");
+  });
+
   it("stores connection state for server disconnect and reconnect events", () => {
     const disconnected = reduceOpenCodeEvent(createEmptyAgentStore(null), {
       type: "server.disconnected",

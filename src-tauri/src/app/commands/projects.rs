@@ -11,9 +11,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::app::projects::dto::{
-    CloneProjectRequest, CreateProjectRequest, LocalDirectorySearchResultDto,
-    ProjectDetailsDto, ProjectDto, SearchLocalDirectoriesRequest,
-    SearchProjectFilesRequest, UpdateProjectRequest,
+    CloneProjectRequest, CreateProjectRequest, LocalDirectorySearchResultDto, ProjectDetailsDto,
+    ProjectDto, SearchLocalDirectoriesRequest, SearchProjectFilesRequest, UpdateProjectRequest,
 };
 use crate::app::runs::dto::RunSelectionCatalogResponseDto;
 use crate::app::state::AppState;

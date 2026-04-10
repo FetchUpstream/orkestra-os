@@ -1170,18 +1170,6 @@ export const reduceOpenCodeEvent = (
         });
         return nextState;
       }
-      const sessionResult = matchOrAdoptSession(
-        nextState,
-        normalized.sessionId,
-      );
-      if (!sessionResult.canApply) {
-        console.warn("[runs] permission.asked ignored: session mismatch", {
-          requestId: normalized.requestId,
-          sessionId: normalized.sessionId,
-          storeSessionId: nextState.sessionId,
-        });
-        return nextState;
-      }
       const pendingPermissionsById = {
         ...nextState.pendingPermissionsById,
         [normalized.requestId]: normalized,
@@ -1204,7 +1192,7 @@ export const reduceOpenCodeEvent = (
       });
       return {
         ...nextState,
-        sessionId: sessionResult.sessionId,
+        sessionId: nextState.sessionId ?? normalized.sessionId,
         pendingPermissionsById,
         resolvedPermissionsById,
         failedPermissionsById,

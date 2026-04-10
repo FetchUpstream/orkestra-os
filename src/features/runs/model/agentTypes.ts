@@ -129,6 +129,8 @@ export type UiQuestionRequest = {
 export type UiPermissionRequest = {
   requestId: string;
   sessionId: string;
+  sourceKind?: "main" | "subagent";
+  sourceLabel?: string;
   kind?: string;
   pathPatterns?: string[];
   metadata?: Record<string, string>;

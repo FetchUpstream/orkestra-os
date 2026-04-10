@@ -18,10 +18,10 @@ use once_cell::sync::Lazy;
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 static DIRECTORY_MATCHER: Lazy<Mutex<Matcher>> =
     Lazy::new(|| Mutex::new(Matcher::new(Config::DEFAULT)));
@@ -111,7 +111,12 @@ impl LocalDirectorySearchService {
                 .into_iter()
                 .map(Self::to_search_result)
                 .collect::<Vec<_>>();
-            results.sort_by(|a, b| a.path.len().cmp(&b.path.len()).then_with(|| a.path.cmp(&b.path)));
+            results.sort_by(|a, b| {
+                a.path
+                    .len()
+                    .cmp(&b.path.len())
+                    .then_with(|| a.path.cmp(&b.path))
+            });
             results.truncate(limit);
             return Ok(results);
         }
@@ -364,7 +369,11 @@ impl LocalDirectorySearchService {
     }
 
     fn normalize_query(query: &str) -> String {
-        query.trim().split_whitespace().collect::<Vec<_>>().join(" ")
+        query
+            .trim()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     fn normalize_limit(limit: Option<usize>) -> usize {
@@ -397,8 +406,8 @@ mod tests {
 
     #[tokio::test]
     async fn matches_directory_name_and_parent_path() {
-        let base = std::env::temp_dir()
-            .join(format!("orkestra-repo-search-{}", uuid::Uuid::new_v4()));
+        let base =
+            std::env::temp_dir().join(format!("orkestra-repo-search-{}", uuid::Uuid::new_v4()));
         let workspace_a = base.join("workspace-a");
         let workspace_b = base.join("workspace-b");
         let repo_a = workspace_a.join("orkestra-os");
@@ -407,18 +416,27 @@ mod tests {
         std::fs::create_dir_all(repo_b.join(".git")).unwrap();
 
         let service = LocalDirectorySearchService::new_with_roots(vec![base]);
-        let results = service.search_directories("orkestra-os", Some(10)).await.unwrap();
+        let results = service
+            .search_directories("orkestra-os", Some(10))
+            .await
+            .unwrap();
 
         assert_eq!(results.len(), 2);
-        assert!(results.iter().all(|item| item.directory_name == "orkestra-os"));
-        assert!(results.iter().any(|item| item.parent_path.contains("workspace-a")));
-        assert!(results.iter().any(|item| item.parent_path.contains("workspace-b")));
+        assert!(results
+            .iter()
+            .all(|item| item.directory_name == "orkestra-os"));
+        assert!(results
+            .iter()
+            .any(|item| item.parent_path.contains("workspace-a")));
+        assert!(results
+            .iter()
+            .any(|item| item.parent_path.contains("workspace-b")));
     }
 
     #[tokio::test]
     async fn only_returns_git_repository_roots() {
-        let base = std::env::temp_dir()
-            .join(format!("orkestra-repo-search-{}", uuid::Uuid::new_v4()));
+        let base =
+            std::env::temp_dir().join(format!("orkestra-repo-search-{}", uuid::Uuid::new_v4()));
         let repo = base.join("repo-root");
         let plain_dir = base.join("plain-directory");
         let nested_plain = repo.join("src");
@@ -430,33 +448,33 @@ mod tests {
         let results = service.search_directories("repo", Some(10)).await.unwrap();
 
         assert!(results.iter().any(|item| item.path.ends_with("repo-root")));
-        assert!(!results.iter().any(|item| item.path.ends_with("plain-directory")));
+        assert!(!results
+            .iter()
+            .any(|item| item.path.ends_with("plain-directory")));
         assert!(!results.iter().any(|item| item.path.ends_with("src")));
     }
 
     #[test]
     fn resolves_windows_home_from_userprofile_when_home_is_unset() {
-        let home_dir = LocalDirectorySearchService::resolve_home_dir_for_platform(true, |key| {
-            match key {
+        let home_dir =
+            LocalDirectorySearchService::resolve_home_dir_for_platform(true, |key| match key {
                 "HOME" => None,
                 "USERPROFILE" => Some(r"C:\Users\orkestra".into()),
                 _ => None,
-            }
-        });
+            });
 
         assert_eq!(home_dir, Some(PathBuf::from(r"C:\Users\orkestra")));
     }
 
     #[test]
     fn resolves_windows_home_from_home_drive_and_path_when_needed() {
-        let home_dir = LocalDirectorySearchService::resolve_home_dir_for_platform(true, |key| {
-            match key {
+        let home_dir =
+            LocalDirectorySearchService::resolve_home_dir_for_platform(true, |key| match key {
                 "HOME" | "USERPROFILE" => None,
                 "HOMEDRIVE" => Some("C:".into()),
                 "HOMEPATH" => Some(r"\Users\orkestra".into()),
                 _ => None,
-            }
-        });
+            });
 
         assert_eq!(home_dir, Some(PathBuf::from(r"C:\Users\orkestra")));
     }
@@ -483,7 +501,9 @@ mod tests {
         let service = LocalDirectorySearchService::new_with_roots(roots);
         let indexed = service.build_index();
 
-        assert!(indexed.iter().all(|entry| entry.path != repo_root.to_string_lossy()));
+        assert!(indexed
+            .iter()
+            .all(|entry| entry.path != repo_root.to_string_lossy()));
     }
 
     #[tokio::test]
