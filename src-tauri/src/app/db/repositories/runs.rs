@@ -585,8 +585,9 @@ impl RunsRepository {
         let result = sqlx::query(
             "UPDATE runs
              SET cleanup_state = 'running',
-                 cleanup_started_at = ?
-             WHERE id = ?",
+                  cleanup_started_at = ?
+             WHERE id = ?
+               AND cleanup_state = 'pending'",
         )
         .bind(started_at)
         .bind(run_id)

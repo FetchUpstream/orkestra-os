@@ -26,6 +26,8 @@ const deferred = function <T>() {
 
 const {
   routeState,
+  listenMock,
+  tauriEventListeners,
   navigateMock,
   bootstrapRunOpenCodeMock,
   getBufferedRunOpenCodeEventsMock,
@@ -51,6 +53,11 @@ const {
   subscribeToRunDeletedMock,
 } = vi.hoisted(() => ({
   routeState: { runId: "run-1" },
+  listenMock: vi.fn(),
+  tauriEventListeners: new Map<
+    string,
+    Set<(event: { payload: unknown }) => void>
+  >(),
   navigateMock: vi.fn(),
   bootstrapRunOpenCodeMock: vi.fn(),
   getBufferedRunOpenCodeEventsMock: vi.fn(),
@@ -91,8 +98,38 @@ vi.mock("@solidjs/router", () => ({
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async () => () => undefined),
+  listen: listenMock,
 }));
+
+const emitTauriEvent = (eventName: string, payload: unknown): void => {
+  const listeners = tauriEventListeners.get(eventName);
+  if (!listeners) {
+    return;
+  }
+  for (const listener of listeners) {
+    listener({ payload });
+  }
+};
+
+const buildRun = (overrides?: Record<string, unknown>) => ({
+  id: "run-1",
+  taskId: "task-1",
+  projectId: "project-1",
+  status: "running",
+  triggeredBy: "user",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  startedAt: "2026-01-01T00:00:01.000Z",
+  finishedAt: null,
+  summary: null,
+  errorMessage: null,
+  sourceBranch: "main",
+  worktreeId: "wt-1",
+  targetRepoId: "repo-1",
+  displayKey: "RUN-1",
+  initialPromptSentAt: null,
+  initialPromptClientRequestId: null,
+  ...overrides,
+});
 
 vi.mock("../../../../app/lib/runs", () => ({
   bootstrapRunOpenCode: bootstrapRunOpenCodeMock,
@@ -146,6 +183,25 @@ describe("useRunDetailModel startup ownership", () => {
     vi.useRealTimers();
     routeState.runId = "run-1";
     navigateMock.mockReset();
+    listenMock.mockReset();
+    tauriEventListeners.clear();
+    listenMock.mockImplementation(
+      async (
+        eventName: string,
+        handler: (event: { payload: unknown }) => void,
+      ) => {
+        const listeners = tauriEventListeners.get(eventName) ?? new Set();
+        listeners.add(handler);
+        tauriEventListeners.set(eventName, listeners);
+        return () => {
+          const registered = tauriEventListeners.get(eventName);
+          registered?.delete(handler);
+          if (registered && registered.size === 0) {
+            tauriEventListeners.delete(eventName);
+          }
+        };
+      },
+    );
     bootstrapRunOpenCodeMock.mockReset();
     getBufferedRunOpenCodeEventsMock.mockReset();
     subscribeRunOpenCodeEventsMock.mockReset();
@@ -214,29 +270,14 @@ describe("useRunDetailModel startup ownership", () => {
     replyRunOpenCodeQuestionMock.mockResolvedValue({
       status: "accepted",
       repliedAt: "2026-01-01T00:00:00.000Z",
+      runState: "busy_coding",
     });
     rejectRunOpenCodeQuestionMock.mockResolvedValue({
       status: "accepted",
       rejectedAt: "2026-01-01T00:00:00.000Z",
+      runState: "busy_coding",
     });
-    getRunMock.mockResolvedValue({
-      id: "run-1",
-      taskId: "task-1",
-      projectId: "project-1",
-      status: "running",
-      triggeredBy: "user",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      startedAt: "2026-01-01T00:00:01.000Z",
-      finishedAt: null,
-      summary: null,
-      errorMessage: null,
-      sourceBranch: "main",
-      worktreeId: "wt-1",
-      targetRepoId: "repo-1",
-      displayKey: "RUN-1",
-      initialPromptSentAt: null,
-      initialPromptClientRequestId: null,
-    });
+    getRunMock.mockResolvedValue(buildRun());
     getTaskMock.mockResolvedValue({
       id: "task-1",
       title: "Task",
@@ -473,6 +514,7 @@ describe("useRunDetailModel startup ownership", () => {
 
     await waitFor(() => {
       expect(modelRef).toBeDefined();
+      expect(listenMock).toHaveBeenCalled();
     });
 
     await modelRef!.git.rebaseWorktreeOntoSource();
@@ -521,6 +563,22 @@ describe("useRunDetailModel startup ownership", () => {
         modelId: "model-1",
       }),
     );
+
+    getRunMock.mockResolvedValue(buildRun({ runState: "busy_coding" }));
+
+    emitTauriEvent("run-state-changed", {
+      runId: "run-1",
+      taskId: "task-1",
+      projectId: "project-1",
+      previousRunState: null,
+      newRunState: "busy_coding",
+      transitionSource: "direct_user_prompt_submitted",
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.run()?.runState).toBe("busy_coding");
+    });
   });
 
   it("does not inject implicit agent when no prompt override is provided", async () => {
@@ -1762,6 +1820,61 @@ describe("useRunDetailModel startup ownership", () => {
     });
   });
 
+  it("updates the displayed run state before rendering a live question request", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+      expect(modelRef!.run()?.runState ?? null).toBeNull();
+      expect(listenMock).toHaveBeenCalled();
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "question.asked",
+      data: {
+        requestID: "question-live-1",
+        sessionID: "session-1",
+        questions: [{ header: "Choose", question: "Pick one", custom: true }],
+      },
+    });
+
+    getRunMock.mockResolvedValue(buildRun({ runState: "question_pending" }));
+
+    emitTauriEvent("run-state-changed", {
+      runId: "run-1",
+      taskId: "task-1",
+      projectId: "project-1",
+      previousRunState: null,
+      newRunState: "question_pending",
+      transitionSource: "question_asked",
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.run()?.runState).toBe("question_pending");
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-live-1",
+      });
+    });
+  });
+
   it("replies to the active question request with structured answers", async () => {
     listRunOpenCodeQuestionRequestsMock.mockResolvedValueOnce({
       questions: [
@@ -1784,6 +1897,7 @@ describe("useRunDetailModel startup ownership", () => {
       expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
         requestId: "question-1",
       });
+      expect(listenMock).toHaveBeenCalled();
     });
 
     const accepted = await modelRef!.agent.replyQuestion("question-1", [
@@ -1802,6 +1916,22 @@ describe("useRunDetailModel startup ownership", () => {
         expect.objectContaining({ requestId: "question-1", status: "replied" }),
       ]),
     );
+
+    getRunMock.mockResolvedValue(buildRun({ runState: "busy_coding" }));
+
+    emitTauriEvent("run-state-changed", {
+      runId: "run-1",
+      taskId: "task-1",
+      projectId: "project-1",
+      previousRunState: "question_pending",
+      newRunState: "busy_coding",
+      transitionSource: "user_reply",
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.run()?.runState).toBe("busy_coding");
+    });
   });
 
   it("rejects subagent question requests and keeps source attribution friendly", async () => {
@@ -1835,6 +1965,7 @@ describe("useRunDetailModel startup ownership", () => {
 
     await waitFor(() => {
       expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+      expect(listenMock).toHaveBeenCalled();
     });
 
     const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
@@ -1885,6 +2016,22 @@ describe("useRunDetailModel startup ownership", () => {
         }),
       ]),
     );
+
+    getRunMock.mockResolvedValue(buildRun({ runState: "busy_coding" }));
+
+    emitTauriEvent("run-state-changed", {
+      runId: "run-1",
+      taskId: "task-1",
+      projectId: "project-1",
+      previousRunState: "question_pending",
+      newRunState: "busy_coding",
+      transitionSource: "user_reply",
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.run()?.runState).toBe("busy_coding");
+    });
   });
 
   it("serializes multiple pending questions into active and queued state", async () => {

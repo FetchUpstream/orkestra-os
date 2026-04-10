@@ -130,6 +130,7 @@ export type RunOpenCodeEvent = {
   ts: string | number | null;
   event: string;
   data: unknown;
+  runState?: RunState | null;
 };
 
 export type EnsureRunOpenCodeResult = {
@@ -203,6 +204,7 @@ export type SubmitRunOpenCodePromptResult = {
   reason?: string;
   queuedAt: string;
   clientRequestId?: string;
+  runState?: RunState | null;
 };
 
 export type ReplyRunOpenCodePermissionParams = {
@@ -231,6 +233,7 @@ export type ReplyRunOpenCodeQuestionResult = {
   status: "accepted" | "unsupported";
   reason?: string;
   repliedAt: string;
+  runState?: RunState | null;
 };
 
 export type RejectRunOpenCodeQuestionParams = {
@@ -242,6 +245,7 @@ export type RejectRunOpenCodeQuestionResult = {
   status: "accepted" | "unsupported";
   reason?: string;
   rejectedAt: string;
+  runState?: RunState | null;
 };
 
 export type StartRunOpenCodeResult = {
@@ -295,6 +299,8 @@ type ReplyRunOpenCodeQuestionResponse = {
   reason?: string | null;
   repliedAt?: string;
   replied_at?: string;
+  runState?: string | null;
+  run_state?: string | null;
 };
 
 type RejectRunOpenCodeQuestionResponse = {
@@ -303,6 +309,8 @@ type RejectRunOpenCodeQuestionResponse = {
   reason?: string | null;
   rejectedAt?: string;
   rejected_at?: string;
+  runState?: string | null;
+  run_state?: string | null;
 };
 
 type RunOpenCodeQuestionRequestResponse = {
@@ -471,6 +479,8 @@ type RunOpenCodeEventResponse = {
   event?: string;
   payload?: unknown;
   data?: unknown;
+  run_state?: string | null;
+  runState?: string | null;
 };
 
 type SubmitRunOpenCodePromptResponse = {
@@ -481,6 +491,8 @@ type SubmitRunOpenCodePromptResponse = {
   queuedAt?: string;
   client_request_id?: string | null;
   clientRequestId?: string | null;
+  run_state?: string | null;
+  runState?: string | null;
 };
 
 type ReplyRunOpenCodePermissionResponse = {
@@ -829,6 +841,7 @@ const toRunOpenCodeEvent = (
   ts: pick(event.timestamp, event.ts) ?? null,
   event: pick(event.eventName, event.event) ?? "unknown",
   data: pick(event.payload, event.data) ?? null,
+  runState: toRunState(pick(event.run_state, event.runState)),
 });
 
 const toUnknownArray = (value: unknown): unknown[] => {
@@ -1791,6 +1804,7 @@ export const submitRunOpenCodePrompt = async ({
     queuedAt: pick(response.queued_at, response.queuedAt) ?? "",
     clientRequestId:
       pick(response.client_request_id, response.clientRequestId) ?? undefined,
+    runState: toRunState(pick(response.run_state, response.runState)),
   };
 };
 
@@ -1819,6 +1833,7 @@ export const replyRunOpenCodePermission = async ({
     status: state === "unsupported" ? "unsupported" : "accepted",
     reason: response.reason ?? undefined,
     repliedAt: pick(response.replied_at, response.repliedAt) ?? "",
+    runState: toRunState(pick(response.run_state, response.runState)),
   };
 };
 
@@ -1900,6 +1915,7 @@ export const rejectRunOpenCodeQuestion = async ({
     status: state === "unsupported" ? "unsupported" : "accepted",
     reason: response.reason ?? undefined,
     rejectedAt: pick(response.rejected_at, response.rejectedAt) ?? "",
+    runState: toRunState(pick(response.run_state, response.runState)),
   };
 };
 

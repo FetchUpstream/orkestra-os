@@ -56,32 +56,7 @@ impl RunStateService {
     }
 
     pub async fn resolve_effective_run_state(&self, run: &Run) -> Result<Option<String>, AppError> {
-        if Self::is_terminal_status(run.status.as_str()) {
-            return Ok(None);
-        }
-
-        let stored = run
-            .run_state
-            .as_deref()
-            .map(str::trim)
-            .filter(|state| !state.is_empty());
-
-        if matches!(
-            stored,
-            Some(QUESTION_PENDING | PERMISSION_REQUESTED | COMMITTING_CHANGES | RESOLVING_REBASE_CONFLICTS)
-        ) {
-            return Ok(stored.map(ToString::to_string));
-        }
-
-        if run.status == "idle" && self.is_ready_to_merge(run).await? {
-            return Ok(Some(READY_TO_MERGE.to_string()));
-        }
-
-        if let Some(state) = stored {
-            return Ok(Some(state.to_string()));
-        }
-
-        Ok(Self::fallback_state_for_status(run.status.as_str()).map(ToString::to_string))
+        self.resolve_run_state(run, true).await
     }
 
     pub async fn handle_run_started(
@@ -89,6 +64,40 @@ impl RunStateService {
         run_id: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
         self.transition_to_state(run_id, Some(BUSY_CODING), "run_started")
+            .await
+    }
+
+    pub async fn handle_agent_active(
+        &self,
+        run_id: &str,
+        transition_source: &str,
+    ) -> Result<Option<RunStateChangedEventDto>, AppError> {
+        let Some(run) = self.runs_repository.get_run(run_id).await? else {
+            return Ok(None);
+        };
+        if Self::is_terminal_status(run.status.as_str()) {
+            return Ok(None);
+        }
+
+        let current = run
+            .run_state
+            .as_deref()
+            .map(str::trim)
+            .filter(|state| !state.is_empty());
+
+        if matches!(
+            current,
+            Some(
+                QUESTION_PENDING
+                    | PERMISSION_REQUESTED
+                    | COMMITTING_CHANGES
+                    | RESOLVING_REBASE_CONFLICTS
+            )
+        ) {
+            return Ok(None);
+        }
+
+        self.transition_to_state(run_id, Some(BUSY_CODING), transition_source)
             .await
     }
 
@@ -113,8 +122,7 @@ impl RunStateService {
             return Ok(None);
         }
 
-        self.transition_to_state(run_id, Some(BUSY_CODING), "user_reply")
-            .await
+        self.recompute_run_state(run_id, "user_reply").await
     }
 
     pub async fn handle_waiting_for_input(
@@ -143,24 +151,6 @@ impl RunStateService {
             .await
     }
 
-    pub async fn handle_permission_resolved(
-        &self,
-        run_id: &str,
-    ) -> Result<Option<RunStateChangedEventDto>, AppError> {
-        let Some(run) = self.runs_repository.get_run(run_id).await? else {
-            return Ok(None);
-        };
-
-        let next = if run.status == "idle" {
-            WAITING_FOR_INPUT
-        } else {
-            BUSY_CODING
-        };
-
-        self.transition_to_state(run_id, Some(next), "permission_resolved")
-            .await
-    }
-
     pub async fn handle_commit_requested(
         &self,
         run_id: &str,
@@ -186,6 +176,20 @@ impl RunStateService {
         run_id: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
         self.transition_to_state(run_id, None, "run_merged").await
+    }
+
+    pub async fn recompute_run_state(
+        &self,
+        run_id: &str,
+        transition_source: &str,
+    ) -> Result<Option<RunStateChangedEventDto>, AppError> {
+        let Some(run) = self.runs_repository.get_run(run_id).await? else {
+            return Ok(None);
+        };
+
+        let next_state = self.resolve_run_state(&run, false).await?;
+        self.transition_to_state(run_id, next_state.as_deref(), transition_source)
+            .await
     }
 
     async fn transition_to_state(
@@ -344,6 +348,48 @@ impl RunStateService {
         Ok(analysis.is_fast_forward() || analysis.is_up_to_date())
     }
 
+    async fn resolve_run_state(
+        &self,
+        run: &Run,
+        preserve_special_stored_states: bool,
+    ) -> Result<Option<String>, AppError> {
+        if Self::is_terminal_status(run.status.as_str()) {
+            return Ok(None);
+        }
+
+        let stored = run
+            .run_state
+            .as_deref()
+            .map(str::trim)
+            .filter(|state| !state.is_empty());
+
+        if preserve_special_stored_states
+            && matches!(
+                stored,
+                Some(
+                    QUESTION_PENDING
+                        | PERMISSION_REQUESTED
+                        | COMMITTING_CHANGES
+                        | RESOLVING_REBASE_CONFLICTS
+                )
+            )
+        {
+            return Ok(stored.map(ToString::to_string));
+        }
+
+        if run.status == "idle" && self.is_ready_to_merge(run).await? {
+            return Ok(Some(READY_TO_MERGE.to_string()));
+        }
+
+        if let Some(state) = stored
+            .filter(|state| preserve_special_stored_states || !Self::is_special_stored_state(state))
+        {
+            return Ok(Some(state.to_string()));
+        }
+
+        Ok(Self::fallback_state_for_status(run.status.as_str()).map(ToString::to_string))
+    }
+
     fn fallback_state_for_status(status: &str) -> Option<&'static str> {
         match status {
             "queued" | "preparing" => Some(WARMING_UP),
@@ -355,5 +401,15 @@ impl RunStateService {
 
     fn is_terminal_status(status: &str) -> bool {
         matches!(status, "complete" | "failed" | "cancelled")
+    }
+
+    fn is_special_stored_state(state: &str) -> bool {
+        matches!(
+            state,
+            QUESTION_PENDING
+                | PERMISSION_REQUESTED
+                | COMMITTING_CHANGES
+                | RESOLVING_REBASE_CONFLICTS
+        )
     }
 }

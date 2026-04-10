@@ -2293,6 +2293,15 @@ export const useRunDetailModel = () => {
           return;
         }
 
+        setRun((current) =>
+          current
+            ? {
+                ...current,
+                status: event.newStatus,
+              }
+            : current,
+        );
+
         void refreshRunDetails(runId);
       });
 
@@ -2300,6 +2309,15 @@ export const useRunDetailModel = () => {
         if (disposed || params.runId !== runId || event.runId !== runId) {
           return;
         }
+
+        setRun((current) =>
+          current
+            ? {
+                ...current,
+                runState: event.newRunState,
+              }
+            : current,
+        );
 
         void refreshRunDetails(runId);
       });

@@ -144,6 +144,8 @@ pub struct RawAgentEvent {
     pub timestamp: String,
     pub event_name: String,
     pub payload: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_state: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -167,6 +169,7 @@ pub struct SubmitRunOpenCodePromptResponse {
     pub reason: Option<String>,
     pub queued_at: String,
     pub client_request_id: Option<String>,
+    pub run_state: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -183,6 +186,7 @@ pub struct ReplyRunOpenCodeQuestionResponse {
     pub state: String,
     pub reason: Option<String>,
     pub replied_at: String,
+    pub run_state: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -191,6 +195,7 @@ pub struct RejectRunOpenCodeQuestionResponse {
     pub state: String,
     pub reason: Option<String>,
     pub rejected_at: String,
+    pub run_state: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
