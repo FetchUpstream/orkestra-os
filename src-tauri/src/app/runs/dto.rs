@@ -179,6 +179,22 @@ pub struct ReplyRunOpenCodePermissionResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReplyRunOpenCodeQuestionResponse {
+    pub state: String,
+    pub reason: Option<String>,
+    pub replied_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RejectRunOpenCodeQuestionResponse {
+    pub state: String,
+    pub reason: Option<String>,
+    pub rejected_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StartRunOpenCodeResponse {
     pub state: String,
     pub reason: Option<String>,
@@ -204,6 +220,12 @@ pub struct RunOpenCodeSessionMessageDto {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunOpenCodeSessionTodoDto {
+    pub payload: Value,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunOpenCodeQuestionRequestDto {
     pub payload: Value,
 }
 

@@ -34,6 +34,9 @@ const {
   submitRunOpenCodePromptMock,
   getRunSelectionOptionsWithCacheMock,
   readRunSelectionOptionsCacheMock,
+  listRunOpenCodeQuestionRequestsMock,
+  replyRunOpenCodeQuestionMock,
+  rejectRunOpenCodeQuestionMock,
   replyRunOpenCodePermissionMock,
   getRunGitMergeStatusMock,
   rebaseRunWorktreeOntoSourceMock,
@@ -56,6 +59,9 @@ const {
   submitRunOpenCodePromptMock: vi.fn(),
   getRunSelectionOptionsWithCacheMock: vi.fn(),
   readRunSelectionOptionsCacheMock: vi.fn(),
+  listRunOpenCodeQuestionRequestsMock: vi.fn(),
+  replyRunOpenCodeQuestionMock: vi.fn(),
+  rejectRunOpenCodeQuestionMock: vi.fn(),
   replyRunOpenCodePermissionMock: vi.fn(),
   getRunGitMergeStatusMock: vi.fn(),
   rebaseRunWorktreeOntoSourceMock: vi.fn(),
@@ -105,11 +111,14 @@ vi.mock("../../../../app/lib/runs", () => ({
     sessionId: "terminal-1",
     generation: 1,
   })),
+  listRunOpenCodeQuestionRequests: listRunOpenCodeQuestionRequestsMock,
   rebaseRunWorktreeOntoSource: rebaseRunWorktreeOntoSourceMock,
+  rejectRunOpenCodeQuestion: rejectRunOpenCodeQuestionMock,
   resizeRunTerminal: vi.fn(async () => undefined),
   setRunDiffWatch: vi.fn(async () => undefined),
   submitRunOpenCodePrompt: submitRunOpenCodePromptMock,
   replyRunOpenCodePermission: replyRunOpenCodePermissionMock,
+  replyRunOpenCodeQuestion: replyRunOpenCodeQuestionMock,
   subscribeRunOpenCodeEvents: subscribeRunOpenCodeEventsMock,
   unsubscribeRunOpenCodeEvents: unsubscribeRunOpenCodeEventsMock,
   writeRunTerminal: writeRunTerminalMock,
@@ -144,6 +153,9 @@ describe("useRunDetailModel startup ownership", () => {
     submitRunOpenCodePromptMock.mockReset();
     getRunSelectionOptionsWithCacheMock.mockReset();
     readRunSelectionOptionsCacheMock.mockReset();
+    listRunOpenCodeQuestionRequestsMock.mockReset();
+    replyRunOpenCodeQuestionMock.mockReset();
+    rejectRunOpenCodeQuestionMock.mockReset();
     replyRunOpenCodePermissionMock.mockReset();
     getRunGitMergeStatusMock.mockReset();
     rebaseRunWorktreeOntoSourceMock.mockReset();
@@ -177,6 +189,10 @@ describe("useRunDetailModel startup ownership", () => {
       streamConnected: true,
     });
     getBufferedRunOpenCodeEventsMock.mockResolvedValue([]);
+    listRunOpenCodeQuestionRequestsMock.mockResolvedValue({
+      questions: [],
+      raw: [],
+    });
     subscribeRunOpenCodeEventsMock.mockResolvedValue(() => undefined);
     getRunGitMergeStatusMock.mockResolvedValue({
       state: "ready",
@@ -194,6 +210,14 @@ describe("useRunDetailModel startup ownership", () => {
     replyRunOpenCodePermissionMock.mockResolvedValue({
       status: "accepted",
       repliedAt: "2026-01-01T00:00:00.000Z",
+    });
+    replyRunOpenCodeQuestionMock.mockResolvedValue({
+      status: "accepted",
+      repliedAt: "2026-01-01T00:00:00.000Z",
+    });
+    rejectRunOpenCodeQuestionMock.mockResolvedValue({
+      status: "accepted",
+      rejectedAt: "2026-01-01T00:00:00.000Z",
     });
     getRunMock.mockResolvedValue({
       id: "run-1",
@@ -1701,6 +1725,198 @@ describe("useRunDetailModel startup ownership", () => {
         sourceKind: "subagent",
         sourceLabel: "Subagent",
       });
+    });
+  });
+
+  it("hydrates pending question requests on load", async () => {
+    listRunOpenCodeQuestionRequestsMock.mockResolvedValueOnce({
+      questions: [
+        {
+          id: "question-1",
+          sessionID: "session-1",
+          questions: [
+            {
+              header: "Choose action",
+              question: "Which action should I take?",
+              options: [{ label: "Apply patch", description: "Modify files" }],
+              custom: true,
+            },
+          ],
+        },
+      ],
+      raw: [],
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-1",
+        sourceKind: "main",
+        sourceLabel: "Main agent",
+      });
+    });
+  });
+
+  it("replies to the active question request with structured answers", async () => {
+    listRunOpenCodeQuestionRequestsMock.mockResolvedValueOnce({
+      questions: [
+        {
+          id: "question-1",
+          sessionID: "session-1",
+          questions: [{ header: "Choose", question: "Pick one", custom: true }],
+        },
+      ],
+      raw: [],
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-1",
+      });
+    });
+
+    const accepted = await modelRef!.agent.replyQuestion("question-1", [
+      ["Apply patch"],
+    ]);
+
+    expect(accepted).toBe(true);
+    expect(replyRunOpenCodeQuestionMock).toHaveBeenCalledWith({
+      runId: "run-1",
+      requestId: "question-1",
+      answers: [["Apply patch"]],
+    });
+    expect(modelRef!.agent.questionState().activeRequest).toBeNull();
+    expect(modelRef!.agent.questionState().resolvedRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ requestId: "question-1", status: "replied" }),
+      ]),
+    );
+  });
+
+  it("rejects subagent question requests and keeps source attribution friendly", async () => {
+    listRunOpenCodeQuestionRequestsMock.mockResolvedValueOnce({
+      questions: [
+        {
+          id: "question-sub-1",
+          sessionID: "session-sub-1",
+          questions: [
+            { header: "Confirm", question: "Continue?", custom: true },
+          ],
+        },
+      ],
+      raw: [],
+    });
+    bootstrapRunOpenCodeMock.mockResolvedValueOnce({
+      state: "running",
+      chatMode: "interactive",
+      bufferedEvents: [],
+      messages: [],
+      todos: [],
+      streamConnected: true,
+      sessionId: "session-root",
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "session.updated",
+      data: {
+        info: {
+          sessionID: "session-sub-1",
+          parentID: "session-root",
+          title: "Docs lookup",
+          model: "provider/k2p5",
+        },
+      },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-sub-1",
+        sourceKind: "subagent",
+        sourceLabel: "Docs lookup - k2p5",
+      });
+    });
+
+    const accepted = await modelRef!.agent.rejectQuestion("question-sub-1");
+
+    expect(accepted).toBe(true);
+    expect(rejectRunOpenCodeQuestionMock).toHaveBeenCalledWith({
+      runId: "run-1",
+      requestId: "question-sub-1",
+    });
+    expect(modelRef!.agent.questionState().resolvedRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          requestId: "question-sub-1",
+          status: "rejected",
+        }),
+      ]),
+    );
+  });
+
+  it("serializes multiple pending questions into active and queued state", async () => {
+    listRunOpenCodeQuestionRequestsMock.mockResolvedValueOnce({
+      questions: [
+        {
+          id: "question-1",
+          sessionID: "session-1",
+          questions: [{ header: "One", question: "First?", custom: true }],
+        },
+        {
+          id: "question-2",
+          sessionID: "session-1",
+          questions: [{ header: "Two", question: "Second?", custom: true }],
+        },
+      ],
+      raw: [],
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-1",
+      });
+      expect(modelRef!.agent.questionState().queuedRequests).toEqual([
+        expect.objectContaining({ requestId: "question-2" }),
+      ]);
     });
   });
 

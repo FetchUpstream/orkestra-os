@@ -26,6 +26,7 @@ const RUN_STATE_CHANGED_EVENT: &str = "run-state-changed";
 const WARMING_UP: &str = "warming_up";
 const BUSY_CODING: &str = "busy_coding";
 const WAITING_FOR_INPUT: &str = "waiting_for_input";
+const QUESTION_PENDING: &str = "question_pending";
 const PERMISSION_REQUESTED: &str = "permission_requested";
 const COMMITTING_CHANGES: &str = "committing_changes";
 const RESOLVING_REBASE_CONFLICTS: &str = "resolving_rebase_conflicts";
@@ -67,7 +68,7 @@ impl RunStateService {
 
         if matches!(
             stored,
-            Some(PERMISSION_REQUESTED | COMMITTING_CHANGES | RESOLVING_REBASE_CONFLICTS)
+            Some(QUESTION_PENDING | PERMISSION_REQUESTED | COMMITTING_CHANGES | RESOLVING_REBASE_CONFLICTS)
         ) {
             return Ok(stored.map(ToString::to_string));
         }
@@ -122,6 +123,15 @@ impl RunStateService {
         transition_source: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
         self.transition_to_state(run_id, Some(WAITING_FOR_INPUT), transition_source)
+            .await
+    }
+
+    pub async fn handle_question_pending(
+        &self,
+        run_id: &str,
+        transition_source: &str,
+    ) -> Result<Option<RunStateChangedEventDto>, AppError> {
+        self.transition_to_state(run_id, Some(QUESTION_PENDING), transition_source)
             .await
     }
 

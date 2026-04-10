@@ -29,6 +29,7 @@ export const RUN_STATES = [
   "warming_up",
   "busy_coding",
   "waiting_for_input",
+  "question_pending",
   "permission_requested",
   "committing_changes",
   "resolving_rebase_conflicts",
@@ -218,6 +219,31 @@ export type ReplyRunOpenCodePermissionResult = {
   repliedAt: string;
 };
 
+export type RunOpenCodeQuestionAnswer = string[];
+
+export type ReplyRunOpenCodeQuestionParams = {
+  runId: string;
+  requestId: string;
+  answers: RunOpenCodeQuestionAnswer[];
+};
+
+export type ReplyRunOpenCodeQuestionResult = {
+  status: "accepted" | "unsupported";
+  reason?: string;
+  repliedAt: string;
+};
+
+export type RejectRunOpenCodeQuestionParams = {
+  runId: string;
+  requestId: string;
+};
+
+export type RejectRunOpenCodeQuestionResult = {
+  status: "accepted" | "unsupported";
+  reason?: string;
+  rejectedAt: string;
+};
+
 export type StartRunOpenCodeResult = {
   state: RunOpenCodeAgentState;
   reason?: string;
@@ -241,6 +267,11 @@ export type RunOpenCodeSessionTodosResult = {
   raw: unknown;
 };
 
+export type RunOpenCodeQuestionRequestsResult = {
+  questions: unknown[];
+  raw: unknown;
+};
+
 export type GetRunOpenCodeSessionTodosParams = {
   runId: string;
   sessionId?: string;
@@ -256,6 +287,26 @@ export type BootstrapRunOpenCodeResult = {
   sessionId?: string;
   streamConnected: boolean;
   readyPhase?: string;
+};
+
+type ReplyRunOpenCodeQuestionResponse = {
+  state?: string;
+  status?: string;
+  reason?: string | null;
+  repliedAt?: string;
+  replied_at?: string;
+};
+
+type RejectRunOpenCodeQuestionResponse = {
+  state?: string;
+  status?: string;
+  reason?: string | null;
+  rejectedAt?: string;
+  rejected_at?: string;
+};
+
+type RunOpenCodeQuestionRequestResponse = {
+  payload?: unknown;
 };
 
 export type RunGitBranchSync = {
@@ -1768,6 +1819,87 @@ export const replyRunOpenCodePermission = async ({
     status: state === "unsupported" ? "unsupported" : "accepted",
     reason: response.reason ?? undefined,
     repliedAt: pick(response.replied_at, response.repliedAt) ?? "",
+  };
+};
+
+export const listRunOpenCodeQuestionRequests = async (
+  runId: string,
+): Promise<RunOpenCodeQuestionRequestsResult> => {
+  const response = await invoke<unknown>(
+    "list_run_opencode_question_requests",
+    {
+      runId,
+    },
+  );
+
+  if (Array.isArray(response)) {
+    return {
+      questions: unwrapSnapshotItems(response),
+      raw: response,
+    };
+  }
+
+  const record =
+    response && typeof response === "object"
+      ? (response as { questions?: RunOpenCodeQuestionRequestResponse[] })
+      : null;
+
+  if (record && Array.isArray(record.questions)) {
+    return {
+      questions: unwrapSnapshotItems(record.questions),
+      raw: response,
+    };
+  }
+
+  return {
+    questions: unwrapSnapshotItems(toUnknownArray(response)),
+    raw: response,
+  };
+};
+
+export const replyRunOpenCodeQuestion = async ({
+  runId,
+  requestId,
+  answers,
+}: ReplyRunOpenCodeQuestionParams): Promise<ReplyRunOpenCodeQuestionResult> => {
+  const response = await invoke<ReplyRunOpenCodeQuestionResponse>(
+    "reply_run_opencode_question",
+    {
+      request: {
+        runId,
+        requestId,
+        answers,
+      },
+    },
+  );
+
+  const state = response.state ?? response.status;
+  return {
+    status: state === "unsupported" ? "unsupported" : "accepted",
+    reason: response.reason ?? undefined,
+    repliedAt: pick(response.replied_at, response.repliedAt) ?? "",
+  };
+};
+
+export const rejectRunOpenCodeQuestion = async ({
+  runId,
+  requestId,
+}: RejectRunOpenCodeQuestionParams): Promise<RejectRunOpenCodeQuestionResult> => {
+  const response = await invoke<RejectRunOpenCodeQuestionResponse>(
+    "reject_run_opencode_question",
+    {
+      request: {
+        runId,
+        requestId,
+      },
+    },
+  );
+
+  const state = response.state ?? response.status;
+  return {
+    status: state === "unsupported" ? "unsupported" : "accepted",
+    reason: response.reason ?? undefined,
+    rejectedAt: pick(response.rejected_at, response.rejectedAt) ?? "",
   };
 };
 

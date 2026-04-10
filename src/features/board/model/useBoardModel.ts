@@ -137,6 +137,8 @@ const boardLabelForRunState = (state: RunState): string => {
       return "Busy Coding";
     case "waiting_for_input":
       return "Waiting for Input";
+    case "question_pending":
+      return "Question Pending";
     case "permission_requested":
       return "Permission Requested";
     case "committing_changes":

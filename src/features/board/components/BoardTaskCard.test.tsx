@@ -93,4 +93,43 @@ describe("BoardTaskCard", () => {
 
     expect(onDragEnd).toHaveBeenCalledTimes(1);
   });
+
+  it("renders question pending mini-card state with question mark icon", () => {
+    render(() => (
+      <Router>
+        <Route
+          path="/board"
+          component={() => (
+            <ul>
+              <BoardTaskCard
+                task={{
+                  id: "task-1",
+                  title: "Task with runs",
+                  status: "review",
+                  projectId: "project-1",
+                }}
+                project={{
+                  id: "project-1",
+                  name: "Project",
+                  key: "PRJ",
+                  repositories: [],
+                }}
+                runMiniCards={[
+                  {
+                    runId: "run-1",
+                    label: "Question Pending",
+                    state: "question_pending",
+                    isNavigable: true,
+                  },
+                ]}
+              />
+            </ul>
+          )}
+        />
+      </Router>
+    ));
+
+    expect(screen.getByText("Question Pending")).toBeTruthy();
+    expect(screen.getByText("?")).toBeTruthy();
+  });
 });

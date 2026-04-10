@@ -39,6 +39,10 @@ const createModelStub = (
   runOverrides: Record<string, unknown> = {},
   chatMode: "interactive" | "read_only" | "unavailable" = "interactive",
   agentOverrides: {
+    pendingQuestionsById?: Record<string, unknown>;
+    failedQuestionsById?: Record<string, unknown>;
+    isReplyingQuestion?: boolean;
+    questionReplyError?: string;
     pendingPermissionsById?: Record<string, unknown>;
     failedPermissionsById?: Record<string, unknown>;
     isReplyingPermission?: boolean;
@@ -61,7 +65,9 @@ const createModelStub = (
         lastSyncAt: Date.now(),
         messageOrder: [],
         messagesById: {},
-        pendingQuestionsById: {},
+        pendingQuestionsById: agentOverrides.pendingQuestionsById ?? {},
+        resolvedQuestionsById: {},
+        failedQuestionsById: agentOverrides.failedQuestionsById ?? {},
         pendingPermissionsById: withPendingPermission
           ? ((agentOverrides.pendingPermissionsById as
               | Record<string, unknown>
@@ -82,9 +88,28 @@ const createModelStub = (
         rawEvents: [],
       }),
       isSubmittingPrompt: () => false,
+      isReplyingQuestion: () => agentOverrides.isReplyingQuestion ?? false,
       isReplyingPermission: () => agentOverrides.isReplyingPermission ?? false,
       submitError: () => "",
+      questionReplyError: () => agentOverrides.questionReplyError ?? "",
       permissionReplyError: () => agentOverrides.permissionReplyError ?? "",
+      questionState: () => {
+        const store = model.agent.store();
+        const pending = Object.values(store.pendingQuestionsById) as Array<
+          Record<string, unknown>
+        >;
+        const failed = Object.values(
+          (store as { failedQuestionsById?: Record<string, unknown> })
+            .failedQuestionsById ?? {},
+        ) as Array<Record<string, unknown>>;
+        return {
+          activeRequest:
+            (pending[0] as Record<string, unknown> | undefined) ?? null,
+          queuedRequests: pending.slice(1),
+          resolvedRequests: [],
+          failedRequests: failed,
+        };
+      },
       permissionState: () => {
         const store = model.agent.store();
         const pending = Object.values(store.pendingPermissionsById) as Array<
@@ -111,6 +136,8 @@ const createModelStub = (
       projectDefaultRunProviderId: () => "provider-1",
       projectDefaultRunModelId: () => "model-1",
       runSelectionOptionsError: () => "",
+      replyQuestion: vi.fn(async () => true),
+      rejectQuestion: vi.fn(async () => true),
       replyPermission: vi.fn(async () => true),
     },
   } as unknown as ReturnType<
@@ -226,6 +253,189 @@ describe("NewRunChatWorkspace", () => {
       }),
     ).toBeTruthy();
     expect(screen.queryByText(/session-child/i)).toBeNull();
+  });
+
+  it("renders the question wizard in the composer area and hides the normal composer", () => {
+    const { model } = createModelStub("running", false, {}, "interactive", {
+      pendingQuestionsById: {
+        "question-1": {
+          requestId: "question-1",
+          sessionId: "session-1",
+          sourceKind: "main",
+          sourceLabel: "Main agent",
+          questions: [
+            {
+              header: "Choose action",
+              question: "Which action should I take?",
+              options: [{ label: "Apply patch", description: "Modify files" }],
+              custom: true,
+            },
+          ],
+        },
+      },
+    });
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByLabelText("Question composer takeover")).toBeTruthy();
+    expect(screen.queryByLabelText("Question request")).toBeNull();
+    expect(screen.getByText("Question 1 of 1")).toBeTruthy();
+    expect(screen.getByText("Which action should I take?")).toBeTruthy();
+    expect(screen.getByText("Apply patch")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Type your own answer" }),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText("Your answer")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send answer" })).toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Review answers" })
+        .getAttribute("disabled"),
+    ).not.toBeNull();
+    expect(screen.queryByLabelText("Message agent")).toBeNull();
+  });
+
+  it("navigates to review and sends structured answers", async () => {
+    const replyQuestionMock = vi.fn(async () => true);
+    const rejectQuestionMock = vi.fn(async () => true);
+    const { model } = createModelStub("running", false, {}, "interactive", {
+      pendingQuestionsById: {
+        "question-1": {
+          requestId: "question-1",
+          sessionId: "session-1",
+          questions: [
+            {
+              header: "Choose action",
+              question: "Which action should I take?",
+              options: [{ label: "Apply patch", description: "Modify files" }],
+              custom: true,
+            },
+          ],
+        },
+      },
+    });
+    model.agent.replyQuestion = replyQuestionMock;
+    model.agent.rejectQuestion = rejectQuestionMock;
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Apply patch" }));
+    expect(screen.queryByLabelText("Your answer")).toBeNull();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Review answers" }),
+    );
+    expect(screen.getAllByText("Review answers").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+    expect(replyQuestionMock).toHaveBeenCalledWith("question-1", [
+      ["Apply patch"],
+    ]);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByText("Question 1 of 1")).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(rejectQuestionMock).toHaveBeenCalledWith("question-1");
+  });
+
+  it("shows queued question count and failure state", () => {
+    const { model } = createModelStub("running", false, {}, "interactive", {
+      pendingQuestionsById: {
+        "question-1": {
+          requestId: "question-1",
+          sessionId: "session-1",
+          questions: [{ header: "One", question: "First?", custom: true }],
+        },
+        "question-2": {
+          requestId: "question-2",
+          sessionId: "session-child",
+          sourceKind: "subagent",
+          sourceLabel: "Docs lookup - k2p5",
+          questions: [{ header: "Two", question: "Second?", custom: true }],
+        },
+      },
+      failedQuestionsById: {
+        "question-stale": {
+          requestId: "question-stale",
+          sessionId: "session-1",
+          questions: [{ header: "Stale", question: "Old?", custom: true }],
+          failureMessage: "Question request expired before response.",
+        },
+      },
+    });
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByText("1 more question request queued.")).toBeTruthy();
+    expect(
+      screen.getByLabelText("Question request failed tool item"),
+    ).toBeTruthy();
+  });
+
+  it("keeps typed answers behind explicit custom selection and only allows send on review", async () => {
+    const replyQuestionMock = vi.fn(async () => false);
+    const { model } = createModelStub("running", false, {}, "interactive", {
+      pendingQuestionsById: {
+        "question-1": {
+          requestId: "question-1",
+          sessionId: "session-1",
+          questions: [
+            {
+              header: "Choose action",
+              question: "Which action should I take?",
+              options: [{ label: "Apply patch", description: "Modify files" }],
+              custom: true,
+            },
+            {
+              header: "Reason",
+              question: "Why?",
+              options: [],
+              custom: true,
+            },
+          ],
+        },
+      },
+    });
+    model.agent.replyQuestion = replyQuestionMock;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Type your own answer" }),
+    );
+    await fireEvent.input(screen.getByLabelText("Your answer"), {
+      target: { value: "My custom answer" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Question 2 of 2")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Send answer" })).toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Review answers" })
+        .getAttribute("disabled"),
+    ).not.toBeNull();
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Type your own answer" }),
+    );
+    await fireEvent.input(screen.getByLabelText("Your answer"), {
+      target: { value: "Because it is needed" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Review answers" }),
+    );
+    expect(screen.getAllByText("Review answers").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Send answer" })).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+    expect(replyQuestionMock).toHaveBeenCalledWith("question-1", [
+      ["My custom answer"],
+      ["Because it is needed"],
+    ]);
+
+    await fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+    expect(
+      (screen.getByLabelText("Your answer") as HTMLTextAreaElement).value,
+    ).toBe("My custom answer");
   });
 
   it("shows queued permission count and advances when first request resolves", () => {

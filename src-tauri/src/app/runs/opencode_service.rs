@@ -14,11 +14,12 @@ use crate::app::errors::AppError;
 use crate::app::projects::service::ProjectsService;
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, OpenCodeDependencyStatusDto,
-    RawAgentEvent, ReplyRunOpenCodePermissionResponse, RunAgentDto, RunAgentsResponseDto, RunDto,
-    RunModelSelectionDto, RunOpenCodeChatModeDto, RunOpenCodeSessionMessageDto,
-    RunOpenCodeSessionTodoDto, RunProviderDto, RunProvidersResponseDto,
-    RunSelectionCatalogResponseDto, StartRunOpenCodeResponse, StopRunOpenCodeResponse,
-    SubmitRunOpenCodePromptResponse,
+    RawAgentEvent, RejectRunOpenCodeQuestionResponse, ReplyRunOpenCodePermissionResponse,
+    ReplyRunOpenCodeQuestionResponse, RunAgentDto, RunAgentsResponseDto, RunDto,
+    RunModelSelectionDto, RunOpenCodeChatModeDto, RunOpenCodeQuestionRequestDto,
+    RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, RunProviderDto,
+    RunProvidersResponseDto, RunSelectionCatalogResponseDto, StartRunOpenCodeResponse,
+    StopRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::run_state_service::RunStateService;
 use crate::app::runs::service::RunsService;
@@ -110,6 +111,26 @@ enum OpenCodeServiceError {
 
     #[error("failed to reply to OpenCode permission request '{request_id}'")]
     PermissionReply {
+        request_id: String,
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to list OpenCode question requests")]
+    QuestionList {
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to reply to OpenCode question request '{request_id}'")]
+    QuestionReply {
+        request_id: String,
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to reject OpenCode question request '{request_id}'")]
+    QuestionReject {
         request_id: String,
         #[source]
         source: opencode::Error,
@@ -215,6 +236,21 @@ fn value_array_to_todo_wrappers(value: serde_json::Value) -> Vec<RunOpenCodeSess
         .unwrap_or_default()
 }
 
+fn value_array_to_question_request_wrappers(
+    value: serde_json::Value,
+) -> Vec<RunOpenCodeQuestionRequestDto> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .cloned()
+                .map(|payload| RunOpenCodeQuestionRequestDto { payload })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn to_nonempty_trimmed_string(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -241,6 +277,12 @@ fn build_permission_reply_body(session_id: &str, reply: &str, remember: bool) ->
         "sessionID": session_id,
         "reply": reply,
         "remember": remember,
+    })
+}
+
+fn build_question_reply_body(answers: Vec<Vec<String>>) -> serde_json::Value {
+    serde_json::json!({
+        "answers": answers,
     })
 }
 
@@ -1736,6 +1778,44 @@ impl RunsOpenCodeService {
         )
     }
 
+    fn parse_question_request_id_value(value: &serde_json::Value) -> Option<String> {
+        parse_string_field(value, &["requestID", "requestId", "id"])
+    }
+
+    async fn refresh_pending_question_requests(
+        &self,
+        handle: &RunOpenCodeHandle,
+    ) -> Result<HashSet<String>, AppError> {
+        let response = handle
+            .client
+            .call_operation("question.list", RequestOptions::default())
+            .await
+            .map_err(|source| OpenCodeServiceError::QuestionList { source })
+            .context("while loading pending question requests from OpenCode")
+            .map_err(app_error_from_anyhow)?;
+
+        let pending_ids = response
+            .data
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Self::parse_question_request_id_value)
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+
+        {
+            let mut state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions = pending_ids.clone();
+        }
+
+        Ok(pending_ids)
+    }
+
     /// Extracts a non-empty, trimmed status hint from a JSON payload.
     ///
     /// The function looks for a `status` field at the top level and then inside an optional
@@ -1891,17 +1971,11 @@ impl RunsOpenCodeService {
                 Ok(())
             }
             "question.asked" => {
-                let Some(session_id) =
+                let Some(_session_id) =
                     Self::parse_payload_property(payload, &["sessionID", "sessionId"])
                 else {
                     return Ok(());
                 };
-                if !self
-                    .event_matches_current_run_session(run_id, &session_id)
-                    .await?
-                {
-                    return Ok(());
-                }
 
                 let Some(request_id) =
                     Self::parse_payload_property(payload, &["requestID", "requestId"])
@@ -1916,22 +1990,16 @@ impl RunsOpenCodeService {
                 }
                 let _ = self
                     .run_state_service
-                    .handle_waiting_for_input(run_id, "question_asked")
+                    .handle_question_pending(run_id, "question_asked")
                     .await?;
                 Ok(())
             }
             "question.replied" | "question.rejected" => {
-                let Some(session_id) =
+                let Some(_session_id) =
                     Self::parse_payload_property(payload, &["sessionID", "sessionId"])
                 else {
                     return Ok(());
                 };
-                if !self
-                    .event_matches_current_run_session(run_id, &session_id)
-                    .await?
-                {
-                    return Ok(());
-                }
 
                 let Some(request_id) =
                     Self::parse_payload_property(payload, &["requestID", "requestId"])
@@ -4649,6 +4717,262 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         })
     }
 
+    pub async fn list_run_opencode_question_requests(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<RunOpenCodeQuestionRequestDto>, AppError> {
+        let run = self.runs_service.get_run_model(run_id).await?;
+        if Self::should_use_completed_read_only_bootstrap(run.status.as_str()) {
+            return Ok(vec![]);
+        }
+
+        let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
+        if ensured.state == "unsupported" {
+            return Ok(vec![]);
+        }
+
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let _operation_guard = handle.acquire_active_operation_guard("list_question_requests")?;
+        handle.touch_interaction("list_question_requests")?;
+
+        let response = handle
+            .client
+            .call_operation("question.list", RequestOptions::default())
+            .await
+            .map_err(|source| OpenCodeServiceError::QuestionList { source })
+            .context("while loading run OpenCode question requests")
+            .map_err(app_error_from_anyhow)?;
+
+        {
+            let pending_ids = response
+                .data
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Self::parse_question_request_id_value)
+                        .collect::<HashSet<_>>()
+                })
+                .unwrap_or_default();
+            let mut state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions = pending_ids;
+        }
+
+        Ok(value_array_to_question_request_wrappers(response.data))
+    }
+
+    pub async fn reply_run_opencode_question(
+        &self,
+        run_id: &str,
+        request_id: &str,
+        answers: Vec<Vec<String>>,
+    ) -> Result<ReplyRunOpenCodeQuestionResponse, AppError> {
+        self.ensure_service_accepting_new_work().await?;
+
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let request_id = request_id.trim();
+        if request_id.is_empty() {
+            return Err(AppError::validation("request_id is required"));
+        }
+
+        let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
+        if ensured.state == "unsupported" {
+            return Ok(ReplyRunOpenCodeQuestionResponse {
+                state: "unsupported".to_string(),
+                reason: ensured.reason,
+                replied_at: Utc::now().to_rfc3339(),
+            });
+        }
+
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let _operation_guard = handle.acquire_active_operation_guard("reply_question")?;
+        handle.touch_main_session_activity()?;
+
+        let in_memory_pending = {
+            let state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions.contains(request_id)
+        };
+        if !in_memory_pending {
+            let pending_ids = self.refresh_pending_question_requests(&handle).await?;
+            if !pending_ids.contains(request_id) {
+                return Ok(ReplyRunOpenCodeQuestionResponse {
+                    state: "accepted".to_string(),
+                    reason: Some("stale_question_request".to_string()),
+                    replied_at: Utc::now().to_rfc3339(),
+                });
+            }
+        }
+
+        let response = handle
+            .client
+            .call_operation(
+                "question.reply",
+                RequestOptions::default()
+                    .with_path("requestID", request_id.to_string())
+                    .with_body(build_question_reply_body(answers)),
+            )
+            .await
+            .map_err(|source| OpenCodeServiceError::QuestionReply {
+                request_id: request_id.to_string(),
+                source,
+            })
+            .context("while forwarding question answer to OpenCode")
+            .map_err(app_error_from_anyhow)?;
+
+        let response_state = response
+            .data
+            .get("state")
+            .and_then(|value| value.as_str())
+            .unwrap_or("accepted");
+        let response_reason = response
+            .data
+            .get("reason")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+
+        if response_state.eq_ignore_ascii_case("unsupported") {
+            return Ok(ReplyRunOpenCodeQuestionResponse {
+                state: "unsupported".to_string(),
+                reason: response_reason,
+                replied_at: Utc::now().to_rfc3339(),
+            });
+        }
+
+        let has_pending_questions = {
+            let mut state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions.remove(request_id);
+            !state.pending_questions.is_empty()
+        };
+
+        if !has_pending_questions {
+            let _ = self.run_state_service.handle_user_replied(run_id).await?;
+        }
+
+        Ok(ReplyRunOpenCodeQuestionResponse {
+            state: "accepted".to_string(),
+            reason: None,
+            replied_at: Utc::now().to_rfc3339(),
+        })
+    }
+
+    pub async fn reject_run_opencode_question(
+        &self,
+        run_id: &str,
+        request_id: &str,
+    ) -> Result<RejectRunOpenCodeQuestionResponse, AppError> {
+        self.ensure_service_accepting_new_work().await?;
+
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let request_id = request_id.trim();
+        if request_id.is_empty() {
+            return Err(AppError::validation("request_id is required"));
+        }
+
+        let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
+        if ensured.state == "unsupported" {
+            return Ok(RejectRunOpenCodeQuestionResponse {
+                state: "unsupported".to_string(),
+                reason: ensured.reason,
+                rejected_at: Utc::now().to_rfc3339(),
+            });
+        }
+
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let _operation_guard = handle.acquire_active_operation_guard("reject_question")?;
+        handle.touch_main_session_activity()?;
+
+        let in_memory_pending = {
+            let state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions.contains(request_id)
+        };
+        if !in_memory_pending {
+            let pending_ids = self.refresh_pending_question_requests(&handle).await?;
+            if !pending_ids.contains(request_id) {
+                return Ok(RejectRunOpenCodeQuestionResponse {
+                    state: "accepted".to_string(),
+                    reason: Some("stale_question_request".to_string()),
+                    rejected_at: Utc::now().to_rfc3339(),
+                });
+            }
+        }
+
+        let response = handle
+            .client
+            .call_operation(
+                "question.reject",
+                RequestOptions::default().with_path("requestID", request_id.to_string()),
+            )
+            .await
+            .map_err(|source| OpenCodeServiceError::QuestionReject {
+                request_id: request_id.to_string(),
+                source,
+            })
+            .context("while rejecting question request in OpenCode")
+            .map_err(app_error_from_anyhow)?;
+
+        let response_state = response
+            .data
+            .get("state")
+            .and_then(|value| value.as_str())
+            .unwrap_or("accepted");
+        let response_reason = response
+            .data
+            .get("reason")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+
+        if response_state.eq_ignore_ascii_case("unsupported") {
+            return Ok(RejectRunOpenCodeQuestionResponse {
+                state: "unsupported".to_string(),
+                reason: response_reason,
+                rejected_at: Utc::now().to_rfc3339(),
+            });
+        }
+
+        let has_pending_questions = {
+            let mut state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions.remove(request_id);
+            !state.pending_questions.is_empty()
+        };
+
+        if !has_pending_questions {
+            let _ = self.run_state_service.handle_user_replied(run_id).await?;
+        }
+
+        Ok(RejectRunOpenCodeQuestionResponse {
+            state: "accepted".to_string(),
+            reason: None,
+            rejected_at: Utc::now().to_rfc3339(),
+        })
+    }
+
     pub async fn start_run_opencode(
         &self,
         run_id: &str,
@@ -7022,6 +7346,69 @@ mod tests {
             .unwrap();
 
         assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
+    }
+
+    #[tokio::test]
+    async fn subagent_question_asked_tracks_request_id_for_child_session() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.asked","properties":{"requestID":"question-sub-1","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        let guard = state.lock().unwrap();
+        assert!(guard.pending_questions.contains("question-sub-1"));
+        drop(guard);
+        assert_eq!(fetch_run_state(&pool, "run-1").await.as_deref(), Some("question_pending"));
+    }
+
+    #[tokio::test]
+    async fn subagent_question_resolution_clears_tracked_request_id_for_child_session() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.asked","properties":{"requestID":"question-sub-2","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.replied","properties":{"requestID":"question-sub-2","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        let guard = state.lock().unwrap();
+        assert!(!guard.pending_questions.contains("question-sub-2"));
+        drop(guard);
+        assert_eq!(fetch_run_state(&pool, "run-1").await.as_deref(), Some("busy_coding"));
     }
 
     #[tokio::test]

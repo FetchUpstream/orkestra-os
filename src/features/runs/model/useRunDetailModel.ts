@@ -25,8 +25,11 @@ import {
   listRunDiffFiles,
   mergeRunWorktreeIntoSource,
   openRunTerminal,
+  listRunOpenCodeQuestionRequests,
   rebaseRunWorktreeOntoSource,
+  rejectRunOpenCodeQuestion,
   replyRunOpenCodePermission,
+  replyRunOpenCodeQuestion,
   resizeRunTerminal,
   setRunDiffWatch,
   submitRunOpenCodePrompt,
@@ -60,11 +63,13 @@ import {
   reduceOpenCodeEvent,
 } from "./agentReducer";
 import type {
+  AgentQuestionState,
   AgentPermissionState,
   AgentStore,
   OpenCodeBusEvent,
   UiMessage,
   UiPermissionRequest,
+  UiQuestionRequest,
 } from "./agentTypes";
 import { setRunCommitPending } from "./commitUiState";
 import {
@@ -378,6 +383,8 @@ export const useRunDetailModel = () => {
     createSignal("");
   const [projectDefaultRunModelId, setProjectDefaultRunModelId] =
     createSignal("");
+  const [isReplyingQuestion, setIsReplyingQuestion] = createSignal(false);
+  const [questionReplyError, setQuestionReplyError] = createSignal("");
   const [isReplyingPermission, setIsReplyingPermission] = createSignal(false);
   const [permissionReplyError, setPermissionReplyError] = createSignal("");
   const [gitStatus, setGitStatus] = createSignal<RunGitMergeStatus | null>(
@@ -603,6 +610,45 @@ export const useRunDetailModel = () => {
     );
   };
 
+  const isStaleQuestionReplyError = (message: string): boolean => {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    return normalized.includes("stale_question_request");
+  };
+
+  const toSortableTimestamp = (
+    value: string | number | null | undefined,
+  ): number => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Date.parse(value);
+      if (!Number.isNaN(parsed)) {
+        return parsed;
+      }
+    }
+    return 0;
+  };
+
+  const sortQuestionRequests = (
+    requests: UiQuestionRequest[],
+    timestampField: "receivedAt" | "resolvedAt",
+  ): UiQuestionRequest[] => {
+    return [...requests].sort((left, right) => {
+      const timestampDelta =
+        toSortableTimestamp(left[timestampField]) -
+        toSortableTimestamp(right[timestampField]);
+      if (timestampDelta !== 0) {
+        return timestampDelta;
+      }
+      return left.requestId.localeCompare(right.requestId);
+    });
+  };
+
   const markPermissionRequestFailed = (
     requestId: string,
     failureMessage = "Permission request expired before response.",
@@ -680,19 +726,58 @@ export const useRunDetailModel = () => {
     });
   };
 
-  const toSortablePermissionTimestamp = (
-    value: string | number | null | undefined,
-  ): number => {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-    if (typeof value === "string" && value.trim().length > 0) {
-      const parsed = Date.parse(value);
-      if (!Number.isNaN(parsed)) {
-        return parsed;
+  const markQuestionRequestFailed = (
+    requestId: string,
+    failureMessage = "Question request expired before response.",
+  ): void => {
+    setAgentStore((current) => {
+      const pendingQuestion = current.pendingQuestionsById[requestId];
+      if (!pendingQuestion) {
+        return current;
       }
-    }
-    return 0;
+
+      const pendingQuestionsById = { ...current.pendingQuestionsById };
+      delete pendingQuestionsById[requestId];
+
+      const failedQuestion: UiQuestionRequest = {
+        ...pendingQuestion,
+        status: "failed",
+        failureMessage,
+        resolvedAt: new Date().toISOString(),
+      };
+
+      return {
+        ...current,
+        pendingQuestionsById,
+        failedQuestionsById: {
+          ...current.failedQuestionsById,
+          [requestId]: failedQuestion,
+        },
+      };
+    });
+  };
+
+  const applyLocalQuestionResolutionAccepted = (
+    requestId: string,
+    action: "reply" | "reject",
+    runId: string,
+    sessionId: string,
+    resolvedAt: string,
+  ): void => {
+    const syntheticEvent: RunOpenCodeEvent = {
+      runId,
+      ts: resolvedAt,
+      event: action === "reject" ? "question.rejected" : "question.replied",
+      data: {
+        requestID: requestId,
+        sessionID: sessionId,
+      },
+    };
+
+    setAgentEvents((current) => appendCappedHistory(current, syntheticEvent));
+    setAgentStore((current) => {
+      return reduceOpenCodeEvent(current, toOpenCodeBusEvent(syntheticEvent));
+    });
   };
 
   const sortPermissionRequests = (
@@ -701,8 +786,8 @@ export const useRunDetailModel = () => {
   ): UiPermissionRequest[] => {
     return [...requests].sort((left, right) => {
       const timestampDelta =
-        toSortablePermissionTimestamp(left[timestampField]) -
-        toSortablePermissionTimestamp(right[timestampField]);
+        toSortableTimestamp(left[timestampField]) -
+        toSortableTimestamp(right[timestampField]);
       if (timestampDelta !== 0) {
         return timestampDelta;
       }
@@ -811,6 +896,58 @@ export const useRunDetailModel = () => {
       sourceLabel,
     };
   };
+
+  const withQuestionSource = (
+    question: UiQuestionRequest,
+  ): UiQuestionRequest => {
+    const rootSessionId = agentStore().sessionId?.trim() ?? "";
+    const questionSessionId = question.sessionId?.trim() ?? "";
+    const derivedSourceLabel =
+      permissionSourceLabelsBySessionId()[questionSessionId] || "";
+    let sourceKind: "main" | "subagent";
+
+    if (knownSubagentSessionIds().has(questionSessionId)) {
+      sourceKind = "subagent";
+    } else if (rootSessionId) {
+      sourceKind = questionSessionId === rootSessionId ? "main" : "subagent";
+    } else if (derivedSourceLabel) {
+      sourceKind = "subagent";
+    } else {
+      sourceKind = "main";
+    }
+
+    const sourceLabel =
+      sourceKind === "main" ? "Main agent" : derivedSourceLabel || "Subagent";
+
+    return {
+      ...question,
+      sourceKind,
+      sourceLabel,
+    };
+  };
+
+  const questionState = createMemo<AgentQuestionState>(() => {
+    const store = agentStore();
+    const pendingRequests = sortQuestionRequests(
+      Object.values(store.pendingQuestionsById),
+      "receivedAt",
+    ).map(withQuestionSource);
+    const resolvedRequests = sortQuestionRequests(
+      Object.values(store.resolvedQuestionsById),
+      "resolvedAt",
+    ).map(withQuestionSource);
+    const failedRequests = sortQuestionRequests(
+      Object.values(store.failedQuestionsById),
+      "resolvedAt",
+    ).map(withQuestionSource);
+
+    return {
+      activeRequest: pendingRequests[0] ?? null,
+      queuedRequests: pendingRequests.slice(1),
+      resolvedRequests,
+      failedRequests,
+    };
+  });
 
   const permissionState = createMemo<AgentPermissionState>(() => {
     const store = agentStore();
@@ -1518,6 +1655,15 @@ export const useRunDetailModel = () => {
     return sessionId.trim();
   };
 
+  const loadPendingRunQuestions = async (runId: string): Promise<unknown[]> => {
+    try {
+      const response = await listRunOpenCodeQuestionRequests(runId);
+      return response.questions;
+    } catch {
+      return [];
+    }
+  };
+
   const hydrateAgentSnapshot = async (
     runId: string,
     requestVersion: number,
@@ -1525,6 +1671,7 @@ export const useRunDetailModel = () => {
     baseEvents: RunOpenCodeEvent[] = [],
   ): Promise<void> => {
     const bootstrap = await bootstrapRunOpenCode(runId);
+    const pendingQuestions = await loadPendingRunQuestions(runId);
     const chatMode = resolveChatMode(bootstrap);
     const bufferedEvents =
       chatMode === "interactive"
@@ -1577,6 +1724,7 @@ export const useRunDetailModel = () => {
       const hydrated = hydrateAgentStore({
         sessionId,
         messages: bootstrap.messages,
+        questions: pendingQuestions,
         todos: bootstrap.todos,
       });
 
@@ -2345,6 +2493,7 @@ export const useRunDetailModel = () => {
 
     try {
       const result = await bootstrapRunOpenCode(normalizedRunId);
+      const pendingQuestions = await loadPendingRunQuestions(normalizedRunId);
       if (
         requestVersion !== activeAgentRequestVersion ||
         params.runId !== normalizedRunId
@@ -2395,6 +2544,7 @@ export const useRunDetailModel = () => {
         const hydrated = hydrateAgentStore({
           sessionId,
           messages: result.messages,
+          questions: pendingQuestions,
           todos: result.todos,
         });
 
@@ -2988,6 +3138,200 @@ export const useRunDetailModel = () => {
     }
   });
 
+  const replyQuestion = async (
+    requestId: string,
+    answers: string[][],
+  ): Promise<boolean> => {
+    const normalizedRequestId = requestId.trim();
+    if (!normalizedRequestId) {
+      setQuestionReplyError("Missing question request.");
+      return false;
+    }
+
+    const runId = params.runId?.trim() ?? "";
+    if (!runId) {
+      setQuestionReplyError("Missing run.");
+      return false;
+    }
+
+    const requestVersion = activeAgentRequestVersion;
+    const store = agentStore();
+    const pending = store.pendingQuestionsById[normalizedRequestId];
+    const activePendingRequest = questionState().activeRequest;
+    if (
+      activePendingRequest &&
+      activePendingRequest.requestId !== normalizedRequestId
+    ) {
+      setQuestionReplyError("Finish the current question request first.");
+      return false;
+    }
+    if (!pending) {
+      setQuestionReplyError("");
+      return false;
+    }
+
+    setQuestionReplyError("");
+    setIsReplyingQuestion(true);
+
+    try {
+      const response = await replyRunOpenCodeQuestion({
+        runId,
+        requestId: normalizedRequestId,
+        answers,
+      });
+
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== runId
+      ) {
+        return false;
+      }
+
+      if (response.status === "accepted") {
+        if (response.reason?.trim() === "stale_question_request") {
+          markQuestionRequestFailed(normalizedRequestId);
+        } else {
+          applyLocalQuestionResolutionAccepted(
+            normalizedRequestId,
+            "reply",
+            runId,
+            pending.sessionId,
+            response.repliedAt?.trim() || new Date().toISOString(),
+          );
+        }
+        setQuestionReplyError("");
+        return true;
+      }
+
+      setQuestionReplyError(
+        response.reason?.trim() ||
+          "Question reply is not supported for this run.",
+      );
+      return false;
+    } catch (replyError) {
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== runId
+      ) {
+        return false;
+      }
+
+      const errorMessage = getErrorMessage(replyError);
+      if (isStaleQuestionReplyError(errorMessage)) {
+        markQuestionRequestFailed(normalizedRequestId);
+        setQuestionReplyError("");
+        return false;
+      }
+
+      setQuestionReplyError(
+        errorMessage || "Failed to reply to question request.",
+      );
+      return false;
+    } finally {
+      if (
+        requestVersion === activeAgentRequestVersion &&
+        params.runId === runId
+      ) {
+        setIsReplyingQuestion(false);
+      }
+    }
+  };
+
+  const rejectQuestion = async (requestId: string): Promise<boolean> => {
+    const normalizedRequestId = requestId.trim();
+    if (!normalizedRequestId) {
+      setQuestionReplyError("Missing question request.");
+      return false;
+    }
+
+    const runId = params.runId?.trim() ?? "";
+    if (!runId) {
+      setQuestionReplyError("Missing run.");
+      return false;
+    }
+
+    const requestVersion = activeAgentRequestVersion;
+    const store = agentStore();
+    const pending = store.pendingQuestionsById[normalizedRequestId];
+    const activePendingRequest = questionState().activeRequest;
+    if (
+      activePendingRequest &&
+      activePendingRequest.requestId !== normalizedRequestId
+    ) {
+      setQuestionReplyError("Finish the current question request first.");
+      return false;
+    }
+    if (!pending) {
+      setQuestionReplyError("");
+      return false;
+    }
+
+    setQuestionReplyError("");
+    setIsReplyingQuestion(true);
+
+    try {
+      const response = await rejectRunOpenCodeQuestion({
+        runId,
+        requestId: normalizedRequestId,
+      });
+
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== runId
+      ) {
+        return false;
+      }
+
+      if (response.status === "accepted") {
+        if (response.reason?.trim() === "stale_question_request") {
+          markQuestionRequestFailed(normalizedRequestId);
+        } else {
+          applyLocalQuestionResolutionAccepted(
+            normalizedRequestId,
+            "reject",
+            runId,
+            pending.sessionId,
+            response.rejectedAt?.trim() || new Date().toISOString(),
+          );
+        }
+        setQuestionReplyError("");
+        return true;
+      }
+
+      setQuestionReplyError(
+        response.reason?.trim() ||
+          "Question reply is not supported for this run.",
+      );
+      return false;
+    } catch (replyError) {
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== runId
+      ) {
+        return false;
+      }
+
+      const errorMessage = getErrorMessage(replyError);
+      if (isStaleQuestionReplyError(errorMessage)) {
+        markQuestionRequestFailed(normalizedRequestId);
+        setQuestionReplyError("");
+        return false;
+      }
+
+      setQuestionReplyError(
+        errorMessage || "Failed to reject question request.",
+      );
+      return false;
+    } finally {
+      if (
+        requestVersion === activeAgentRequestVersion &&
+        params.runId === runId
+      ) {
+        setIsReplyingQuestion(false);
+      }
+    }
+  };
+
   const replyPermission = async (
     requestId: string,
     decision: "deny" | "once" | "always",
@@ -3173,6 +3517,8 @@ export const useRunDetailModel = () => {
     setSubmitError("");
     setPendingPrompt(null);
     setChatSessionHealth("idle");
+    setIsReplyingQuestion(false);
+    setQuestionReplyError("");
     setIsReplyingPermission(false);
     setPermissionReplyError("");
     setAgentState("idle");
@@ -3684,6 +4030,7 @@ export const useRunDetailModel = () => {
       readinessPhase: agentReadinessPhase,
       events: agentEvents,
       store: agentStore,
+      questionState,
       permissionState,
       error: agentError,
       isSubmittingPrompt,
@@ -3698,10 +4045,14 @@ export const useRunDetailModel = () => {
       projectDefaultRunAgentId,
       projectDefaultRunProviderId,
       projectDefaultRunModelId,
+      isReplyingQuestion,
+      questionReplyError,
       isReplyingPermission,
       permissionReplyError,
       submitPrompt,
       retryPendingPrompt,
+      replyQuestion,
+      rejectQuestion,
       replyPermission,
       reconnectSession: reconnectAgentSession,
       ensureAgentForRun,
