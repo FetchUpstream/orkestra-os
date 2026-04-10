@@ -1473,6 +1473,44 @@ impl RunsOpenCodeService {
         None
     }
 
+    /// Process a runtime event emitted by an OpenCode runtime, updating the provided
+    /// session runtime state and invoking run/task state transitions as needed.
+    ///
+    /// Supported events and effects:
+    /// - `session.status`: updates the last status hint and `idle_cleanup_ready`; when the
+    ///   status becomes `idle` triggers idle cleanup handling.
+    /// - `question.asked`: records a pending question and notifies the run state service
+    ///   that input is awaited.
+    /// - `question.replied` / `question.rejected`: clears the pending question and notifies
+    ///   the run state service that the user replied.
+    /// - `permission.asked`: records a pending permission request and notifies the run
+    ///   state service that a permission is requested.
+    /// - `permission.replied` / `permission.rejected`: removes a pending permission request;
+    ///   when the last pending permission is cleared and there are no pending questions,
+    ///   notifies the run state service that permissions have been resolved.
+    /// - `session.idle`: triggers idle cleanup handling without requiring `idle_cleanup_ready`.
+    ///
+    /// Events that include a `sessionID`/`sessionId` are ignored if the session does not
+    /// match the run's current persisted session (except permission events are tracked
+    /// even for child/subagent sessions where appropriate). The function acquires the
+    /// `session_runtime_state` lock to update in-memory pending sets and returns any
+    /// encountered `AppError` from service calls or poisoned locks.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on successful processing; an `AppError` if underlying services or locks fail.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # // Illustrative example; actual usage requires a RunsOpenCodeService instance,
+    /// # // a SessionRuntimeState wrapped in Arc<Mutex<_>>, and a Tokio runtime.
+    /// # async fn _example() {
+    /// #     // let svc: RunsOpenCodeService = ...;
+    /// #     // let state = Arc::new(Mutex::new(SessionRuntimeState::default()));
+    /// #     // svc.process_runtime_event("run1", "session.status", r#"{"sessionID":"s","status":"idle"}"#, &state).await.unwrap();
+    /// # }
+    /// ```
     async fn process_runtime_event(
         &self,
         run_id: &str,
@@ -6454,6 +6492,17 @@ mod tests {
         assert!(guard.pending_permissions.contains("perm-sub-1"));
     }
 
+    /// Verifies that permission requests for a child session are tracked and cleared when a reply for that session is received.
+    ///
+    /// This test sends a `permission.asked` event for a non-root (child) session and then a matching `permission.replied` event,
+    /// and asserts that the request id is removed from `SessionRuntimeState::pending_permissions`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Sends a permission.asked for session-child and then a permission.replied for the same request/session,
+    /// // expecting the pending permission id to be removed from the session runtime state.
+    /// ```
     #[tokio::test]
     async fn subagent_permission_resolution_clears_tracked_request_id_for_child_session() {
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
