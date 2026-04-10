@@ -842,7 +842,8 @@ export const useProjectsPageModel = () => {
     setError("");
 
     if (mode() === "edit") {
-      await flushQueuedProjectSettingsAutosave();
+      const flushed = await flushQueuedProjectSettingsAutosave();
+      if (!flushed) return;
       return;
     }
 
