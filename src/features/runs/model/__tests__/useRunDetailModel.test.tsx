@@ -40,10 +40,12 @@ const {
   mergeRunWorktreeIntoSourceMock,
   listRunDiffFilesMock,
   getRunDiffFileMock,
+  killRunTerminalMock,
   writeRunTerminalMock,
   getRunMock,
   getTaskMock,
   getProjectMock,
+  subscribeToRunDeletedMock,
 } = vi.hoisted(() => ({
   routeState: { runId: "run-1" },
   navigateMock: vi.fn(),
@@ -60,11 +62,17 @@ const {
   mergeRunWorktreeIntoSourceMock: vi.fn(),
   listRunDiffFilesMock: vi.fn(),
   getRunDiffFileMock: vi.fn(),
+  killRunTerminalMock: vi.fn(),
   writeRunTerminalMock: vi.fn(),
   getRunMock: vi.fn(),
   getTaskMock: vi.fn(),
   getProjectMock: vi.fn(),
+  subscribeToRunDeletedMock: vi.fn(),
 }));
+
+let runDeletedListener:
+  | ((event: { runId: string; timestamp: string }) => void)
+  | null = null;
 
 vi.mock("@solidjs/router", () => ({
   useNavigate: () => navigateMock,
@@ -90,7 +98,7 @@ vi.mock("../../../../app/lib/runs", () => ({
   getRun: getRunMock,
   getRunGitMergeStatus: getRunGitMergeStatusMock,
   getRunDiffFile: getRunDiffFileMock,
-  killRunTerminal: vi.fn(async () => undefined),
+  killRunTerminal: killRunTerminalMock,
   listRunDiffFiles: listRunDiffFilesMock,
   mergeRunWorktreeIntoSource: mergeRunWorktreeIntoSourceMock,
   openRunTerminal: vi.fn(async () => ({
@@ -105,6 +113,10 @@ vi.mock("../../../../app/lib/runs", () => ({
   subscribeRunOpenCodeEvents: subscribeRunOpenCodeEventsMock,
   unsubscribeRunOpenCodeEvents: unsubscribeRunOpenCodeEventsMock,
   writeRunTerminal: writeRunTerminalMock,
+}));
+
+vi.mock("../../../../app/lib/runDeletedEvents", () => ({
+  subscribeToRunDeleted: subscribeToRunDeletedMock,
 }));
 
 vi.mock("../../../../app/lib/runSelectionOptionsCache", () => ({
@@ -138,10 +150,23 @@ describe("useRunDetailModel startup ownership", () => {
     mergeRunWorktreeIntoSourceMock.mockReset();
     listRunDiffFilesMock.mockReset();
     getRunDiffFileMock.mockReset();
+    killRunTerminalMock.mockReset();
     writeRunTerminalMock.mockReset();
     getRunMock.mockReset();
     getTaskMock.mockReset();
     getProjectMock.mockReset();
+    subscribeToRunDeletedMock.mockReset();
+    runDeletedListener = null;
+    subscribeToRunDeletedMock.mockImplementation(
+      (onEvent: (event: { runId: string; timestamp: string }) => void) => {
+        runDeletedListener = onEvent;
+        return () => {
+          if (runDeletedListener === onEvent) {
+            runDeletedListener = null;
+          }
+        };
+      },
+    );
 
     bootstrapRunOpenCodeMock.mockResolvedValue({
       state: "running",
@@ -163,6 +188,7 @@ describe("useRunDetailModel startup ownership", () => {
     });
     rebaseRunWorktreeOntoSourceMock.mockResolvedValue({ status: "accepted" });
     mergeRunWorktreeIntoSourceMock.mockResolvedValue({ status: "accepted" });
+    killRunTerminalMock.mockResolvedValue(undefined);
     writeRunTerminalMock.mockResolvedValue(undefined);
     unsubscribeRunOpenCodeEventsMock.mockResolvedValue(undefined);
     replyRunOpenCodePermissionMock.mockResolvedValue({
@@ -290,6 +316,35 @@ describe("useRunDetailModel startup ownership", () => {
     expect(subscribeRunOpenCodeEventsMock).not.toHaveBeenCalled();
   });
 
+  it("navigates away and clears run-scoped state when current run is deleted", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+      expect(modelRef!.run()?.id).toBe("run-1");
+    });
+
+    runDeletedListener?.({
+      runId: "run-1",
+      timestamp: "2026-01-01T00:00:02.000Z",
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.run()).toBeNull();
+      expect(modelRef!.task()).toBeNull();
+      expect(navigateMock).toHaveBeenCalledWith("/board?projectId=project-1", {
+        replace: true,
+      });
+      expect(unsubscribeRunOpenCodeEventsMock).toHaveBeenCalled();
+      expect(killRunTerminalMock).toHaveBeenCalled();
+    });
+  });
+
   it("uses startup-cached run options when available", async () => {
     readRunSelectionOptionsCacheMock.mockReturnValueOnce({
       agents: [{ id: "agent-cached", label: "Cached Agent" }],
@@ -400,14 +455,13 @@ describe("useRunDetailModel startup ownership", () => {
     await modelRef!.git.rebaseWorktreeOntoSource();
 
     expect(submitRunOpenCodePromptMock).toHaveBeenCalledTimes(1);
-    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith({
-      runId: "run-1",
-      prompt: "Resolve file conflicts in src/app.ts",
-      clientRequestId: undefined,
-      agentId: undefined,
-      providerId: undefined,
-      modelId: undefined,
-    });
+    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        prompt: "Resolve file conflicts in src/app.ts",
+        clientRequestId: expect.any(String),
+      }),
+    );
   });
 
   it("submits prompt with message-level selection overrides", async () => {
@@ -433,14 +487,16 @@ describe("useRunDetailModel startup ownership", () => {
     });
 
     expect(accepted).toBe(true);
-    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith({
-      runId: "run-1",
-      prompt: "Ship it",
-      clientRequestId: undefined,
-      agentId: "agent-1",
-      providerId: "provider-1",
-      modelId: "model-1",
-    });
+    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        prompt: "Ship it",
+        clientRequestId: expect.any(String),
+        agentId: "agent-1",
+        providerId: "provider-1",
+        modelId: "model-1",
+      }),
+    );
   });
 
   it("does not inject implicit agent when no prompt override is provided", async () => {
@@ -462,14 +518,13 @@ describe("useRunDetailModel startup ownership", () => {
     const accepted = await modelRef!.agent.submitPrompt("Ship it");
 
     expect(accepted).toBe(true);
-    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith({
-      runId: "run-1",
-      prompt: "Ship it",
-      clientRequestId: undefined,
-      agentId: undefined,
-      providerId: undefined,
-      modelId: undefined,
-    });
+    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        prompt: "Ship it",
+        clientRequestId: expect.any(String),
+      }),
+    );
   });
 
   it("sets submitting state immediately while prompt submission is pending", async () => {

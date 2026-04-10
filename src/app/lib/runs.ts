@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { emitRunDeleted } from "./runDeletedEvents";
 
 export const RUN_STATUSES = [
   "queued",
@@ -1428,6 +1429,10 @@ export const getRun = async (runId: string): Promise<Run> => {
 
 export const deleteRun = async (runId: string): Promise<void> => {
   await invoke("delete_run", { runId });
+  emitRunDeleted({
+    runId,
+    timestamp: new Date().toISOString(),
+  });
 };
 
 export const listRunDiffFiles = async (

@@ -47,6 +47,7 @@ import {
 } from "../../../app/lib/runs";
 import { subscribeToRunStateChanged } from "../../../app/lib/runStateEvents";
 import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
+import { subscribeToRunDeleted } from "../../../app/lib/runDeletedEvents";
 import {
   getRunSelectionOptionsWithCache,
   readRunSelectionOptionsCache,
@@ -398,6 +399,7 @@ export const useRunDetailModel = () => {
   let activeAgentRequestVersion = 0;
   let activeAgentSubscriptionVersion = 0;
   let activePromptSubmitVersion = 0;
+  let deletedRouteRunId = "";
   let isAgentUiSubscribed = false;
   let activeAgentSubscriberId: string | null = null;
   let activeAgentSubscriberRunId: string | null = null;
@@ -1850,7 +1852,11 @@ export const useRunDetailModel = () => {
   const refreshRunDetails = async (runId: string): Promise<void> => {
     const refreshVersion = ++activeRunRefreshVersion;
     const loadedRun = await getRun(runId);
-    if (params.runId !== runId || refreshVersion !== activeRunRefreshVersion) {
+    if (
+      params.runId !== runId ||
+      refreshVersion !== activeRunRefreshVersion ||
+      deletedRouteRunId === runId
+    ) {
       return;
     }
     setRun(loadedRun);
@@ -1865,7 +1871,8 @@ export const useRunDetailModel = () => {
         const loadedProject = await getProject(projectId);
         if (
           params.runId !== runId ||
-          refreshVersion !== activeRunRefreshVersion
+          refreshVersion !== activeRunRefreshVersion ||
+          deletedRouteRunId === runId
         ) {
           return;
         }
@@ -1881,7 +1888,8 @@ export const useRunDetailModel = () => {
       } catch {
         if (
           params.runId !== runId ||
-          refreshVersion !== activeRunRefreshVersion
+          refreshVersion !== activeRunRefreshVersion ||
+          deletedRouteRunId === runId
         ) {
           return;
         }
@@ -1895,7 +1903,8 @@ export const useRunDetailModel = () => {
       const loadedTask = await getTask(loadedRun.taskId);
       if (
         params.runId !== runId ||
-        refreshVersion !== activeRunRefreshVersion
+        refreshVersion !== activeRunRefreshVersion ||
+        deletedRouteRunId === runId
       ) {
         return;
       }
@@ -1903,7 +1912,8 @@ export const useRunDetailModel = () => {
     } catch {
       if (
         params.runId !== runId ||
-        refreshVersion !== activeRunRefreshVersion
+        refreshVersion !== activeRunRefreshVersion ||
+        deletedRouteRunId === runId
       ) {
         return;
       }
@@ -3149,6 +3159,7 @@ export const useRunDetailModel = () => {
   createEffect(() => {
     const runId = params.runId;
     const requestVersion = ++activeAgentRequestVersion;
+    deletedRouteRunId = "";
     clearPendingAgentEventFlush();
     clearPendingAgentSnapshotHydrate();
     setAgentEvents([]);
@@ -3226,6 +3237,42 @@ export const useRunDetailModel = () => {
       // Ignore disposal failures during route transitions.
     }
   };
+
+  createEffect(() => {
+    const runId = params.runId?.trim() ?? "";
+    if (!runId) {
+      return;
+    }
+
+    let disposed = false;
+    const unsubscribe = subscribeToRunDeleted((event) => {
+      if (disposed || event.runId !== runId || params.runId?.trim() !== runId) {
+        return;
+      }
+
+      clearPostMergeRedirectTimer();
+      clearCleanupRefreshFollowUpTimer();
+      const redirectHref = boardHref();
+      deletedRouteRunId = runId;
+      activeRunRequestVersion += 1;
+      activeRunRefreshVersion += 1;
+      setIsLoading(false);
+      setError("");
+      setRun(null);
+      setTask(null);
+      setDiffFiles([]);
+      setDiffFilePayloads({});
+      setDiffFileLoadingPaths({});
+      unsubscribeAgentEvents(runId);
+      void disposeTerminal();
+      navigate(redirectHref, { replace: true });
+    });
+
+    onCleanup(() => {
+      disposed = true;
+      unsubscribe();
+    });
+  });
 
   const initTerminalForRun = async (runId: string): Promise<void> => {
     const normalizedRunId = runId.trim();

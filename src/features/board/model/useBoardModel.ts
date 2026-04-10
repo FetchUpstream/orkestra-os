@@ -30,6 +30,7 @@ import {
 import { subscribeToTaskStatusChanged } from "../../../app/lib/taskStatusEvents";
 import { subscribeToRunStateChanged } from "../../../app/lib/runStateEvents";
 import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
+import { subscribeToRunDeleted } from "../../../app/lib/runDeletedEvents";
 import {
   listProjectTasks,
   searchProjectTasks,
@@ -352,10 +353,12 @@ export const useBoardModel = () => {
   let runSelectionOptionsRequestVersion = 0;
   let runSourceBranchesRequestVersion = 0;
   const taskRunRequestVersions: Record<string, number> = {};
+  const deletedRunIds = new Set<string>();
   let boardEventSubscriptionDisposed = false;
   let removeBoardEventSubscription: (() => void) | null = null;
   let removeBoardRunStatusSubscription: (() => void) | null = null;
   let removeBoardRunStateSubscription: (() => void) | null = null;
+  let removeBoardRunDeletedSubscription: (() => void) | null = null;
 
   const beginTaskRunRequest = (taskId: string): number => {
     const nextVersion = (taskRunRequestVersions[taskId] ?? 0) + 1;
@@ -390,11 +393,43 @@ export const useBoardModel = () => {
         return;
       }
 
-      const miniCards = resolveTaskRunMiniCards(taskValue, runs);
+      const miniCards = resolveTaskRunMiniCards(taskValue, runs).filter(
+        (miniCard) => !deletedRunIds.has(miniCard.runId.trim()),
+      );
       applyTaskRunMiniCards(taskId, miniCards);
     } catch {
       // Ignore transient run refresh failures.
     }
+  };
+
+  const removeDeletedRunMiniCards = (runId: string) => {
+    const normalizedRunId = runId.trim();
+    if (!normalizedRunId) {
+      return;
+    }
+
+    deletedRunIds.add(normalizedRunId);
+
+    setTaskRunMiniCards((current) => {
+      let didChange = false;
+      const next: Record<string, BoardTaskRunMiniCard[]> = {};
+
+      for (const [taskId, miniCards] of Object.entries(current)) {
+        const remaining = miniCards.filter(
+          (miniCard) => miniCard.runId !== normalizedRunId,
+        );
+
+        if (remaining.length !== miniCards.length) {
+          didChange = true;
+        }
+
+        if (remaining.length > 0) {
+          next[taskId] = remaining;
+        }
+      }
+
+      return didChange ? next : current;
+    });
   };
 
   const selectedProject = createMemo(
@@ -1204,6 +1239,14 @@ export const useBoardModel = () => {
       removeBoardRunStateSubscription = unlisten;
     })();
 
+    removeBoardRunDeletedSubscription = subscribeToRunDeleted((event) => {
+      if (boardEventSubscriptionDisposed) {
+        return;
+      }
+
+      removeDeletedRunMiniCards(event.runId);
+    });
+
     setError("");
     try {
       const loadedProjects = await listProjects();
@@ -1244,6 +1287,10 @@ export const useBoardModel = () => {
     if (removeBoardRunStateSubscription) {
       removeBoardRunStateSubscription();
       removeBoardRunStateSubscription = null;
+    }
+    if (removeBoardRunDeletedSubscription) {
+      removeBoardRunDeletedSubscription();
+      removeBoardRunDeletedSubscription = null;
     }
   });
 

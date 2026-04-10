@@ -26,10 +26,12 @@ const {
   listTaskRunSourceBranchesMock,
   startRunOpenCodeMock,
   createRunMock,
+  deleteRunMock,
   listTaskDependenciesMock,
   deleteTaskMock,
   getRunSelectionOptionsWithCacheMock,
   readRunSelectionOptionsCacheMock,
+  subscribeToRunDeletedMock,
 } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   getProjectMock: vi.fn(),
@@ -38,11 +40,17 @@ const {
   listTaskRunSourceBranchesMock: vi.fn(),
   startRunOpenCodeMock: vi.fn(),
   createRunMock: vi.fn(),
+  deleteRunMock: vi.fn(),
   listTaskDependenciesMock: vi.fn(),
   deleteTaskMock: vi.fn(),
   getRunSelectionOptionsWithCacheMock: vi.fn(),
   readRunSelectionOptionsCacheMock: vi.fn(),
+  subscribeToRunDeletedMock: vi.fn(),
 }));
+
+let runDeletedListener:
+  | ((event: { runId: string; timestamp: string }) => void)
+  | null = null;
 
 vi.mock("@solidjs/router", () => ({
   useNavigate: () => navigateMock,
@@ -69,10 +77,14 @@ vi.mock("../../../../app/lib/tasks", () => ({
 
 vi.mock("../../../../app/lib/runs", () => ({
   createRun: createRunMock,
-  deleteRun: vi.fn(),
+  deleteRun: deleteRunMock,
   listTaskRuns: listTaskRunsMock,
   listTaskRunSourceBranches: listTaskRunSourceBranchesMock,
   startRunOpenCode: startRunOpenCodeMock,
+}));
+
+vi.mock("../../../../app/lib/runDeletedEvents", () => ({
+  subscribeToRunDeleted: subscribeToRunDeletedMock,
 }));
 
 vi.mock("../../../../app/lib/runSelectionOptionsCache", () => ({
@@ -111,10 +123,23 @@ describe("useTaskDetailModel start run", () => {
     listTaskRunSourceBranchesMock.mockReset();
     startRunOpenCodeMock.mockReset();
     createRunMock.mockReset();
+    deleteRunMock.mockReset();
     listTaskDependenciesMock.mockReset();
     deleteTaskMock.mockReset();
     getRunSelectionOptionsWithCacheMock.mockReset();
     readRunSelectionOptionsCacheMock.mockReset();
+    subscribeToRunDeletedMock.mockReset();
+    runDeletedListener = null;
+    subscribeToRunDeletedMock.mockImplementation(
+      (onEvent: (event: { runId: string; timestamp: string }) => void) => {
+        runDeletedListener = onEvent;
+        return () => {
+          if (runDeletedListener === onEvent) {
+            runDeletedListener = null;
+          }
+        };
+      },
+    );
 
     getTaskMock.mockResolvedValue({
       id: "task-1",
@@ -165,6 +190,12 @@ describe("useTaskDetailModel start run", () => {
       agents: [],
       providers: [{ id: "provider-1", label: "OpenAI" }],
       models: [{ id: "model-1", label: "GPT-5", providerId: "provider-1" }],
+    });
+    deleteRunMock.mockImplementation(async (runId: string) => {
+      runDeletedListener?.({
+        runId,
+        timestamp: "2026-01-01T00:00:04.000Z",
+      });
     });
   });
 
@@ -967,6 +998,63 @@ describe("useTaskDetailModel start run", () => {
     await ref.current?.onStartRun("run-1");
 
     expect(startRunOpenCodeMock).not.toHaveBeenCalled();
+  });
+
+  it("reconciles deleted runs across local run list and per-run ui state", async () => {
+    startRunOpenCodeMock.mockResolvedValueOnce({
+      state: "error",
+      reason: "Agent failed",
+      queuedAt: "2026-01-01T00:00:01.000Z",
+      clientRequestId: "initial-run-message:run-2",
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.runs().length).toBe(2);
+    });
+
+    await ref.current?.onStartRun("run-2");
+
+    await waitFor(() => {
+      expect(ref.current?.runStartErrors()["run-2"]).toBe("Agent failed");
+    });
+
+    await ref.current?.onDeleteRun("run-2");
+
+    await waitFor(() => {
+      expect(ref.current?.runs().some((run) => run.id === "run-2")).toBe(false);
+      expect(ref.current?.runStartErrors()["run-2"]).toBeUndefined();
+      expect(ref.current?.warmingRunIds()["run-2"]).toBeUndefined();
+    });
+    expect(ref.current?.actionError()).toBe("");
+  });
+
+  it("keeps deleted run visible and shows error when deletion fails", async () => {
+    deleteRunMock.mockRejectedValueOnce(new Error("delete failed"));
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.runs().length).toBe(2);
+    });
+
+    await ref.current?.onDeleteRun("run-2");
+
+    expect(ref.current?.runs().some((run) => run.id === "run-2")).toBe(true);
+    expect(ref.current?.actionError()).toContain("Failed to delete run");
   });
 
   it("resolves task detail close destination to the current task project board", async () => {
