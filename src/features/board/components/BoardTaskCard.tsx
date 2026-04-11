@@ -51,6 +51,8 @@ const BoardTaskCard: Component<Props> = (props) => {
     switch (miniCard.state) {
       case "ready_to_merge":
         return <span class="text-success font-semibold">✓</span>;
+      case "question_pending":
+        return <span class="board-task-run-warning font-semibold">?</span>;
       case "permission_requested":
         return <span class="board-task-run-warning font-semibold">?</span>;
       case "waiting_for_input":

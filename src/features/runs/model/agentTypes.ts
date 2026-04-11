@@ -123,7 +123,21 @@ export type UiQuestionRequest = {
   requestId: string;
   sessionId: string;
   questions: unknown[];
+  sourceKind?: "main" | "subagent";
+  sourceLabel?: string;
+  status?: "pending" | "replied" | "rejected" | "failed";
+  dedupeKey?: string;
+  receivedAt?: string | number | null;
+  resolvedAt?: string | number | null;
+  failureMessage?: string;
   raw?: unknown;
+};
+
+export type AgentQuestionState = {
+  activeRequest: UiQuestionRequest | null;
+  queuedRequests: UiQuestionRequest[];
+  resolvedRequests: UiQuestionRequest[];
+  failedRequests: UiQuestionRequest[];
 };
 
 export type UiPermissionRequest = {
@@ -177,6 +191,8 @@ export type AgentStore = {
   messagesById: Record<string, UiMessage>;
   messageOrder: string[];
   pendingQuestionsById: Record<string, UiQuestionRequest>;
+  resolvedQuestionsById: Record<string, UiQuestionRequest>;
+  failedQuestionsById: Record<string, UiQuestionRequest>;
   pendingPermissionsById: Record<string, UiPermissionRequest>;
   resolvedPermissionsById: Record<string, UiPermissionRequest>;
   failedPermissionsById: Record<string, UiPermissionRequest>;

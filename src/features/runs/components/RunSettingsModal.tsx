@@ -21,11 +21,13 @@ import {
   type Component,
 } from "solid-js";
 import type {
+  RunAgentOption,
   RunModelOption,
   RunSelectionOption,
   RunSourceBranchOption,
 } from "../../../app/lib/runs";
 import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
+import RunAgentSelectOptions from "./RunAgentSelectOptions";
 
 type RunSettingsModalProps = {
   isOpen: Accessor<boolean>;
@@ -36,7 +38,7 @@ type RunSettingsModalProps = {
   isLoadingRunSourceBranches: Accessor<boolean>;
   runSelectionOptionsError: Accessor<string>;
   runSourceBranchError: Accessor<string>;
-  runAgentOptions: Accessor<RunSelectionOption[]>;
+  runAgentOptions: Accessor<RunAgentOption[]>;
   runProviderOptions: Accessor<RunSelectionOption[]>;
   runSourceBranchOptions: Accessor<RunSourceBranchOption[]>;
   visibleRunModelOptions: Accessor<RunModelOption[]>;
@@ -237,11 +239,10 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
                     disabled={props.isSubmitting()}
                     aria-label="Default run agent"
                   >
-                    <For each={props.runAgentOptions()}>
-                      {(option) => (
-                        <option value={option.id}>{option.label}</option>
-                      )}
-                    </For>
+                    <RunAgentSelectOptions
+                      options={props.runAgentOptions()}
+                      includeSystemDefaultOption
+                    />
                   </select>
                 </label>
                 <label class="projects-field task-runs-default-field">

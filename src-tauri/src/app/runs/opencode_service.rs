@@ -14,11 +14,12 @@ use crate::app::errors::AppError;
 use crate::app::projects::service::ProjectsService;
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, OpenCodeDependencyStatusDto,
-    RawAgentEvent, ReplyRunOpenCodePermissionResponse, RunAgentDto, RunAgentsResponseDto, RunDto,
-    RunModelSelectionDto, RunOpenCodeChatModeDto, RunOpenCodeSessionMessageDto,
-    RunOpenCodeSessionTodoDto, RunProviderDto, RunProvidersResponseDto,
-    RunSelectionCatalogResponseDto, StartRunOpenCodeResponse, StopRunOpenCodeResponse,
-    SubmitRunOpenCodePromptResponse,
+    RawAgentEvent, RejectRunOpenCodeQuestionResponse, ReplyRunOpenCodePermissionResponse,
+    ReplyRunOpenCodeQuestionResponse, RunAgentDto, RunAgentsResponseDto, RunDto,
+    RunModelSelectionDto, RunOpenCodeChatModeDto, RunOpenCodeQuestionRequestDto,
+    RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, RunProviderDto,
+    RunProvidersResponseDto, RunSelectionCatalogResponseDto, StartRunOpenCodeResponse,
+    StopRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::run_state_service::RunStateService;
 use crate::app::runs::service::RunsService;
@@ -34,7 +35,7 @@ use opencode::{
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::async_runtime::JoinHandle;
@@ -110,6 +111,26 @@ enum OpenCodeServiceError {
 
     #[error("failed to reply to OpenCode permission request '{request_id}'")]
     PermissionReply {
+        request_id: String,
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to list OpenCode question requests")]
+    QuestionList {
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to reply to OpenCode question request '{request_id}'")]
+    QuestionReply {
+        request_id: String,
+        #[source]
+        source: opencode::Error,
+    },
+
+    #[error("failed to reject OpenCode question request '{request_id}'")]
+    QuestionReject {
         request_id: String,
         #[source]
         source: opencode::Error,
@@ -215,6 +236,21 @@ fn value_array_to_todo_wrappers(value: serde_json::Value) -> Vec<RunOpenCodeSess
         .unwrap_or_default()
 }
 
+fn value_array_to_question_request_wrappers(
+    value: serde_json::Value,
+) -> Vec<RunOpenCodeQuestionRequestDto> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .cloned()
+                .map(|payload| RunOpenCodeQuestionRequestDto { payload })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn to_nonempty_trimmed_string(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -241,6 +277,12 @@ fn build_permission_reply_body(session_id: &str, reply: &str, remember: bool) ->
         "sessionID": session_id,
         "reply": reply,
         "remember": remember,
+    })
+}
+
+fn build_question_reply_body(answers: Vec<Vec<String>>) -> serde_json::Value {
+    serde_json::json!({
+        "answers": answers,
     })
 }
 
@@ -469,6 +511,7 @@ fn merge_provider_options(sources: Vec<Vec<RunProviderDto>>) -> Vec<RunProviderD
     merged
 }
 
+#[cfg(test)]
 fn parse_agents_from_config_payload(value: &serde_json::Value) -> Vec<RunAgentDto> {
     fn parse_agent_entry(
         entry: &serde_json::Value,
@@ -484,9 +527,15 @@ fn parse_agents_from_config_payload(value: &serde_json::Value) -> Vec<RunAgentDt
                 }
             },
         )?;
-        let name = parse_string_field(entry, &["name", "title", "displayName", "display_name"])
-            .or_else(|| fallback_id.and_then(|v| to_nonempty_trimmed_string(Some(v))));
-        Some(RunAgentDto { id, name })
+        Some(RunAgentDto {
+            label: parse_string_field(entry, &["name", "title", "displayName", "display_name"])
+                .or_else(|| fallback_id.and_then(|v| to_nonempty_trimmed_string(Some(v))))
+                .unwrap_or_else(|| id.clone()),
+            id,
+            mode: "primary".to_string(),
+            scope: "inherited".to_string(),
+            selectable: true,
+        })
     }
 
     let mut agents = Vec::new();
@@ -541,6 +590,7 @@ fn parse_agents_from_config_payload(value: &serde_json::Value) -> Vec<RunAgentDt
     agents
 }
 
+#[cfg(test)]
 fn dedupe_agents(agents: Vec<RunAgentDto>) -> Vec<RunAgentDto> {
     let mut seen = HashSet::new();
     let mut deduped = Vec::new();
@@ -550,6 +600,289 @@ fn dedupe_agents(agents: Vec<RunAgentDto>) -> Vec<RunAgentDto> {
         }
     }
     deduped
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiscoveredAgentMode {
+    Primary,
+    Subagent,
+    All,
+}
+
+impl DiscoveredAgentMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "primary" => Some(Self::Primary),
+            "subagent" => Some(Self::Subagent),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Primary => "primary",
+            Self::Subagent => "subagent",
+            Self::All => "all",
+        }
+    }
+
+    fn is_selectable_for_main_agent(self) -> bool {
+        matches!(self, Self::Primary | Self::All)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiscoveredAgentScope {
+    Project,
+    Global,
+    Inherited,
+}
+
+impl DiscoveredAgentScope {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Global => "global",
+            Self::Inherited => "inherited",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AuthoritativeAgentDescriptor {
+    id: String,
+    label: String,
+    mode: DiscoveredAgentMode,
+    hidden: bool,
+}
+
+fn parse_authoritative_agents_from_app_payload(
+    value: &serde_json::Value,
+) -> Vec<AuthoritativeAgentDescriptor> {
+    let Some(entries) = value.as_array() else {
+        return Vec::new();
+    };
+
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let id = parse_string_field(entry, &["name"])?;
+            let mode = parse_string_field(entry, &["mode"])
+                .and_then(|mode| DiscoveredAgentMode::parse(&mode))?;
+            let hidden = entry
+                .as_object()
+                .and_then(|object| object.get("hidden"))
+                .and_then(|candidate| candidate.as_bool())
+                .unwrap_or(false);
+
+            Some(AuthoritativeAgentDescriptor {
+                label: id.clone(),
+                id,
+                mode,
+                hidden,
+            })
+        })
+        .collect()
+}
+
+fn dedupe_authoritative_agents(
+    agents: Vec<AuthoritativeAgentDescriptor>,
+) -> Vec<AuthoritativeAgentDescriptor> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::new();
+    for agent in agents {
+        if seen.insert(agent.id.clone()) {
+            deduped.push(agent);
+        }
+    }
+    deduped
+}
+
+fn parse_agent_names_from_config_payload(value: &serde_json::Value) -> HashSet<String> {
+    fn collect_agent_names(
+        value: &serde_json::Value,
+        fallback_id: Option<&str>,
+        allow_fallback_id: bool,
+    ) -> Option<String> {
+        parse_string_field(value, &["name", "id", "agentID", "agentId"]).or_else(|| {
+            if allow_fallback_id {
+                fallback_id.and_then(|candidate| to_nonempty_trimmed_string(Some(candidate)))
+            } else {
+                None
+            }
+        })
+    }
+
+    let mut names = HashSet::new();
+
+    if let Some(object) = value.as_object() {
+        for section in ["agent", "agents"] {
+            let Some(section_value) = object.get(section) else {
+                continue;
+            };
+
+            if let Some(array) = section_value.as_array() {
+                for entry in array {
+                    if let Some(name) = collect_agent_names(entry, None, false) {
+                        names.insert(name);
+                    }
+                }
+                continue;
+            }
+
+            if let Some(section_object) = section_value.as_object() {
+                for (key, entry) in section_object {
+                    if !entry.is_object() {
+                        continue;
+                    }
+                    if let Some(name) = collect_agent_names(entry, Some(key), true) {
+                        names.insert(name);
+                    }
+                }
+            }
+        }
+    }
+
+    names
+}
+
+fn read_agent_names_from_config_file(path: &Path) -> HashSet<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+        .map(|value| parse_agent_names_from_config_payload(&value))
+        .unwrap_or_default()
+}
+
+fn collect_markdown_agent_names_from_dir(path: &Path) -> HashSet<String> {
+    fn visit(path: &Path, root: &Path, names: &mut HashSet<String>) {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                visit(&entry_path, root, names);
+                continue;
+            }
+
+            let is_markdown = entry_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("md"));
+            if !is_markdown {
+                continue;
+            }
+
+            let Some(relative) = entry_path.strip_prefix(root).ok() else {
+                continue;
+            };
+            let relative_without_extension = relative.with_extension("");
+            let Some(without_extension) = relative_without_extension.to_str() else {
+                continue;
+            };
+            let normalized = without_extension.replace('\\', "/");
+            if let Some(name) = to_nonempty_trimmed_string(Some(&normalized)) {
+                names.insert(name);
+            }
+        }
+    }
+
+    let mut names = HashSet::new();
+    if path.is_dir() {
+        visit(path, path, &mut names);
+    }
+    names
+}
+
+fn modern_global_opencode_root(project_env: &HashMap<String, String>) -> Option<PathBuf> {
+    let env_config_dir = project_env
+        .get("OPENCODE_CONFIG_DIR")
+        .and_then(|value| to_nonempty_trimmed_string(Some(value)))
+        .or_else(|| {
+            std::env::var("OPENCODE_CONFIG_DIR")
+                .ok()
+                .and_then(|value| to_nonempty_trimmed_string(Some(&value)))
+        });
+    if let Some(config_dir) = env_config_dir {
+        return Some(PathBuf::from(config_dir));
+    }
+
+    let home = std::env::var("HOME")
+        .ok()
+        .and_then(|value| to_nonempty_trimmed_string(Some(&value)))?;
+    let xdg_config_home = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .and_then(|value| to_nonempty_trimmed_string(Some(&value)));
+
+    Some(match xdg_config_home {
+        Some(root) => PathBuf::from(root).join("opencode"),
+        None => PathBuf::from(home).join(".config").join("opencode"),
+    })
+}
+
+fn legacy_global_opencode_root() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .and_then(|value| to_nonempty_trimmed_string(Some(&value)))
+        .map(|home| PathBuf::from(home).join(".opencode"))
+}
+
+fn collect_agent_names_from_scope_paths(paths: &[PathBuf]) -> HashSet<String> {
+    let mut names = HashSet::new();
+
+    for root in paths {
+        let config_path = root.join("opencode.json");
+        names.extend(read_agent_names_from_config_file(&config_path));
+        names.extend(collect_markdown_agent_names_from_dir(&root.join("agent")));
+        names.extend(collect_markdown_agent_names_from_dir(&root.join("agents")));
+    }
+
+    names
+}
+
+fn classify_effective_agents(
+    agents: Vec<AuthoritativeAgentDescriptor>,
+    canonical_repo_root: &Path,
+    project_env: &HashMap<String, String>,
+) -> Vec<RunAgentDto> {
+    let project_agent_names = collect_agent_names_from_scope_paths(&[
+        canonical_repo_root.to_path_buf(),
+        canonical_repo_root.join(".opencode"),
+    ]);
+
+    let mut global_scope_paths = Vec::new();
+    if let Some(path) = modern_global_opencode_root(project_env) {
+        global_scope_paths.push(path);
+    }
+    if let Some(path) = legacy_global_opencode_root() {
+        global_scope_paths.push(path);
+    }
+    let global_agent_names = collect_agent_names_from_scope_paths(&global_scope_paths);
+
+    agents
+        .into_iter()
+        .filter(|agent| !agent.hidden && agent.mode.is_selectable_for_main_agent())
+        .map(|agent| {
+            let scope = if project_agent_names.contains(&agent.id) {
+                DiscoveredAgentScope::Project
+            } else if global_agent_names.contains(&agent.id) {
+                DiscoveredAgentScope::Global
+            } else {
+                DiscoveredAgentScope::Inherited
+            };
+
+            RunAgentDto {
+                id: agent.id,
+                label: agent.label,
+                mode: agent.mode.as_str().to_string(),
+                scope: scope.as_str().to_string(),
+                selectable: true,
+            }
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -772,6 +1105,14 @@ struct RunOpenCodeUsageSnapshot {
     viewer_count: usize,
     active_operation_count: usize,
     last_interaction_at: String,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub(crate) struct RunOpenCodeTrackedState {
+    pub has_event_stream_task: bool,
+    pub subscriber_count: usize,
+    pub subscriber_task_count: usize,
 }
 
 struct RunOpenCodeViewerLease {
@@ -1187,6 +1528,7 @@ struct SessionRuntimeState {
     last_status_hint: Option<String>,
     pending_questions: HashSet<String>,
     pending_permissions: HashSet<String>,
+    interrupted_run_state: Option<String>,
     idle_cleanup_ready: bool,
 }
 
@@ -1196,6 +1538,7 @@ impl Default for SessionRuntimeState {
             last_status_hint: None,
             pending_questions: HashSet::new(),
             pending_permissions: HashSet::new(),
+            interrupted_run_state: None,
             idle_cleanup_ready: false,
         }
     }
@@ -1293,50 +1636,56 @@ impl RunsOpenCodeService {
         }
 
         let run = self.runs_service.get_run_model(run_id).await?;
-        if run.cleanup_state != "pending" {
-            return Ok(());
-        }
-        let context = self
-            .runs_service
-            .get_run_initial_prompt_context(run_id)
-            .await?;
-        if !self.runs_service.mark_cleanup_running(run_id).await? {
-            return Ok(());
-        }
-        let cleanup_result = self
-            .run_lifecycle_script_in_worktree(run_id, context.cleanup_script.as_deref())
-            .await;
-        match cleanup_result {
-            Ok(()) => {
-                let _ = self.runs_service.mark_cleanup_succeeded(run_id).await?;
-                let _ = self
-                    .run_status_transition_service
-                    .handle_agent_waiting(&run.task_id, run_id, session_id, source_event)
-                    .await?;
-                let _ = self
-                    .task_status_transition_service
-                    .handle_agent_turn_completed(&run.task_id, run_id, session_id, source_event)
-                    .await?;
-            }
-            Err(err) => {
-                let error_text = err.to_string();
-                let failure_prompt = Self::compose_cleanup_failure_prompt(err.failed_commands());
-                let _ = self
+        match run.cleanup_state.as_str() {
+            "pending" => {
+                let context = self
                     .runs_service
-                    .mark_cleanup_failed(run_id, &error_text)
+                    .get_run_initial_prompt_context(run_id)
                     .await?;
-                self.submit_run_opencode_prompt(
-                    run_id,
-                    &failure_prompt,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .await?;
+                if !self.runs_service.mark_cleanup_running(run_id).await? {
+                    return Ok(());
+                }
+                let cleanup_result = self
+                    .run_lifecycle_script_in_worktree(run_id, context.cleanup_script.as_deref())
+                    .await;
+                match cleanup_result {
+                    Ok(()) => {
+                        let _ = self.runs_service.mark_cleanup_succeeded(run_id).await?;
+                    }
+                    Err(err) => {
+                        let error_text = err.to_string();
+                        let failure_prompt =
+                            Self::compose_cleanup_failure_prompt(err.failed_commands());
+                        let _ = self
+                            .runs_service
+                            .mark_cleanup_failed(run_id, &error_text)
+                            .await?;
+                        self.submit_run_opencode_prompt(
+                            run_id,
+                            &failure_prompt,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                }
             }
+            "running" | "failed" => return Ok(()),
+            _ => {}
         }
+
+        let _ = self
+            .run_status_transition_service
+            .handle_agent_waiting(&run.task_id, run_id, session_id, source_event)
+            .await?;
+        let _ = self
+            .task_status_transition_service
+            .handle_agent_turn_completed(&run.task_id, run_id, session_id, source_event)
+            .await?;
 
         Ok(())
     }
@@ -1405,7 +1754,11 @@ impl RunsOpenCodeService {
         let value: serde_json::Value = serde_json::from_str(payload).ok()?;
         let object = value.as_object()?;
         let properties = object.get("properties").and_then(|value| value.as_object());
-        for source in [Some(object), properties] {
+        let message = object.get("message").and_then(|value| value.as_object());
+        let message_properties = message
+            .and_then(|value| value.get("properties"))
+            .and_then(|value| value.as_object());
+        for source in [Some(object), properties, message, message_properties] {
             let Some(source) = source else {
                 continue;
             };
@@ -1435,6 +1788,153 @@ impl RunsOpenCodeService {
                 "permissionId",
             ],
         )
+    }
+
+    fn parse_question_request_id(payload: &str) -> Option<String> {
+        Self::parse_payload_property(payload, &["requestID", "requestId", "id"])
+    }
+
+    fn parse_question_request_id_value(value: &serde_json::Value) -> Option<String> {
+        parse_string_field(value, &["requestID", "requestId", "id"])
+    }
+
+    async fn refresh_pending_question_requests(
+        &self,
+        run_id: &str,
+        handle: &RunOpenCodeHandle,
+    ) -> Result<HashSet<String>, AppError> {
+        let response = handle
+            .client
+            .call_operation("question.list", RequestOptions::default())
+            .await
+            .map_err(|source| OpenCodeServiceError::QuestionList { source })
+            .context("while loading pending question requests from OpenCode")
+            .map_err(app_error_from_anyhow)?;
+
+        let pending_ids = response
+            .data
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Self::parse_question_request_id_value)
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+
+        {
+            let mut state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions = pending_ids.clone();
+        }
+
+        let has_pending_permissions = {
+            let state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            !state.pending_permissions.is_empty()
+        };
+
+        if pending_ids.is_empty() {
+            if has_pending_permissions {
+                let _ = self
+                    .run_state_service
+                    .handle_permission_requested(run_id)
+                    .await?;
+            } else {
+                self.restore_interrupted_run_state_or_recompute(
+                    run_id,
+                    &handle.session_runtime_state,
+                    "question_list_refreshed",
+                )
+                .await?;
+            }
+        } else {
+            let _ = self
+                .run_state_service
+                .handle_question_pending(run_id, "question_list_refreshed")
+                .await?;
+        }
+
+        Ok(pending_ids)
+    }
+
+    async fn remember_interrupted_special_run_state(
+        &self,
+        run_id: &str,
+        session_runtime_state: &Arc<Mutex<SessionRuntimeState>>,
+    ) -> Result<(), AppError> {
+        let run = self.runs_service.get_run_model(run_id).await?;
+        let Some(current_state) = self
+            .run_state_service
+            .resolve_effective_run_state(&run)
+            .await?
+        else {
+            return Ok(());
+        };
+
+        if !matches!(
+            current_state.as_str(),
+            "committing_changes" | "resolving_rebase_conflicts"
+        ) {
+            return Ok(());
+        }
+
+        let mut state = session_runtime_state
+            .lock()
+            .map_err(|_| lock_error("OpenCode session runtime state"))?;
+        if state.interrupted_run_state.is_none() {
+            state.interrupted_run_state = Some(current_state);
+        }
+
+        Ok(())
+    }
+
+    async fn restore_interrupted_run_state_or_recompute(
+        &self,
+        run_id: &str,
+        session_runtime_state: &Arc<Mutex<SessionRuntimeState>>,
+        transition_source: &str,
+    ) -> Result<Option<String>, AppError> {
+        let run = self.runs_service.get_run_model(run_id).await?;
+        let interrupted_state = {
+            let mut state = session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            if run.status == "in_progress" {
+                state.interrupted_run_state.take()
+            } else {
+                state.interrupted_run_state = None;
+                None
+            }
+        };
+
+        match interrupted_state.as_deref() {
+            Some("committing_changes") => {
+                let event = self
+                    .run_state_service
+                    .handle_commit_requested(run_id)
+                    .await?;
+                Ok(event.and_then(|payload| payload.new_run_state))
+            }
+            Some("resolving_rebase_conflicts") => {
+                let event = self
+                    .run_state_service
+                    .handle_rebase_conflicts_started(run_id)
+                    .await?;
+                Ok(event.and_then(|payload| payload.new_run_state))
+            }
+            _ => {
+                let event = self
+                    .run_state_service
+                    .recompute_run_state(run_id, transition_source)
+                    .await?;
+                Ok(event.and_then(|payload| payload.new_run_state))
+            }
+        }
     }
 
     /// Extracts a non-empty, trimmed status hint from a JSON payload.
@@ -1514,7 +2014,8 @@ impl RunsOpenCodeService {
     ///
     /// # Returns
     ///
-    /// `Ok(())` on successful processing; an `AppError` if underlying services or locks fail.
+    /// Returns the backend-derived run state to attach to the forwarded agent event when this
+    /// runtime event directly caused a persisted run-state transition; otherwise `None`.
     ///
     /// # Examples
     ///
@@ -1533,7 +2034,7 @@ impl RunsOpenCodeService {
         event_name: &str,
         payload: &str,
         session_runtime_state: &Arc<Mutex<SessionRuntimeState>>,
-    ) -> Result<(), AppError> {
+    ) -> Result<Option<String>, AppError> {
         let runtime_event_name = if event_name == "message" {
             Self::parse_payload_property(payload, &["type"])
                 .unwrap_or_else(|| event_name.to_string())
@@ -1546,36 +2047,54 @@ impl RunsOpenCodeService {
                 let Some(session_id) =
                     Self::parse_payload_property(payload, &["sessionID", "sessionId"])
                 else {
-                    return Ok(());
+                    return Ok(None);
                 };
 
                 if !self
                     .event_matches_current_run_session(run_id, &session_id)
                     .await?
                 {
-                    return Ok(());
+                    return Ok(None);
                 }
 
                 let Some(status) = Self::parse_status_hint(payload) else {
-                    return Ok(());
+                    return Ok(None);
                 };
 
                 if status != "busy" && status != "idle" && status != "active" && status != "error" {
-                    return Ok(());
+                    return Ok(None);
                 }
 
+                let should_mark_running = status == "busy" || status == "active";
                 let should_handle_idle = {
                     let mut state = session_runtime_state
                         .lock()
                         .map_err(|_| lock_error("OpenCode session runtime state"))?;
                     state.last_status_hint = Some(status.clone());
-                    if state.last_status_hint.as_deref() == Some("busy")
-                        || state.last_status_hint.as_deref() == Some("active")
-                    {
+                    if should_mark_running {
                         state.idle_cleanup_ready = true;
                     }
                     status == "idle"
                 };
+
+                if should_mark_running {
+                    let _ = self
+                        .run_status_transition_service
+                        .handle_run_started(run_id)
+                        .await?;
+                    let event = self
+                        .run_state_service
+                        .handle_agent_active(run_id, "session.status=busy")
+                        .await?;
+                    if let Some(run_state) = event.and_then(|payload| payload.new_run_state) {
+                        return Ok(Some(run_state));
+                    }
+                    let run = self.runs_service.get_run_model(run_id).await?;
+                    return self
+                        .run_state_service
+                        .resolve_effective_run_state(&run)
+                        .await;
+                }
 
                 if should_handle_idle {
                     return self
@@ -1586,73 +2105,79 @@ impl RunsOpenCodeService {
                             true,
                             session_runtime_state,
                         )
-                        .await;
+                        .await
+                        .map(|_| None);
                 }
 
-                Ok(())
+                Ok(None)
             }
             "question.asked" => {
-                let Some(session_id) =
+                let Some(_session_id) =
                     Self::parse_payload_property(payload, &["sessionID", "sessionId"])
                 else {
-                    return Ok(());
+                    return Ok(None);
                 };
-                if !self
-                    .event_matches_current_run_session(run_id, &session_id)
-                    .await?
-                {
-                    return Ok(());
-                }
 
-                let Some(request_id) =
-                    Self::parse_payload_property(payload, &["requestID", "requestId"])
-                else {
-                    return Ok(());
+                let Some(request_id) = Self::parse_question_request_id(payload) else {
+                    return Ok(None);
                 };
+                self.remember_interrupted_special_run_state(run_id, session_runtime_state)
+                    .await?;
                 {
                     let mut state = session_runtime_state
                         .lock()
                         .map_err(|_| lock_error("OpenCode session runtime state"))?;
                     state.pending_questions.insert(request_id);
                 }
-                let _ = self
+                let event = self
                     .run_state_service
-                    .handle_waiting_for_input(run_id, "question_asked")
+                    .handle_question_pending(run_id, "question_asked")
                     .await?;
-                Ok(())
+                Ok(event.and_then(|payload| payload.new_run_state))
             }
             "question.replied" | "question.rejected" => {
-                let Some(session_id) =
+                let Some(_session_id) =
                     Self::parse_payload_property(payload, &["sessionID", "sessionId"])
                 else {
-                    return Ok(());
+                    return Ok(None);
                 };
-                if !self
-                    .event_matches_current_run_session(run_id, &session_id)
-                    .await?
-                {
-                    return Ok(());
-                }
 
-                let Some(request_id) =
-                    Self::parse_payload_property(payload, &["requestID", "requestId"])
-                else {
-                    return Ok(());
+                let Some(request_id) = Self::parse_question_request_id(payload) else {
+                    return Ok(None);
                 };
-                {
+                let (has_pending_questions, has_pending_permissions) = {
                     let mut state = session_runtime_state
                         .lock()
                         .map_err(|_| lock_error("OpenCode session runtime state"))?;
                     state.pending_questions.remove(&request_id);
+                    (
+                        !state.pending_questions.is_empty(),
+                        !state.pending_permissions.is_empty(),
+                    )
+                };
+                if has_pending_questions {
+                    return Ok(None);
                 }
-                let _ = self.run_state_service.handle_user_replied(run_id).await?;
-                Ok(())
+                if has_pending_permissions {
+                    let event = self
+                        .run_state_service
+                        .handle_permission_requested(run_id)
+                        .await?;
+                    Ok(event.and_then(|payload| payload.new_run_state))
+                } else {
+                    self.restore_interrupted_run_state_or_recompute(
+                        run_id,
+                        session_runtime_state,
+                        "user_reply",
+                    )
+                    .await
+                }
             }
             "permission.asked" => {
                 let Some(session_id) =
                     Self::parse_payload_property(payload, &["sessionID", "sessionId"])
                 else {
-                    return Ok(());
+                    return Ok(None);
                 };
                 let request_id_hint = Self::parse_permission_request_id(payload);
                 let permission_kind = Self::parse_payload_property(
@@ -1671,8 +2196,10 @@ impl RunsOpenCodeService {
                     "Received OpenCode permission event"
                 );
                 let Some(request_id) = Self::parse_permission_request_id(payload) else {
-                    return Ok(());
+                    return Ok(None);
                 };
+                self.remember_interrupted_special_run_state(run_id, session_runtime_state)
+                    .await?;
                 let (was_new, pending_count) = {
                     let mut state = session_runtime_state
                         .lock()
@@ -1693,17 +2220,17 @@ impl RunsOpenCodeService {
                     was_new = was_new,
                     "Tracked pending permission request"
                 );
-                let _ = self
+                let event = self
                     .run_state_service
                     .handle_permission_requested(run_id)
                     .await?;
-                Ok(())
+                Ok(event.and_then(|payload| payload.new_run_state))
             }
             "permission.replied" | "permission.rejected" => {
                 let Some(session_id) =
                     Self::parse_payload_property(payload, &["sessionID", "sessionId"])
                 else {
-                    return Ok(());
+                    return Ok(None);
                 };
                 let request_id_hint = Self::parse_permission_request_id(payload);
                 info!(
@@ -1717,7 +2244,7 @@ impl RunsOpenCodeService {
                     "Received OpenCode permission resolution event"
                 );
                 let Some(request_id) = Self::parse_permission_request_id(payload) else {
-                    return Ok(());
+                    return Ok(None);
                 };
                 let (removed, pending_count, has_pending_questions) = {
                     let mut state = session_runtime_state
@@ -1740,25 +2267,28 @@ impl RunsOpenCodeService {
                     "Cleared pending permission request from runtime state"
                 );
                 if removed && pending_count == 0 && !has_pending_questions {
-                    let _ = self
-                        .run_state_service
-                        .handle_permission_resolved(run_id)
-                        .await?;
+                    return self
+                        .restore_interrupted_run_state_or_recompute(
+                            run_id,
+                            session_runtime_state,
+                            "permission_resolved",
+                        )
+                        .await;
                 }
-                Ok(())
+                Ok(None)
             }
             "session.idle" => {
                 let Some(session_id) =
                     Self::parse_payload_property(payload, &["sessionID", "sessionId"])
                 else {
-                    return Ok(());
+                    return Ok(None);
                 };
 
                 if !self
                     .event_matches_current_run_session(run_id, &session_id)
                     .await?
                 {
-                    return Ok(());
+                    return Ok(None);
                 }
 
                 self.handle_session_idle_signal(
@@ -1769,8 +2299,9 @@ impl RunsOpenCodeService {
                     session_runtime_state,
                 )
                 .await
+                .map(|_| None)
             }
-            _ => Ok(()),
+            _ => Ok(None),
         }
     }
 
@@ -2214,11 +2745,13 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         buffered_events: &Arc<Mutex<VecDeque<RawAgentEvent>>>,
         event_name: impl Into<String>,
         payload: impl Into<String>,
+        run_state: Option<String>,
     ) {
         let agent_event = RawAgentEvent {
             timestamp: Utc::now().to_rfc3339(),
             event_name: event_name.into(),
             payload: payload.into(),
+            run_state,
         };
 
         if let Ok(mut buffered) = buffered_events.lock() {
@@ -3148,6 +3681,112 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             .await
     }
 
+    #[cfg(test)]
+    pub async fn has_run_handle(&self, run_id: &str) -> bool {
+        self.handles.read().await.contains_key(run_id)
+    }
+
+    #[cfg(test)]
+    pub async fn tracked_run_state(&self, run_id: &str) -> Option<RunOpenCodeTrackedState> {
+        let handle = self.handles.read().await.get(run_id).cloned()?;
+        let has_event_stream_task = handle.event_stream_task.lock().await.is_some();
+        let subscriber_count = handle.subscribers.lock().ok()?.len();
+        let subscriber_task_count = handle.subscriber_tasks.lock().ok()?.len();
+
+        Some(RunOpenCodeTrackedState {
+            has_event_stream_task,
+            subscriber_count,
+            subscriber_task_count,
+        })
+    }
+
+    #[cfg(test)]
+    pub async fn insert_test_running_handle(
+        &self,
+        run_id: &str,
+        task_id: &str,
+        repo_path: &std::path::Path,
+    ) {
+        let server = create_opencode_server(Some(OpencodeServerOptions {
+            cwd: Some(repo_path.to_path_buf()),
+            port: 0,
+            config: Some(serde_json::json!({})),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+
+        let client = create_opencode_client(Some(OpencodeClientConfig {
+            base_url: server.url.clone(),
+            directory: Some(repo_path.to_string_lossy().to_string()),
+            ..Default::default()
+        }))
+        .unwrap();
+
+        let (event_tx, _rx) = tokio::sync::broadcast::channel(8);
+        let handle = Arc::new(RunOpenCodeHandle {
+            generation: 1,
+            _server: Arc::new(tokio::sync::Mutex::new(server)),
+            client,
+            lifecycle: Arc::new(Mutex::new(Self::build_run_lifecycle(&RunDto {
+                id: run_id.to_string(),
+                task_id: task_id.to_string(),
+                project_id: "project-1".to_string(),
+                target_repo_id: None,
+                status: "in_progress".to_string(),
+                run_state: None,
+                triggered_by: "user".to_string(),
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+                started_at: None,
+                finished_at: None,
+                summary: None,
+                error_message: None,
+                worktree_id: None,
+                agent_id: None,
+                provider_id: None,
+                model_id: None,
+                source_branch: None,
+                initial_prompt_sent_at: None,
+                initial_prompt_client_request_id: None,
+                setup_state: "pending".to_string(),
+                setup_started_at: None,
+                setup_finished_at: None,
+                setup_error_message: None,
+                cleanup_state: "pending".to_string(),
+                cleanup_started_at: None,
+                cleanup_finished_at: None,
+                cleanup_error_message: None,
+            }))),
+            session_id: Arc::new(Mutex::new(None)),
+            session_init_lock: tokio::sync::Mutex::new(()),
+            subscribers: Arc::new(Mutex::new(HashMap::new())),
+            subscriber_tasks: Arc::new(Mutex::new(HashMap::new())),
+            subscriber_generation: AtomicU64::new(1),
+            subscriber_lifecycle_lock: tokio::sync::Mutex::new(()),
+            event_tx,
+            event_stream_task: Arc::new(tokio::sync::Mutex::new(None)),
+            buffered_events: Arc::new(Mutex::new(VecDeque::new())),
+            session_runtime_state: Arc::new(Mutex::new(SessionRuntimeState::default())),
+        });
+
+        self.handles
+            .write()
+            .await
+            .insert(run_id.to_string(), handle);
+    }
+
+    #[cfg(test)]
+    pub async fn poison_subscriber_tasks_lock(&self, run_id: &str) {
+        let handle = self.handles.read().await.get(run_id).cloned().unwrap();
+        let subscriber_tasks = handle.subscriber_tasks.clone();
+        let join_result = std::thread::spawn(move || {
+            let _guard = subscriber_tasks.lock().unwrap();
+            panic!("poison OpenCode subscriber tasks lock for test");
+        })
+        .join();
+        assert!(join_result.is_err());
+    }
+
     fn missing_dependency_reason() -> String {
         "OpenCode is required for run and agent workflows, but it was not detected on this system. Install OpenCode and check again.".to_string()
     }
@@ -3267,7 +3906,12 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
     }
 
-    async fn with_ephemeral_client<T, F>(&self, cwd: PathBuf, op: F) -> Result<T, AppError>
+    async fn with_ephemeral_client<T, F>(
+        &self,
+        cwd: PathBuf,
+        project_env: HashMap<String, String>,
+        op: F,
+    ) -> Result<T, AppError>
     where
         F: for<'a> FnOnce(
             &'a OpencodeClient,
@@ -3275,7 +3919,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             Box<dyn std::future::Future<Output = Result<T, AppError>> + Send + 'a>,
         >,
     {
-        let options = build_opencode_server_options(cwd, HashMap::new());
+        let options = build_opencode_server_options(cwd.clone(), project_env);
 
         let server = create_opencode_server(Some(options))
             .await
@@ -3284,6 +3928,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             .map_err(app_error_from_anyhow)?;
         let client = create_opencode_client(Some(OpencodeClientConfig {
             base_url: server.url.clone(),
+            directory: Some(cwd.to_string_lossy().to_string()),
             timeout: Duration::from_secs(30),
             ..Default::default()
         }))
@@ -3367,10 +4012,18 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         &self,
         project_id: &str,
     ) -> Result<RunSelectionCatalogResponseDto, AppError> {
-        let canonical_repo_root = if project_id.trim().is_empty() {
+        let trimmed_project_id = project_id.trim();
+        let canonical_repo_root = if trimmed_project_id.is_empty() {
             self.fallback_ephemeral_cwd()
         } else {
-            self.resolve_project_repo_root(project_id).await?
+            self.resolve_project_repo_root(trimmed_project_id).await?
+        };
+        let project_env = if trimmed_project_id.is_empty() {
+            HashMap::new()
+        } else {
+            self.projects_service
+                .resolve_project_env_vars(trimmed_project_id)
+                .await?
         };
         info!(
             target: "opencode.discovery",
@@ -3381,8 +4034,9 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         );
 
         let detection_started = Instant::now();
+        let classification_repo_root = canonical_repo_root.clone();
         let result = self
-            .with_ephemeral_client(canonical_repo_root.clone(), |client| {
+            .with_ephemeral_client(canonical_repo_root.clone(), project_env.clone(), |client| {
                 Box::pin(async move {
                     let provider_list_response = client
                         .provider()
@@ -3427,12 +4081,12 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                         parse_providers_from_payload(&config_providers_response.data),
                         parse_providers_from_payload(&config_response.data),
                     ]);
-                    let agents = dedupe_agents(
-                        [
-                            parse_agents_from_config_payload(&app_agents_response.data),
-                            parse_agents_from_config_payload(&config_response.data),
-                        ]
-                        .concat(),
+                    let agents = classify_effective_agents(
+                        dedupe_authoritative_agents(parse_authoritative_agents_from_app_payload(
+                            &app_agents_response.data,
+                        )),
+                        &classification_repo_root,
+                        &project_env,
                     );
 
                     Ok(RunSelectionCatalogResponseDto { agents, providers })
@@ -3815,6 +4469,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         if prompt.is_empty() {
             return Err(AppError::validation("prompt is required"));
         }
+        let is_commit_prompt = run_state_hint.as_deref() == Some("committing_changes");
 
         let is_initial_seed_request =
             Self::is_initial_seed_request(run_id, client_request_id.as_deref());
@@ -3833,6 +4488,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     reason: None,
                     queued_at: Utc::now().to_rfc3339(),
                     client_request_id,
+                    run_state: None,
                 });
             }
 
@@ -3859,6 +4515,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 reason: ensured.reason,
                 queued_at: Utc::now().to_rfc3339(),
                 client_request_id,
+                run_state: None,
             });
         }
 
@@ -3966,12 +4623,28 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             .task_status_transition_service
             .handle_user_replied_to_agent(&run_defaults.task_id, run_id)
             .await?;
-        if run_state_hint.as_deref() == Some("committing_changes") {
-            let _ = self
-                .run_state_service
+        let run_state = if is_commit_prompt {
+            self.run_state_service
                 .handle_commit_requested(run_id)
-                .await?;
-        }
+                .await?
+                .and_then(|payload| payload.new_run_state)
+        } else {
+            None
+        };
+        let run_state = if run_state.is_none() && is_commit_prompt {
+            let latest_run = self.runs_service.get_run_model(run_id).await.ok();
+            if let Some(run) = latest_run {
+                self.run_state_service
+                    .resolve_effective_run_state(&run)
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            }
+        } else {
+            run_state
+        };
 
         info!(
             target: "opencode.runtime",
@@ -3987,6 +4660,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             reason: None,
             queued_at: Utc::now().to_rfc3339(),
             client_request_id,
+            run_state,
         })
     }
 
@@ -4216,16 +4890,352 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         };
 
         if removed && pending_count == 0 && !has_pending_questions {
-            let _ = self
-                .run_state_service
-                .handle_permission_resolved(run_id)
-                .await?;
+            self.restore_interrupted_run_state_or_recompute(
+                run_id,
+                &handle.session_runtime_state,
+                "permission_resolved",
+            )
+            .await?;
         }
 
         Ok(ReplyRunOpenCodePermissionResponse {
             state: "accepted".to_string(),
             reason: None,
             replied_at: Utc::now().to_rfc3339(),
+        })
+    }
+
+    pub async fn list_run_opencode_question_requests(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<RunOpenCodeQuestionRequestDto>, AppError> {
+        let run = self.runs_service.get_run_model(run_id).await?;
+        if Self::should_use_completed_read_only_bootstrap(run.status.as_str()) {
+            return Ok(vec![]);
+        }
+
+        let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
+        if ensured.state == "unsupported" {
+            return Ok(vec![]);
+        }
+
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let _operation_guard = handle.acquire_active_operation_guard("list_question_requests")?;
+        handle.touch_interaction("list_question_requests")?;
+
+        let response = handle
+            .client
+            .call_operation("question.list", RequestOptions::default())
+            .await
+            .map_err(|source| OpenCodeServiceError::QuestionList { source })
+            .context("while loading run OpenCode question requests")
+            .map_err(app_error_from_anyhow)?;
+
+        let question_requests = value_array_to_question_request_wrappers(response.data.clone());
+        let pending_ids = response
+            .data
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Self::parse_question_request_id_value)
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+
+        {
+            let mut state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions = pending_ids.clone();
+        }
+
+        if pending_ids.is_empty() {
+            let has_pending_permissions = {
+                let state = handle
+                    .session_runtime_state
+                    .lock()
+                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
+                !state.pending_permissions.is_empty()
+            };
+            if has_pending_permissions {
+                let _ = self
+                    .run_state_service
+                    .handle_permission_requested(run_id)
+                    .await?;
+            } else {
+                self.restore_interrupted_run_state_or_recompute(
+                    run_id,
+                    &handle.session_runtime_state,
+                    "question_list_requested",
+                )
+                .await?;
+            }
+        } else {
+            let _ = self
+                .run_state_service
+                .handle_question_pending(run_id, "question_list_requested")
+                .await?;
+        }
+
+        Ok(question_requests)
+    }
+
+    pub async fn reply_run_opencode_question(
+        &self,
+        run_id: &str,
+        request_id: &str,
+        answers: Vec<Vec<String>>,
+    ) -> Result<ReplyRunOpenCodeQuestionResponse, AppError> {
+        self.ensure_service_accepting_new_work().await?;
+
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let request_id = request_id.trim();
+        if request_id.is_empty() {
+            return Err(AppError::validation("request_id is required"));
+        }
+
+        let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
+        if ensured.state == "unsupported" {
+            return Ok(ReplyRunOpenCodeQuestionResponse {
+                state: "unsupported".to_string(),
+                reason: ensured.reason,
+                replied_at: Utc::now().to_rfc3339(),
+                run_state: None,
+            });
+        }
+
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let _operation_guard = handle.acquire_active_operation_guard("reply_question")?;
+        handle.touch_main_session_activity()?;
+
+        let in_memory_pending = {
+            let state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions.contains(request_id)
+        };
+        if !in_memory_pending {
+            let pending_ids = self
+                .refresh_pending_question_requests(run_id, &handle)
+                .await?;
+            if !pending_ids.contains(request_id) {
+                return Ok(ReplyRunOpenCodeQuestionResponse {
+                    state: "accepted".to_string(),
+                    reason: Some("stale_question_request".to_string()),
+                    replied_at: Utc::now().to_rfc3339(),
+                    run_state: None,
+                });
+            }
+        }
+
+        let response = handle
+            .client
+            .call_operation(
+                "question.reply",
+                RequestOptions::default()
+                    .with_path("requestID", request_id.to_string())
+                    .with_body(build_question_reply_body(answers)),
+            )
+            .await
+            .map_err(|source| OpenCodeServiceError::QuestionReply {
+                request_id: request_id.to_string(),
+                source,
+            })
+            .context("while forwarding question answer to OpenCode")
+            .map_err(app_error_from_anyhow)?;
+
+        let response_state = response
+            .data
+            .get("state")
+            .and_then(|value| value.as_str())
+            .unwrap_or("accepted");
+        let response_reason = response
+            .data
+            .get("reason")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+
+        if response_state.eq_ignore_ascii_case("unsupported") {
+            return Ok(ReplyRunOpenCodeQuestionResponse {
+                state: "unsupported".to_string(),
+                reason: response_reason,
+                replied_at: Utc::now().to_rfc3339(),
+                run_state: None,
+            });
+        }
+
+        let mut run_state = None;
+        let (has_pending_questions, has_pending_permissions) = {
+            let mut state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions.remove(request_id);
+            (
+                !state.pending_questions.is_empty(),
+                !state.pending_permissions.is_empty(),
+            )
+        };
+
+        if !has_pending_questions {
+            if has_pending_permissions {
+                run_state = self
+                    .run_state_service
+                    .handle_permission_requested(run_id)
+                    .await?
+                    .and_then(|payload| payload.new_run_state);
+            } else {
+                run_state = self
+                    .restore_interrupted_run_state_or_recompute(
+                        run_id,
+                        &handle.session_runtime_state,
+                        "user_reply",
+                    )
+                    .await?;
+            }
+        }
+
+        Ok(ReplyRunOpenCodeQuestionResponse {
+            state: "accepted".to_string(),
+            reason: None,
+            replied_at: Utc::now().to_rfc3339(),
+            run_state,
+        })
+    }
+
+    pub async fn reject_run_opencode_question(
+        &self,
+        run_id: &str,
+        request_id: &str,
+    ) -> Result<RejectRunOpenCodeQuestionResponse, AppError> {
+        self.ensure_service_accepting_new_work().await?;
+
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let request_id = request_id.trim();
+        if request_id.is_empty() {
+            return Err(AppError::validation("request_id is required"));
+        }
+
+        let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
+        if ensured.state == "unsupported" {
+            return Ok(RejectRunOpenCodeQuestionResponse {
+                state: "unsupported".to_string(),
+                reason: ensured.reason,
+                rejected_at: Utc::now().to_rfc3339(),
+                run_state: None,
+            });
+        }
+
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let _operation_guard = handle.acquire_active_operation_guard("reject_question")?;
+        handle.touch_main_session_activity()?;
+
+        let in_memory_pending = {
+            let state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions.contains(request_id)
+        };
+        if !in_memory_pending {
+            let pending_ids = self
+                .refresh_pending_question_requests(run_id, &handle)
+                .await?;
+            if !pending_ids.contains(request_id) {
+                return Ok(RejectRunOpenCodeQuestionResponse {
+                    state: "accepted".to_string(),
+                    reason: Some("stale_question_request".to_string()),
+                    rejected_at: Utc::now().to_rfc3339(),
+                    run_state: None,
+                });
+            }
+        }
+
+        let response = handle
+            .client
+            .call_operation(
+                "question.reject",
+                RequestOptions::default().with_path("requestID", request_id.to_string()),
+            )
+            .await
+            .map_err(|source| OpenCodeServiceError::QuestionReject {
+                request_id: request_id.to_string(),
+                source,
+            })
+            .context("while rejecting question request in OpenCode")
+            .map_err(app_error_from_anyhow)?;
+
+        let response_state = response
+            .data
+            .get("state")
+            .and_then(|value| value.as_str())
+            .unwrap_or("accepted");
+        let response_reason = response
+            .data
+            .get("reason")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+
+        if response_state.eq_ignore_ascii_case("unsupported") {
+            return Ok(RejectRunOpenCodeQuestionResponse {
+                state: "unsupported".to_string(),
+                reason: response_reason,
+                rejected_at: Utc::now().to_rfc3339(),
+                run_state: None,
+            });
+        }
+
+        let mut run_state = None;
+        let (has_pending_questions, has_pending_permissions) = {
+            let mut state = handle
+                .session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions.remove(request_id);
+            (
+                !state.pending_questions.is_empty(),
+                !state.pending_permissions.is_empty(),
+            )
+        };
+
+        if !has_pending_questions {
+            if has_pending_permissions {
+                run_state = self
+                    .run_state_service
+                    .handle_permission_requested(run_id)
+                    .await?
+                    .and_then(|payload| payload.new_run_state);
+            } else {
+                run_state = self
+                    .restore_interrupted_run_state_or_recompute(
+                        run_id,
+                        &handle.session_runtime_state,
+                        "user_reply",
+                    )
+                    .await?;
+            }
+        }
+
+        Ok(RejectRunOpenCodeQuestionResponse {
+            state: "accepted".to_string(),
+            reason: None,
+            rejected_at: Utc::now().to_rfc3339(),
+            run_state,
         })
     }
 
@@ -4384,7 +5394,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 "OpenCode completed/read-only session message fetch using ephemeral path"
             );
             let result = self
-                .with_ephemeral_client(cwd, |client| {
+                .with_ephemeral_client(cwd, HashMap::new(), |client| {
                     Box::pin(async move {
                         let request = RequestOptions::default().with_path("id", session_id.clone());
                         let response = client
@@ -4461,7 +5471,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 "OpenCode completed/read-only session todo fetch using ephemeral path"
             );
             let result = self
-                .with_ephemeral_client(cwd, |client| {
+                .with_ephemeral_client(cwd, HashMap::new(), |client| {
                     Box::pin(async move {
                         let request = RequestOptions::default().with_path("id", session_id.clone());
                         let response = client
@@ -4583,6 +5593,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                                 "skipped": skipped,
                             })
                             .to_string(),
+                            run_state: None,
                         };
 
                         let channel = {
@@ -4701,7 +5712,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     persistent_handle_present = persistent_handle_present,
                     "OpenCode completed/read-only bootstrap using ephemeral path"
                 );
-                self.with_ephemeral_client(cwd, |client| {
+                self.with_ephemeral_client(cwd, HashMap::new(), |client| {
                     Box::pin(async move {
                         Self::fetch_session_history_with_client(client, &session_id_for_fetch).await
                     })
@@ -4916,6 +5927,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                                     "attempt": reconnect_attempt,
                                 })
                                 .to_string(),
+                                None,
                             );
                         }
                         reconnect_attempt = 0;
@@ -4942,6 +5954,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                                 "error": "stream subscribe failed",
                             })
                             .to_string(),
+                            None,
                         );
 
                         reconnect_attempt += 1;
@@ -4956,6 +5969,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                                     "attempts": reconnect_attempt,
                                 })
                                 .to_string(),
+                                None,
                             );
                             let _ = runs_opencode_service
                                 .stop_run_opencode_internal(
@@ -4982,6 +5996,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                                 "backoffMs": backoff_ms,
                             })
                             .to_string(),
+                            None,
                         );
 
                         sleep(Duration::from_millis(backoff_ms)).await;
@@ -5009,7 +6024,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     };
 
                     let event_name = sse.event.unwrap_or_else(|| "message".to_string());
-                    if let Err(err) = runs_opencode_service
+                    let runtime_run_state = match runs_opencode_service
                         .process_runtime_event(
                             &run_id,
                             &event_name,
@@ -5018,20 +6033,25 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                         )
                         .await
                     {
-                        warn!(
-                            target: "opencode.runtime",
-                            marker = "runtime_event_processing_failed",
-                            run_id = run_id.as_str(),
-                            event_name = event_name.as_str(),
-                            error = %err,
-                            "OpenCode runtime event processing failed"
-                        );
-                    }
+                        Ok(run_state) => run_state,
+                        Err(err) => {
+                            warn!(
+                                target: "opencode.runtime",
+                                marker = "runtime_event_processing_failed",
+                                run_id = run_id.as_str(),
+                                event_name = event_name.as_str(),
+                                error = %err,
+                                "OpenCode runtime event processing failed"
+                            );
+                            None
+                        }
+                    };
                     RunsOpenCodeService::push_event(
                         &event_tx,
                         &buffered_events,
                         event_name,
                         sse.data,
+                        runtime_run_state,
                     );
                 }
 
@@ -5044,6 +6064,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                         "error": "event stream ended",
                     })
                     .to_string(),
+                    None,
                 );
 
                 reconnect_attempt += 1;
@@ -5058,6 +6079,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                             "attempts": reconnect_attempt,
                         })
                         .to_string(),
+                        None,
                     );
                     let _ = runs_opencode_service
                         .stop_run_opencode_internal(
@@ -5084,6 +6106,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                         "backoffMs": backoff_ms,
                     })
                     .to_string(),
+                    None,
                 );
 
                 sleep(Duration::from_millis(backoff_ms)).await;
@@ -5103,7 +6126,9 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 
 #[cfg(test)]
 mod tests {
-    use super::{build_opencode_server_options, RawAgentEvent, RunsOpenCodeService};
+    use super::{
+        build_opencode_server_options, RawAgentEvent, RunsOpenCodeService, SubscriberTaskEntry,
+    };
     use crate::app::db::migrations::run_migrations;
     use crate::app::db::repositories::projects::ProjectsRepository;
     use crate::app::db::repositories::runs::RunsRepository;
@@ -5125,6 +6150,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicU64;
     use std::sync::{Arc, Mutex};
+    use tauri::ipc::Channel;
     use uuid::Uuid;
 
     #[test]
@@ -5145,6 +6171,7 @@ mod tests {
             timestamp: "2026-01-01T00:00:00.000Z".to_string(),
             event_name: event_name.to_string(),
             payload: payload.to_string(),
+            run_state: None,
         }
     }
 
@@ -5705,6 +6732,79 @@ mod tests {
     }
 
     #[test]
+    fn parse_authoritative_agents_filters_by_mode_and_hidden_state() {
+        let app_agents = serde_json::json!([
+            { "name": "project-primary", "mode": "primary", "hidden": false },
+            { "name": "project-shared", "mode": "all", "hidden": false },
+            { "name": "worker-only", "mode": "subagent", "hidden": false },
+            { "name": "summary", "mode": "primary", "hidden": true }
+        ]);
+
+        let discovered = super::parse_authoritative_agents_from_app_payload(&app_agents);
+        let classified = super::classify_effective_agents(
+            discovered,
+            std::path::Path::new("/definitely-missing-project-root"),
+            &HashMap::new(),
+        );
+
+        assert_eq!(classified.len(), 2);
+        assert_eq!(classified[0].id, "project-primary");
+        assert_eq!(classified[0].mode, "primary");
+        assert_eq!(classified[0].scope, "inherited");
+        assert!(classified[0].selectable);
+        assert_eq!(classified[1].id, "project-shared");
+        assert_eq!(classified[1].mode, "all");
+    }
+
+    #[test]
+    fn classify_effective_agents_prefers_project_scope_over_global_name_collision() {
+        let temp_root =
+            std::env::temp_dir().join(format!("orkestra-agent-discovery-{}", uuid::Uuid::new_v4()));
+        let project_root = temp_root.join("project");
+        let global_root = temp_root.join("global");
+
+        std::fs::create_dir_all(project_root.join(".opencode/agents")).unwrap();
+        std::fs::create_dir_all(global_root.join("agents")).unwrap();
+        std::fs::write(
+            project_root.join(".opencode/agents/reviewer.md"),
+            "# reviewer",
+        )
+        .unwrap();
+        std::fs::write(global_root.join("agents/reviewer.md"), "# reviewer").unwrap();
+        std::fs::write(global_root.join("agents/global-only.md"), "# global-only").unwrap();
+
+        let agents = vec![
+            super::AuthoritativeAgentDescriptor {
+                id: "reviewer".to_string(),
+                label: "reviewer".to_string(),
+                mode: super::DiscoveredAgentMode::Primary,
+                hidden: false,
+            },
+            super::AuthoritativeAgentDescriptor {
+                id: "global-only".to_string(),
+                label: "global-only".to_string(),
+                mode: super::DiscoveredAgentMode::Primary,
+                hidden: false,
+            },
+        ];
+        let mut project_env = HashMap::new();
+        project_env.insert(
+            "OPENCODE_CONFIG_DIR".to_string(),
+            global_root.to_string_lossy().to_string(),
+        );
+
+        let classified = super::classify_effective_agents(agents, &project_root, &project_env);
+
+        assert_eq!(classified.len(), 2);
+        assert_eq!(classified[0].id, "reviewer");
+        assert_eq!(classified[0].scope, "project");
+        assert_eq!(classified[1].id, "global-only");
+        assert_eq!(classified[1].scope, "global");
+
+        std::fs::remove_dir_all(temp_root).unwrap();
+    }
+
+    #[test]
     fn parse_discovery_ignores_unrelated_sections_in_mixed_roots() {
         let config_get = serde_json::json!({
             "providers": {
@@ -6224,6 +7324,137 @@ mod tests {
         assert!(!opencode_service.handles.read().await.contains_key("run-1"));
     }
 
+    #[tokio::test]
+    async fn stop_run_opencode_cleans_up_event_stream_and_subscribers() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get("run-1")
+            .cloned()
+            .unwrap();
+        *handle.event_stream_task.lock().await =
+            Some(tauri::async_runtime::spawn(std::future::pending::<()>()));
+        handle
+            .subscribers
+            .lock()
+            .unwrap()
+            .insert("subscriber-1".to_string(), Channel::new(|_| Ok(())));
+        handle.subscriber_tasks.lock().unwrap().insert(
+            "subscriber-1".to_string(),
+            SubscriberTaskEntry {
+                generation: 1,
+                handle: tauri::async_runtime::spawn(std::future::pending::<()>()),
+                _viewer_lease: None,
+            },
+        );
+
+        let before = opencode_service.tracked_run_state("run-1").await.unwrap();
+        assert!(before.has_event_stream_task);
+        assert_eq!(before.subscriber_count, 1);
+        assert_eq!(before.subscriber_task_count, 1);
+
+        opencode_service
+            .stop_run_opencode("run-1", Some("test_delete_shutdown"))
+            .await
+            .unwrap();
+
+        assert!(!opencode_service.has_run_handle("run-1").await);
+    }
+
+    #[tokio::test]
+    async fn direct_composer_submit_waits_for_runtime_busy_event_to_set_busy_coding() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get("run-1")
+            .cloned()
+            .unwrap();
+        {
+            let mut session_id = handle.session_id.lock().unwrap();
+            *session_id = Some("session-1".to_string());
+        }
+        set_run_session_id(&pool, "run-1", "session-1").await;
+
+        let response = opencode_service
+            .submit_run_opencode_prompt(
+                "run-1",
+                "Ship it",
+                Some("manual-direct-1".to_string()),
+                None,
+                Some("agent-1".to_string()),
+                Some("provider-1".to_string()),
+                Some("model-1".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.state, "accepted");
+        assert_eq!(response.run_state, None);
+        assert_eq!(fetch_run_state(&pool, "run-1").await, None);
+
+        let runtime_run_state = opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.status",
+                r#"{"sessionID":"session-1","status":"busy"}"#,
+                &handle.session_runtime_state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(runtime_run_state.as_deref(), Some("busy_coding"));
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("busy_coding")
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_submit_does_not_fall_back_to_busy_coding() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let response = opencode_service
+            .submit_run_opencode_prompt(
+                "run-1",
+                "Commit these changes",
+                Some("manual-commit-1".to_string()),
+                Some("committing_changes".to_string()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.state, "accepted");
+        assert_eq!(response.run_state.as_deref(), Some("committing_changes"));
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("committing_changes")
+        );
+    }
+
     async fn set_run_session_id(pool: &SqlitePool, run_id: &str, session_id: &str) {
         sqlx::query("UPDATE runs SET opencode_session_id = ? WHERE id = ?")
             .bind(session_id)
@@ -6300,6 +7531,32 @@ mod tests {
             .unwrap()
     }
 
+    async fn fetch_run_status(pool: &SqlitePool, run_id: &str) -> String {
+        sqlx::query_scalar("SELECT status FROM runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn set_run_state(pool: &SqlitePool, run_id: &str, run_state: Option<&str>) {
+        sqlx::query("UPDATE runs SET run_state = ? WHERE id = ?")
+            .bind(run_state)
+            .bind(run_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn set_run_cleanup_state(pool: &SqlitePool, run_id: &str, cleanup_state: &str) {
+        sqlx::query("UPDATE runs SET cleanup_state = ? WHERE id = ?")
+            .bind(cleanup_state)
+            .bind(run_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
     async fn set_run_status(pool: &SqlitePool, run_id: &str, status: &str) {
         sqlx::query("UPDATE runs SET status = ? WHERE id = ?")
             .bind(status)
@@ -6348,6 +7605,63 @@ mod tests {
             .unwrap();
 
         assert_eq!(fetch_task_status(&pool, "task-1").await, "review");
+    }
+
+    #[tokio::test]
+    async fn session_idle_after_commit_turn_clears_committing_changes() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+        set_task_status(&pool, "task-1", "doing").await;
+        set_run_cleanup_state(&pool, "run-1", "succeeded").await;
+        set_run_state(&pool, "run-1", Some("committing_changes")).await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.idle",
+                r#"{"sessionID":"session-1"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_run_status(&pool, "run-1").await, "idle");
+        assert_eq!(fetch_task_status(&pool, "task-1").await, "review");
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("waiting_for_input")
+        );
+    }
+
+    #[tokio::test]
+    async fn session_idle_while_cleanup_running_does_not_transition_run() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+        set_task_status(&pool, "task-1", "doing").await;
+        set_run_cleanup_state(&pool, "run-1", "running").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.idle",
+                r#"{"sessionID":"session-1"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_run_status(&pool, "run-1").await, "in_progress");
+        assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
     }
 
     #[tokio::test]
@@ -6481,6 +7795,231 @@ mod tests {
             .unwrap();
 
         assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
+    }
+
+    #[tokio::test]
+    async fn subagent_question_asked_tracks_request_id_for_child_session() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.asked","properties":{"requestID":"question-sub-1","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        let guard = state.lock().unwrap();
+        assert!(guard.pending_questions.contains("question-sub-1"));
+        drop(guard);
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("question_pending")
+        );
+    }
+
+    #[tokio::test]
+    async fn wrapped_message_question_asked_tracks_request_id_from_message_properties_id() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"message":{"type":"question.asked","properties":{"id":"question-msg-1","sessionID":"session-child"}}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        let guard = state.lock().unwrap();
+        assert!(guard.pending_questions.contains("question-msg-1"));
+        drop(guard);
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("question_pending")
+        );
+    }
+
+    #[tokio::test]
+    async fn wrapped_message_question_reply_clears_request_id_from_message_properties_id() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"message":{"type":"question.asked","properties":{"id":"question-msg-2","sessionID":"session-child"}}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"message":{"type":"question.replied","properties":{"id":"question-msg-2","sessionID":"session-child"}}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        let guard = state.lock().unwrap();
+        assert!(!guard.pending_questions.contains("question-msg-2"));
+        drop(guard);
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("busy_coding")
+        );
+    }
+
+    #[tokio::test]
+    async fn subagent_question_resolution_clears_tracked_request_id_for_child_session() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.asked","properties":{"requestID":"question-sub-2","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.replied","properties":{"requestID":"question-sub-2","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        let guard = state.lock().unwrap();
+        assert!(!guard.pending_questions.contains("question-sub-2"));
+        drop(guard);
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("busy_coding")
+        );
+    }
+
+    #[tokio::test]
+    async fn question_resolution_preserves_pending_permission_state() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"permission.asked","properties":{"id":"perm-sub-1","permission":"external_directory","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.asked","properties":{"requestID":"question-sub-3","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.replied","properties":{"requestID":"question-sub-3","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("permission_requested")
+        );
+    }
+
+    #[tokio::test]
+    async fn question_resolution_restores_committing_changes_when_commit_turn_resumes() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+        set_run_state(&pool, "run-1", Some("committing_changes")).await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.asked","properties":{"requestID":"question-sub-4","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("question_pending")
+        );
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.replied","properties":{"requestID":"question-sub-4","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("committing_changes")
+        );
     }
 
     #[tokio::test]
@@ -6659,7 +8198,10 @@ mod tests {
             let guard = handle.session_runtime_state.lock().unwrap();
             assert!(guard.pending_permissions.contains("perm-sub-3"));
         }
-        assert_eq!(fetch_run_state(&pool, "run-1").await.as_deref(), Some("permission_requested"));
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("permission_requested")
+        );
 
         opencode_service
             .reply_run_opencode_permission("run-1", "session-root", "perm-sub-3", "once", false)
@@ -6669,7 +8211,10 @@ mod tests {
         let guard = handle.session_runtime_state.lock().unwrap();
         assert!(!guard.pending_permissions.contains("perm-sub-3"));
         drop(guard);
-        assert_eq!(fetch_run_state(&pool, "run-1").await.as_deref(), Some("busy_coding"));
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("busy_coding")
+        );
     }
 
     #[tokio::test]

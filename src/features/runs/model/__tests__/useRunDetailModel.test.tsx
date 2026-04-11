@@ -26,6 +26,8 @@ const deferred = function <T>() {
 
 const {
   routeState,
+  listenMock,
+  tauriEventListeners,
   navigateMock,
   bootstrapRunOpenCodeMock,
   getBufferedRunOpenCodeEventsMock,
@@ -34,18 +36,28 @@ const {
   submitRunOpenCodePromptMock,
   getRunSelectionOptionsWithCacheMock,
   readRunSelectionOptionsCacheMock,
+  listRunOpenCodeQuestionRequestsMock,
+  replyRunOpenCodeQuestionMock,
+  rejectRunOpenCodeQuestionMock,
   replyRunOpenCodePermissionMock,
   getRunGitMergeStatusMock,
   rebaseRunWorktreeOntoSourceMock,
   mergeRunWorktreeIntoSourceMock,
   listRunDiffFilesMock,
   getRunDiffFileMock,
+  killRunTerminalMock,
   writeRunTerminalMock,
   getRunMock,
   getTaskMock,
   getProjectMock,
+  subscribeToRunDeletedMock,
 } = vi.hoisted(() => ({
   routeState: { runId: "run-1" },
+  listenMock: vi.fn(),
+  tauriEventListeners: new Map<
+    string,
+    Set<(event: { payload: unknown }) => void>
+  >(),
   navigateMock: vi.fn(),
   bootstrapRunOpenCodeMock: vi.fn(),
   getBufferedRunOpenCodeEventsMock: vi.fn(),
@@ -54,17 +66,26 @@ const {
   submitRunOpenCodePromptMock: vi.fn(),
   getRunSelectionOptionsWithCacheMock: vi.fn(),
   readRunSelectionOptionsCacheMock: vi.fn(),
+  listRunOpenCodeQuestionRequestsMock: vi.fn(),
+  replyRunOpenCodeQuestionMock: vi.fn(),
+  rejectRunOpenCodeQuestionMock: vi.fn(),
   replyRunOpenCodePermissionMock: vi.fn(),
   getRunGitMergeStatusMock: vi.fn(),
   rebaseRunWorktreeOntoSourceMock: vi.fn(),
   mergeRunWorktreeIntoSourceMock: vi.fn(),
   listRunDiffFilesMock: vi.fn(),
   getRunDiffFileMock: vi.fn(),
+  killRunTerminalMock: vi.fn(),
   writeRunTerminalMock: vi.fn(),
   getRunMock: vi.fn(),
   getTaskMock: vi.fn(),
   getProjectMock: vi.fn(),
+  subscribeToRunDeletedMock: vi.fn(),
 }));
+
+let runDeletedListener:
+  | ((event: { runId: string; timestamp: string }) => void)
+  | null = null;
 
 vi.mock("@solidjs/router", () => ({
   useNavigate: () => navigateMock,
@@ -77,8 +98,38 @@ vi.mock("@solidjs/router", () => ({
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async () => () => undefined),
+  listen: listenMock,
 }));
+
+const emitTauriEvent = (eventName: string, payload: unknown): void => {
+  const listeners = tauriEventListeners.get(eventName);
+  if (!listeners) {
+    return;
+  }
+  for (const listener of listeners) {
+    listener({ payload });
+  }
+};
+
+const buildRun = (overrides?: Record<string, unknown>) => ({
+  id: "run-1",
+  taskId: "task-1",
+  projectId: "project-1",
+  status: "running",
+  triggeredBy: "user",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  startedAt: "2026-01-01T00:00:01.000Z",
+  finishedAt: null,
+  summary: null,
+  errorMessage: null,
+  sourceBranch: "main",
+  worktreeId: "wt-1",
+  targetRepoId: "repo-1",
+  displayKey: "RUN-1",
+  initialPromptSentAt: null,
+  initialPromptClientRequestId: null,
+  ...overrides,
+});
 
 vi.mock("../../../../app/lib/runs", () => ({
   bootstrapRunOpenCode: bootstrapRunOpenCodeMock,
@@ -90,21 +141,28 @@ vi.mock("../../../../app/lib/runs", () => ({
   getRun: getRunMock,
   getRunGitMergeStatus: getRunGitMergeStatusMock,
   getRunDiffFile: getRunDiffFileMock,
-  killRunTerminal: vi.fn(async () => undefined),
+  killRunTerminal: killRunTerminalMock,
   listRunDiffFiles: listRunDiffFilesMock,
   mergeRunWorktreeIntoSource: mergeRunWorktreeIntoSourceMock,
   openRunTerminal: vi.fn(async () => ({
     sessionId: "terminal-1",
     generation: 1,
   })),
+  listRunOpenCodeQuestionRequests: listRunOpenCodeQuestionRequestsMock,
   rebaseRunWorktreeOntoSource: rebaseRunWorktreeOntoSourceMock,
+  rejectRunOpenCodeQuestion: rejectRunOpenCodeQuestionMock,
   resizeRunTerminal: vi.fn(async () => undefined),
   setRunDiffWatch: vi.fn(async () => undefined),
   submitRunOpenCodePrompt: submitRunOpenCodePromptMock,
   replyRunOpenCodePermission: replyRunOpenCodePermissionMock,
+  replyRunOpenCodeQuestion: replyRunOpenCodeQuestionMock,
   subscribeRunOpenCodeEvents: subscribeRunOpenCodeEventsMock,
   unsubscribeRunOpenCodeEvents: unsubscribeRunOpenCodeEventsMock,
   writeRunTerminal: writeRunTerminalMock,
+}));
+
+vi.mock("../../../../app/lib/runDeletedEvents", () => ({
+  subscribeToRunDeleted: subscribeToRunDeletedMock,
 }));
 
 vi.mock("../../../../app/lib/runSelectionOptionsCache", () => ({
@@ -125,6 +183,25 @@ describe("useRunDetailModel startup ownership", () => {
     vi.useRealTimers();
     routeState.runId = "run-1";
     navigateMock.mockReset();
+    listenMock.mockReset();
+    tauriEventListeners.clear();
+    listenMock.mockImplementation(
+      async (
+        eventName: string,
+        handler: (event: { payload: unknown }) => void,
+      ) => {
+        const listeners = tauriEventListeners.get(eventName) ?? new Set();
+        listeners.add(handler);
+        tauriEventListeners.set(eventName, listeners);
+        return () => {
+          const registered = tauriEventListeners.get(eventName);
+          registered?.delete(handler);
+          if (registered && registered.size === 0) {
+            tauriEventListeners.delete(eventName);
+          }
+        };
+      },
+    );
     bootstrapRunOpenCodeMock.mockReset();
     getBufferedRunOpenCodeEventsMock.mockReset();
     subscribeRunOpenCodeEventsMock.mockReset();
@@ -132,16 +209,32 @@ describe("useRunDetailModel startup ownership", () => {
     submitRunOpenCodePromptMock.mockReset();
     getRunSelectionOptionsWithCacheMock.mockReset();
     readRunSelectionOptionsCacheMock.mockReset();
+    listRunOpenCodeQuestionRequestsMock.mockReset();
+    replyRunOpenCodeQuestionMock.mockReset();
+    rejectRunOpenCodeQuestionMock.mockReset();
     replyRunOpenCodePermissionMock.mockReset();
     getRunGitMergeStatusMock.mockReset();
     rebaseRunWorktreeOntoSourceMock.mockReset();
     mergeRunWorktreeIntoSourceMock.mockReset();
     listRunDiffFilesMock.mockReset();
     getRunDiffFileMock.mockReset();
+    killRunTerminalMock.mockReset();
     writeRunTerminalMock.mockReset();
     getRunMock.mockReset();
     getTaskMock.mockReset();
     getProjectMock.mockReset();
+    subscribeToRunDeletedMock.mockReset();
+    runDeletedListener = null;
+    subscribeToRunDeletedMock.mockImplementation(
+      (onEvent: (event: { runId: string; timestamp: string }) => void) => {
+        runDeletedListener = onEvent;
+        return () => {
+          if (runDeletedListener === onEvent) {
+            runDeletedListener = null;
+          }
+        };
+      },
+    );
 
     bootstrapRunOpenCodeMock.mockResolvedValue({
       state: "running",
@@ -152,6 +245,10 @@ describe("useRunDetailModel startup ownership", () => {
       streamConnected: true,
     });
     getBufferedRunOpenCodeEventsMock.mockResolvedValue([]);
+    listRunOpenCodeQuestionRequestsMock.mockResolvedValue({
+      questions: [],
+      raw: [],
+    });
     subscribeRunOpenCodeEventsMock.mockResolvedValue(() => undefined);
     getRunGitMergeStatusMock.mockResolvedValue({
       state: "ready",
@@ -163,30 +260,24 @@ describe("useRunDetailModel startup ownership", () => {
     });
     rebaseRunWorktreeOntoSourceMock.mockResolvedValue({ status: "accepted" });
     mergeRunWorktreeIntoSourceMock.mockResolvedValue({ status: "accepted" });
+    killRunTerminalMock.mockResolvedValue(undefined);
     writeRunTerminalMock.mockResolvedValue(undefined);
     unsubscribeRunOpenCodeEventsMock.mockResolvedValue(undefined);
     replyRunOpenCodePermissionMock.mockResolvedValue({
       status: "accepted",
       repliedAt: "2026-01-01T00:00:00.000Z",
     });
-    getRunMock.mockResolvedValue({
-      id: "run-1",
-      taskId: "task-1",
-      projectId: "project-1",
-      status: "running",
-      triggeredBy: "user",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      startedAt: "2026-01-01T00:00:01.000Z",
-      finishedAt: null,
-      summary: null,
-      errorMessage: null,
-      sourceBranch: "main",
-      worktreeId: "wt-1",
-      targetRepoId: "repo-1",
-      displayKey: "RUN-1",
-      initialPromptSentAt: null,
-      initialPromptClientRequestId: null,
+    replyRunOpenCodeQuestionMock.mockResolvedValue({
+      status: "accepted",
+      repliedAt: "2026-01-01T00:00:00.000Z",
+      runState: "busy_coding",
     });
+    rejectRunOpenCodeQuestionMock.mockResolvedValue({
+      status: "accepted",
+      rejectedAt: "2026-01-01T00:00:00.000Z",
+      runState: "busy_coding",
+    });
+    getRunMock.mockResolvedValue(buildRun());
     getTaskMock.mockResolvedValue({
       id: "task-1",
       title: "Task",
@@ -288,6 +379,35 @@ describe("useRunDetailModel startup ownership", () => {
     });
 
     expect(subscribeRunOpenCodeEventsMock).not.toHaveBeenCalled();
+  });
+
+  it("navigates away and clears run-scoped state when current run is deleted", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+      expect(modelRef!.run()?.id).toBe("run-1");
+    });
+
+    runDeletedListener?.({
+      runId: "run-1",
+      timestamp: "2026-01-01T00:00:02.000Z",
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.run()).toBeNull();
+      expect(modelRef!.task()).toBeNull();
+      expect(navigateMock).toHaveBeenCalledWith("/board?projectId=project-1", {
+        replace: true,
+      });
+      expect(unsubscribeRunOpenCodeEventsMock).toHaveBeenCalled();
+      expect(killRunTerminalMock).toHaveBeenCalled();
+    });
   });
 
   it("uses startup-cached run options when available", async () => {
@@ -394,20 +514,20 @@ describe("useRunDetailModel startup ownership", () => {
 
     await waitFor(() => {
       expect(modelRef).toBeDefined();
+      expect(listenMock).toHaveBeenCalled();
     });
 
     await modelRef!.git.rebaseWorktreeOntoSource();
     await modelRef!.git.rebaseWorktreeOntoSource();
 
     expect(submitRunOpenCodePromptMock).toHaveBeenCalledTimes(1);
-    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith({
-      runId: "run-1",
-      prompt: "Resolve file conflicts in src/app.ts",
-      clientRequestId: undefined,
-      agentId: undefined,
-      providerId: undefined,
-      modelId: undefined,
-    });
+    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        prompt: "Resolve file conflicts in src/app.ts",
+        clientRequestId: expect.any(String),
+      }),
+    );
   });
 
   it("submits prompt with message-level selection overrides", async () => {
@@ -433,13 +553,31 @@ describe("useRunDetailModel startup ownership", () => {
     });
 
     expect(accepted).toBe(true);
-    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith({
+    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        prompt: "Ship it",
+        clientRequestId: expect.any(String),
+        agentId: "agent-1",
+        providerId: "provider-1",
+        modelId: "model-1",
+      }),
+    );
+
+    getRunMock.mockResolvedValue(buildRun({ runState: "busy_coding" }));
+
+    emitTauriEvent("run-state-changed", {
       runId: "run-1",
-      prompt: "Ship it",
-      clientRequestId: undefined,
-      agentId: "agent-1",
-      providerId: "provider-1",
-      modelId: "model-1",
+      taskId: "task-1",
+      projectId: "project-1",
+      previousRunState: null,
+      newRunState: "busy_coding",
+      transitionSource: "direct_user_prompt_submitted",
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.run()?.runState).toBe("busy_coding");
     });
   });
 
@@ -462,14 +600,13 @@ describe("useRunDetailModel startup ownership", () => {
     const accepted = await modelRef!.agent.submitPrompt("Ship it");
 
     expect(accepted).toBe(true);
-    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith({
-      runId: "run-1",
-      prompt: "Ship it",
-      clientRequestId: undefined,
-      agentId: undefined,
-      providerId: undefined,
-      modelId: undefined,
-    });
+    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        prompt: "Ship it",
+        clientRequestId: expect.any(String),
+      }),
+    );
   });
 
   it("sets submitting state immediately while prompt submission is pending", async () => {
@@ -1646,6 +1783,351 @@ describe("useRunDetailModel startup ownership", () => {
         sourceKind: "subagent",
         sourceLabel: "Subagent",
       });
+    });
+  });
+
+  it("hydrates pending question requests on load", async () => {
+    listRunOpenCodeQuestionRequestsMock.mockResolvedValueOnce({
+      questions: [
+        {
+          id: "question-1",
+          sessionID: "session-1",
+          questions: [
+            {
+              header: "Choose action",
+              question: "Which action should I take?",
+              options: [{ label: "Apply patch", description: "Modify files" }],
+              custom: true,
+            },
+          ],
+        },
+      ],
+      raw: [],
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-1",
+        sourceKind: "main",
+        sourceLabel: "Main agent",
+      });
+    });
+  });
+
+  it("keeps existing pending questions when question hydration fetch fails", async () => {
+    listRunOpenCodeQuestionRequestsMock
+      .mockResolvedValueOnce({
+        questions: [
+          {
+            id: "question-1",
+            sessionID: "session-1",
+            questions: [
+              {
+                header: "Choose action",
+                question: "Which action should I take?",
+                options: [
+                  { label: "Apply patch", description: "Modify files" },
+                ],
+                custom: true,
+              },
+            ],
+          },
+        ],
+        raw: [],
+      })
+      .mockRejectedValueOnce(new Error("temporary failure"));
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-1",
+      });
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:10.000Z",
+      event: "stream.resync_needed",
+      data: {
+        sessionID: "session-1",
+      },
+    });
+
+    await waitFor(() => {
+      expect(listRunOpenCodeQuestionRequestsMock).toHaveBeenCalledTimes(2);
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-1",
+      });
+    });
+  });
+
+  it("updates the displayed run state before rendering a live question request", async () => {
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+      expect(modelRef!.run()?.runState ?? null).toBeNull();
+      expect(listenMock).toHaveBeenCalled();
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "question.asked",
+      data: {
+        requestID: "question-live-1",
+        sessionID: "session-1",
+        questions: [{ header: "Choose", question: "Pick one", custom: true }],
+      },
+    });
+
+    getRunMock.mockResolvedValue(buildRun({ runState: "question_pending" }));
+
+    emitTauriEvent("run-state-changed", {
+      runId: "run-1",
+      taskId: "task-1",
+      projectId: "project-1",
+      previousRunState: null,
+      newRunState: "question_pending",
+      transitionSource: "question_asked",
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.run()?.runState).toBe("question_pending");
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-live-1",
+      });
+    });
+  });
+
+  it("replies to the active question request with structured answers", async () => {
+    listRunOpenCodeQuestionRequestsMock.mockResolvedValueOnce({
+      questions: [
+        {
+          id: "question-1",
+          sessionID: "session-1",
+          questions: [{ header: "Choose", question: "Pick one", custom: true }],
+        },
+      ],
+      raw: [],
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-1",
+      });
+      expect(listenMock).toHaveBeenCalled();
+    });
+
+    const accepted = await modelRef!.agent.replyQuestion("question-1", [
+      ["Apply patch"],
+    ]);
+
+    expect(accepted).toBe(true);
+    expect(replyRunOpenCodeQuestionMock).toHaveBeenCalledWith({
+      runId: "run-1",
+      requestId: "question-1",
+      answers: [["Apply patch"]],
+    });
+    expect(modelRef!.agent.questionState().activeRequest).toBeNull();
+    expect(modelRef!.agent.questionState().resolvedRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ requestId: "question-1", status: "replied" }),
+      ]),
+    );
+
+    getRunMock.mockResolvedValue(buildRun({ runState: "busy_coding" }));
+
+    emitTauriEvent("run-state-changed", {
+      runId: "run-1",
+      taskId: "task-1",
+      projectId: "project-1",
+      previousRunState: "question_pending",
+      newRunState: "busy_coding",
+      transitionSource: "user_reply",
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.run()?.runState).toBe("busy_coding");
+    });
+  });
+
+  it("rejects subagent question requests and keeps source attribution friendly", async () => {
+    listRunOpenCodeQuestionRequestsMock.mockResolvedValueOnce({
+      questions: [
+        {
+          id: "question-sub-1",
+          sessionID: "session-sub-1",
+          questions: [
+            { header: "Confirm", question: "Continue?", custom: true },
+          ],
+        },
+      ],
+      raw: [],
+    });
+    bootstrapRunOpenCodeMock.mockResolvedValueOnce({
+      state: "running",
+      chatMode: "interactive",
+      bufferedEvents: [],
+      messages: [],
+      todos: [],
+      streamConnected: true,
+      sessionId: "session-root",
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+      expect(listenMock).toHaveBeenCalled();
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:00.000Z",
+      event: "session.updated",
+      data: {
+        info: {
+          sessionID: "session-sub-1",
+          parentID: "session-root",
+          title: "Docs lookup",
+          model: "provider/k2p5",
+        },
+      },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-sub-1",
+        sourceKind: "subagent",
+        sourceLabel: "Docs lookup - k2p5",
+      });
+    });
+
+    const accepted = await modelRef!.agent.rejectQuestion("question-sub-1");
+
+    expect(accepted).toBe(true);
+    expect(rejectRunOpenCodeQuestionMock).toHaveBeenCalledWith({
+      runId: "run-1",
+      requestId: "question-sub-1",
+    });
+    expect(modelRef!.agent.questionState().resolvedRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          requestId: "question-sub-1",
+          status: "rejected",
+        }),
+      ]),
+    );
+
+    getRunMock.mockResolvedValue(buildRun({ runState: "busy_coding" }));
+
+    emitTauriEvent("run-state-changed", {
+      runId: "run-1",
+      taskId: "task-1",
+      projectId: "project-1",
+      previousRunState: "question_pending",
+      newRunState: "busy_coding",
+      transitionSource: "user_reply",
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.run()?.runState).toBe("busy_coding");
+    });
+  });
+
+  it("serializes multiple pending questions into active and queued state", async () => {
+    listRunOpenCodeQuestionRequestsMock.mockResolvedValueOnce({
+      questions: [
+        {
+          id: "question-1",
+          sessionID: "session-1",
+          questions: [{ header: "One", question: "First?", custom: true }],
+        },
+        {
+          id: "question-2",
+          sessionID: "session-1",
+          questions: [{ header: "Two", question: "Second?", custom: true }],
+        },
+      ],
+      raw: [],
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-1",
+      });
+      expect(modelRef!.agent.questionState().queuedRequests).toEqual([
+        expect.objectContaining({ requestId: "question-2" }),
+      ]);
     });
   });
 

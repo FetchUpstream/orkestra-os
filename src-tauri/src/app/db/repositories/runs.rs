@@ -30,6 +30,18 @@ pub struct RunsRepository {
     pool: SqlitePool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunDeleteTaskStatusReconciliation {
+    pub task_id: String,
+    pub project_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunDeleteResult {
+    pub deleted: bool,
+    pub task_status_reconciled: Option<RunDeleteTaskStatusReconciliation>,
+}
+
 impl RunsRepository {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -272,12 +284,117 @@ impl RunsRepository {
         Ok(rows.into_iter().map(Self::map_row_to_run).collect())
     }
 
-    pub async fn delete_run(&self, run_id: &str) -> Result<bool, AppError> {
+    pub async fn hard_delete_run(&self, run_id: &str) -> Result<bool, AppError> {
         let result = sqlx::query("DELETE FROM runs WHERE id = ?")
             .bind(run_id)
             .execute(&self.pool)
             .await
             .runs_db("deleting run")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn hard_delete_run_and_reconcile_task_status(
+        &self,
+        run_id: &str,
+        updated_at: &str,
+    ) -> Result<RunDeleteResult, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .runs_db("starting run delete transaction")?;
+
+        let run_context: Option<(String, String)> =
+            sqlx::query_as("SELECT task_id, project_id FROM runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .runs_db("loading run context for run delete")?;
+
+        let Some((task_id, project_id)) = run_context else {
+            tx.commit()
+                .await
+                .runs_db("committing run delete transaction")?;
+            return Ok(RunDeleteResult {
+                deleted: false,
+                task_status_reconciled: None,
+            });
+        };
+
+        let deleted = sqlx::query("DELETE FROM runs WHERE id = ?")
+            .bind(run_id)
+            .execute(&mut *tx)
+            .await
+            .runs_db("deleting run in transaction")?;
+
+        if deleted.rows_affected() == 0 {
+            tx.commit()
+                .await
+                .runs_db("committing run delete transaction")?;
+            return Ok(RunDeleteResult {
+                deleted: false,
+                task_status_reconciled: None,
+            });
+        }
+
+        let task_update = sqlx::query(
+            "UPDATE tasks
+             SET status = 'review',
+                 updated_at = ?
+             WHERE id = ?
+               AND status = 'doing'
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM runs
+                   WHERE task_id = ?
+                     AND status IN ('queued', 'preparing', 'in_progress', 'idle')
+               )",
+        )
+        .bind(updated_at)
+        .bind(&task_id)
+        .bind(&task_id)
+        .execute(&mut *tx)
+        .await
+        .runs_db("reconciling task status after run delete")?;
+
+        let task_status_reconciled = if task_update.rows_affected() > 0 {
+            Some(RunDeleteTaskStatusReconciliation {
+                task_id,
+                project_id,
+            })
+        } else {
+            None
+        };
+
+        tx.commit()
+            .await
+            .runs_db("committing run delete transaction")?;
+
+        Ok(RunDeleteResult {
+            deleted: true,
+            task_status_reconciled,
+        })
+    }
+
+    pub async fn transition_run_to_cancelled(
+        &self,
+        run_id: &str,
+        finished_at: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET status = 'cancelled',
+                 run_state = NULL,
+                 finished_at = COALESCE(finished_at, ?)
+             WHERE id = ?
+               AND status IN ('queued', 'preparing', 'in_progress', 'idle')",
+        )
+        .bind(finished_at)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await
+        .runs_db("transitioning run to cancelled")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -564,8 +681,9 @@ impl RunsRepository {
         let result = sqlx::query(
             "UPDATE runs
              SET cleanup_state = 'running',
-                 cleanup_started_at = ?
-             WHERE id = ?",
+                  cleanup_started_at = ?
+             WHERE id = ?
+               AND cleanup_state = 'pending'",
         )
         .bind(started_at)
         .bind(run_id)
@@ -965,6 +1083,127 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(run_status, "complete");
+    }
+
+    #[tokio::test]
+    async fn transition_run_to_cancelled_clears_run_state() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, run_state, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-1")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("in_progress")
+        .bind("busy_coding")
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let changed = repository
+            .transition_run_to_cancelled("run-1", "2024-01-01T00:10:00Z")
+            .await
+            .unwrap();
+
+        assert!(changed);
+
+        let status: String = sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "cancelled");
+
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = 'run-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state, None);
+    }
+
+    #[tokio::test]
+    async fn hard_delete_run_and_reconcile_task_status_sets_review_when_last_active_deleted() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        sqlx::query("UPDATE tasks SET status = 'doing' WHERE id = 'task-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES ('run-1', 'task-1', 'project-1', 'repo-1', 'cancelled', 'user', '2024-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let deleted = repository
+            .hard_delete_run_and_reconcile_task_status("run-1", "2024-01-01T00:10:00Z")
+            .await
+            .unwrap();
+
+        assert!(deleted.deleted);
+        assert_eq!(
+            deleted.task_status_reconciled,
+            Some(RunDeleteTaskStatusReconciliation {
+                task_id: "task-1".to_string(),
+                project_id: "project-1".to_string(),
+            })
+        );
+
+        let task_status: String =
+            sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(task_status, "review");
+    }
+
+    #[tokio::test]
+    async fn hard_delete_run_and_reconcile_task_status_keeps_doing_when_other_active_exists() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        sqlx::query("UPDATE tasks SET status = 'doing' WHERE id = 'task-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES
+             ('run-delete', 'task-1', 'project-1', 'repo-1', 'cancelled', 'user', '2024-01-01T00:00:00Z'),
+             ('run-active', 'task-1', 'project-1', 'repo-1', 'idle', 'user', '2024-01-01T00:01:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let deleted = repository
+            .hard_delete_run_and_reconcile_task_status("run-delete", "2024-01-01T00:10:00Z")
+            .await
+            .unwrap();
+
+        assert!(deleted.deleted);
+        assert_eq!(deleted.task_status_reconciled, None);
+
+        let task_status: String =
+            sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(task_status, "doing");
     }
 
     #[tokio::test]

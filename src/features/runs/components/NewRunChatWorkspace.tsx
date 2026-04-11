@@ -32,11 +32,13 @@ import {
   type RunChatToolRailItem,
   type RunChatToolRailSubagentItem,
 } from "./chat";
+import RunAgentSelectOptions from "./RunAgentSelectOptions";
 import type {
   AgentStore,
   OpenCodeBusEvent,
   UiPart,
   UiPermissionRequest,
+  UiQuestionRequest,
 } from "../model/agentTypes";
 import { hydrateAgentStore } from "../model/agentReducer";
 import { useRunDetailModel } from "../model/useRunDetailModel";
@@ -47,6 +49,19 @@ import {
   getRunOpenCodeSessionMessages,
   getRunOpenCodeSessionTodos,
 } from "../../../app/lib/runs";
+import {
+  buildQuestionWizardConfirmSummary,
+  buildQuestionWizardFinalAnswers,
+  createEmptyQuestionWizardDrafts,
+  getQuestionWizardDraft,
+  isQuestionWizardComplete,
+  isQuestionWizardPromptComplete,
+  toggleQuestionWizardOption,
+  toggleQuestionWizardCustomAnswer,
+  updateQuestionWizardCustomText,
+  type QuestionWizardDraftAnswer,
+  type QuestionWizardPrompt,
+} from "./questionWizard";
 
 type AgentReadinessPhase =
   | "warming_backend"
@@ -954,6 +969,508 @@ const parsePermissionCardData = (
   };
 };
 
+const parseQuestionPrompts = (questions: unknown[]): QuestionWizardPrompt[] => {
+  return questions
+    .map((item, index) => {
+      const record = isRecord(item) ? item : {};
+      const options = Array.isArray(record.options)
+        ? record.options
+            .map((option) => {
+              const optionRecord = isRecord(option) ? option : {};
+              const label = toSingleLine(optionRecord.label, 80);
+              if (!label) {
+                return null;
+              }
+              return {
+                label,
+                description: toSingleLine(optionRecord.description, 180) || "",
+              };
+            })
+            .filter(
+              (option): option is QuestionWizardPrompt["options"][number] =>
+                option !== null,
+            )
+        : [];
+
+      const question =
+        toSingleLine(record.question, 300) || `Question ${index + 1}`;
+      const header = toSingleLine(record.header, 80) || `Question ${index + 1}`;
+      const multiple = record.multiple === true;
+      const custom = record.custom === true || options.length === 0;
+
+      return {
+        question,
+        header,
+        options,
+        multiple,
+        custom,
+      };
+    })
+    .filter((prompt): prompt is QuestionWizardPrompt => Boolean(prompt));
+};
+
+const parseQuestionCardData = (
+  question: UiQuestionRequest,
+): {
+  requestId: string;
+  sourceLabel: string;
+  sourceKind: "main" | "subagent";
+  prompts: QuestionWizardPrompt[];
+  failureMessage: string;
+} => {
+  return {
+    requestId: question.requestId,
+    sourceLabel:
+      toSingleLine(question.sourceLabel, 80) ||
+      (question.sourceKind === "subagent" ? "Subagent" : "Main agent"),
+    sourceKind: question.sourceKind === "subagent" ? "subagent" : "main",
+    prompts: parseQuestionPrompts(question.questions),
+    failureMessage:
+      toSingleLine(question.failureMessage, 140) ||
+      "Question request expired before response.",
+  };
+};
+
+type QuestionComposerTakeoverProps = {
+  card: NonNullable<ReturnType<typeof parseQuestionCardData>>;
+  queuedCount: number;
+  isReplying: boolean;
+  replyError: string;
+  onReply: (
+    requestId: string,
+    answers: string[][],
+  ) => Promise<boolean> | boolean;
+  onReject: (requestId: string) => Promise<boolean> | boolean;
+};
+
+const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
+  props,
+) => {
+  const [activeStepIndex, setActiveStepIndex] = createSignal(0);
+  const [draftRequestId, setDraftRequestId] = createSignal("");
+  const [draftAnswersByQuestionIndex, setDraftAnswersByQuestionIndex] =
+    createSignal<QuestionWizardDraftAnswer[]>([]);
+  const hasReviewStep = createMemo(() => props.card.prompts.length > 1);
+
+  createEffect(() => {
+    if (draftRequestId() === props.card.requestId) {
+      return;
+    }
+    setDraftRequestId(props.card.requestId);
+    setActiveStepIndex(0);
+    setDraftAnswersByQuestionIndex(
+      createEmptyQuestionWizardDrafts(props.card.prompts.length),
+    );
+  });
+
+  const reviewStepIndex = createMemo(() =>
+    hasReviewStep() ? props.card.prompts.length : -1,
+  );
+  const isReviewStep = createMemo(
+    () => hasReviewStep() && activeStepIndex() === reviewStepIndex(),
+  );
+  const currentPrompt = createMemo(
+    () => props.card.prompts[activeStepIndex()] ?? null,
+  );
+  const currentDraft = createMemo(() =>
+    getQuestionWizardDraft(draftAnswersByQuestionIndex(), activeStepIndex()),
+  );
+  const finalAnswers = createMemo(() =>
+    buildQuestionWizardFinalAnswers(
+      props.card.prompts,
+      draftAnswersByQuestionIndex(),
+    ),
+  );
+  const reviewSummary = createMemo(() =>
+    buildQuestionWizardConfirmSummary(
+      props.card.prompts,
+      draftAnswersByQuestionIndex(),
+    ),
+  );
+  const isQuestionComplete = (index: number): boolean => {
+    const prompt = props.card.prompts[index];
+    return prompt
+      ? isQuestionWizardPromptComplete(
+          prompt,
+          getQuestionWizardDraft(draftAnswersByQuestionIndex(), index),
+        )
+      : false;
+  };
+  const isAllComplete = createMemo(() =>
+    isQuestionWizardComplete(props.card.prompts, draftAnswersByQuestionIndex()),
+  );
+  const maxUnlockedQuestionStep = createMemo(() => {
+    for (let index = 0; index < props.card.prompts.length; index += 1) {
+      if (!isQuestionComplete(index)) {
+        return index;
+      }
+    }
+    return props.card.prompts.length;
+  });
+  const canOpenStep = (targetStepIndex: number): boolean => {
+    if (targetStepIndex <= activeStepIndex()) {
+      return true;
+    }
+    if (hasReviewStep() && targetStepIndex === reviewStepIndex()) {
+      return isAllComplete();
+    }
+    return targetStepIndex <= maxUnlockedQuestionStep();
+  };
+  const stepValidationError = createMemo(() => {
+    if (isReviewStep()) {
+      return isAllComplete() ? "" : "Answer every question before sending.";
+    }
+    return currentPrompt() && isQuestionComplete(activeStepIndex())
+      ? ""
+      : "Answer this step before continuing.";
+  });
+
+  const updateDraftAt = (
+    index: number,
+    updater: (draft: QuestionWizardDraftAnswer) => QuestionWizardDraftAnswer,
+  ) => {
+    setDraftAnswersByQuestionIndex((current) => {
+      const next = [...current];
+      while (next.length <= index) {
+        next.push({
+          selectedOptionLabels: [],
+          useCustomAnswer: false,
+          customText: "",
+        });
+      }
+      next[index] = updater(getQuestionWizardDraft(next, index));
+      return next;
+    });
+  };
+
+  const progressLabel = createMemo(() => {
+    if (isReviewStep()) {
+      return "Review answers";
+    }
+    return `Question ${activeStepIndex() + 1} of ${props.card.prompts.length}`;
+  });
+  const currentQuestionKey = createMemo(
+    () => `${props.card.requestId}:${activeStepIndex()}`,
+  );
+
+  return (
+    <section
+      class="run-chat-tool-rail border-base-content/10 bg-base-100 relative z-10 overflow-hidden rounded-none border shadow-sm"
+      aria-label="Question composer takeover"
+    >
+      <div class="bg-base-100 space-y-4 p-4">
+        <div class="border-base-content/10 bg-base-100 space-y-2 border-b pb-3">
+          <div class="run-chat-tool-rail__row">
+            <span class="run-chat-tool-rail__line">
+              {toSingleLine(props.card.prompts[0]?.header, 80) ||
+                "Question request"}
+            </span>
+          </div>
+          <div class="text-base-content/60 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] tracking-[0.18em] uppercase">
+            <span>{progressLabel()}</span>
+            <span>Source: {props.card.sourceLabel}</span>
+          </div>
+          <Show when={props.queuedCount > 0}>
+            <p class="text-base-content/70 text-xs">
+              {props.queuedCount} more question request
+              {props.queuedCount === 1 ? "" : "s"} queued.
+            </p>
+          </Show>
+        </div>
+
+        <div class="bg-base-100 flex flex-wrap gap-2">
+          <For each={props.card.prompts}>
+            {(prompt, promptIndex) => (
+              <button
+                type="button"
+                class={`rounded-none border px-3 py-1 text-xs font-medium ${
+                  activeStepIndex() === promptIndex()
+                    ? "border-primary/50 bg-primary/10 text-primary"
+                    : isQuestionComplete(promptIndex())
+                      ? "border-base-content/20 bg-base-100 text-base-content"
+                      : "border-base-content/10 bg-base-100 text-base-content/55"
+                }`}
+                disabled={props.isReplying || !canOpenStep(promptIndex())}
+                onClick={() => setActiveStepIndex(promptIndex())}
+              >
+                {promptIndex() + 1}. {prompt.header}
+              </button>
+            )}
+          </For>
+          <Show when={hasReviewStep()}>
+            <button
+              type="button"
+              class={`rounded-none border px-3 py-1 text-xs font-medium ${
+                isReviewStep()
+                  ? "border-primary/50 bg-primary/10 text-primary"
+                  : "border-base-content/10 bg-base-100 text-base-content/55"
+              }`}
+              disabled={props.isReplying || !canOpenStep(reviewStepIndex())}
+              onClick={() => setActiveStepIndex(reviewStepIndex())}
+            >
+              Review
+            </button>
+          </Show>
+        </div>
+
+        <Show
+          when={!isReviewStep() && currentPrompt()}
+          fallback={
+            <div class="border-base-content/10 bg-base-100 space-y-3 border p-4">
+              <p class="text-sm font-semibold">Review answers</p>
+              <For each={reviewSummary()}>
+                {(item, summaryIndex) => (
+                  <div class="border-base-content/10 bg-base-100 border px-3 py-3">
+                    <div class="flex items-start justify-between gap-3">
+                      <div class="space-y-1">
+                        <p class="text-sm font-semibold">{item.header}</p>
+                        <p class="text-base-content/70 text-xs">
+                          {item.question}
+                        </p>
+                        <p class="text-base-content text-sm">
+                          {item.answers.length > 0
+                            ? item.answers.join(", ")
+                            : "No answer yet"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-xs rounded-none px-2"
+                        disabled={props.isReplying}
+                        onClick={() => setActiveStepIndex(summaryIndex())}
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+          }
+        >
+          {(prompt) => (
+            <Show keyed when={currentQuestionKey()}>
+              {() => {
+                const isOptionChecked = (label: string) =>
+                  currentDraft().selectedOptionLabels.includes(label);
+                const isCustomEnabled = () => prompt().custom;
+                const isCustomChecked = () =>
+                  isCustomEnabled() && currentDraft().useCustomAnswer;
+
+                return (
+                  <div class="border-base-content/10 bg-base-100 space-y-4 border p-4">
+                    <div class="space-y-1">
+                      <p class="text-sm font-semibold">{prompt().header}</p>
+                      <p class="text-base-content/90 text-sm leading-6">
+                        {prompt().question}
+                      </p>
+                    </div>
+
+                    <div class="space-y-2">
+                      <For each={prompt().options}>
+                        {(option) => {
+                          const checked = () => isOptionChecked(option.label);
+                          return (
+                            <button
+                              type="button"
+                              aria-label={option.label}
+                              data-checked={checked() ? "true" : "false"}
+                              class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
+                                checked()
+                                  ? "border-primary/50 bg-base-100"
+                                  : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
+                              }`}
+                              disabled={props.isReplying}
+                              onClick={() => {
+                                updateDraftAt(activeStepIndex(), (draft) =>
+                                  toggleQuestionWizardOption(
+                                    prompt(),
+                                    draft,
+                                    option.label,
+                                  ),
+                                );
+                              }}
+                            >
+                              <span
+                                class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
+                                  checked()
+                                    ? "border-primary bg-primary text-primary-content"
+                                    : "border-base-content/30 bg-base-100"
+                                }`}
+                                aria-hidden="true"
+                              >
+                                <Show when={checked()}>✓</Show>
+                              </span>
+                              <span>
+                                <span class="block text-sm font-medium">
+                                  {option.label}
+                                </span>
+                                <Show when={option.description.length > 0}>
+                                  <span class="text-base-content/70 mt-1 block text-xs">
+                                    {option.description}
+                                  </span>
+                                </Show>
+                              </span>
+                            </button>
+                          );
+                        }}
+                      </For>
+
+                      <Show when={isCustomEnabled()}>
+                        <button
+                          type="button"
+                          aria-label="Type your own answer"
+                          data-checked={isCustomChecked() ? "true" : "false"}
+                          class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
+                            isCustomChecked()
+                              ? "border-primary/50 bg-base-100"
+                              : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
+                          }`}
+                          disabled={props.isReplying}
+                          onClick={() => {
+                            updateDraftAt(activeStepIndex(), (draft) =>
+                              toggleQuestionWizardCustomAnswer(prompt(), draft),
+                            );
+                          }}
+                        >
+                          <span
+                            class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
+                              isCustomChecked()
+                                ? "border-primary bg-primary text-primary-content"
+                                : "border-base-content/30 bg-base-100"
+                            }`}
+                            aria-hidden="true"
+                          >
+                            <Show when={isCustomChecked()}>✓</Show>
+                          </span>
+                          <span class="block text-sm font-medium">
+                            Type your own answer
+                          </span>
+                        </button>
+                      </Show>
+                    </div>
+
+                    <Show when={isCustomEnabled() && isCustomChecked()}>
+                      <div class="bg-base-100 space-y-2">
+                        <label
+                          class="text-base-content/60 text-xs font-semibold tracking-[0.18em] uppercase"
+                          for={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
+                        >
+                          Your answer
+                        </label>
+                        <textarea
+                          id={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
+                          class="textarea textarea-bordered bg-base-100 min-h-[96px] w-full rounded-none text-sm leading-6"
+                          value={currentDraft().customText}
+                          placeholder="Type your answer"
+                          disabled={props.isReplying}
+                          rows={4}
+                          onInput={(event) => {
+                            updateDraftAt(activeStepIndex(), (draft) =>
+                              updateQuestionWizardCustomText(
+                                draft,
+                                event.currentTarget.value,
+                              ),
+                            );
+                          }}
+                        />
+                        <p class="text-base-content/60 text-xs">
+                          Type your own answer if none of the options fit.
+                        </p>
+                      </div>
+                    </Show>
+                  </div>
+                );
+              }}
+            </Show>
+          )}
+        </Show>
+
+        <Show
+          when={stepValidationError().length > 0 || props.replyError.length > 0}
+        >
+          <div class="bg-base-100">
+            <p
+              class={
+                props.replyError.length > 0
+                  ? "projects-error"
+                  : "project-placeholder-text"
+              }
+            >
+              {props.replyError.length > 0
+                ? props.replyError
+                : stepValidationError()}
+            </p>
+          </div>
+        </Show>
+
+        <div class="border-base-content/10 bg-base-100 flex items-center justify-between gap-2 border-t pt-3">
+          <button
+            type="button"
+            class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+            disabled={props.isReplying}
+            onClick={() => {
+              void props.onReject(props.card.requestId);
+            }}
+          >
+            {props.isReplying ? "Sending..." : "Dismiss"}
+          </button>
+          <div class="flex items-center gap-2">
+            <Show when={hasReviewStep() || activeStepIndex() > 0}>
+              <button
+                type="button"
+                class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
+                disabled={props.isReplying || activeStepIndex() === 0}
+                onClick={() =>
+                  setActiveStepIndex(Math.max(0, activeStepIndex() - 1))
+                }
+              >
+                Back
+              </button>
+            </Show>
+            <Show
+              when={!isReviewStep()}
+              fallback={
+                <button
+                  type="button"
+                  class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
+                  disabled={props.isReplying || !isAllComplete()}
+                  onClick={() => {
+                    void props.onReply(props.card.requestId, finalAnswers());
+                  }}
+                >
+                  {props.isReplying ? "Sending..." : "Send answer"}
+                </button>
+              }
+            >
+              <button
+                type="button"
+                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
+                disabled={
+                  props.isReplying || !isQuestionComplete(activeStepIndex())
+                }
+                onClick={() => {
+                  if (!hasReviewStep()) {
+                    void props.onReply(props.card.requestId, finalAnswers());
+                    return;
+                  }
+                  setActiveStepIndex(activeStepIndex() + 1);
+                }}
+              >
+                {!hasReviewStep()
+                  ? "Send answer"
+                  : activeStepIndex() === props.card.prompts.length - 1
+                    ? "Review answers"
+                    : "Next"}
+              </button>
+            </Show>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
+
 const toToolLabel = (toolName: string | null | undefined): string => {
   const raw = toolName?.trim();
   if (!raw) {
@@ -1408,6 +1925,28 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
 
     return runAgentOptions()[0]?.id || "";
   });
+  const pendingQuestionRequests = createMemo(() => {
+    const state = props.model.agent.questionState?.();
+    return state?.activeRequest ? [state.activeRequest] : [];
+  });
+  const queuedQuestionRequests = createMemo(() => {
+    return props.model.agent.questionState?.().queuedRequests ?? [];
+  });
+  const pendingQuestionCards = createMemo(() => {
+    return pendingQuestionRequests().map((question) =>
+      parseQuestionCardData(question),
+    );
+  });
+  const failedQuestionCards = createMemo(() => {
+    return (
+      props.model.agent
+        .questionState?.()
+        .failedRequests.map((question) => parseQuestionCardData(question)) ?? []
+    );
+  });
+  const hasPendingQuestion = createMemo(
+    () => pendingQuestionRequests().length > 0,
+  );
   const pendingPermissionRequests = createMemo(() => {
     const state = props.model.agent.permissionState();
     return state.activeRequest ? [state.activeRequest] : [];
@@ -1427,6 +1966,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
   const hasPendingPermission = createMemo(
     () => pendingPermissionRequests().length > 0,
+  );
+  const activeQuestionCard = createMemo(
+    () => pendingQuestionCards()[0] ?? null,
   );
 
   createEffect(() => {
@@ -1870,6 +2412,43 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         );
       });
 
+    const failedQuestionItems = failedQuestionCards().map((card) => {
+      return (
+        <RunChatMessage role="assistant">
+          <section
+            class="run-chat-tool-rail"
+            aria-label="Question request failed tool item"
+          >
+            <ul class="run-chat-tool-rail__list">
+              <li class="run-chat-tool-rail__item run-chat-tool-rail__item--failed">
+                <div class="run-chat-tool-rail__row">
+                  <span class="run-chat-tool-rail__line">Question pending</span>
+                  <span class="run-chat-tool-rail__status">
+                    <span
+                      class="run-chat-tool-rail__status-slot"
+                      aria-label="failed"
+                    >
+                      <AppIcon
+                        name="status.error"
+                        class="run-chat-tool-rail__status-icon run-chat-tool-rail__status-icon--error"
+                        aria-hidden="true"
+                        size={14}
+                      />
+                      <span class="sr-only">failed</span>
+                    </span>
+                  </span>
+                </div>
+                <p class="run-chat-tool-rail__details">
+                  <strong>Source:</strong> {card.sourceLabel}
+                </p>
+                <p class="run-chat-tool-rail__details">{card.failureMessage}</p>
+              </li>
+            </ul>
+          </section>
+        </RunChatMessage>
+      );
+    });
+
     const pendingPermissionItems = pendingPermissionCards().map((card) => {
       return (
         <RunChatMessage
@@ -2150,6 +2729,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     return [
       ...messageItems,
       ...(optimisticPromptItem ? [optimisticPromptItem] : []),
+      ...failedQuestionItems,
       ...pendingPermissionItems,
       ...failedPermissionItems,
       ...(sessionStatusItem ? [sessionStatusItem] : []),
@@ -2390,59 +2970,90 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               </section>
             }
           >
-            <RunChatComposer
-              class="run-chat-composer"
-              value={composerValue()}
-              onInput={setComposerValue}
-              onSubmit={(value) => {
-                void (async () => {
-                  const agentId = selectedAgentId();
-                  const providerId = selectedProviderId();
-                  const modelId = selectedModelId();
-                  const hasValidSelection =
-                    !!agentId &&
-                    !!providerId &&
-                    !!modelId &&
-                    doesModelMatchProvider(modelId, providerId);
+            <Show
+              when={activeQuestionCard()}
+              fallback={
+                <RunChatComposer
+                  class="run-chat-composer"
+                  value={composerValue()}
+                  onInput={setComposerValue}
+                  onSubmit={(value) => {
+                    void (async () => {
+                      const agentId = selectedAgentId();
+                      const providerId = selectedProviderId();
+                      const modelId = selectedModelId();
+                      const hasValidSelection =
+                        !!agentId &&
+                        !!providerId &&
+                        !!modelId &&
+                        doesModelMatchProvider(modelId, providerId);
 
-                  if (!hasValidSelection) {
-                    setComposerSelectionValidationError(
-                      "Select a valid agent, provider, and model before sending.",
-                    );
-                    return;
-                  }
+                      if (!hasValidSelection) {
+                        setComposerSelectionValidationError(
+                          "Select a valid agent, provider, and model before sending.",
+                        );
+                        return;
+                      }
 
-                  setComposerSelectionValidationError("");
-                  if (chatSessionHealth() === "unresponsive") {
-                    const recovered =
-                      (await props.model.agent.reconnectSession?.()) ?? false;
-                    if (!recovered) {
-                      return;
-                    }
+                      setComposerSelectionValidationError("");
+                      if (chatSessionHealth() === "unresponsive") {
+                        const recovered =
+                          (await props.model.agent.reconnectSession?.()) ??
+                          false;
+                        if (!recovered) {
+                          return;
+                        }
+                      }
+                      const success = await props.model.agent.submitPrompt(
+                        value,
+                        {
+                          agentId,
+                          providerId,
+                          modelId,
+                        },
+                      );
+                      if (success) {
+                        setComposerValue("");
+                      }
+                    })();
+                  }}
+                  disabled={
+                    hasPendingPermission() ||
+                    isComposerBlockedByReadiness() ||
+                    props.model.agent.state() === "unsupported" ||
+                    props.model.agent.isReplyingPermission()
                   }
-                  const success = await props.model.agent.submitPrompt(value, {
-                    agentId,
-                    providerId,
-                    modelId,
-                  });
-                  if (success) {
-                    setComposerValue("");
-                  }
-                })();
-              }}
-              disabled={
-                hasPendingPermission() ||
-                isComposerBlockedByReadiness() ||
-                props.model.agent.state() === "unsupported" ||
-                props.model.agent.isReplyingPermission()
+                  submitting={props.model.agent.isSubmittingPrompt()}
+                  placeholder="What do you want to do?"
+                  textareaLabel="Message agent"
+                  submitLabel="Send"
+                />
               }
-              submitting={props.model.agent.isSubmittingPrompt()}
-              placeholder="What do you want to do?"
-              textareaLabel="Message agent"
-              submitLabel="Send"
-            />
+            >
+              {(card) => (
+                <QuestionComposerTakeover
+                  card={card()}
+                  queuedCount={queuedQuestionRequests().length}
+                  isReplying={props.model.agent.isReplyingQuestion?.() ?? false}
+                  replyError={props.model.agent.questionReplyError?.() ?? ""}
+                  onReply={(requestId, answers) =>
+                    props.model.agent.replyQuestion?.(requestId, answers) ??
+                    false
+                  }
+                  onReject={(requestId) =>
+                    props.model.agent.rejectQuestion?.(requestId) ?? false
+                  }
+                />
+              )}
+            </Show>
           </Show>
-          <Show when={!isRunCompleted() && hasRunSelectionOptions()}>
+          <Show
+            when={
+              !isRunCompleted() &&
+              !activeQuestionCard() &&
+              hasRunSelectionOptions()
+            }
+          >
             <div class="run-chat-override-grid mt-2 gap-2">
               <label class="projects-field run-chat-override-field">
                 <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
@@ -2536,11 +3147,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                   }}
                   aria-label="Prompt override agent"
                 >
-                  <For each={runAgentOptions()}>
-                    {(option: { id: string; label: string }) => (
-                      <option value={option.id}>{option.label}</option>
-                    )}
-                  </For>
+                  <RunAgentSelectOptions options={runAgentOptions()} />
                 </select>
               </label>
             </div>
@@ -2561,6 +3168,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               {composerSelectionValidationError()}
             </p>
           </Show>
+          <Show when={hasPendingQuestion() && !activeQuestionCard()}>
+            <p class="project-placeholder-text" aria-live="polite">
+              Prompt submission is blocked until this question is answered.
+            </p>
+          </Show>
           <Show when={hasPendingPermission()}>
             <p class="project-placeholder-text" aria-live="polite">
               Prompt submission is blocked until this permission is answered.
@@ -2568,6 +3180,17 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           </Show>
           <Show
             when={
+              !hasPendingQuestion() &&
+              props.model.agent.questionReplyError?.().length > 0
+            }
+          >
+            <p class="projects-error">
+              {props.model.agent.questionReplyError?.()}
+            </p>
+          </Show>
+          <Show
+            when={
+              !hasPendingQuestion() &&
               !hasPendingPermission() &&
               props.model.agent.permissionReplyError().length > 0
             }

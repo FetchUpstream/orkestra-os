@@ -14,6 +14,7 @@ use crate::app::db::repositories::runs::RunsRepository;
 use crate::app::errors::AppError;
 use crate::app::runs::dto::RunDto;
 use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext};
+use crate::app::tasks::dto::TaskStatusChangedEventDto;
 use crate::app::worktrees::dto::{CreateWorktreeRequest, LocalBranchDto, RemoveWorktreeRequest};
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
@@ -223,18 +224,101 @@ impl RunsService {
             .ok_or_else(|| AppError::not_found("run repository not found"))
     }
 
-    pub async fn delete_run(&self, run_id: &str) -> Result<(), AppError> {
+    pub async fn prepare_run_for_deletion(&self, run_id: &str) -> Result<(), AppError> {
         let run_id = run_id.trim();
         if run_id.is_empty() {
             return Err(AppError::validation("run_id is required"));
         }
 
-        let deleted = self.repository.delete_run(run_id).await?;
-        if !deleted {
+        let run = self
+            .repository
+            .get_run(run_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("run not found"))?;
+
+        self.begin_delete_run_lifecycle(&run).await
+    }
+
+    pub async fn hard_delete_run(&self, run_id: &str) -> Result<(), AppError> {
+        self.hard_delete_run_and_reconcile_task_status(run_id)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn hard_delete_run_and_reconcile_task_status(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<TaskStatusChangedEventDto>, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let updated_at = Utc::now().to_rfc3339();
+        let delete_result = self
+            .repository
+            .hard_delete_run_and_reconcile_task_status(run_id, &updated_at)
+            .await?;
+        if !delete_result.deleted {
             return Err(AppError::not_found("run not found"));
         }
 
+        let task_status_event =
+            delete_result
+                .task_status_reconciled
+                .map(|reconciled| TaskStatusChangedEventDto {
+                    task_id: reconciled.task_id,
+                    project_id: reconciled.project_id,
+                    run_id: Some(run_id.to_string()),
+                    previous_status: "doing".to_string(),
+                    new_status: "review".to_string(),
+                    transition_source: "run_deleted".to_string(),
+                    timestamp: updated_at,
+                });
+
+        Ok(task_status_event)
+    }
+
+    async fn begin_delete_run_lifecycle(&self, run: &Run) -> Result<(), AppError> {
+        if !Self::requires_delete_lifecycle_transition(run.status.as_str()) {
+            return Ok(());
+        }
+
+        let finished_at = Utc::now().to_rfc3339();
+        let transitioned = self
+            .repository
+            .transition_run_to_cancelled(&run.id, &finished_at)
+            .await?;
+
+        if transitioned {
+            info!(
+                subsystem = "runs",
+                operation = "delete_run",
+                run_id = run.id.as_str(),
+                previous_status = run.status.as_str(),
+                next_status = "cancelled",
+                "Transitioned run into delete lifecycle"
+            );
+            return Ok(());
+        }
+
+        let refreshed_run = self
+            .repository
+            .get_run(&run.id)
+            .await?
+            .ok_or_else(|| AppError::not_found("run not found"))?;
+
+        if Self::requires_delete_lifecycle_transition(refreshed_run.status.as_str()) {
+            return Err(AppError::conflict(
+                "run deletion could not transition run out of an active state",
+            ));
+        }
+
         Ok(())
+    }
+
+    fn requires_delete_lifecycle_transition(status: &str) -> bool {
+        matches!(status, "queued" | "preparing" | "in_progress" | "idle")
     }
 
     #[cfg(test)]
@@ -1170,7 +1254,8 @@ mod tests {
         seed_task(&pool, "task-1", &repo_path).await;
         seed_run(&pool, "run-1", "task-1").await;
 
-        let result = service.delete_run("run-1").await;
+        service.prepare_run_for_deletion("run-1").await.unwrap();
+        let result = service.hard_delete_run("run-1").await;
 
         assert!(result.is_ok());
         let found = service.get_run("run-1").await;
@@ -1178,10 +1263,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_run_lifecycle_transitions_active_run_to_cancelled_before_deletion() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task_with_status(&pool, "task-1", &repo_path, "doing").await;
+        seed_run_with_status(&pool, "run-1", "task-1", "in_progress").await;
+
+        let run = service.get_run_model("run-1").await.unwrap();
+
+        service.begin_delete_run_lifecycle(&run).await.unwrap();
+
+        let transitioned = service.get_run_model("run-1").await.unwrap();
+        assert_eq!(transitioned.status, "cancelled");
+        assert!(transitioned.finished_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn delete_run_lifecycle_keeps_terminal_runs_terminal_before_deletion() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run_with_status(&pool, "run-1", "task-1", "complete").await;
+
+        let run = service.get_run_model("run-1").await.unwrap();
+
+        service.begin_delete_run_lifecycle(&run).await.unwrap();
+
+        let unchanged = service.get_run_model("run-1").await.unwrap();
+        assert_eq!(unchanged.status, "complete");
+    }
+
+    #[tokio::test]
+    async fn hard_delete_run_and_reconcile_returns_status_event_when_task_moves_to_review() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task_with_status(&pool, "task-1", &repo_path, "doing").await;
+        seed_run_with_status(&pool, "run-1", "task-1", "cancelled").await;
+
+        let status_event = service
+            .hard_delete_run_and_reconcile_task_status("run-1")
+            .await
+            .unwrap();
+
+        let payload = status_event.expect("expected status event payload");
+        assert_eq!(payload.task_id, "task-1");
+        assert_eq!(payload.project_id, "project-1");
+        assert_eq!(payload.run_id.as_deref(), Some("run-1"));
+        assert_eq!(payload.previous_status, "doing");
+        assert_eq!(payload.new_status, "review");
+        assert_eq!(payload.transition_source, "run_deleted");
+    }
+
+    #[tokio::test]
+    async fn hard_delete_run_and_reconcile_returns_no_status_event_when_task_stays_doing() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task_with_status(&pool, "task-1", &repo_path, "doing").await;
+        seed_run_with_status(&pool, "run-delete", "task-1", "cancelled").await;
+        seed_run_with_status(&pool, "run-active", "task-1", "idle").await;
+
+        let status_event = service
+            .hard_delete_run_and_reconcile_task_status("run-delete")
+            .await
+            .unwrap();
+
+        assert!(status_event.is_none());
+    }
+
+    #[tokio::test]
     async fn delete_run_returns_not_found_for_missing_run() {
         let (service, _, _) = setup_service().await;
 
-        let result = service.delete_run("missing-run").await;
+        let result = service.prepare_run_for_deletion("missing-run").await;
 
         match result {
             Err(AppError::NotFound(message)) => assert_eq!(message, "run not found"),

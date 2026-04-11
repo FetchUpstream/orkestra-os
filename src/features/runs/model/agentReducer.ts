@@ -27,6 +27,7 @@ import { appendCappedHistory } from "../../../app/lib/runs";
 type HydrateInput = {
   sessionId: string | null;
   messages: unknown;
+  questions?: unknown;
   todos: unknown;
 };
 
@@ -450,11 +451,14 @@ const normalizeTodos = (value: unknown): UiTodo[] => {
   });
 };
 
-const normalizeQuestion = (value: unknown): UiQuestionRequest | null => {
+const normalizeQuestion = (
+  value: unknown,
+  receivedAt?: string | number | null,
+): UiQuestionRequest | null => {
   if (!isRecord(value)) {
     return null;
   }
-  const requestId = asString(value.requestID ?? value.requestId);
+  const requestId = asString(value.requestID ?? value.requestId ?? value.id);
   const sessionId = asString(value.sessionID ?? value.sessionId);
   if (!requestId || !sessionId) {
     return null;
@@ -463,8 +467,26 @@ const normalizeQuestion = (value: unknown): UiQuestionRequest | null => {
     requestId,
     sessionId,
     questions: asArray(value.questions),
+    status: "pending",
+    dedupeKey: `${sessionId}:${requestId}`,
+    receivedAt:
+      parseTimestamp(value.receivedAt ?? value.received_at) ??
+      parseTimestamp(receivedAt) ??
+      parseTimestamp(value.createdAt ?? value.created_at) ??
+      null,
     raw: value,
   };
+};
+
+const extractQuestions = (value: unknown): unknown[] => {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (!isRecord(value)) {
+    return [];
+  }
+  const maybeQuestions = pickRecordValue(value, "questions", "items", "data");
+  return Array.isArray(maybeQuestions) ? maybeQuestions : [];
 };
 
 const normalizePermission = (
@@ -635,6 +657,8 @@ export const createEmptyAgentStore = (sessionId: string | null): AgentStore => {
     messagesById: {},
     messageOrder: [],
     pendingQuestionsById: {},
+    resolvedQuestionsById: {},
+    failedQuestionsById: {},
     pendingPermissionsById: {},
     resolvedPermissionsById: {},
     failedPermissionsById: {},
@@ -965,6 +989,17 @@ export const hydrateAgentStore = (input: HydrateInput): AgentStore => {
     }
   }
 
+  const pendingQuestionsById = extractQuestions(input.questions).reduce<
+    Record<string, UiQuestionRequest>
+  >((acc, item) => {
+    const normalizedQuestion = normalizeQuestion(item);
+    if (!normalizedQuestion) {
+      return acc;
+    }
+    acc[normalizedQuestion.requestId] = normalizedQuestion;
+    return acc;
+  }, {});
+
   return {
     ...state,
     status: "idle",
@@ -972,6 +1007,7 @@ export const hydrateAgentStore = (input: HydrateInput): AgentStore => {
     lastSyncAt: Date.now(),
     messagesById: nextMessagesById,
     messageOrder: nextMessageOrder,
+    pendingQuestionsById,
     todos: normalizeTodos(extractTodos(input.todos)),
   };
 };
@@ -1119,24 +1155,23 @@ export const reduceOpenCodeEvent = (
     }
 
     case "question.asked": {
-      const normalized = normalizeQuestion(properties);
+      const normalized = normalizeQuestion(properties, event.ts);
       if (!normalized) {
         return nextState;
       }
-      const sessionResult = matchOrAdoptSession(
-        nextState,
-        normalized.sessionId,
-      );
-      if (!sessionResult.canApply) {
-        return nextState;
-      }
+      const failedQuestionsById = { ...nextState.failedQuestionsById };
+      delete failedQuestionsById[normalized.requestId];
+      const resolvedQuestionsById = { ...nextState.resolvedQuestionsById };
+      delete resolvedQuestionsById[normalized.requestId];
       return {
         ...nextState,
-        sessionId: sessionResult.sessionId,
+        sessionId: nextState.sessionId ?? normalized.sessionId,
         pendingQuestionsById: {
           ...nextState.pendingQuestionsById,
           [normalized.requestId]: normalized,
         },
+        resolvedQuestionsById,
+        failedQuestionsById,
       };
     }
 
@@ -1147,10 +1182,26 @@ export const reduceOpenCodeEvent = (
         return nextState;
       }
       const pendingQuestionsById = { ...nextState.pendingQuestionsById };
+      const resolvedStatus =
+        event.type === "question.rejected"
+          ? ("rejected" as const)
+          : ("replied" as const);
+      const resolvedQuestionsById = {
+        ...nextState.resolvedQuestionsById,
+        [requestId]: {
+          ...nextState.pendingQuestionsById[requestId],
+          status: resolvedStatus,
+          resolvedAt: event.ts ?? null,
+        },
+      };
       delete pendingQuestionsById[requestId];
+      const failedQuestionsById = { ...nextState.failedQuestionsById };
+      delete failedQuestionsById[requestId];
       return {
         ...nextState,
         pendingQuestionsById,
+        resolvedQuestionsById,
+        failedQuestionsById,
       };
     }
 

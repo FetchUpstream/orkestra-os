@@ -16,6 +16,7 @@ use crate::app::db::repositories::task_search::TaskSearchRepository;
 use crate::app::db::repositories::tasks::TasksRepository;
 use crate::app::projects::search_service::ProjectFileSearchService;
 use crate::app::projects::service::ProjectsService;
+use crate::app::runs::delete_service::RunsDeleteService;
 use crate::app::runs::diff_service::RunsDiffService;
 use crate::app::runs::merge_service::RunsMergeService;
 use crate::app::runs::opencode_service::RunsOpenCodeService;
@@ -34,6 +35,7 @@ use std::path::PathBuf;
 pub struct AppState {
     pub projects_service: ProjectsService,
     pub runs_service: RunsService,
+    pub runs_delete_service: RunsDeleteService,
     pub runs_diff_service: RunsDiffService,
     pub runs_merge_service: RunsMergeService,
     pub runs_opencode_service: RunsOpenCodeService,
@@ -89,12 +91,18 @@ impl AppState {
             run_status_transition_service.clone(),
             app_data_dir.clone(),
         );
+        let runs_delete_service = RunsDeleteService::new(
+            runs_service.clone(),
+            runs_opencode_service.clone(),
+            task_status_transition_service.clone(),
+        );
         let terminal_service =
             TerminalService::new(projects_service.clone(), runs_service.clone(), app_data_dir);
         let tasks_service = TasksService::new(tasks_repository, task_search_service);
         Self {
             projects_service,
             runs_service,
+            runs_delete_service,
             runs_diff_service,
             runs_merge_service,
             runs_opencode_service,
