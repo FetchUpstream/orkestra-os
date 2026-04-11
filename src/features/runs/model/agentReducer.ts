@@ -470,7 +470,10 @@ const normalizeQuestion = (
     status: "pending",
     dedupeKey: `${sessionId}:${requestId}`,
     receivedAt:
-      receivedAt ?? parseTimestamp(value.createdAt ?? value.created_at) ?? null,
+      parseTimestamp(value.receivedAt ?? value.received_at) ??
+      parseTimestamp(receivedAt) ??
+      parseTimestamp(value.createdAt ?? value.created_at) ??
+      null,
     raw: value,
   };
 };

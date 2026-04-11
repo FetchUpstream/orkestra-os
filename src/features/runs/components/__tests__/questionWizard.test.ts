@@ -136,6 +136,41 @@ describe("questionWizard", () => {
     expect(buildQuestionWizardFinalAnswers([prompt], [draft])).toEqual([[]]);
   });
 
+  it("ignores custom draft text when prompt.custom is false", () => {
+    const prompt: QuestionWizardPrompt = {
+      header: "One",
+      question: "First?",
+      options: [{ label: "A", description: "" }],
+      multiple: false,
+      custom: false,
+    };
+    const draft: QuestionWizardDraftAnswer = {
+      selectedOptionLabels: ["A"],
+      useCustomAnswer: true,
+      customText: "Alpha",
+    };
+
+    expect(isQuestionWizardPromptComplete(prompt, draft)).toBe(true);
+    expect(buildQuestionWizardFinalAnswers([prompt], [draft])).toEqual([["A"]]);
+  });
+
+  it("does not toggle custom mode when prompt.custom is false", () => {
+    const prompt: QuestionWizardPrompt = {
+      header: "One",
+      question: "First?",
+      options: [{ label: "A", description: "" }],
+      multiple: false,
+      custom: false,
+    };
+    const draft: QuestionWizardDraftAnswer = {
+      selectedOptionLabels: ["A"],
+      useCustomAnswer: false,
+      customText: "",
+    };
+
+    expect(toggleQuestionWizardCustomAnswer(prompt, draft)).toEqual(draft);
+  });
+
   it("single-select custom toggle clears normal options and does not autofill text", () => {
     const prompt: QuestionWizardPrompt = {
       header: "One",

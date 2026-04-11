@@ -1253,7 +1253,9 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
               {() => {
                 const isOptionChecked = (label: string) =>
                   currentDraft().selectedOptionLabels.includes(label);
-                const isCustomChecked = () => currentDraft().useCustomAnswer;
+                const isCustomEnabled = () => prompt().custom;
+                const isCustomChecked = () =>
+                  isCustomEnabled() && currentDraft().useCustomAnswer;
 
                 return (
                   <div class="border-base-content/10 bg-base-100 space-y-4 border p-4">
@@ -1314,39 +1316,41 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
                         }}
                       </For>
 
-                      <button
-                        type="button"
-                        aria-label="Type your own answer"
-                        data-checked={isCustomChecked() ? "true" : "false"}
-                        class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
-                          isCustomChecked()
-                            ? "border-primary/50 bg-base-100"
-                            : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
-                        }`}
-                        disabled={props.isReplying}
-                        onClick={() => {
-                          updateDraftAt(activeStepIndex(), (draft) =>
-                            toggleQuestionWizardCustomAnswer(prompt(), draft),
-                          );
-                        }}
-                      >
-                        <span
-                          class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
+                      <Show when={isCustomEnabled()}>
+                        <button
+                          type="button"
+                          aria-label="Type your own answer"
+                          data-checked={isCustomChecked() ? "true" : "false"}
+                          class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
                             isCustomChecked()
-                              ? "border-primary bg-primary text-primary-content"
-                              : "border-base-content/30 bg-base-100"
+                              ? "border-primary/50 bg-base-100"
+                              : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
                           }`}
-                          aria-hidden="true"
+                          disabled={props.isReplying}
+                          onClick={() => {
+                            updateDraftAt(activeStepIndex(), (draft) =>
+                              toggleQuestionWizardCustomAnswer(prompt(), draft),
+                            );
+                          }}
                         >
-                          <Show when={isCustomChecked()}>✓</Show>
-                        </span>
-                        <span class="block text-sm font-medium">
-                          Type your own answer
-                        </span>
-                      </button>
+                          <span
+                            class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
+                              isCustomChecked()
+                                ? "border-primary bg-primary text-primary-content"
+                                : "border-base-content/30 bg-base-100"
+                            }`}
+                            aria-hidden="true"
+                          >
+                            <Show when={isCustomChecked()}>✓</Show>
+                          </span>
+                          <span class="block text-sm font-medium">
+                            Type your own answer
+                          </span>
+                        </button>
+                      </Show>
                     </div>
 
-                    <Show when={isCustomChecked()}>
+                    <Show when={isCustomEnabled() && isCustomChecked()}>
                       <div class="bg-base-100 space-y-2">
                         <label
                           class="text-base-content/60 text-xs font-semibold tracking-[0.18em] uppercase"
@@ -1966,19 +1970,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const activeQuestionCard = createMemo(
     () => pendingQuestionCards()[0] ?? null,
   );
-  const [questionActiveStepIndex, setQuestionActiveStepIndex] = createSignal(0);
-  const [legacyQuestionDrafts] = createSignal<QuestionWizardDraftAnswer[]>([]);
-  const getQuestionDraft = (promptIndex: number): QuestionWizardDraftAnswer => {
-    return getQuestionWizardDraft(legacyQuestionDrafts(), promptIndex);
-  };
-  const getQuestionStepValidationError = (): string => "";
-  const getQuestionValidationError = (): string => "";
-  const isQuestionComplete = (): boolean => false;
-  const isAllQuestionsComplete = (): boolean => false;
-  const buildQuestionAnswers = (): string[][] => [];
-  const questionConfirmSummary = createMemo(
-    () => [] as ReturnType<typeof buildQuestionWizardConfirmSummary>,
-  );
 
   createEffect(() => {
     const pending = pendingPermissionCards();
@@ -2420,394 +2411,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           </div>
         );
       });
-
-    const pendingQuestionItems = pendingQuestionCards().map((card) => {
-      const confirmStepIndex = card.prompts.length;
-      const totalStepCount = card.prompts.length + 1;
-      const currentStepIndex = Math.min(
-        questionActiveStepIndex(),
-        confirmStepIndex,
-      );
-      const isConfirmStep = currentStepIndex === confirmStepIndex;
-      const currentPrompt = card.prompts[currentStepIndex] ?? null;
-      const currentDraft = currentPrompt
-        ? getQuestionDraft(currentStepIndex)
-        : null;
-      const validationError = isConfirmStep
-        ? getQuestionValidationError(card)
-        : getQuestionStepValidationError(card, currentStepIndex);
-      const canGoBack = currentStepIndex > 0;
-      const canAdvance =
-        !isConfirmStep && isQuestionComplete(card, currentStepIndex);
-      const canSend = isConfirmStep && isAllQuestionsComplete(card);
-      const requestTitle =
-        toSingleLine(card.prompts[0]?.header, 80) || "Question request";
-      const progressLabel = isConfirmStep
-        ? `Confirm ${totalStepCount} of ${totalStepCount}`
-        : `Question ${currentStepIndex + 1} of ${card.prompts.length}`;
-      const maxUnlockedQuestionStep = (() => {
-        let unlocked = 0;
-        for (let index = 0; index < card.prompts.length; index += 1) {
-          if (!isQuestionComplete(card, index)) {
-            return index;
-          }
-          unlocked = index + 1;
-        }
-        return unlocked;
-      })();
-      const canOpenStep = (targetStepIndex: number): boolean => {
-        if (targetStepIndex <= currentStepIndex) {
-          return true;
-        }
-        if (targetStepIndex === confirmStepIndex) {
-          return isAllQuestionsComplete(card);
-        }
-        return targetStepIndex <= maxUnlockedQuestionStep;
-      };
-
-      return (
-        <RunChatMessage
-          role="assistant"
-          class="run-chat-message-item"
-          ariaLabel="Question request"
-        >
-          <RunChatAssistantMessage
-            content=" "
-            toolRail={
-              <section
-                class="run-chat-tool-rail"
-                aria-label="Question request tool item"
-              >
-                <ul class="run-chat-tool-rail__list">
-                  <li class="run-chat-tool-rail__item run-chat-tool-rail__item--running">
-                    <div class="space-y-4">
-                      <div class="border-base-content/10 space-y-2 border-b pb-3">
-                        <div class="run-chat-tool-rail__row">
-                          <span class="run-chat-tool-rail__line">
-                            {requestTitle}
-                          </span>
-                        </div>
-                        <div class="text-base-content/60 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] tracking-[0.18em] uppercase">
-                          <span>{progressLabel}</span>
-                          <span>Source: {card.sourceLabel}</span>
-                        </div>
-                        <Show when={queuedQuestionRequests().length > 0}>
-                          <p class="text-base-content/70 text-xs">
-                            {queuedQuestionRequests().length} more question
-                            request
-                            {queuedQuestionRequests().length === 1
-                              ? ""
-                              : "s"}{" "}
-                            queued.
-                          </p>
-                        </Show>
-                      </div>
-
-                      <div class="flex flex-wrap gap-2">
-                        <For each={card.prompts}>
-                          {(prompt, promptIndex) => {
-                            const stepNumber = promptIndex() + 1;
-                            const isActive = currentStepIndex === promptIndex();
-                            const isComplete = isQuestionComplete(
-                              card,
-                              promptIndex(),
-                            );
-                            return (
-                              <button
-                                type="button"
-                                class={`rounded-none border px-3 py-1 text-xs font-medium ${
-                                  isActive
-                                    ? "border-primary/50 bg-primary/10 text-primary"
-                                    : isComplete
-                                      ? "border-base-content/20 bg-base-100 text-base-content"
-                                      : "border-base-content/10 bg-base-100/60 text-base-content/55"
-                                }`}
-                                disabled={
-                                  props.model.agent.isReplyingQuestion?.() ||
-                                  !canOpenStep(promptIndex())
-                                }
-                                onClick={() =>
-                                  setQuestionActiveStepIndex(promptIndex())
-                                }
-                              >
-                                {stepNumber}. {prompt.header}
-                              </button>
-                            );
-                          }}
-                        </For>
-                        <button
-                          type="button"
-                          class={`rounded-none border px-3 py-1 text-xs font-medium ${
-                            isConfirmStep
-                              ? "border-primary/50 bg-primary/10 text-primary"
-                              : "border-base-content/10 bg-base-100/60 text-base-content/55"
-                          }`}
-                          disabled={
-                            props.model.agent.isReplyingQuestion?.() ||
-                            !canOpenStep(confirmStepIndex)
-                          }
-                          onClick={() =>
-                            setQuestionActiveStepIndex(confirmStepIndex)
-                          }
-                        >
-                          {totalStepCount}. Confirm
-                        </button>
-                      </div>
-
-                      <Show
-                        when={!isConfirmStep && currentPrompt && currentDraft}
-                        fallback={
-                          <div class="border-base-content/10 bg-base-100/70 space-y-3 border p-4">
-                            <For each={questionConfirmSummary()}>
-                              {(item, summaryIndex) => (
-                                <div class="border-base-content/10 bg-base-100 border px-3 py-3">
-                                  <div class="flex items-start justify-between gap-3">
-                                    <div class="space-y-1">
-                                      <p class="text-sm font-semibold">
-                                        {item.header}
-                                      </p>
-                                      <p class="text-base-content/70 text-xs">
-                                        {item.question}
-                                      </p>
-                                      <p class="text-base-content text-sm">
-                                        {item.answers.length > 0
-                                          ? item.answers.join(", ")
-                                          : "No answer yet"}
-                                      </p>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      class="btn btn-ghost btn-xs rounded-none px-2"
-                                      disabled={props.model.agent.isReplyingQuestion?.()}
-                                      onClick={() => {
-                                        setQuestionActiveStepIndex(
-                                          summaryIndex(),
-                                        );
-                                      }}
-                                    >
-                                      Edit
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-                            </For>
-                          </div>
-                        }
-                      >
-                        <div class="border-base-content/10 bg-base-100/70 space-y-4 border p-4">
-                          <div class="space-y-1">
-                            <p class="text-sm font-semibold">
-                              {currentPrompt!.header}
-                            </p>
-                            <p class="text-base-content/90 text-sm leading-6">
-                              {currentPrompt!.question}
-                            </p>
-                          </div>
-
-                          <Show when={currentPrompt!.options.length > 0}>
-                            <div class="space-y-2">
-                              <For each={currentPrompt!.options}>
-                                {(option) => {
-                                  const checked =
-                                    currentDraft!.selectedOptionLabels.includes(
-                                      option.label,
-                                    );
-                                  return (
-                                    <button
-                                      type="button"
-                                      aria-label={option.label}
-                                      class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
-                                        checked
-                                          ? "border-primary/50 bg-primary/10"
-                                          : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
-                                      }`}
-                                      disabled={props.model.agent.isReplyingQuestion?.()}
-                                      onClick={() => {
-                                        updateQuestionSelection(
-                                          currentStepIndex,
-                                          currentPrompt!,
-                                          option.label,
-                                        );
-                                      }}
-                                    >
-                                      <span
-                                        class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
-                                          checked
-                                            ? "border-primary bg-primary text-primary-content"
-                                            : "border-base-content/30 bg-base-100"
-                                        }`}
-                                        aria-hidden="true"
-                                      >
-                                        <Show when={checked}>✓</Show>
-                                      </span>
-                                      <span>
-                                        <span class="block text-sm font-medium">
-                                          {option.label}
-                                        </span>
-                                        <Show
-                                          when={option.description.length > 0}
-                                        >
-                                          <span class="text-base-content/70 mt-1 block text-xs">
-                                            {option.description}
-                                          </span>
-                                        </Show>
-                                      </span>
-                                    </button>
-                                  );
-                                }}
-                              </For>
-                            </div>
-                          </Show>
-
-                          <div class="space-y-2">
-                            <label
-                              class="text-base-content/60 text-xs font-semibold tracking-[0.18em] uppercase"
-                              for={`question-answer-${card.requestId}-${currentStepIndex}`}
-                            >
-                              Your answer
-                            </label>
-                            <textarea
-                              id={`question-answer-${card.requestId}-${currentStepIndex}`}
-                              class="textarea textarea-bordered bg-base-100 min-h-[96px] w-full rounded-none text-sm leading-6"
-                              value={currentDraft!.customText}
-                              placeholder={
-                                currentPrompt!.options.length > 0
-                                  ? "Add context or type your own answer"
-                                  : "Type your answer"
-                              }
-                              disabled={props.model.agent.isReplyingQuestion?.()}
-                              rows={4}
-                              onInput={(event) => {
-                                updateQuestionCustomAnswer(
-                                  currentStepIndex,
-                                  event.currentTarget.value,
-                                );
-                              }}
-                              onKeyDown={(event) => {
-                                if (
-                                  !(event.metaKey || event.ctrlKey) ||
-                                  event.key !== "Enter"
-                                ) {
-                                  return;
-                                }
-                                if (
-                                  !canAdvance ||
-                                  props.model.agent.isReplyingQuestion?.()
-                                ) {
-                                  return;
-                                }
-                                event.preventDefault();
-                                setQuestionActiveStepIndex(
-                                  currentStepIndex + 1,
-                                );
-                              }}
-                            />
-                            <p class="text-base-content/60 text-xs">
-                              You can type your own answer even if none of the
-                              options fit.
-                            </p>
-                          </div>
-                        </div>
-                      </Show>
-
-                      <Show when={validationError.length > 0}>
-                        <p class="project-placeholder-text">
-                          {validationError}
-                        </p>
-                      </Show>
-                      <Show
-                        when={
-                          props.model.agent.questionReplyError?.().length > 0
-                        }
-                      >
-                        <p class="projects-error">
-                          {props.model.agent.questionReplyError?.()}
-                        </p>
-                      </Show>
-
-                      <div class="flex items-center justify-between gap-2">
-                        <button
-                          type="button"
-                          class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
-                          disabled={props.model.agent.isReplyingQuestion?.()}
-                          onClick={() => {
-                            void props.model.agent.rejectQuestion?.(
-                              card.requestId,
-                            );
-                          }}
-                        >
-                          {props.model.agent.isReplyingQuestion?.()
-                            ? "Sending..."
-                            : "Dismiss"}
-                        </button>
-                        <div class="flex items-center gap-2">
-                          <button
-                            type="button"
-                            class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
-                            disabled={
-                              props.model.agent.isReplyingQuestion?.() ||
-                              !canGoBack
-                            }
-                            onClick={() => {
-                              setQuestionActiveStepIndex(
-                                Math.max(0, currentStepIndex - 1),
-                              );
-                            }}
-                          >
-                            Back
-                          </button>
-                          <Show
-                            when={!isConfirmStep}
-                            fallback={
-                              <button
-                                type="button"
-                                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
-                                disabled={
-                                  props.model.agent.isReplyingQuestion?.() ||
-                                  !canSend
-                                }
-                                onClick={() => {
-                                  void props.model.agent.replyQuestion?.(
-                                    card.requestId,
-                                    buildQuestionAnswers(card),
-                                  );
-                                }}
-                              >
-                                {props.model.agent.isReplyingQuestion?.()
-                                  ? "Sending..."
-                                  : "Send answer"}
-                              </button>
-                            }
-                          >
-                            <button
-                              type="button"
-                              class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
-                              disabled={
-                                props.model.agent.isReplyingQuestion?.() ||
-                                !canAdvance
-                              }
-                              onClick={() => {
-                                setQuestionActiveStepIndex(
-                                  currentStepIndex + 1,
-                                );
-                              }}
-                            >
-                              {currentStepIndex === card.prompts.length - 1
-                                ? "Review"
-                                : "Next"}
-                            </button>
-                          </Show>
-                        </div>
-                      </div>
-                    </div>
-                  </li>
-                </ul>
-              </section>
-            }
-          />
-        </RunChatMessage>
-      );
-    });
 
     const failedQuestionItems = failedQuestionCards().map((card) => {
       return (

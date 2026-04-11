@@ -1655,12 +1655,14 @@ export const useRunDetailModel = () => {
     return sessionId.trim();
   };
 
-  const loadPendingRunQuestions = async (runId: string): Promise<unknown[]> => {
+  const loadPendingRunQuestions = async (
+    runId: string,
+  ): Promise<unknown[] | null> => {
     try {
       const response = await listRunOpenCodeQuestionRequests(runId);
       return response.questions;
     } catch {
-      return [];
+      return null;
     }
   };
 
@@ -1724,7 +1726,8 @@ export const useRunDetailModel = () => {
       const hydrated = hydrateAgentStore({
         sessionId,
         messages: bootstrap.messages,
-        questions: pendingQuestions,
+        questions:
+          pendingQuestions ?? Object.values(current.pendingQuestionsById),
         todos: bootstrap.todos,
       });
 
@@ -2562,7 +2565,8 @@ export const useRunDetailModel = () => {
         const hydrated = hydrateAgentStore({
           sessionId,
           messages: result.messages,
-          questions: pendingQuestions,
+          questions:
+            pendingQuestions ?? Object.values(current.pendingQuestionsById),
           todos: result.todos,
         });
 
@@ -3206,6 +3210,17 @@ export const useRunDetailModel = () => {
       }
 
       if (response.status === "accepted") {
+        if (response.runState) {
+          setRun((current) =>
+            current
+              ? {
+                  ...current,
+                  runState: response.runState,
+                }
+              : current,
+          );
+        }
+
         if (response.reason?.trim() === "stale_question_request") {
           markQuestionRequestFailed(normalizedRequestId);
         } else {
@@ -3301,6 +3316,17 @@ export const useRunDetailModel = () => {
       }
 
       if (response.status === "accepted") {
+        if (response.runState) {
+          setRun((current) =>
+            current
+              ? {
+                  ...current,
+                  runState: response.runState,
+                }
+              : current,
+          );
+        }
+
         if (response.reason?.trim() === "stale_question_request") {
           markQuestionRequestFailed(normalizedRequestId);
         } else {

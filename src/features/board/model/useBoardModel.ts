@@ -242,14 +242,22 @@ const reconcileMiniCards = (
   });
 };
 
-const runToBoardTaskRunMiniCard = (run: Run): BoardTaskRunMiniCard | null => {
+const runToBoardTaskRunMiniCard = (
+  run: Run,
+  deletedRunIds?: ReadonlySet<string>,
+): BoardTaskRunMiniCard | null => {
+  const normalizedRunId = run.id.trim();
+  if (!normalizedRunId || deletedRunIds?.has(normalizedRunId)) {
+    return null;
+  }
+
   const runState = run.runState ?? fallbackRunState(run.status);
   if (!runState) {
     return null;
   }
 
   return {
-    runId: run.id,
+    runId: normalizedRunId,
     label: boardLabelForRunState(runState),
     state: runState,
     isNavigable: true,
@@ -278,13 +286,14 @@ const mergeTaskRunMiniCards = (
 const resolveTaskRunMiniCards = (
   task: Task,
   runItems: Awaited<ReturnType<typeof listTaskRuns>>,
+  deletedRunIds?: ReadonlySet<string>,
 ): BoardTaskRunMiniCard[] => {
   if (task.status === "done") return [];
 
   return sortRunsForBoard(runItems)
     .filter((run) => ACTIVE_RUN_STATUSES.has(run.status))
     .flatMap((run) => {
-      const miniCard = runToBoardTaskRunMiniCard(run);
+      const miniCard = runToBoardTaskRunMiniCard(run, deletedRunIds);
       return miniCard ? [miniCard] : [];
     });
 };
@@ -395,9 +404,7 @@ export const useBoardModel = () => {
         return;
       }
 
-      const miniCards = resolveTaskRunMiniCards(taskValue, runs).filter(
-        (miniCard) => !deletedRunIds.has(miniCard.runId.trim()),
-      );
+      const miniCards = resolveTaskRunMiniCards(taskValue, runs, deletedRunIds);
       applyTaskRunMiniCards(taskId, miniCards);
     } catch {
       // Ignore transient run refresh failures.
@@ -798,7 +805,11 @@ export const useBoardModel = () => {
               return null;
             }
 
-            const miniCards = resolveTaskRunMiniCards(task, runs);
+            const miniCards = resolveTaskRunMiniCards(
+              task,
+              runs,
+              deletedRunIds,
+            );
             return { taskId: task.id, miniCards, taskRunRequestVersion };
           } catch {
             return null;
@@ -1020,7 +1031,11 @@ export const useBoardModel = () => {
             return true;
           }
 
-          const miniCards = resolveTaskRunMiniCards(updatedTask, runs);
+          const miniCards = resolveTaskRunMiniCards(
+            updatedTask,
+            runs,
+            deletedRunIds,
+          );
           applyTaskRunMiniCards(taskId, miniCards);
         } catch {
           // Preserve current mini-card state when run refresh fails.
@@ -1123,7 +1138,10 @@ export const useBoardModel = () => {
           modelId: selectedRunModelId().trim() || resolved.modelId || undefined,
           sourceBranch: selectedRunSourceBranch().trim() || undefined,
         });
-        const createdRunMiniCard = runToBoardTaskRunMiniCard(createdRun);
+        const createdRunMiniCard = runToBoardTaskRunMiniCard(
+          createdRun,
+          deletedRunIds,
+        );
         if (createdRunMiniCard) {
           beginTaskRunRequest(taskId);
           setTaskRunMiniCards((current) => {

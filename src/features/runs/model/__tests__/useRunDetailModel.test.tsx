@@ -1820,6 +1820,70 @@ describe("useRunDetailModel startup ownership", () => {
     });
   });
 
+  it("keeps existing pending questions when question hydration fetch fails", async () => {
+    listRunOpenCodeQuestionRequestsMock
+      .mockResolvedValueOnce({
+        questions: [
+          {
+            id: "question-1",
+            sessionID: "session-1",
+            questions: [
+              {
+                header: "Choose action",
+                question: "Which action should I take?",
+                options: [
+                  { label: "Apply patch", description: "Modify files" },
+                ],
+                custom: true,
+              },
+            ],
+          },
+        ],
+        raw: [],
+      })
+      .mockRejectedValueOnce(new Error("temporary failure"));
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-1",
+      });
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+    });
+
+    const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
+      | {
+          onOutputChannel?: (event: {
+            runId: string;
+            ts: string | number | null;
+            event: string;
+            data: unknown;
+          }) => void;
+        }
+      | undefined;
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:10.000Z",
+      event: "stream.resync_needed",
+      data: {
+        sessionID: "session-1",
+      },
+    });
+
+    await waitFor(() => {
+      expect(listRunOpenCodeQuestionRequestsMock).toHaveBeenCalledTimes(2);
+      expect(modelRef!.agent.questionState().activeRequest).toMatchObject({
+        requestId: "question-1",
+      });
+    });
+  });
+
   it("updates the displayed run state before rendering a live question request", async () => {
     let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
     render(() => {

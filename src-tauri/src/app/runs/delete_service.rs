@@ -1,6 +1,7 @@
 use crate::app::errors::AppError;
 use crate::app::runs::opencode_service::RunsOpenCodeService;
 use crate::app::runs::service::RunsService;
+use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
 
 const DELETE_SHUTDOWN_REASON: &str = "run_deleted";
 
@@ -8,13 +9,19 @@ const DELETE_SHUTDOWN_REASON: &str = "run_deleted";
 pub struct RunsDeleteService {
     runs_service: RunsService,
     runs_opencode_service: RunsOpenCodeService,
+    task_status_transition_service: TaskStatusTransitionService,
 }
 
 impl RunsDeleteService {
-    pub fn new(runs_service: RunsService, runs_opencode_service: RunsOpenCodeService) -> Self {
+    pub fn new(
+        runs_service: RunsService,
+        runs_opencode_service: RunsOpenCodeService,
+        task_status_transition_service: TaskStatusTransitionService,
+    ) -> Self {
         Self {
             runs_service,
             runs_opencode_service,
+            task_status_transition_service,
         }
     }
 
@@ -23,7 +30,17 @@ impl RunsDeleteService {
         self.runs_opencode_service
             .stop_run_opencode(run_id, Some(DELETE_SHUTDOWN_REASON))
             .await?;
-        self.runs_service.hard_delete_run(run_id).await
+        let status_changed = self
+            .runs_service
+            .hard_delete_run_and_reconcile_task_status(run_id)
+            .await?;
+
+        if let Some(payload) = status_changed {
+            self.task_status_transition_service
+                .emit_task_status_changed(&payload)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -107,13 +124,17 @@ mod tests {
         let runs_opencode_service = RunsOpenCodeService::new(
             runs_service.clone(),
             projects_service,
-            task_status_transition_service,
+            task_status_transition_service.clone(),
             run_state_service,
             run_status_transition_service,
             app_data_dir,
         );
         let runs_delete_service =
-            RunsDeleteService::new(runs_service.clone(), runs_opencode_service.clone());
+            RunsDeleteService::new(
+                runs_service.clone(),
+                runs_opencode_service.clone(),
+                task_status_transition_service,
+            );
 
         (
             runs_delete_service,
@@ -248,5 +269,62 @@ mod tests {
         assert!(result.is_err());
         let run = runs_service.get_run_model("run-1").await.unwrap();
         assert_eq!(run.status, "cancelled");
+    }
+
+    #[tokio::test]
+    async fn delete_run_moves_task_from_doing_to_review_when_no_other_active_runs() {
+        let (delete_service, runs_service, _opencode_service, pool, temp_dir) =
+            setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "in_progress").await;
+        sqlx::query("UPDATE tasks SET status = 'doing' WHERE id = ?")
+            .bind("task-1")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        delete_service.delete_run("run-1").await.unwrap();
+
+        assert!(matches!(
+            runs_service.get_run_model("run-1").await,
+            Err(AppError::NotFound(_))
+        ));
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_status, "review");
+    }
+
+    #[tokio::test]
+    async fn delete_run_keeps_task_doing_when_another_active_run_exists() {
+        let (delete_service, runs_service, _opencode_service, pool, temp_dir) =
+            setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-delete", "task-1", "in_progress").await;
+        seed_run(&pool, "run-active", "task-1", "idle").await;
+        sqlx::query("UPDATE tasks SET status = 'doing' WHERE id = ?")
+            .bind("task-1")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        delete_service.delete_run("run-delete").await.unwrap();
+
+        assert!(matches!(
+            runs_service.get_run_model("run-delete").await,
+            Err(AppError::NotFound(_))
+        ));
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_status, "doing");
     }
 }

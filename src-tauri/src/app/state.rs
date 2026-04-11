@@ -91,8 +91,11 @@ impl AppState {
             run_status_transition_service.clone(),
             app_data_dir.clone(),
         );
-        let runs_delete_service =
-            RunsDeleteService::new(runs_service.clone(), runs_opencode_service.clone());
+        let runs_delete_service = RunsDeleteService::new(
+            runs_service.clone(),
+            runs_opencode_service.clone(),
+            task_status_transition_service.clone(),
+        );
         let terminal_service =
             TerminalService::new(projects_service.clone(), runs_service.clone(), app_data_dir);
         let tasks_service = TasksService::new(tasks_repository, task_search_service);

@@ -1049,6 +1049,29 @@ const toRunAgentMode = (value: unknown): RunAgentMode => {
   return "primary";
 };
 
+const opaqueIdentifierPattern = /^[A-Za-z0-9_-]{20,}$/;
+const uuidLikePattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const isOpaqueIdentifierLabel = (value: string): boolean => {
+  return uuidLikePattern.test(value) || opaqueIdentifierPattern.test(value);
+};
+
+const toAgentSelectionLabel = (value: RunSelectionItemResponse): string => {
+  const label = toOptionalTrimmedString(
+    value.display_name ?? value.displayName ?? value.label ?? value.name,
+  );
+  if (!label) {
+    return "Agent";
+  }
+
+  if (isOpaqueIdentifierLabel(label)) {
+    return "Agent";
+  }
+
+  return label;
+};
+
 const toAgentSelectionOptions = (source: unknown): RunAgentOption[] => {
   if (!Array.isArray(source)) {
     return [];
@@ -1066,10 +1089,7 @@ const toAgentSelectionOptions = (source: unknown): RunAgentOption[] => {
       }
       return {
         id,
-        label:
-          toOptionalTrimmedString(
-            value.label ?? value.name ?? value.display_name,
-          ) || id,
+        label: toAgentSelectionLabel(value),
         scope: toRunAgentScope(value.scope),
         mode: toRunAgentMode(value.mode),
         selectable: value.selectable ?? true,
@@ -1893,6 +1913,7 @@ export const replyRunOpenCodeQuestion = async ({
     status: state === "unsupported" ? "unsupported" : "accepted",
     reason: response.reason ?? undefined,
     repliedAt: pick(response.replied_at, response.repliedAt) ?? "",
+    runState: toRunState(pick(response.run_state, response.runState)),
   };
 };
 

@@ -88,11 +88,13 @@ export const buildQuestionWizardFinalAnswers = (
     if (prompt.multiple) {
       return dedupeStrings([
         ...selectedOptionLabels,
-        ...(draft.useCustomAnswer && customText ? [customText] : []),
+        ...(prompt.custom && draft.useCustomAnswer && customText
+          ? [customText]
+          : []),
       ]);
     }
 
-    if (draft.useCustomAnswer && customText) {
+    if (prompt.custom && draft.useCustomAnswer && customText) {
       return [customText];
     }
 
@@ -105,7 +107,7 @@ export const isQuestionWizardPromptComplete = (
   draft: QuestionWizardDraftAnswer,
 ): boolean => {
   const customText = normalizeText(draft.customText);
-  if (draft.useCustomAnswer && customText.length > 0) {
+  if (prompt.custom && draft.useCustomAnswer && customText.length > 0) {
     return true;
   }
 
@@ -169,6 +171,10 @@ export const toggleQuestionWizardCustomAnswer = (
   prompt: QuestionWizardPrompt,
   draft: QuestionWizardDraftAnswer,
 ): QuestionWizardDraftAnswer => {
+  if (!prompt.custom) {
+    return draft;
+  }
+
   const nextUseCustomAnswer = !draft.useCustomAnswer;
   return {
     ...draft,

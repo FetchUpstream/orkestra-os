@@ -239,7 +239,10 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
                     disabled={props.isSubmitting()}
                     aria-label="Default run agent"
                   >
-                    <RunAgentSelectOptions options={props.runAgentOptions()} />
+                    <RunAgentSelectOptions
+                      options={props.runAgentOptions()}
+                      includeSystemDefaultOption
+                    />
                   </select>
                 </label>
                 <label class="projects-field task-runs-default-field">

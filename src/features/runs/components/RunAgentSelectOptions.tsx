@@ -22,12 +22,19 @@ const RunAgentSelectOptions: Component<RunAgentSelectOptionsProps> = (
   props,
 ) => {
   const projectOptions = () =>
-    props.options.filter((option) => option.scope === "project");
+    props.options.filter(
+      (option) => option.scope === "project" && option.selectable !== false,
+    );
   const globalOptions = () =>
-    props.options.filter((option) => option.scope === "global");
+    props.options.filter(
+      (option) => option.scope === "global" && option.selectable !== false,
+    );
   const inheritedOptions = () =>
     props.options.filter(
-      (option) => option.scope !== "project" && option.scope !== "global",
+      (option) =>
+        option.selectable !== false &&
+        option.scope !== "project" &&
+        option.scope !== "global",
     );
 
   return (

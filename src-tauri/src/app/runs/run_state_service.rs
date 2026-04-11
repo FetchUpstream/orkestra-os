@@ -219,6 +219,13 @@ impl RunStateService {
             other => other,
         };
 
+        let Some(latest_run) = self.runs_repository.get_run(run_id).await? else {
+            return Ok(None);
+        };
+        if Self::is_terminal_status(latest_run.status.as_str()) {
+            return Ok(None);
+        }
+
         let changed = self
             .runs_repository
             .update_run_state(run_id, persisted_next_state)
@@ -411,5 +418,173 @@ impl RunStateService {
                 | COMMITTING_CHANGES
                 | RESOLVING_REBASE_CONFLICTS
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::db::migrations::run_migrations;
+    use crate::app::worktrees::service::WorktreesService;
+    use sqlx::SqlitePool;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use uuid::Uuid;
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("orkestraos-run-state-service-{}", Uuid::new_v4()));
+            fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    async fn setup_service() -> (RunStateService, SqlitePool, TempDir) {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+
+        let temp_dir = TempDir::new();
+        let app_data_dir = temp_dir.path().join("app-data");
+        let runs_repository = RunsRepository::new(pool.clone());
+        let runs_service = RunsService::new(
+            RunsRepository::new(pool.clone()),
+            WorktreesService::new(app_data_dir.clone()),
+        );
+        let service = RunStateService::new(runs_repository, runs_service, None, app_data_dir);
+
+        (service, pool, temp_dir)
+    }
+
+    async fn seed_task(pool: &SqlitePool, task_id: &str, repo_path: &Path) {
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("project-1")
+        .bind("Alpha")
+        .bind("ALP")
+        .bind(Option::<String>::None)
+        .bind("repo-1")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("repo-1")
+        .bind("project-1")
+        .bind("Main")
+        .bind(repo_path.to_string_lossy().to_string())
+        .bind(1)
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(task_id)
+        .bind("project-1")
+        .bind("repo-1")
+        .bind(1)
+        .bind("Task")
+        .bind(Option::<String>::None)
+        .bind("todo")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_run(
+        pool: &SqlitePool,
+        run_id: &str,
+        task_id: &str,
+        status: &str,
+        run_state: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, run_state, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(run_id)
+        .bind(task_id)
+        .bind("project-1")
+        .bind("repo-1")
+        .bind(status)
+        .bind(run_state)
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn transition_to_state_skips_terminal_runs() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "complete", "busy_coding").await;
+
+        let event = service
+            .handle_waiting_for_input("run-1", "test_transition")
+            .await
+            .unwrap();
+
+        assert!(event.is_none());
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = ?")
+                .bind("run-1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), Some("busy_coding"));
+    }
+
+    #[tokio::test]
+    async fn transition_to_state_updates_non_terminal_runs() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "in_progress", "busy_coding").await;
+
+        let event = service
+            .handle_waiting_for_input("run-1", "test_transition")
+            .await
+            .unwrap();
+
+        assert!(event.is_some());
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = ?")
+                .bind("run-1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), Some("waiting_for_input"));
     }
 }
