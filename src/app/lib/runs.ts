@@ -219,6 +219,7 @@ export type ReplyRunOpenCodePermissionResult = {
   status: "accepted" | "unsupported";
   reason?: string;
   repliedAt: string;
+  runState?: RunState | null;
 };
 
 export type RunOpenCodeQuestionAnswer = string[];
@@ -501,6 +502,8 @@ type ReplyRunOpenCodePermissionResponse = {
   reason?: string | null;
   replied_at?: string;
   repliedAt?: string;
+  run_state?: string | null;
+  runState?: string | null;
 };
 
 type RunOpenCodeSnapshotResponse = {

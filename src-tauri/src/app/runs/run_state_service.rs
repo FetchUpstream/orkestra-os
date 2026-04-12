@@ -85,15 +85,7 @@ impl RunStateService {
             .map(str::trim)
             .filter(|state| !state.is_empty());
 
-        if matches!(
-            current,
-            Some(
-                QUESTION_PENDING
-                    | PERMISSION_REQUESTED
-                    | COMMITTING_CHANGES
-                    | RESOLVING_REBASE_CONFLICTS
-            )
-        ) {
+        if current.is_some_and(Self::is_special_stored_state) {
             return Ok(None);
         }
 
@@ -228,7 +220,11 @@ impl RunStateService {
 
         let changed = self
             .runs_repository
-            .update_run_state(run_id, persisted_next_state)
+            .update_run_state(
+                run_id,
+                latest_run.run_state.as_deref(),
+                persisted_next_state,
+            )
             .await?;
         if !changed {
             return Ok(None);
@@ -370,17 +366,7 @@ impl RunStateService {
             .map(str::trim)
             .filter(|state| !state.is_empty());
 
-        if preserve_special_stored_states
-            && matches!(
-                stored,
-                Some(
-                    QUESTION_PENDING
-                        | PERMISSION_REQUESTED
-                        | COMMITTING_CHANGES
-                        | RESOLVING_REBASE_CONFLICTS
-                )
-            )
-        {
+        if preserve_special_stored_states && stored.is_some_and(Self::is_special_stored_state) {
             return Ok(stored.map(ToString::to_string));
         }
 

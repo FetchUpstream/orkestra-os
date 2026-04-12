@@ -976,14 +976,40 @@ const parseQuestionPrompts = (questions: unknown[]): QuestionWizardPrompt[] => {
       const options = Array.isArray(record.options)
         ? record.options
             .map((option) => {
-              const optionRecord = isRecord(option) ? option : {};
-              const label = toSingleLine(optionRecord.label, 80);
-              if (!label) {
+              const optionRecord = isRecord(option) ? option : null;
+              const rawValueCandidate =
+                optionRecord &&
+                (typeof optionRecord.value === "string" ||
+                  typeof optionRecord.value === "number" ||
+                  typeof optionRecord.value === "boolean")
+                  ? String(optionRecord.value)
+                  : optionRecord &&
+                      (typeof optionRecord.id === "string" ||
+                        typeof optionRecord.id === "number" ||
+                        typeof optionRecord.id === "boolean")
+                    ? String(optionRecord.id)
+                    : typeof option === "string" ||
+                        typeof option === "number" ||
+                        typeof option === "boolean"
+                      ? String(option)
+                      : optionRecord &&
+                          (typeof optionRecord.label === "string" ||
+                            typeof optionRecord.label === "number" ||
+                            typeof optionRecord.label === "boolean")
+                        ? String(optionRecord.label)
+                        : "";
+              const rawValue = rawValueCandidate.trim();
+              if (!rawValue) {
                 return null;
               }
+              const safeLabel =
+                toSingleLine(optionRecord?.label, 80) ||
+                toSingleLine(rawValueCandidate, 80) ||
+                "Option";
               return {
-                label,
-                description: toSingleLine(optionRecord.description, 180) || "",
+                label: safeLabel,
+                value: rawValue,
+                description: toSingleLine(optionRecord?.description, 180) || "",
               };
             })
             .filter(
@@ -1048,6 +1074,7 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
 ) => {
   const [activeStepIndex, setActiveStepIndex] = createSignal(0);
   const [draftRequestId, setDraftRequestId] = createSignal("");
+  const [isActionInFlight, setIsActionInFlight] = createSignal(false);
   const [draftAnswersByQuestionIndex, setDraftAnswersByQuestionIndex] =
     createSignal<QuestionWizardDraftAnswer[]>([]);
   const hasReviewStep = createMemo(() => props.card.prompts.length > 1);
@@ -1133,7 +1160,7 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
       const next = [...current];
       while (next.length <= index) {
         next.push({
-          selectedOptionLabels: [],
+          selectedOptionValues: [],
           useCustomAnswer: false,
           customText: "",
         });
@@ -1152,6 +1179,22 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
   const currentQuestionKey = createMemo(
     () => `${props.card.requestId}:${activeStepIndex()}`,
   );
+  const isInteractionLocked = createMemo(
+    () => props.isReplying || isActionInFlight(),
+  );
+  const runGuardedAction = async (
+    action: () => Promise<boolean> | boolean,
+  ): Promise<void> => {
+    if (isInteractionLocked()) {
+      return;
+    }
+    setIsActionInFlight(true);
+    try {
+      await action();
+    } finally {
+      setIsActionInFlight(false);
+    }
+  };
 
   return (
     <section
@@ -1190,7 +1233,7 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
                       ? "border-base-content/20 bg-base-100 text-base-content"
                       : "border-base-content/10 bg-base-100 text-base-content/55"
                 }`}
-                disabled={props.isReplying || !canOpenStep(promptIndex())}
+                disabled={isInteractionLocked() || !canOpenStep(promptIndex())}
                 onClick={() => setActiveStepIndex(promptIndex())}
               >
                 {promptIndex() + 1}. {prompt.header}
@@ -1205,7 +1248,9 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
                   ? "border-primary/50 bg-primary/10 text-primary"
                   : "border-base-content/10 bg-base-100 text-base-content/55"
               }`}
-              disabled={props.isReplying || !canOpenStep(reviewStepIndex())}
+              disabled={
+                isInteractionLocked() || !canOpenStep(reviewStepIndex())
+              }
               onClick={() => setActiveStepIndex(reviewStepIndex())}
             >
               Review
@@ -1236,7 +1281,7 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
                       <button
                         type="button"
                         class="btn btn-ghost btn-xs rounded-none px-2"
-                        disabled={props.isReplying}
+                        disabled={isInteractionLocked()}
                         onClick={() => setActiveStepIndex(summaryIndex())}
                       >
                         Edit
@@ -1251,8 +1296,8 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
           {(prompt) => (
             <Show keyed when={currentQuestionKey()}>
               {() => {
-                const isOptionChecked = (label: string) =>
-                  currentDraft().selectedOptionLabels.includes(label);
+                const isOptionChecked = (value: string) =>
+                  currentDraft().selectedOptionValues.includes(value);
                 const isCustomEnabled = () => prompt().custom;
                 const isCustomChecked = () =>
                   isCustomEnabled() && currentDraft().useCustomAnswer;
@@ -1269,7 +1314,7 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
                     <div class="space-y-2">
                       <For each={prompt().options}>
                         {(option) => {
-                          const checked = () => isOptionChecked(option.label);
+                          const checked = () => isOptionChecked(option.value);
                           return (
                             <button
                               type="button"
@@ -1280,13 +1325,13 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
                                   ? "border-primary/50 bg-base-100"
                                   : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
                               }`}
-                              disabled={props.isReplying}
+                              disabled={isInteractionLocked()}
                               onClick={() => {
                                 updateDraftAt(activeStepIndex(), (draft) =>
                                   toggleQuestionWizardOption(
                                     prompt(),
                                     draft,
-                                    option.label,
+                                    option.value,
                                   ),
                                 );
                               }}
@@ -1326,7 +1371,7 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
                               ? "border-primary/50 bg-base-100"
                               : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
                           }`}
-                          disabled={props.isReplying}
+                          disabled={isInteractionLocked()}
                           onClick={() => {
                             updateDraftAt(activeStepIndex(), (draft) =>
                               toggleQuestionWizardCustomAnswer(prompt(), draft),
@@ -1363,7 +1408,7 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
                           class="textarea textarea-bordered bg-base-100 min-h-[96px] w-full rounded-none text-sm leading-6"
                           value={currentDraft().customText}
                           placeholder="Type your answer"
-                          disabled={props.isReplying}
+                          disabled={isInteractionLocked()}
                           rows={4}
                           onInput={(event) => {
                             updateDraftAt(activeStepIndex(), (draft) =>
@@ -1408,19 +1453,19 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
           <button
             type="button"
             class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
-            disabled={props.isReplying}
+            disabled={isInteractionLocked()}
             onClick={() => {
-              void props.onReject(props.card.requestId);
+              void runGuardedAction(() => props.onReject(props.card.requestId));
             }}
           >
-            {props.isReplying ? "Sending..." : "Dismiss"}
+            {isInteractionLocked() ? "Sending..." : "Dismiss"}
           </button>
           <div class="flex items-center gap-2">
             <Show when={hasReviewStep() || activeStepIndex() > 0}>
               <button
                 type="button"
                 class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
-                disabled={props.isReplying || activeStepIndex() === 0}
+                disabled={isInteractionLocked() || activeStepIndex() === 0}
                 onClick={() =>
                   setActiveStepIndex(Math.max(0, activeStepIndex() - 1))
                 }
@@ -1434,12 +1479,14 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
                 <button
                   type="button"
                   class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
-                  disabled={props.isReplying || !isAllComplete()}
+                  disabled={isInteractionLocked() || !isAllComplete()}
                   onClick={() => {
-                    void props.onReply(props.card.requestId, finalAnswers());
+                    void runGuardedAction(() =>
+                      props.onReply(props.card.requestId, finalAnswers()),
+                    );
                   }}
                 >
-                  {props.isReplying ? "Sending..." : "Send answer"}
+                  {isInteractionLocked() ? "Sending..." : "Send answer"}
                 </button>
               }
             >
@@ -1447,11 +1494,14 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
                 type="button"
                 class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
                 disabled={
-                  props.isReplying || !isQuestionComplete(activeStepIndex())
+                  isInteractionLocked() ||
+                  !isQuestionComplete(activeStepIndex())
                 }
                 onClick={() => {
                   if (!hasReviewStep()) {
-                    void props.onReply(props.card.requestId, finalAnswers());
+                    void runGuardedAction(() =>
+                      props.onReply(props.card.requestId, finalAnswers()),
+                    );
                     return;
                   }
                   setActiveStepIndex(activeStepIndex() + 1);

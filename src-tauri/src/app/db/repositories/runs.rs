@@ -489,6 +489,7 @@ impl RunsRepository {
     pub async fn update_run_state(
         &self,
         run_id: &str,
+        expected_run_state: Option<&str>,
         run_state: Option<&str>,
     ) -> Result<bool, AppError> {
         let result = sqlx::query(
@@ -496,13 +497,19 @@ impl RunsRepository {
              SET run_state = ?
              WHERE id = ?
                AND (
-                 (run_state IS NULL AND ? IS NOT NULL)
-                 OR (run_state IS NOT NULL AND ? IS NULL)
-                 OR run_state != ?
-               )",
+                 (run_state IS NULL AND ? IS NULL)
+                 OR run_state = ?
+               )
+                AND (
+                  (run_state IS NULL AND ? IS NOT NULL)
+                  OR (run_state IS NOT NULL AND ? IS NULL)
+                  OR run_state != ?
+                )",
         )
         .bind(run_state)
         .bind(run_id)
+        .bind(expected_run_state)
+        .bind(expected_run_state)
         .bind(run_state)
         .bind(run_state)
         .bind(run_state)
@@ -1126,6 +1133,80 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(run_state, None);
+    }
+
+    #[tokio::test]
+    async fn update_run_state_updates_when_expected_state_matches() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, run_state, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-1")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("in_progress")
+        .bind("busy_coding")
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let changed = repository
+            .update_run_state("run-1", Some("busy_coding"), Some("waiting_for_input"))
+            .await
+            .unwrap();
+
+        assert!(changed);
+
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = 'run-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), Some("waiting_for_input"));
+    }
+
+    #[tokio::test]
+    async fn update_run_state_skips_when_expected_state_mismatches() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, run_state, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-1")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("in_progress")
+        .bind("question_pending")
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let changed = repository
+            .update_run_state("run-1", Some("busy_coding"), Some("waiting_for_input"))
+            .await
+            .unwrap();
+
+        assert!(!changed);
+
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = 'run-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), Some("question_pending"));
     }
 
     #[tokio::test]

@@ -12,6 +12,7 @@
 
 export type QuestionWizardOption = {
   label: string;
+  value: string;
   description: string;
 };
 
@@ -24,7 +25,7 @@ export type QuestionWizardPrompt = {
 };
 
 export type QuestionWizardDraftAnswer = {
-  selectedOptionLabels: string[];
+  selectedOptionValues: string[];
   useCustomAnswer: boolean;
   customText: string;
 };
@@ -57,7 +58,7 @@ export const createEmptyQuestionWizardDrafts = (
   promptCount: number,
 ): QuestionWizardDraftAnswer[] => {
   return Array.from({ length: Math.max(0, promptCount) }, () => ({
-    selectedOptionLabels: [],
+    selectedOptionValues: [],
     useCustomAnswer: false,
     customText: "",
   }));
@@ -69,7 +70,7 @@ export const getQuestionWizardDraft = (
 ): QuestionWizardDraftAnswer => {
   return (
     drafts[promptIndex] ?? {
-      selectedOptionLabels: [],
+      selectedOptionValues: [],
       useCustomAnswer: false,
       customText: "",
     }
@@ -83,11 +84,11 @@ export const buildQuestionWizardFinalAnswers = (
   return prompts.map((prompt, index) => {
     const draft = getQuestionWizardDraft(drafts, index);
     const customText = normalizeText(draft.customText);
-    const selectedOptionLabels = dedupeStrings(draft.selectedOptionLabels);
+    const selectedOptionValues = dedupeStrings(draft.selectedOptionValues);
 
     if (prompt.multiple) {
       return dedupeStrings([
-        ...selectedOptionLabels,
+        ...selectedOptionValues,
         ...(prompt.custom && draft.useCustomAnswer && customText
           ? [customText]
           : []),
@@ -98,7 +99,7 @@ export const buildQuestionWizardFinalAnswers = (
       return [customText];
     }
 
-    return selectedOptionLabels.length > 0 ? [selectedOptionLabels[0]] : [];
+    return selectedOptionValues.length > 0 ? [selectedOptionValues[0]] : [];
   });
 };
 
@@ -111,7 +112,7 @@ export const isQuestionWizardPromptComplete = (
     return true;
   }
 
-  return dedupeStrings(draft.selectedOptionLabels).length > 0;
+  return dedupeStrings(draft.selectedOptionValues).length > 0;
 };
 
 export const isQuestionWizardComplete = (
@@ -134,35 +135,40 @@ export const buildQuestionWizardConfirmSummary = (
   return prompts.map((prompt, index) => ({
     header: prompt.header,
     question: prompt.question,
-    answers: finalAnswers[index] ?? [],
+    answers: (finalAnswers[index] ?? []).map((answer) => {
+      const matchingOption = prompt.options.find(
+        (option) => option.value === answer,
+      );
+      return matchingOption?.label ?? answer;
+    }),
   }));
 };
 
 export const toggleQuestionWizardOption = (
   prompt: QuestionWizardPrompt,
   draft: QuestionWizardDraftAnswer,
-  optionLabel: string,
+  optionValue: string,
 ): QuestionWizardDraftAnswer => {
-  const nextLabel = optionLabel.trim();
-  if (!nextLabel) {
+  const nextValue = optionValue.trim();
+  if (!nextValue) {
     return draft;
   }
 
-  const previousSelected = dedupeStrings(draft.selectedOptionLabels);
-  const alreadySelected = previousSelected.includes(nextLabel);
+  const previousSelected = dedupeStrings(draft.selectedOptionValues);
+  const alreadySelected = previousSelected.includes(nextValue);
 
   if (prompt.multiple) {
     return {
       ...draft,
-      selectedOptionLabels: alreadySelected
-        ? previousSelected.filter((label) => label !== nextLabel)
-        : [...previousSelected, nextLabel],
+      selectedOptionValues: alreadySelected
+        ? previousSelected.filter((value) => value !== nextValue)
+        : [...previousSelected, nextValue],
     };
   }
 
   return {
     ...draft,
-    selectedOptionLabels: alreadySelected ? [] : [nextLabel],
+    selectedOptionValues: alreadySelected ? [] : [nextValue],
     useCustomAnswer: false,
   };
 };
@@ -178,8 +184,8 @@ export const toggleQuestionWizardCustomAnswer = (
   const nextUseCustomAnswer = !draft.useCustomAnswer;
   return {
     ...draft,
-    selectedOptionLabels:
-      !prompt.multiple && nextUseCustomAnswer ? [] : draft.selectedOptionLabels,
+    selectedOptionValues:
+      !prompt.multiple && nextUseCustomAnswer ? [] : draft.selectedOptionValues,
     useCustomAnswer: nextUseCustomAnswer,
   };
 };

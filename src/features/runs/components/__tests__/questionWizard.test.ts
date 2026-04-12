@@ -29,7 +29,7 @@ describe("questionWizard", () => {
       {
         header: "One",
         question: "Pick one",
-        options: [{ label: "A", description: "" }],
+        options: [{ label: "A", value: "A", description: "" }],
         multiple: false,
         custom: true,
       },
@@ -48,13 +48,13 @@ describe("questionWizard", () => {
       {
         header: "One",
         question: "Pick one",
-        options: [{ label: "A", description: "" }],
+        options: [{ label: "A", value: "A", description: "" }],
         multiple: false,
         custom: true,
       },
     ];
     const draft: QuestionWizardDraftAnswer = {
-      selectedOptionLabels: ["A"],
+      selectedOptionValues: ["A"],
       useCustomAnswer: true,
       customText: "Custom",
     };
@@ -70,15 +70,15 @@ describe("questionWizard", () => {
         header: "Many",
         question: "Pick many",
         options: [
-          { label: "A", description: "" },
-          { label: "B", description: "" },
+          { label: "A", value: "A", description: "" },
+          { label: "B", value: "B", description: "" },
         ],
         multiple: true,
         custom: true,
       },
     ];
     const draft: QuestionWizardDraftAnswer = {
-      selectedOptionLabels: ["A", "B", "A"],
+      selectedOptionValues: ["A", "B", "A"],
       useCustomAnswer: true,
       customText: "B",
     };
@@ -100,14 +100,14 @@ describe("questionWizard", () => {
       {
         header: "Two",
         question: "Second?",
-        options: [{ label: "B", description: "" }],
+        options: [{ label: "B", value: "B", description: "" }],
         multiple: false,
         custom: true,
       },
     ];
     const drafts: QuestionWizardDraftAnswer[] = [
-      { selectedOptionLabels: [], useCustomAnswer: true, customText: "Alpha" },
-      { selectedOptionLabels: ["B"], useCustomAnswer: false, customText: "" },
+      { selectedOptionValues: [], useCustomAnswer: true, customText: "Alpha" },
+      { selectedOptionValues: ["B"], useCustomAnswer: false, customText: "" },
     ];
 
     expect(isQuestionWizardPromptComplete(prompts[0]!, drafts[0]!)).toBe(true);
@@ -118,16 +118,44 @@ describe("questionWizard", () => {
     ]);
   });
 
-  it("does not count custom text unless custom mode is selected", () => {
+  it("renders safe labels in confirm summary for raw selected values", () => {
     const prompt: QuestionWizardPrompt = {
-      header: "One",
-      question: "First?",
-      options: [{ label: "A", description: "" }],
+      header: "Action",
+      question: "Choose action",
+      options: [
+        {
+          label: "Apply patch",
+          value: "tool.patch.apply:run-unsafe-internal-value",
+          description: "",
+        },
+      ],
       multiple: false,
       custom: true,
     };
     const draft: QuestionWizardDraftAnswer = {
-      selectedOptionLabels: [],
+      selectedOptionValues: ["tool.patch.apply:run-unsafe-internal-value"],
+      useCustomAnswer: false,
+      customText: "",
+    };
+
+    expect(buildQuestionWizardFinalAnswers([prompt], [draft])).toEqual([
+      ["tool.patch.apply:run-unsafe-internal-value"],
+    ]);
+    expect(buildQuestionWizardConfirmSummary([prompt], [draft])).toEqual([
+      { header: "Action", question: "Choose action", answers: ["Apply patch"] },
+    ]);
+  });
+
+  it("does not count custom text unless custom mode is selected", () => {
+    const prompt: QuestionWizardPrompt = {
+      header: "One",
+      question: "First?",
+      options: [{ label: "A", value: "A", description: "" }],
+      multiple: false,
+      custom: true,
+    };
+    const draft: QuestionWizardDraftAnswer = {
+      selectedOptionValues: [],
       useCustomAnswer: false,
       customText: "Alpha",
     };
@@ -140,12 +168,12 @@ describe("questionWizard", () => {
     const prompt: QuestionWizardPrompt = {
       header: "One",
       question: "First?",
-      options: [{ label: "A", description: "" }],
+      options: [{ label: "A", value: "A", description: "" }],
       multiple: false,
       custom: false,
     };
     const draft: QuestionWizardDraftAnswer = {
-      selectedOptionLabels: ["A"],
+      selectedOptionValues: ["A"],
       useCustomAnswer: true,
       customText: "Alpha",
     };
@@ -158,12 +186,12 @@ describe("questionWizard", () => {
     const prompt: QuestionWizardPrompt = {
       header: "One",
       question: "First?",
-      options: [{ label: "A", description: "" }],
+      options: [{ label: "A", value: "A", description: "" }],
       multiple: false,
       custom: false,
     };
     const draft: QuestionWizardDraftAnswer = {
-      selectedOptionLabels: ["A"],
+      selectedOptionValues: ["A"],
       useCustomAnswer: false,
       customText: "",
     };
@@ -175,7 +203,7 @@ describe("questionWizard", () => {
     const prompt: QuestionWizardPrompt = {
       header: "One",
       question: "First?",
-      options: [{ label: "A", description: "" }],
+      options: [{ label: "A", value: "A", description: "" }],
       multiple: false,
       custom: true,
     };
@@ -186,14 +214,14 @@ describe("questionWizard", () => {
       "A",
     );
     expect(selected).toMatchObject({
-      selectedOptionLabels: ["A"],
+      selectedOptionValues: ["A"],
       useCustomAnswer: false,
       customText: "",
     });
 
     const custom = toggleQuestionWizardCustomAnswer(prompt, selected);
     expect(custom).toMatchObject({
-      selectedOptionLabels: [],
+      selectedOptionValues: [],
       useCustomAnswer: true,
       customText: "",
     });

@@ -365,6 +365,140 @@ describe("NewRunChatWorkspace", () => {
     expect(rejectQuestionMock).toHaveBeenCalledWith("question-1");
   });
 
+  it("renders safe option labels but submits raw option values", async () => {
+    const replyQuestionMock = vi.fn(async () => true);
+    const { model } = createModelStub("running", false, {}, "interactive", {
+      pendingQuestionsById: {
+        "question-1": {
+          requestId: "question-1",
+          sessionId: "session-1",
+          questions: [
+            {
+              header: "Choose action",
+              question: "Which action should I take?",
+              options: [
+                {
+                  label: "Use safe action",
+                  value: "tool.patch.apply:internal-unsafe-value",
+                  description: "Modify files",
+                },
+              ],
+              custom: false,
+            },
+          ],
+        },
+      },
+    });
+    model.agent.replyQuestion = replyQuestionMock;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(
+      screen.getByRole("button", { name: "Use safe action" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("tool.patch.apply:internal-unsafe-value"),
+    ).toBeNull();
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Use safe action" }),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+
+    expect(replyQuestionMock).toHaveBeenCalledWith("question-1", [
+      ["tool.patch.apply:internal-unsafe-value"],
+    ]);
+  });
+
+  it("submits raw option id values when display labels are sanitized", async () => {
+    const replyQuestionMock = vi.fn(async () => true);
+    const { model } = createModelStub("running", false, {}, "interactive", {
+      pendingQuestionsById: {
+        "question-1": {
+          requestId: "question-1",
+          sessionId: "session-1",
+          questions: [
+            {
+              header: "Choose action",
+              question: "Which action should I take?",
+              options: [
+                {
+                  id: "tool.patch.apply:internal-id-value",
+                  label: "Apply patch safely",
+                  description: "Modify files",
+                },
+              ],
+              custom: false,
+            },
+          ],
+        },
+      },
+    });
+    model.agent.replyQuestion = replyQuestionMock;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Apply patch safely" }),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+
+    expect(replyQuestionMock).toHaveBeenCalledWith("question-1", [
+      ["tool.patch.apply:internal-id-value"],
+    ]);
+  });
+
+  it("prevents duplicate reply/reject calls on rapid double click", async () => {
+    let resolveReply: ((value: boolean) => void) | null = null;
+    let resolveReject: ((value: boolean) => void) | null = null;
+    const replyQuestionMock = vi.fn(
+      () => new Promise<boolean>((resolve) => (resolveReply = resolve)),
+    );
+    const rejectQuestionMock = vi.fn(
+      () => new Promise<boolean>((resolve) => (resolveReject = resolve)),
+    );
+
+    const { model } = createModelStub("running", false, {}, "interactive", {
+      pendingQuestionsById: {
+        "question-1": {
+          requestId: "question-1",
+          sessionId: "session-1",
+          questions: [
+            {
+              header: "Choose action",
+              question: "Which action should I take?",
+              options: [{ label: "Apply patch", description: "Modify files" }],
+              custom: true,
+            },
+          ],
+        },
+      },
+    });
+    model.agent.replyQuestion = replyQuestionMock;
+    model.agent.rejectQuestion = rejectQuestionMock;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Apply patch" }));
+
+    const sendButton = screen.getByRole("button", { name: "Send answer" });
+    await fireEvent.click(sendButton);
+    await fireEvent.click(sendButton);
+    expect(replyQuestionMock).toHaveBeenCalledTimes(1);
+
+    resolveReply?.(true);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    });
+
+    const dismissButton = screen.getByRole("button", { name: "Dismiss" });
+    await fireEvent.click(dismissButton);
+    expect(screen.getByRole("button", { name: "Sending..." })).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Sending..." }));
+    expect(rejectQuestionMock).toHaveBeenCalledTimes(1);
+    resolveReject?.(true);
+  });
+
   it("renders checked option state immediately", async () => {
     const { model } = createModelStub("running", false, {}, "interactive", {
       pendingQuestionsById: {
