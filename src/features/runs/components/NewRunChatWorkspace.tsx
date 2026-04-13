@@ -2722,7 +2722,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         <RunChatUserMessage>
           <div class="space-y-2">
             <RunChatMarkdown content={pendingPromptItem.text} />
-            <p class="text-[11px] font-medium tracking-[0.18em] text-white/75 uppercase">
+            <p class="run-chat-user-message__status">
               {pendingPromptItem.status === "failed"
                 ? "Send failed"
                 : chatSessionHealth() === "reconnecting"
@@ -2730,10 +2730,10 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                   : "Sending…"}
             </p>
             <Show when={pendingPromptItem.status === "failed"}>
-              <div class="flex flex-wrap justify-end gap-2">
+              <div class="run-chat-user-message__actions">
                 <button
                   type="button"
-                  class="btn btn-xs border-primary-content/30 text-primary-content hover:bg-primary-content/10 rounded-none border bg-transparent px-3 text-[11px] font-medium"
+                  class="run-chat-user-message__action"
                   onClick={() => {
                     void props.model.agent.retryPendingPrompt?.();
                   }}
@@ -2742,7 +2742,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 </button>
                 <button
                   type="button"
-                  class="btn btn-xs border-primary-content/30 text-primary-content hover:bg-primary-content/10 rounded-none border bg-transparent px-3 text-[11px] font-medium"
+                  class="run-chat-user-message__action"
                   onClick={() => {
                     void props.model.agent.reconnectSession?.();
                   }}
