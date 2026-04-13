@@ -151,7 +151,9 @@ const AboutModal: Component<AboutModalProps> = (props) => {
             </div>
             <button
               type="button"
-              ref={closeButtonRef}
+              ref={(element) => {
+                closeButtonRef = element;
+              }}
               class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
               onClick={props.onClose}
               aria-label="Close about modal"
