@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import {
+  IconArrowDown,
   IconArrowLeft,
   IconArrowRight,
   IconBook2,
@@ -36,6 +37,7 @@ import { Dynamic } from "solid-js/web";
 
 const iconRegistry = {
   "nav.back": IconArrowLeft,
+  "nav.down": IconArrowDown,
   "nav.menu": IconMenu2,
   "panel.close": IconX,
   "action.delete": IconTrash,
