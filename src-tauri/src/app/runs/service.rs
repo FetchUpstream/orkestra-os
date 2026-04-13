@@ -239,12 +239,6 @@ impl RunsService {
         self.begin_delete_run_lifecycle(&run).await
     }
 
-    pub async fn hard_delete_run(&self, run_id: &str) -> Result<(), AppError> {
-        self.hard_delete_run_and_reconcile_task_status(run_id)
-            .await
-            .map(|_| ())
-    }
-
     pub async fn hard_delete_run_and_reconcile_task_status(
         &self,
         run_id: &str,
@@ -1255,7 +1249,9 @@ mod tests {
         seed_run(&pool, "run-1", "task-1").await;
 
         service.prepare_run_for_deletion("run-1").await.unwrap();
-        let result = service.hard_delete_run("run-1").await;
+        let result = service
+            .hard_delete_run_and_reconcile_task_status("run-1")
+            .await;
 
         assert!(result.is_ok());
         let found = service.get_run("run-1").await;
