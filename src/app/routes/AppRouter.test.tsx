@@ -149,15 +149,28 @@ vi.mock("../../components/ui/TaskImplementationGuideCrepeEditor", () => ({
     ariaLabel?: string;
     onBlur?: () => void;
     disabled?: boolean;
+    placeholder?: string;
+    helperText?: string;
+    projectId?: string;
+    repositoryId?: string;
   }) => (
-    <textarea
-      role="textbox"
-      aria-label={props.ariaLabel || "Task editor"}
-      value={props.value}
-      disabled={props.disabled}
-      onInput={(event) => props.onChange(event.currentTarget.value)}
-      onBlur={() => props.onBlur?.()}
-    />
+    <div>
+      <textarea
+        role="textbox"
+        aria-label={props.ariaLabel || "Task editor"}
+        value={props.value}
+        disabled={props.disabled}
+        placeholder={props.placeholder}
+        onInput={(event) => props.onChange(event.currentTarget.value)}
+        onBlur={() => props.onBlur?.()}
+      />
+      {props.helperText &&
+      props.projectId &&
+      props.repositoryId &&
+      !props.value.trim() ? (
+        <p>{props.helperText}</p>
+      ) : null}
+    </div>
   ),
 }));
 
@@ -1238,6 +1251,28 @@ describe("app routing and shell", () => {
     expect(window.location.pathname).toBe("/projects/p-1/tasks/new");
     expect(confirmSpy).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
+  });
+
+  it("shows purpose-specific file mention guidance on the create task form", async () => {
+    await renderCreateTaskPage();
+
+    expect(
+      screen.getByLabelText("Task description").getAttribute("placeholder"),
+    ).toBe(
+      "Describe the goal of this task. Type @ to mention files from the repository.",
+    );
+    expect(
+      screen
+        .getByLabelText("Task implementation guide")
+        .getAttribute("placeholder"),
+    ).toBe(
+      "Write the implementation plan for the agent. Type @ to mention files from the repository.",
+    );
+    expect(
+      screen.getAllByText(
+        "Tip: Type @ to search files in the selected repository.",
+      ),
+    ).toHaveLength(2);
   });
 
   it("keeps edits intact when discard is cancelled", async () => {
@@ -3431,6 +3466,32 @@ describe("app routing and shell", () => {
     expect(descriptionBox.value).toContain("### Checklist");
     expect(descriptionBox.value).toContain("**Ship** update");
     expect(descriptionBox.value).toContain("[Docs](https://example.com)");
+  });
+
+  it("shows purpose-specific file mention guidance on the task detail form", async () => {
+    renderAt("/projects/p-1/tasks/task-123");
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Task description")).toBeTruthy();
+    });
+
+    expect(
+      screen.getByLabelText("Task description").getAttribute("placeholder"),
+    ).toBe(
+      "Describe the goal of this task. Type @ to mention files from the repository.",
+    );
+    expect(
+      screen
+        .getByLabelText("Task implementation guide")
+        .getAttribute("placeholder"),
+    ).toBe(
+      "Write the implementation plan for the agent. Type @ to mention files from the repository.",
+    );
+    expect(
+      screen.getAllByText(
+        "Tip: Type @ to search files in the selected repository.",
+      ),
+    ).toHaveLength(1);
   });
 
   it("wires task detail edit, status, move, and delete actions", async () => {
