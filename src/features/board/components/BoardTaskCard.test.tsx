@@ -48,14 +48,24 @@ describe("BoardTaskCard", () => {
                 runMiniCards={[
                   {
                     runId: "run-2",
+                    identityLabel: "RUN-2",
                     label: "Waiting for Input",
                     state: "waiting_for_input",
+                    status: "idle",
+                    statusLabel: "Idle",
+                    agentLabel: "Planner",
+                    modelLabel: "GPT-5",
                     isNavigable: true,
                   },
                   {
                     runId: "run-1",
+                    identityLabel: "RUN-1",
                     label: "Busy Coding",
                     state: "busy_coding",
+                    status: "in_progress",
+                    statusLabel: "In Progress",
+                    agentLabel: "Builder",
+                    modelLabel: "Claude Sonnet 4",
                     isNavigable: true,
                   },
                 ]}
@@ -117,8 +127,13 @@ describe("BoardTaskCard", () => {
                 runMiniCards={[
                   {
                     runId: "run-1",
+                    identityLabel: "RUN-1",
                     label: "Question Pending",
                     state: "question_pending",
+                    status: "idle",
+                    statusLabel: "Idle",
+                    agentLabel: "Planner",
+                    modelLabel: "GPT-5",
                     isNavigable: true,
                   },
                 ]}
@@ -131,5 +146,53 @@ describe("BoardTaskCard", () => {
 
     expect(screen.getByText("Question Pending")).toBeTruthy();
     expect(screen.getByText("?")).toBeTruthy();
+  });
+
+  it("renders run identity, status, agent, and model separately from state", () => {
+    render(() => (
+      <Router>
+        <Route
+          path="/board"
+          component={() => (
+            <ul>
+              <BoardTaskCard
+                task={{
+                  id: "task-1",
+                  title: "Task with runs",
+                  status: "review",
+                  projectId: "project-1",
+                }}
+                project={{
+                  id: "project-1",
+                  name: "Project",
+                  key: "PRJ",
+                  repositories: [],
+                }}
+                runMiniCards={[
+                  {
+                    runId: "run-1",
+                    identityLabel: "RUN-42",
+                    label: "Waiting for Input",
+                    state: "waiting_for_input",
+                    status: "idle",
+                    statusLabel: "Idle",
+                    agentLabel: "Planner",
+                    modelLabel: "GPT-5",
+                    isNavigable: true,
+                  },
+                ]}
+              />
+            </ul>
+          )}
+        />
+      </Router>
+    ));
+
+    expect(screen.getByText("RUN-42")).toBeTruthy();
+    expect(screen.getByText("Idle")).toBeTruthy();
+    expect(screen.getByText("Planner")).toBeTruthy();
+    expect(screen.getByText("GPT-5")).toBeTruthy();
+    expect(screen.getByText("Waiting for Input")).toBeTruthy();
+    expect(screen.queryByText("Run Details")).toBeNull();
   });
 });

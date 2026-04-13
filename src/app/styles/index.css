@@ -1262,7 +1262,7 @@ textarea::placeholder {
 
 .board-task-run-details {
   margin: 0 14px 14px;
-  padding: 8px 10px;
+  padding: 9px 10px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--surface);
@@ -1290,17 +1290,102 @@ textarea::placeholder {
   outline-offset: 2px;
 }
 
-.board-task-run-details-title {
-  margin: 0 0 2px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
+.board-task-run-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
 }
 
-.board-task-run-details-row {
+.board-task-run-identity {
+  margin: 0;
+  min-width: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.board-task-run-meta {
+  margin: 4px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.board-task-run-meta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-task-run-meta-separator {
+  flex: 0 0 auto;
+}
+
+.board-task-run-state-row {
+  margin-top: 6px;
   font-size: 0.78rem;
+  color: var(--text);
+}
+
+.board-task-run-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 1.1rem;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.board-task-run-status--queued,
+.board-task-run-status--idle {
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  border-color: var(--border-subtle);
+}
+
+.board-task-run-status--preparing {
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.board-task-run-status--in-progress {
+  background: rgba(91, 138, 255, 0.15);
+  color: var(--accent);
+  border-color: rgba(91, 138, 255, 0.3);
+}
+
+.board-task-run-status--complete {
+  background: rgba(107, 207, 127, 0.15);
+  color: var(--success);
+  border-color: rgba(107, 207, 127, 0.3);
+}
+
+.board-task-run-status--failed {
+  background: var(--danger-subtle);
+  color: var(--danger);
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.board-task-run-status--cancelled {
+  background: rgba(148, 163, 184, 0.16);
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.28);
 }
 
 .board-task-run-check {

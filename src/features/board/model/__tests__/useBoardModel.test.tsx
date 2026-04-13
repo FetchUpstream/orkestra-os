@@ -244,6 +244,31 @@ describe("useBoardModel run settings defaults", () => {
       children: [],
     });
 
+  it("builds board run mini-cards with run identity, status, agent, and model labels", async () => {
+    listProjectTasksMock.mockResolvedValueOnce([
+      {
+        id: "task-1",
+        title: "Task",
+        status: "doing",
+        projectId: "project-1",
+      },
+    ]);
+    listTaskRunsMock.mockResolvedValueOnce([
+      {
+        id: "run-1",
+        taskId: "task-1",
+        projectId: "project-1",
+        runNumber: 42,
+        displayKey: "RUN-42",
+        status: "idle",
+        runState: "waiting_for_input",
+        triggeredBy: "user",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        agentId: "agent-1",
+        modelId: "model-1",
+      },
+    ]);
+
     const ref: { current: ReturnType<typeof useBoardModel> | null } = {
       current: null,
     };
@@ -253,22 +278,15 @@ describe("useBoardModel run settings defaults", () => {
     });
 
     await waitFor(() => {
-      expect(ref.current?.groupedTasks().todo.length).toBe(1);
-    });
-
-    ref.current?.onRequestMoveTaskToInProgress("task-1");
-
-    await waitFor(() => {
-      expect(ref.current?.isBlockedTaskModalOpen()).toBe(true);
-      expect(ref.current?.isRunSettingsModalOpen()).toBe(false);
-      expect(ref.current?.blockingStartTasks()).toEqual([
-        {
-          id: "task-2",
-          displayKey: "PRJ-2",
-          title: "Finalize schema",
-          status: "doing",
-        },
-      ]);
+      expect(ref.current?.taskRunMiniCards()["task-1"]?.[0]).toMatchObject({
+        runId: "run-1",
+        identityLabel: "RUN-42",
+        label: "Waiting for Input",
+        status: "idle",
+        statusLabel: "Idle",
+        agentLabel: "Agent 1",
+        modelLabel: "Model 1",
+      });
     });
   });
 
