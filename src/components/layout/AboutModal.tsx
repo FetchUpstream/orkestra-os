@@ -28,12 +28,19 @@ import {
   formatSupportDebugInfo,
   readAppSupportMetadata,
 } from "../../app/lib/appSupport";
+import {
+  LINUX_PACKAGE_UPDATE_METADATA_URL,
+  type LinuxPackageUpdateCheckState,
+} from "../../app/lib/linuxPackageUpdates";
 import { AppIcon } from "../ui/icons";
 import appLogo from "../../assets/logo.svg";
+import LinuxPackageUpdatePanel from "./LinuxPackageUpdatePanel";
 
 type AboutModalProps = {
   isOpen: Accessor<boolean>;
   onClose: () => void;
+  updateState?: Accessor<LinuxPackageUpdateCheckState>;
+  onCheckForUpdates?: () => void | Promise<void>;
 };
 
 const openExternalUrl = async (url: string) => {
@@ -77,12 +84,46 @@ const AboutModal: Component<AboutModalProps> = (props) => {
   const [copyStatus, setCopyStatus] = createSignal<"idle" | "copied" | "error">(
     "idle",
   );
+  const [updateCommandCopyStatus, setUpdateCommandCopyStatus] = createSignal<
+    "idle" | "copied" | "error"
+  >("idle");
   let closeButtonRef: HTMLButtonElement | undefined;
 
   const appVersion = createMemo(() =>
     formatAppVersionForDisplay(metadata()?.appVersion),
   );
   const releaseChannel = createMemo(() => formatBadgeLabel(metadata()?.build));
+  const updateState = createMemo<LinuxPackageUpdateCheckState>(
+    () => props.updateState?.() ?? { status: "idle" },
+  );
+  const availableUpdate = createMemo(() => {
+    const nextState = updateState();
+    return nextState.status === "update-available" ? nextState : null;
+  });
+  const upToDateUpdate = createMemo(() => {
+    const nextState = updateState();
+    return nextState.status === "up-to-date" ? nextState : null;
+  });
+  const manualCheckStatusMessage = createMemo(() => {
+    const nextState = updateState();
+
+    switch (nextState.status) {
+      case "checking":
+        return `Checking ${LINUX_PACKAGE_UPDATE_METADATA_URL}...`;
+      case "update-available":
+        return `Checked ${LINUX_PACKAGE_UPDATE_METADATA_URL}. Update found.`;
+      case "up-to-date":
+        return `Checked ${LINUX_PACKAGE_UPDATE_METADATA_URL}. You're up to date.`;
+      case "not-applicable":
+        return nextState.reason === "bundle-type-unavailable"
+          ? "Checked for updates, but couldn't determine an install type for package-manager guidance."
+          : "Checked for updates. Package-manager guidance only applies to Linux deb and rpm installs.";
+      case "error":
+        return `Couldn't check ${LINUX_PACKAGE_UPDATE_METADATA_URL} right now.`;
+      default:
+        return `Checks ${LINUX_PACKAGE_UPDATE_METADATA_URL} for the latest published update metadata.`;
+    }
+  });
 
   createEffect(() => {
     if (!props.isOpen()) return;
@@ -105,6 +146,7 @@ const AboutModal: Component<AboutModalProps> = (props) => {
   createEffect(() => {
     if (!props.isOpen()) {
       setCopyStatus("idle");
+      setUpdateCommandCopyStatus("idle");
     }
   });
 
@@ -120,6 +162,18 @@ const AboutModal: Component<AboutModalProps> = (props) => {
 
   const onReportBug = async () => {
     await openExternalUrl(SUPPORT_LINKS.issueReporting);
+  };
+
+  const onCopyUpdateCommand = async () => {
+    const nextUpdateState = updateState();
+    if (nextUpdateState.status !== "update-available") return;
+
+    try {
+      await navigator.clipboard.writeText(nextUpdateState.command);
+      setUpdateCommandCopyStatus("copied");
+    } catch {
+      setUpdateCommandCopyStatus("error");
+    }
   };
 
   return (
@@ -239,6 +293,96 @@ const AboutModal: Component<AboutModalProps> = (props) => {
                   )}
                 </For>
               </div>
+            </div>
+
+            <div class="space-y-3">
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <p class="text-base-content/55 text-[11px] font-semibold tracking-[0.18em] uppercase">
+                    Updates
+                  </p>
+                  <p class="text-base-content/55 mt-1 text-xs leading-5">
+                    Checks the published Linux package metadata and shows
+                    package-manager upgrade guidance for supported installs.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-sm border-base-content/20 bg-base-100 text-base-content rounded-none border px-4 text-xs font-semibold"
+                  onClick={() => {
+                    setUpdateCommandCopyStatus("idle");
+                    void props.onCheckForUpdates?.();
+                  }}
+                  disabled={updateState().status === "checking"}
+                >
+                  {updateState().status === "checking"
+                    ? "Checking..."
+                    : "Check for updates"}
+                </button>
+              </div>
+
+              <p
+                class="text-base-content/60 text-xs leading-5"
+                aria-live="polite"
+              >
+                {manualCheckStatusMessage()}
+              </p>
+
+              <Show when={updateState().status === "idle"}>
+                <div class="border-base-content/10 bg-base-100/45 rounded-none border px-4 py-3">
+                  <p class="text-base-content/65 text-xs leading-5">
+                    Run a manual update check for supported Linux package
+                    installs.
+                  </p>
+                </div>
+              </Show>
+
+              <Show when={updateState().status === "checking"}>
+                <div class="border-base-content/10 bg-base-100/45 rounded-none border px-4 py-3">
+                  <p class="text-base-content/65 text-xs leading-5">
+                    Checking the latest published package metadata...
+                  </p>
+                </div>
+              </Show>
+
+              <Show when={updateState().status === "error"}>
+                <div class="border-error/25 bg-error/8 rounded-none border px-4 py-3">
+                  <p class="text-error text-xs leading-5">
+                    Couldn’t check for updates right now. Try again in a moment.
+                  </p>
+                </div>
+              </Show>
+
+              <Show when={updateState().status === "not-applicable"}>
+                <div class="border-base-content/10 bg-base-100/45 rounded-none border px-4 py-3">
+                  <p class="text-base-content/65 text-xs leading-5">
+                    Package-manager update notices are available for Linux deb
+                    and rpm installs only.
+                  </p>
+                </div>
+              </Show>
+
+              <Show when={availableUpdate()}>
+                {(result) => (
+                  <LinuxPackageUpdatePanel
+                    result={result()}
+                    title="A newer Linux package is available"
+                    summary="A newer published package is available for this install type. Copy the command below to upgrade with your package manager."
+                    copyStatus={updateCommandCopyStatus()}
+                    onCopyCommand={() => void onCopyUpdateCommand()}
+                  />
+                )}
+              </Show>
+
+              <Show when={upToDateUpdate()}>
+                {(result) => (
+                  <LinuxPackageUpdatePanel
+                    result={result()}
+                    title="You’re up to date"
+                    summary="This Linux package install already matches the latest published update metadata."
+                  />
+                )}
+              </Show>
             </div>
           </div>
 

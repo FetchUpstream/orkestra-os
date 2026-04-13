@@ -26,6 +26,11 @@ import { listProjects, type Project } from "../lib/projects";
 import { primeRunSelectionOptionsCache } from "../lib/runSelectionOptionsCache";
 import { listActiveRuns } from "../lib/runs";
 import type { TaskStatus } from "../lib/tasks";
+import {
+  checkForLinuxPackageUpdate,
+  type LinuxPackageUpdateAvailableResult,
+  type LinuxPackageUpdateCheckState,
+} from "../lib/linuxPackageUpdates";
 import MainContent from "../../components/layout/MainContent";
 import OpenCodeRequiredModal from "../../components/layout/OpenCodeRequiredModal";
 import SidebarNav from "../../components/layout/SidebarNav";
@@ -33,6 +38,7 @@ import Topbar from "../../components/layout/Topbar";
 import AlphaNoticeModal from "../../components/layout/AlphaNoticeModal";
 import AboutModal from "../../components/layout/AboutModal";
 import CloseWhileRunsActiveModal from "../../components/layout/CloseWhileRunsActiveModal";
+import LinuxPackageUpdateNotice from "../../components/layout/LinuxPackageUpdateNotice";
 import { AppIcon } from "../../components/ui/icons";
 import { formatStatus } from "../../features/tasks/utils/taskDetail";
 import {
@@ -134,6 +140,10 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   const [closeWarningRunCount, setCloseWarningRunCount] = createSignal(0);
   const [confirmedCloseInProgress, setConfirmedCloseInProgress] =
     createSignal(false);
+  const [linuxPackageUpdateState, setLinuxPackageUpdateState] =
+    createSignal<LinuxPackageUpdateCheckState>({ status: "idle" });
+  const [startupLinuxPackageUpdate, setStartupLinuxPackageUpdate] =
+    createSignal<LinuxPackageUpdateAvailableResult | null>(null);
 
   const isSidebarVisible = () => (isMobile() ? mobileSidebarOpen() : true);
 
@@ -148,6 +158,30 @@ const AppShellContent: Component<AppShellProps> = (props) => {
     const nextProjects = await listProjects();
     applyProjects(nextProjects);
   };
+
+  const runLinuxPackageUpdateCheck = async ({
+    silent = false,
+  }: {
+    silent?: boolean;
+  } = {}) => {
+    if (!silent) {
+      setLinuxPackageUpdateState({ status: "checking" });
+    }
+
+    const result = await checkForLinuxPackageUpdate();
+
+    if (silent && result.status === "error") {
+      console.warn("Linux package update check failed", result.message);
+      return result;
+    }
+
+    setLinuxPackageUpdateState(result);
+    setStartupLinuxPackageUpdate(
+      result.status === "update-available" ? result : null,
+    );
+    return result;
+  };
+
   onMount(async () => {
     const mediaQuery = window.matchMedia("(max-width: 900px)");
     const updateMobileMode = (matches: boolean) => {
@@ -180,6 +214,8 @@ const AppShellContent: Component<AppShellProps> = (props) => {
     } finally {
       setHasLoadedProjects(true);
     }
+
+    void runLinuxPackageUpdateCheck({ silent: true });
 
     const onTaskDetailTopbarConfig = (event: Event) => {
       const customEvent = event as CustomEvent<TaskDetailTopbarConfig>;
@@ -864,7 +900,12 @@ const AppShellContent: Component<AppShellProps> = (props) => {
           </div>
         </div>
       </div>
-      <AboutModal isOpen={aboutModalOpen} onClose={onCloseSettings} />
+      <AboutModal
+        isOpen={aboutModalOpen}
+        onClose={onCloseSettings}
+        updateState={linuxPackageUpdateState}
+        onCheckForUpdates={() => runLinuxPackageUpdateCheck()}
+      />
       <CloseWhileRunsActiveModal
         isOpen={closeWarningOpen}
         activeRunCount={closeWarningRunCount}
@@ -886,6 +927,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
         }}
       />
       <AlphaNoticeModal />
+      <LinuxPackageUpdateNotice result={startupLinuxPackageUpdate} />
     </div>
   );
 };
