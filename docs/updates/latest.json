@@ -1,0 +1,13 @@
+{
+  "version": "0.0.2",
+  "releasedAt": "2026-04-13T12:00:00Z",
+ "notes": [
+  "Run chat transcript UX fixes: fixes initial anchoring to the latest message, improves bottom anchoring and jump-to-bottom behavior, and expands tests around chat scroll and anchor behavior.",
+  "About modal refresh: simplifies and polishes the About modal layout, updates hierarchy, copy, and presentation, and adjusts support link handling and related tests.",
+  "Sidebar polish: fixes sidebar version display wrapping and refreshes the sidebar after creating a new project."
+],
+  "commands": {
+    "deb": "sudo apt update && sudo apt install --only-upgrade orkestraos",
+    "rpm": "sudo dnf upgrade orkestraos"
+  }
+}
