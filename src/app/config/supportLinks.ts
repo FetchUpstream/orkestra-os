@@ -13,6 +13,5 @@
 export const SUPPORT_LINKS = {
   githubRepository: "https://github.com/FetchUpstream/orkestra-os",
   issueReporting: "https://github.com/FetchUpstream/orkestra-os/issues/new",
-  documentation:
-    "https://github.com/FetchUpstream/orkestra-os/blob/main/README.md",
+  documentation: "https://github.com/FetchUpstream/orkestra-os",
 } as const;
