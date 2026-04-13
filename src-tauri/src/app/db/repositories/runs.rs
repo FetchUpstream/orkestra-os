@@ -749,18 +749,28 @@ impl RunsRepository {
             .await
             .runs_db("starting completion transaction")?;
 
-        let run_update = sqlx::query(
+        let run_update_query = format!(
             "UPDATE runs
              SET status = 'complete',
                  finished_at = COALESCE(finished_at, ?)
              WHERE id = ?
-               AND status != 'complete'",
-        )
+               AND status IN ({})",
+            ACTIVE_RUN_STATUSES_SQL.as_str(),
+        );
+
+        let run_update = sqlx::query(&run_update_query)
         .bind(finished_at)
         .bind(run_id)
         .execute(&mut *tx)
         .await
         .runs_db("marking run complete")?;
+
+        if run_update.rows_affected() == 0 {
+            tx.commit()
+                .await
+                .runs_db("committing completion transaction")?;
+            return Ok(false);
+        }
 
         let task_update = sqlx::query(
             "UPDATE tasks
@@ -788,10 +798,10 @@ impl RunsRepository {
         opencode_session_id: &str,
         updated_at: &str,
     ) -> Result<bool, AppError> {
-        let result = sqlx::query(
+        let query = format!(
             "UPDATE tasks
              SET status = 'review',
-                 updated_at = ?
+                  updated_at = ?
               WHERE id = (
                   SELECT task_id
                   FROM runs
@@ -803,13 +813,18 @@ impl RunsRepository {
                      SELECT 1
                      FROM runs AS other_runs
                      WHERE other_runs.task_id = (SELECT task_id FROM runs WHERE id = ?)
-                       AND other_runs.status = 'in_progress'
-                 )
+                       AND other_runs.status IN ({})
+                       AND other_runs.id != ?
+                  )
                  AND status = 'doing'",
-        )
+            ACTIVE_RUN_STATUSES_SQL.as_str(),
+        );
+
+        let result = sqlx::query(&query)
         .bind(updated_at)
         .bind(run_id)
         .bind(opencode_session_id)
+        .bind(run_id)
         .bind(run_id)
         .execute(&self.pool)
         .await
@@ -1026,7 +1041,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transition_task_doing_to_review_on_session_idle_updates_when_no_runs_in_progress() {
+    async fn transition_task_doing_to_review_on_session_idle_skips_when_another_active_sibling_exists(
+    ) {
         let repository = setup_repository().await;
         let pool = repository.pool.clone();
         seed_project_task_and_repository(&pool).await;
@@ -1041,6 +1057,46 @@ mod tests {
              VALUES
              ('run-idle', 'task-1', 'project-1', 'repo-1', 'idle', 'user', '2024-01-01T00:00:00Z', 'session-idle'),
              ('run-other-idle', 'task-1', 'project-1', 'repo-1', 'idle', 'user', '2024-01-01T00:01:00Z', 'session-other')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let changed = repository
+            .transition_task_doing_to_review_on_session_idle(
+                "run-idle",
+                "session-idle",
+                "2024-01-01T00:10:00Z",
+            )
+            .await
+            .unwrap();
+
+        assert!(!changed);
+
+        let task_status: String =
+            sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(task_status, "doing");
+    }
+
+    #[tokio::test]
+    async fn transition_task_doing_to_review_on_session_idle_updates_when_no_active_siblings_exist() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        sqlx::query("UPDATE tasks SET status = 'doing' WHERE id = 'task-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at, opencode_session_id)
+             VALUES
+             ('run-idle', 'task-1', 'project-1', 'repo-1', 'idle', 'user', '2024-01-01T00:00:00Z', 'session-idle'),
+             ('run-complete', 'task-1', 'project-1', 'repo-1', 'complete', 'user', '2024-01-01T00:01:00Z', 'session-complete')",
         )
         .execute(&pool)
         .await
@@ -1097,6 +1153,74 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(run_status, "complete");
+    }
+
+    #[tokio::test]
+    async fn finalize_run_completion_and_task_done_skips_cancelled_run() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        sqlx::query("UPDATE tasks SET status = 'doing' WHERE id = 'task-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        seed_run(&pool, "run-1", "cancelled", "2024-01-01T00:00:00Z").await;
+
+        let changed = repository
+            .finalize_run_completion_and_task_done("run-1", "2024-01-01T00:10:00Z")
+            .await
+            .unwrap();
+
+        assert!(!changed);
+
+        let task_status: String =
+            sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(task_status, "doing");
+
+        let run_status: String = sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(run_status, "cancelled");
+    }
+
+    #[tokio::test]
+    async fn finalize_run_completion_and_task_done_skips_failed_run() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        sqlx::query("UPDATE tasks SET status = 'doing' WHERE id = 'task-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        seed_run(&pool, "run-1", "failed", "2024-01-01T00:00:00Z").await;
+
+        let changed = repository
+            .finalize_run_completion_and_task_done("run-1", "2024-01-01T00:10:00Z")
+            .await
+            .unwrap();
+
+        assert!(!changed);
+
+        let task_status: String =
+            sqlx::query_scalar("SELECT status FROM tasks WHERE id = 'task-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(task_status, "doing");
+
+        let run_status: String = sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(run_status, "failed");
     }
 
     #[tokio::test]

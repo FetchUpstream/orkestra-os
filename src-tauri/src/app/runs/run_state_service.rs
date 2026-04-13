@@ -63,7 +63,7 @@ impl RunStateService {
         &self,
         run_id: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
-        self.transition_to_state(run_id, Some(BUSY_CODING), "run_started")
+        self.transition_to_state(run_id, Some(BUSY_CODING), "run_started", true)
             .await
     }
 
@@ -89,7 +89,7 @@ impl RunStateService {
             return Ok(None);
         }
 
-        self.transition_to_state(run_id, Some(BUSY_CODING), transition_source)
+        self.transition_to_state(run_id, Some(BUSY_CODING), transition_source, true)
             .await
     }
 
@@ -122,7 +122,12 @@ impl RunStateService {
         run_id: &str,
         transition_source: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
-        self.transition_to_state(run_id, Some(WAITING_FOR_INPUT), transition_source)
+        self.transition_to_state(
+            run_id,
+            Some(WAITING_FOR_INPUT),
+            transition_source,
+            !Self::is_non_authoritative_source(transition_source),
+        )
             .await
     }
 
@@ -131,7 +136,7 @@ impl RunStateService {
         run_id: &str,
         transition_source: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
-        self.transition_to_state(run_id, Some(QUESTION_PENDING), transition_source)
+        self.transition_to_state(run_id, Some(QUESTION_PENDING), transition_source, false)
             .await
     }
 
@@ -139,7 +144,7 @@ impl RunStateService {
         &self,
         run_id: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
-        self.transition_to_state(run_id, Some(PERMISSION_REQUESTED), "permission_requested")
+        self.transition_to_state(run_id, Some(PERMISSION_REQUESTED), "permission_requested", true)
             .await
     }
 
@@ -147,7 +152,7 @@ impl RunStateService {
         &self,
         run_id: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
-        self.transition_to_state(run_id, Some(COMMITTING_CHANGES), "commit_requested")
+        self.transition_to_state(run_id, Some(COMMITTING_CHANGES), "commit_requested", true)
             .await
     }
 
@@ -159,6 +164,7 @@ impl RunStateService {
             run_id,
             Some(RESOLVING_REBASE_CONFLICTS),
             "rebase_conflicts_started",
+            true,
         )
         .await
     }
@@ -167,7 +173,8 @@ impl RunStateService {
         &self,
         run_id: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
-        self.transition_to_state(run_id, None, "run_merged").await
+        self.transition_to_state(run_id, None, "run_merged", true)
+            .await
     }
 
     pub async fn recompute_run_state(
@@ -185,8 +192,13 @@ impl RunStateService {
         };
 
         let next_state = self.resolve_run_state(&latest_run, false).await?;
-        self.transition_to_state_from_snapshot(latest_run, next_state.as_deref(), transition_source)
-            .await
+        self.transition_to_state_from_snapshot(
+            latest_run,
+            next_state.as_deref(),
+            transition_source,
+            false,
+        )
+        .await
     }
 
     async fn transition_to_state(
@@ -194,6 +206,7 @@ impl RunStateService {
         run_id: &str,
         next_state: Option<&str>,
         transition_source: &str,
+        authoritative: bool,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
         let run_id = run_id.trim();
         if run_id.is_empty() {
@@ -204,7 +217,7 @@ impl RunStateService {
             return Ok(None);
         };
 
-        self.transition_to_state_from_snapshot(latest_run, next_state, transition_source)
+        self.transition_to_state_from_snapshot(latest_run, next_state, transition_source, authoritative)
             .await
     }
 
@@ -213,6 +226,7 @@ impl RunStateService {
         latest_run: Run,
         next_state: Option<&str>,
         transition_source: &str,
+        authoritative: bool,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
         if Self::is_terminal_status(latest_run.status.as_str()) {
             return Ok(None);
@@ -224,8 +238,8 @@ impl RunStateService {
             .map(str::trim)
             .filter(|state| !state.is_empty());
 
-        if matches!(next_state, Some(BUSY_CODING))
-            && current_stored_state.is_some_and(Self::is_special_stored_state)
+        if current_stored_state.is_some_and(Self::is_special_stored_state)
+            && (!authoritative || matches!(next_state, Some(BUSY_CODING)))
         {
             return Ok(None);
         }
@@ -430,6 +444,11 @@ impl RunStateService {
                 | RESOLVING_REBASE_CONFLICTS
         )
     }
+
+    fn is_non_authoritative_source(transition_source: &str) -> bool {
+        let source = transition_source.trim().to_ascii_lowercase();
+        source.contains("refresh") || source.contains("recompute")
+    }
 }
 
 #[cfg(test)]
@@ -437,7 +456,7 @@ mod tests {
     use super::*;
     use crate::app::db::migrations::run_migrations;
     use crate::app::worktrees::service::WorktreesService;
-    use sqlx::SqlitePool;
+    use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
     use std::fs;
     use std::path::{Path, PathBuf};
     use uuid::Uuid;
@@ -466,7 +485,11 @@ mod tests {
     }
 
     async fn setup_service() -> (RunStateService, SqlitePool, TempDir) {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
         run_migrations(&pool).await.unwrap();
 
         let temp_dir = TempDir::new();
@@ -624,5 +647,85 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(run_state.as_deref(), Some("question_pending"));
+    }
+
+    #[tokio::test]
+    async fn recompute_preserves_special_stored_state_for_non_authoritative_transition() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(
+            &pool,
+            "run-1",
+            "task-1",
+            "in_progress",
+            "permission_requested",
+        )
+        .await;
+
+        let event = service
+            .recompute_run_state("run-1", "poll_refresh")
+            .await
+            .unwrap();
+
+        assert!(event.is_none());
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = ?")
+                .bind("run-1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), Some("permission_requested"));
+    }
+
+    #[tokio::test]
+    async fn question_pending_non_authoritative_transition_preserves_special_stored_state() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(
+            &pool,
+            "run-1",
+            "task-1",
+            "idle",
+            "committing_changes",
+        )
+        .await;
+
+        let event = service
+            .handle_question_pending("run-1", "question_refresh")
+            .await
+            .unwrap();
+
+        assert!(event.is_none());
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = ?")
+                .bind("run-1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), Some("committing_changes"));
+    }
+
+    #[tokio::test]
+    async fn permission_requested_authoritative_transition_overwrites_prior_special_state() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "idle", "question_pending").await;
+
+        let event = service.handle_permission_requested("run-1").await.unwrap();
+
+        assert!(event.is_some());
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = ?")
+                .bind("run-1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), Some("permission_requested"));
     }
 }

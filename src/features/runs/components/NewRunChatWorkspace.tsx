@@ -3233,11 +3233,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               {composerSelectionValidationError()}
             </p>
           </Show>
-          <Show when={hasPendingQuestion() && !activeQuestionCard()}>
-            <p class="project-placeholder-text" aria-live="polite">
-              Prompt submission is blocked until this question is answered.
-            </p>
-          </Show>
           <Show when={hasPendingPermission()}>
             <p class="project-placeholder-text" aria-live="polite">
               Prompt submission is blocked until this permission is answered.
