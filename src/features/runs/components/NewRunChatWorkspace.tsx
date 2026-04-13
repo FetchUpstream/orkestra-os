@@ -63,6 +63,11 @@ import {
   type QuestionWizardDraftAnswer,
   type QuestionWizardPrompt,
 } from "./questionWizard";
+import {
+  normalizeToolOutputTextForDisplay,
+  normalizeToolPathForDisplay,
+  type ToolPathDisplayContext,
+} from "../lib/normalizeToolPathForDisplay";
 
 type AgentReadinessPhase =
   | "warming_backend"
@@ -128,6 +133,29 @@ const toSingleLine = (value: unknown, maxLength = 140): string | null => {
   return normalized.length <= maxLength
     ? normalized
     : `${normalized.slice(0, maxLength - 3)}...`;
+};
+
+const toSingleLineWithoutTruncation = (value: unknown): string | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const asText =
+    typeof value === "string"
+      ? value
+      : typeof value === "number" || typeof value === "boolean"
+        ? String(value)
+        : null;
+
+  if (asText === null) {
+    return null;
+  }
+
+  const normalized = asText
+    .replace(INTERNAL_ID_PATTERN, "[internal-id]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized.length > 0 ? normalized : null;
 };
 
 const getNestedValueByKeys = (
@@ -407,7 +435,10 @@ const extractTaskSubagentSessionIds = (
   );
 };
 
-const buildSubagentMessagesFromStore = (store: AgentStore) => {
+const buildSubagentMessagesFromStore = (
+  store: AgentStore,
+  displayContext: ToolPathDisplayContext,
+) => {
   return store.messageOrder
     .map((messageId) => store.messagesById[messageId])
     .filter(Boolean)
@@ -421,17 +452,21 @@ const buildSubagentMessagesFromStore = (store: AgentStore) => {
         const part = message.partsById[partId];
         if (!part) continue;
         if (part.kind === "text" && part.text.trim().length > 0) {
-          textParts.push(part.text);
+          textParts.push(
+            normalizeToolOutputTextForDisplay(part.text, displayContext),
+          );
           continue;
         }
         if (part.kind === "reasoning" && part.text.trim().length > 0) {
-          reasoningParts.push(part.text);
+          reasoningParts.push(
+            normalizeToolOutputTextForDisplay(part.text, displayContext),
+          );
           continue;
         }
         if (part.kind === "tool") {
           toolItems.push({
             id: part.id,
-            summary: buildToolSummary(part),
+            summary: buildToolSummary(part, displayContext),
             status: part.status,
           });
         }
@@ -499,6 +534,7 @@ const buildSubagentPanels = (
     string,
     { partOrder: string[]; partsById: Record<string, UiPart> }
   >,
+  displayContext: ToolPathDisplayContext,
   taskPartSessionIdsByPartId: Record<string, string[]>,
   fetchedSessionHistories: Record<string, SubagentHistorySnapshot>,
 ): Record<string, RunChatToolRailSubagentItem[]> => {
@@ -802,29 +838,33 @@ const buildSubagentPanels = (
       return acc;
     }
 
-    const liveMessages = buildSubagentMessagesFromStore({
-      sessionId: session.sessionId,
-      status: "idle",
-      streamConnected: false,
-      lastSyncAt: null,
-      messagesById: Object.fromEntries(
-        session.messageOrder
-          .map((messageId) => [messageId, session.messagesById[messageId]])
-          .filter((entry) => Boolean(entry[1])),
-      ) as AgentStore["messagesById"],
-      messageOrder: session.messageOrder,
-      pendingQuestionsById: {},
-      pendingPermissionsById: {},
-      resolvedPermissionsById: {},
-      failedPermissionsById: {},
-      todos: [],
-      diffSummary: null,
-      rawEvents: [],
-    });
+    const liveMessages = buildSubagentMessagesFromStore(
+      {
+        sessionId: session.sessionId,
+        status: "idle",
+        streamConnected: false,
+        lastSyncAt: null,
+        messagesById: Object.fromEntries(
+          session.messageOrder
+            .map((messageId) => [messageId, session.messagesById[messageId]])
+            .filter((entry) => Boolean(entry[1])),
+        ) as AgentStore["messagesById"],
+        messageOrder: session.messageOrder,
+        pendingQuestionsById: {},
+        pendingPermissionsById: {},
+        resolvedPermissionsById: {},
+        failedPermissionsById: {},
+        todos: [],
+        diffSummary: null,
+        rawEvents: [],
+      },
+      displayContext,
+    );
     const fetchedMessages =
       fetchedSessionHistories[session.sessionId]?.store !== undefined
         ? buildSubagentMessagesFromStore(
             fetchedSessionHistories[session.sessionId].store,
+            displayContext,
           )
         : [];
     const messages = liveMessages.length > 0 ? liveMessages : fetchedMessages;
@@ -1564,7 +1604,10 @@ const toToolLabel = (toolName: string | null | undefined): string => {
     .join(" ");
 };
 
-const buildToolSummary = (part: UiPart): string => {
+const buildToolSummary = (
+  part: UiPart,
+  displayContext: ToolPathDisplayContext,
+): string => {
   if (part.kind !== "tool") {
     return "";
   }
@@ -1574,9 +1617,12 @@ const buildToolSummary = (part: UiPart): string => {
   const input = part.input;
   const include = toSingleLine(getNestedValueByKeys(input, ["include"]), 60);
 
-  const asPath = toSingleLine(
+  const rawPath = toSingleLineWithoutTruncation(
     getNestedValueByKeys(input, ["filePath", "path", "filename"]),
   );
+  const asPath = rawPath
+    ? normalizeToolPathForDisplay(rawPath, displayContext)
+    : null;
   const asCommand = toSingleLine(
     getNestedValueByKeys(input, ["command", "bash", "script", "cmd"]),
   );
@@ -1655,9 +1701,12 @@ const buildToolSummary = (part: UiPart): string => {
       (getNestedValueByKeys(input, ["all"]) === true ? "all tasks" : focused);
   } else if (normalizedToolName.includes("lsp_")) {
     focused =
-      toSingleLine(
+      toSingleLineWithoutTruncation(
         getNestedValueByKeys(input, ["filePath", "newName", "line"]),
       ) || focused;
+    if (focused) {
+      focused = normalizeToolPathForDisplay(focused, displayContext);
+    }
   } else if (normalizedToolName.includes("ast_grep_")) {
     focused = toSingleLine(getNestedValueByKeys(input, ["pattern"])) || focused;
   }
@@ -2183,18 +2232,21 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     return formatted === "Unavailable" ? String(value) : formatted;
   };
 
-  const resolvePartText = (part: UiPart): string => {
+  const resolvePartText = (
+    part: UiPart,
+    displayContext: ToolPathDisplayContext,
+  ): string => {
     if (part.kind !== "text" && part.kind !== "reasoning") {
       return "";
     }
 
     if (typeof part.streamText === "string") {
-      return part.streamText;
+      return normalizeToolOutputTextForDisplay(part.streamText, displayContext);
     }
 
     const streamTail = part.streamTail;
     if (!streamTail) {
-      return part.text;
+      return normalizeToolOutputTextForDisplay(part.text, displayContext);
     }
 
     const deltas: string[] = [];
@@ -2207,8 +2259,16 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
 
     const baseText =
       typeof part.streamBaseText === "string" ? part.streamBaseText : part.text;
-    return `${baseText}${deltas.join("")}`;
+    return normalizeToolOutputTextForDisplay(
+      `${baseText}${deltas.join("")}`,
+      displayContext,
+    );
   };
+
+  const toolPathDisplayContext = createMemo<ToolPathDisplayContext>(() => ({
+    worktreeId: props.model.run()?.worktreeId,
+    targetRepositoryPath: props.model.task()?.targetRepositoryPath,
+  }));
 
   const taskPartSessionIdsByPartId = createMemo(() => {
     const mapping: Record<string, string[]> = {};
@@ -2270,6 +2330,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       props.model.agent.store().rawEvents ?? [],
       props.model.agent.store().sessionId,
       props.model.agent.store().messagesById,
+      toolPathDisplayContext(),
       taskPartSessionIdsByPartId(),
       fetchedSubagentHistories(),
     );
@@ -2319,7 +2380,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         }
 
         if (part.kind === "text") {
-          const text = resolvePartText(part);
+          const text = resolvePartText(part, toolPathDisplayContext());
           if (text.trim().length > 0 || part.streaming) {
             textParts.push(text);
           }
@@ -2327,7 +2388,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         }
 
         if (part.kind === "reasoning") {
-          const text = resolvePartText(part);
+          const text = resolvePartText(part, toolPathDisplayContext());
           if (text.trim().length > 0 || part.streaming) {
             reasoningParts.push(text);
           }
@@ -2335,7 +2396,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         }
 
         if (part.kind === "tool") {
-          const summary = buildToolSummary(part);
+          const summary = buildToolSummary(part, toolPathDisplayContext());
           const isTask = isTaskToolName(part.toolName);
           toolItems.push({
             id: part.id,

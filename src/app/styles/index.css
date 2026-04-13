@@ -5330,9 +5330,10 @@ textarea::placeholder {
 
 .run-chat-tool-rail__row {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: flex-start;
+  justify-content: flex-start;
   gap: 10px;
+  min-width: 0;
 }
 
 .run-chat-tool-rail__line {
@@ -5340,7 +5341,10 @@ textarea::placeholder {
   color: var(--text-muted);
   font-size: 0.78rem;
   line-height: 1.35;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .run-chat-tool-rail__status {
@@ -5350,6 +5354,8 @@ textarea::placeholder {
   font-family: var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  flex: 0 0 auto;
+  align-self: flex-start;
 }
 
 .run-chat-tool-rail__status-slot {
@@ -5514,8 +5520,8 @@ textarea::placeholder {
 
 .run-chat-tool-rail__subagent-tool {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: flex-start;
+  justify-content: flex-start;
   gap: 10px;
   min-width: 0;
   padding: 8px 10px;
@@ -5525,6 +5531,7 @@ textarea::placeholder {
 }
 
 .run-chat-tool-rail__subagent-tool > :first-child {
+  flex: 1 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;

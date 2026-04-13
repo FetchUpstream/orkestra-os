@@ -60,9 +60,11 @@ const createModelStub = (
   } = {},
 ) => {
   const [run, setRun] = createSignal({ status: runStatus, ...runOverrides });
+  const [task] = createSignal({ targetRepositoryPath: null });
 
   const model = {
     run,
+    task,
     agent: {
       chatMode: () => chatMode,
       readinessPhase: () => "ready",
