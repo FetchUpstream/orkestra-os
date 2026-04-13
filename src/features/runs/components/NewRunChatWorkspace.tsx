@@ -1003,9 +1003,7 @@ const parseQuestionPrompts = (questions: unknown[]): QuestionWizardPrompt[] => {
                 return null;
               }
               const safeLabel =
-                toSingleLine(optionRecord?.label, 80) ||
-                toSingleLine(rawValueCandidate, 80) ||
-                "Option";
+                toSingleLine(optionRecord?.label, 80) || "Option";
               return {
                 label: safeLabel,
                 value: rawValue,

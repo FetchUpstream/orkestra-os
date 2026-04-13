@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::app::db::repositories::runs::RunsRepository;
+use crate::app::db::repositories::runs::{RunsRepository, is_active_run_status};
 use crate::app::errors::AppError;
 use crate::app::runs::dto::RunDto;
 use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext};
@@ -312,7 +312,7 @@ impl RunsService {
     }
 
     fn requires_delete_lifecycle_transition(status: &str) -> bool {
-        matches!(status, "queued" | "preparing" | "in_progress" | "idle")
+        is_active_run_status(status)
     }
 
     #[cfg(test)]

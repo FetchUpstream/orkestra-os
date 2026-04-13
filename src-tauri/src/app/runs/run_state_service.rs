@@ -175,12 +175,17 @@ impl RunStateService {
         run_id: &str,
         transition_source: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
-        let Some(run) = self.runs_repository.get_run(run_id).await? else {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Ok(None);
+        }
+
+        let Some(latest_run) = self.runs_repository.get_run(run_id).await? else {
             return Ok(None);
         };
 
-        let next_state = self.resolve_run_state(&run, false).await?;
-        self.transition_to_state(run_id, next_state.as_deref(), transition_source)
+        let next_state = self.resolve_run_state(&latest_run, false).await?;
+        self.transition_to_state_from_snapshot(latest_run, next_state.as_deref(), transition_source)
             .await
     }
 
@@ -195,14 +200,29 @@ impl RunStateService {
             return Ok(None);
         }
 
-        let Some(previous_run) = self.runs_repository.get_run(run_id).await? else {
+        let Some(latest_run) = self.runs_repository.get_run(run_id).await? else {
             return Ok(None);
         };
-        let previous_run_state = self.resolve_effective_run_state(&previous_run).await?;
+
+        self.transition_to_state_from_snapshot(latest_run, next_state, transition_source)
+            .await
+    }
+
+    async fn transition_to_state_from_snapshot(
+        &self,
+        latest_run: Run,
+        next_state: Option<&str>,
+        transition_source: &str,
+    ) -> Result<Option<RunStateChangedEventDto>, AppError> {
+        if Self::is_terminal_status(latest_run.status.as_str()) {
+            return Ok(None);
+        }
+
+        let previous_run_state = self.resolve_effective_run_state(&latest_run).await?;
 
         let persisted_next_state = match next_state {
-            Some(WAITING_FOR_INPUT) if previous_run.status == "idle" => {
-                if self.is_ready_to_merge(&previous_run).await? {
+            Some(WAITING_FOR_INPUT) if latest_run.status == "idle" => {
+                if self.is_ready_to_merge(&latest_run).await? {
                     Some(READY_TO_MERGE)
                 } else {
                     Some(WAITING_FOR_INPUT)
@@ -211,17 +231,10 @@ impl RunStateService {
             other => other,
         };
 
-        let Some(latest_run) = self.runs_repository.get_run(run_id).await? else {
-            return Ok(None);
-        };
-        if Self::is_terminal_status(latest_run.status.as_str()) {
-            return Ok(None);
-        }
-
         let changed = self
             .runs_repository
             .update_run_state(
-                run_id,
+                latest_run.id.as_str(),
                 latest_run.run_state.as_deref(),
                 persisted_next_state,
             )
@@ -230,7 +243,7 @@ impl RunStateService {
             return Ok(None);
         }
 
-        let Some(updated_run) = self.runs_repository.get_run(run_id).await? else {
+        let Some(updated_run) = self.runs_repository.get_run(latest_run.id.as_str()).await? else {
             return Ok(None);
         };
         let new_run_state = self.resolve_effective_run_state(&updated_run).await?;

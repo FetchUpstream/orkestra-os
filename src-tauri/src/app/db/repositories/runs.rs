@@ -15,6 +15,14 @@ use crate::app::runs::errors::RunsRepositoryError;
 use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext, TaskRunContext};
 use sqlx::{Row, SqlitePool};
 
+pub(crate) const ACTIVE_RUN_STATUSES: [&str; 4] = ["queued", "preparing", "in_progress", "idle"];
+const ACTIVE_RUN_STATUSES_SQL: &str = "'queued', 'preparing', 'in_progress', 'idle'";
+const TERMINAL_RUN_STATUSES: [&str; 3] = ["complete", "failed", "cancelled"];
+
+pub(crate) fn is_active_run_status(status: &str) -> bool {
+    ACTIVE_RUN_STATUSES.contains(&status)
+}
+
 trait RunsSqlxResultExt<T> {
     fn runs_db(self, operation: &'static str) -> Result<T, RunsRepositoryError>;
 }
@@ -243,7 +251,7 @@ impl RunsRepository {
     }
 
     pub async fn list_active_runs(&self) -> Result<Vec<Run>, AppError> {
-        let rows = sqlx::query(
+        let query = format!(
             "SELECT
                 id,
                 task_id,
@@ -273,10 +281,12 @@ impl RunsRepository {
                 cleanup_started_at,
                 cleanup_finished_at,
                 cleanup_error_message
-             FROM runs
-             WHERE status IN ('queued', 'preparing', 'in_progress', 'idle')
+              FROM runs
+             WHERE status IN ({ACTIVE_RUN_STATUSES_SQL})
              ORDER BY created_at DESC",
-        )
+        );
+
+        let rows = sqlx::query(&query)
         .fetch_all(&self.pool)
         .await
         .runs_db("listing active runs")?;
@@ -328,7 +338,7 @@ impl RunsRepository {
             });
         }
 
-        let task_update = sqlx::query(
+        let task_update_query = format!(
             "UPDATE tasks
              SET status = 'review',
                  updated_at = ?
@@ -338,9 +348,11 @@ impl RunsRepository {
                    SELECT 1
                    FROM runs
                    WHERE task_id = ?
-                     AND status IN ('queued', 'preparing', 'in_progress', 'idle')
+                     AND status IN ({ACTIVE_RUN_STATUSES_SQL})
                )",
-        )
+        );
+
+        let task_update = sqlx::query(&task_update_query)
         .bind(updated_at)
         .bind(&task_id)
         .bind(&task_id)
@@ -372,14 +384,16 @@ impl RunsRepository {
         run_id: &str,
         finished_at: &str,
     ) -> Result<bool, AppError> {
-        let result = sqlx::query(
+        let query = format!(
             "UPDATE runs
              SET status = 'cancelled',
                  run_state = NULL,
                  finished_at = COALESCE(finished_at, ?)
              WHERE id = ?
-               AND status IN ('queued', 'preparing', 'in_progress', 'idle')",
-        )
+                AND status IN ({ACTIVE_RUN_STATUSES_SQL})",
+        );
+
+        let result = sqlx::query(&query)
         .bind(finished_at)
         .bind(run_id)
         .execute(&self.pool)
@@ -469,10 +483,11 @@ impl RunsRepository {
                  OR run_state = ?
                )
                 AND (
-                  (run_state IS NULL AND ? IS NOT NULL)
-                  OR (run_state IS NOT NULL AND ? IS NULL)
-                  OR run_state != ?
-                )",
+                   (run_state IS NULL AND ? IS NOT NULL)
+                   OR (run_state IS NOT NULL AND ? IS NULL)
+                   OR run_state != ?
+                 )
+                AND status NOT IN (?, ?, ?)",
         )
         .bind(run_state)
         .bind(run_id)
@@ -481,6 +496,9 @@ impl RunsRepository {
         .bind(run_state)
         .bind(run_state)
         .bind(run_state)
+        .bind(TERMINAL_RUN_STATUSES[0])
+        .bind(TERMINAL_RUN_STATUSES[1])
+        .bind(TERMINAL_RUN_STATUSES[2])
         .execute(&self.pool)
         .await
         .runs_db("updating run state")?;
@@ -1178,6 +1196,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_run_state_skips_when_run_status_is_terminal() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, run_state, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-1")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("complete")
+        .bind("busy_coding")
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let changed = repository
+            .update_run_state("run-1", Some("busy_coding"), Some("waiting_for_input"))
+            .await
+            .unwrap();
+
+        assert!(!changed);
+
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = 'run-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), Some("busy_coding"));
+    }
+
+    #[tokio::test]
     async fn hard_delete_run_and_reconcile_task_status_sets_review_when_last_active_deleted() {
         let repository = setup_repository().await;
         let pool = repository.pool.clone();
@@ -1317,11 +1372,8 @@ mod tests {
 
         let ids: Vec<&str> = active_runs.iter().map(|run| run.id.as_str()).collect();
         assert_eq!(ids, vec!["run-running", "run-preparing", "run-queued"]);
-        assert!(active_runs.iter().all(|run| {
-            matches!(
-                run.status.as_str(),
-                "queued" | "preparing" | "in_progress" | "idle"
-            )
-        }));
+        assert!(active_runs
+            .iter()
+            .all(|run| is_active_run_status(run.status.as_str())));
     }
 }

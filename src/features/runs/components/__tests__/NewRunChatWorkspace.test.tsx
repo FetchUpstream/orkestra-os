@@ -448,6 +448,38 @@ describe("NewRunChatWorkspace", () => {
     ]);
   });
 
+  it("uses neutral option labels when only raw values are provided", async () => {
+    const replyQuestionMock = vi.fn(async () => true);
+    const rawValue = "tool.patch.apply:123e4567-e89b-12d3-a456-426614174000";
+    const { model } = createModelStub("running", false, {}, "interactive", {
+      pendingQuestionsById: {
+        "question-1": {
+          requestId: "question-1",
+          sessionId: "session-1",
+          questions: [
+            {
+              header: "Choose action",
+              question: "Which action should I take?",
+              options: [{ value: rawValue }],
+              custom: false,
+            },
+          ],
+        },
+      },
+    });
+    model.agent.replyQuestion = replyQuestionMock;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByRole("button", { name: "Option" })).toBeTruthy();
+    expect(screen.queryByText(rawValue)).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Option" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+
+    expect(replyQuestionMock).toHaveBeenCalledWith("question-1", [[rawValue]]);
+  });
+
   it("prevents duplicate reply/reject calls on rapid double click", async () => {
     let resolveReply: ((value: boolean) => void) | null = null;
     let resolveReject: ((value: boolean) => void) | null = null;
