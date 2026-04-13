@@ -18,6 +18,7 @@ import NewRunChatWorkspace from "../NewRunChatWorkspace";
 const installResizeObserverStub = () => {
   class ResizeObserverStub {
     observe() {}
+    unobserve() {}
     disconnect() {}
   }
 
@@ -1617,7 +1618,7 @@ describe("NewRunChatWorkspace", () => {
     rafSpy.mockRestore();
   });
 
-  it("does not auto-scroll again when root transcript updates after initial anchor", async () => {
+  it("keeps transcript pinned when new root messages arrive near bottom", async () => {
     const [store, setStore] = createSignal({
       sessionId: "session-root",
       status: "active",
@@ -1740,7 +1741,7 @@ describe("NewRunChatWorkspace", () => {
     }));
 
     expect(screen.getByText("Newer root message")).toBeTruthy();
-    expect(scrollToCalls).toBe(0);
+    expect(scrollToCalls).toBeGreaterThan(0);
 
     rafSpy.mockRestore();
   });

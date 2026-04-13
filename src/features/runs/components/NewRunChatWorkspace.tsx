@@ -16,6 +16,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  on,
   onCleanup,
   type Component,
   type JSX,
@@ -2854,13 +2855,17 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     container.scrollTop = targetTop;
   };
 
-  createEffect(() => {
-    props.model.run()?.id;
-    cancelInitialTranscriptAnchorFrames();
-    setTranscriptVisibleCount(TRANSCRIPT_WINDOW_CHUNK);
-    setIsTranscriptNearBottom(true);
-    setIsInitialTranscriptAnchorCompleted(false);
-  });
+  createEffect(
+    on(
+      () => props.model.run()?.id,
+      () => {
+        cancelInitialTranscriptAnchorFrames();
+        setTranscriptVisibleCount(TRANSCRIPT_WINDOW_CHUNK);
+        setIsTranscriptNearBottom(true);
+        setIsInitialTranscriptAnchorCompleted(false);
+      },
+    ),
+  );
 
   createEffect(() => {
     const phase = agentReadinessPhase();
@@ -2896,7 +2901,8 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       return;
     }
 
-    const transcriptItemCount = chatTranscriptItems().length;
+    const transcriptItems = chatTranscriptItems();
+    const transcriptItemCount = transcriptItems.length;
     transcriptVisibleCount();
     runChatComposerOffsetPx();
     transcriptLayoutRevision();
@@ -2952,12 +2958,17 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
 
   createEffect(() => {
-    chatTranscriptItems().length;
+    chatTranscriptItems();
     transcriptVisibleCount();
     runChatComposerOffsetPx();
     transcriptLayoutRevision();
 
+    const wasNearBottomBeforeUpdate = isNearTranscriptBottom();
+
     requestAnimationFrame(() => {
+      if (wasNearBottomBeforeUpdate) {
+        scrollTranscriptToBottom("auto");
+      }
       syncTranscriptNearBottom();
     });
   });

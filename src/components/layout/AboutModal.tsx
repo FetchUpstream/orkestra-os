@@ -23,6 +23,7 @@ import {
 import * as opener from "@tauri-apps/plugin-opener";
 import { SUPPORT_LINKS } from "../../app/config/supportLinks";
 import {
+  formatAppVersionForDisplay,
   formatSupportDebugInfo,
   readAppSupportMetadata,
 } from "../../app/lib/appSupport";
@@ -36,8 +37,13 @@ type AboutModalProps = {
 
 const openExternalUrl = async (url: string) => {
   if ("openUrl" in opener && typeof opener.openUrl === "function") {
-    await opener.openUrl(url);
-    return;
+    try {
+      await opener.openUrl(url);
+      return;
+    } catch {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
   }
   window.open(url, "_blank", "noopener,noreferrer");
 };
@@ -72,7 +78,9 @@ const AboutModal: Component<AboutModalProps> = (props) => {
   );
   let closeButtonRef: HTMLButtonElement | undefined;
 
-  const appVersion = createMemo(() => metadata()?.appVersion ?? "unknown");
+  const appVersion = createMemo(() =>
+    formatAppVersionForDisplay(metadata()?.appVersion),
+  );
   const releaseChannel = createMemo(() => formatBadgeLabel(metadata()?.build));
 
   createEffect(() => {
@@ -199,9 +207,9 @@ const AboutModal: Component<AboutModalProps> = (props) => {
                       rel="noopener noreferrer"
                       aria-label={link.label}
                       class="border-base-content/10 bg-base-100/45 hover:bg-base-100/70 focus-visible:border-primary/40 focus-visible:ring-primary/20 flex w-full items-center justify-between gap-3 border px-3 py-3 text-left transition focus-visible:ring-2 focus-visible:outline-none"
-                      onClick={(event) => {
+                      onClick={async (event) => {
                         event.preventDefault();
-                        void openExternalUrl(link.href);
+                        await openExternalUrl(link.href);
                       }}
                     >
                       <span class="flex min-w-0 items-start gap-3">
@@ -245,7 +253,7 @@ const AboutModal: Component<AboutModalProps> = (props) => {
               <button
                 type="button"
                 class="btn btn-sm border-base-content/20 bg-base-100 text-base-content rounded-none border px-4 text-xs font-semibold"
-                onClick={() => void onReportBug()}
+                onClick={onReportBug}
               >
                 <AppIcon name="action.bug" size={14} stroke={1.75} />
                 Report a bug
@@ -253,7 +261,7 @@ const AboutModal: Component<AboutModalProps> = (props) => {
               <button
                 type="button"
                 class="btn btn-sm border-primary/35 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
-                onClick={() => void onCopyDebugInfo()}
+                onClick={onCopyDebugInfo}
               >
                 <AppIcon name="action.copy" size={14} stroke={1.75} />
                 Copy debug info

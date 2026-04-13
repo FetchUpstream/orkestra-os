@@ -12,7 +12,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SUPPORT_LINKS } from "../../app/config/supportLinks";
 import AboutModal from "./AboutModal";
 
@@ -35,6 +35,8 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 }));
 
 describe("AboutModal", () => {
+  let windowOpenMock: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     getNameMock.mockReset();
     getVersionMock.mockReset();
@@ -42,7 +44,7 @@ describe("AboutModal", () => {
     openUrlMock.mockReset();
 
     getNameMock.mockResolvedValue("OrkestraOS");
-    getVersionMock.mockResolvedValue("v0.0.12+105");
+    getVersionMock.mockResolvedValue("0.0.12+105");
     getTauriVersionMock.mockResolvedValue("2.0.0");
     openUrlMock.mockResolvedValue();
 
@@ -52,6 +54,12 @@ describe("AboutModal", () => {
         writeText: vi.fn().mockResolvedValue(undefined),
       },
     });
+
+    windowOpenMock = vi.spyOn(window, "open").mockImplementation(() => null);
+  });
+
+  afterEach(() => {
+    windowOpenMock.mockRestore();
   });
 
   const renderOpenModal = () => {
@@ -106,7 +114,23 @@ describe("AboutModal", () => {
     const writeText = navigator.clipboard.writeText as ReturnType<typeof vi.fn>;
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(writeText.mock.calls[0]?.[0]).toContain("App: OrkestraOS");
-    expect(writeText.mock.calls[0]?.[0]).toContain("Version: v0.0.12+105");
+    expect(writeText.mock.calls[0]?.[0]).toContain("Version: 0.0.12+105");
     expect(writeText.mock.calls[0]?.[0]).toContain("Build:");
+  });
+
+  it("falls back to window.open when opener.openUrl rejects", async () => {
+    openUrlMock.mockRejectedValueOnce(new Error("failed to open"));
+    renderOpenModal();
+
+    await fireEvent.click(screen.getByRole("link", { name: "Source code" }));
+
+    await waitFor(() => {
+      expect(openUrlMock).toHaveBeenCalledWith(SUPPORT_LINKS.githubRepository);
+      expect(windowOpenMock).toHaveBeenCalledWith(
+        SUPPORT_LINKS.githubRepository,
+        "_blank",
+        "noopener,noreferrer",
+      );
+    });
   });
 });

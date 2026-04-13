@@ -109,5 +109,7 @@ export const formatSupportDebugInfo = (metadata: AppSupportMetadata) => {
     .join("\n");
 };
 
-export const formatAppVersionForDisplay = (version?: string | null) =>
-  normalize(version) ?? "unknown";
+export const formatAppVersionForDisplay = (version?: string | null) => {
+  const normalized = normalize(version);
+  return normalized ? `v${normalized}` : "unknown";
+};
