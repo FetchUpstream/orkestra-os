@@ -93,7 +93,10 @@ pub struct RunProvidersResponseDto {
 #[serde(rename_all = "camelCase")]
 pub struct RunAgentDto {
     pub id: String,
-    pub name: Option<String>,
+    pub label: String,
+    pub mode: String,
+    pub scope: String,
+    pub selectable: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -141,6 +144,8 @@ pub struct RawAgentEvent {
     pub timestamp: String,
     pub event_name: String,
     pub payload: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_state: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -164,6 +169,7 @@ pub struct SubmitRunOpenCodePromptResponse {
     pub reason: Option<String>,
     pub queued_at: String,
     pub client_request_id: Option<String>,
+    pub run_state: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -172,6 +178,24 @@ pub struct ReplyRunOpenCodePermissionResponse {
     pub state: String,
     pub reason: Option<String>,
     pub replied_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyRunOpenCodeQuestionResponse {
+    pub state: String,
+    pub reason: Option<String>,
+    pub replied_at: String,
+    pub run_state: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RejectRunOpenCodeQuestionResponse {
+    pub state: String,
+    pub reason: Option<String>,
+    pub rejected_at: String,
+    pub run_state: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -201,6 +225,12 @@ pub struct RunOpenCodeSessionMessageDto {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunOpenCodeSessionTodoDto {
+    pub payload: Value,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunOpenCodeQuestionRequestDto {
     pub payload: Value,
 }
 

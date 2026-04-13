@@ -21,6 +21,7 @@ import {
 import { resolveProjectBoardHref } from "../../../app/lib/boardNavigation";
 import { getProject } from "../../../app/lib/projects";
 import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
+import { subscribeToRunDeleted } from "../../../app/lib/runDeletedEvents";
 import { subscribeToTaskStatusChanged } from "../../../app/lib/taskStatusEvents";
 import {
   addTaskDependency,
@@ -192,11 +193,14 @@ export const useTaskDetailModel = () => {
   const [runStartErrors, setRunStartErrors] = createSignal<
     Record<string, string>
   >({});
+  const deletedRunIds = new Set<string>();
+  let activeRunsRequestVersion = 0;
   let runSelectionOptionsRequestVersion = 0;
   let runSourceBranchesRequestVersion = 0;
   let editMutationVersion = 0;
   let removeTaskStatusSubscription: (() => void) | null = null;
   let removeRunStatusSubscription: (() => void) | null = null;
+  let removeRunDeletedSubscription: (() => void) | null = null;
   let taskStatusSubscriptionDisposed = false;
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
   let autosaveMaxWaitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -578,16 +582,60 @@ export const useTaskDetailModel = () => {
   };
 
   const refreshRuns = async (taskId: string) => {
+    const requestVersion = ++activeRunsRequestVersion;
     setIsLoadingRuns(true);
     setRunsError("");
     try {
       const loadedRuns = await listTaskRuns(taskId);
-      setRuns(loadedRuns);
+      if (requestVersion !== activeRunsRequestVersion) {
+        return;
+      }
+
+      setRuns(
+        loadedRuns.filter((runItem) => !deletedRunIds.has(runItem.id.trim())),
+      );
     } catch {
+      if (requestVersion !== activeRunsRequestVersion) {
+        return;
+      }
       setRunsError("Failed to load runs.");
       setRuns([]);
     } finally {
-      setIsLoadingRuns(false);
+      if (requestVersion === activeRunsRequestVersion) {
+        setIsLoadingRuns(false);
+      }
+    }
+  };
+
+  const reconcileDeletedRun = (runId: string) => {
+    const normalizedRunId = runId.trim();
+    if (!normalizedRunId) {
+      return;
+    }
+
+    deletedRunIds.add(normalizedRunId);
+
+    setRuns((currentRuns) =>
+      currentRuns.filter((runItem) => runItem.id !== normalizedRunId),
+    );
+    setRunStartErrors((current) => {
+      if (!current[normalizedRunId]) return current;
+      const next = { ...current };
+      delete next[normalizedRunId];
+      return next;
+    });
+    setWarmingRunIds((current) => {
+      if (!Object.hasOwn(current, normalizedRunId)) return current;
+      const next = { ...current };
+      delete next[normalizedRunId];
+      return next;
+    });
+
+    if (deletingRunId() === normalizedRunId) {
+      setDeletingRunId("");
+    }
+    if (startingRunId() === normalizedRunId) {
+      setStartingRunId("");
     }
   };
 
@@ -992,12 +1040,21 @@ export const useTaskDetailModel = () => {
 
       removeRunStatusSubscription = unlisten;
     })();
+
+    removeRunDeletedSubscription = subscribeToRunDeleted((event) => {
+      if (taskStatusSubscriptionDisposed) {
+        return;
+      }
+
+      reconcileDeletedRun(event.runId);
+    });
   });
 
   onCleanup(() => {
     taskStatusSubscriptionDisposed = true;
     removeTaskStatusSubscription?.();
     removeRunStatusSubscription?.();
+    removeRunDeletedSubscription?.();
     clearTaskDetailsAutosaveState();
     editMutationVersion += 1;
   });
@@ -1184,9 +1241,6 @@ export const useTaskDetailModel = () => {
     setDeletingRunId(runId);
     try {
       await deleteRun(runId);
-      setRuns((currentRuns) =>
-        currentRuns.filter((runItem) => runItem.id !== runId),
-      );
     } catch (mutationError) {
       setActionError(
         getActionErrorMessage("Failed to delete run.", mutationError),

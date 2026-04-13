@@ -30,6 +30,7 @@ import {
 import { subscribeToTaskStatusChanged } from "../../../app/lib/taskStatusEvents";
 import { subscribeToRunStateChanged } from "../../../app/lib/runStateEvents";
 import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
+import { subscribeToRunDeleted } from "../../../app/lib/runDeletedEvents";
 import {
   listProjectTasks,
   searchProjectTasks,
@@ -136,6 +137,8 @@ const boardLabelForRunState = (state: RunState): string => {
       return "Busy Coding";
     case "waiting_for_input":
       return "Waiting for Input";
+    case "question_pending":
+      return "Question Pending";
     case "permission_requested":
       return "Permission Requested";
     case "committing_changes":
@@ -239,14 +242,22 @@ const reconcileMiniCards = (
   });
 };
 
-const runToBoardTaskRunMiniCard = (run: Run): BoardTaskRunMiniCard | null => {
+const runToBoardTaskRunMiniCard = (
+  run: Run,
+  deletedRunIds?: ReadonlySet<string>,
+): BoardTaskRunMiniCard | null => {
+  const normalizedRunId = run.id.trim();
+  if (!normalizedRunId || deletedRunIds?.has(normalizedRunId)) {
+    return null;
+  }
+
   const runState = run.runState ?? fallbackRunState(run.status);
   if (!runState) {
     return null;
   }
 
   return {
-    runId: run.id,
+    runId: normalizedRunId,
     label: boardLabelForRunState(runState),
     state: runState,
     isNavigable: true,
@@ -275,13 +286,14 @@ const mergeTaskRunMiniCards = (
 const resolveTaskRunMiniCards = (
   task: Task,
   runItems: Awaited<ReturnType<typeof listTaskRuns>>,
+  deletedRunIds?: ReadonlySet<string>,
 ): BoardTaskRunMiniCard[] => {
   if (task.status === "done") return [];
 
   return sortRunsForBoard(runItems)
     .filter((run) => ACTIVE_RUN_STATUSES.has(run.status))
     .flatMap((run) => {
-      const miniCard = runToBoardTaskRunMiniCard(run);
+      const miniCard = runToBoardTaskRunMiniCard(run, deletedRunIds);
       return miniCard ? [miniCard] : [];
     });
 };
@@ -352,10 +364,12 @@ export const useBoardModel = () => {
   let runSelectionOptionsRequestVersion = 0;
   let runSourceBranchesRequestVersion = 0;
   const taskRunRequestVersions: Record<string, number> = {};
+  const deletedRunIds = new Set<string>();
   let boardEventSubscriptionDisposed = false;
   let removeBoardEventSubscription: (() => void) | null = null;
   let removeBoardRunStatusSubscription: (() => void) | null = null;
   let removeBoardRunStateSubscription: (() => void) | null = null;
+  let removeBoardRunDeletedSubscription: (() => void) | null = null;
 
   const beginTaskRunRequest = (taskId: string): number => {
     const nextVersion = (taskRunRequestVersions[taskId] ?? 0) + 1;
@@ -390,11 +404,41 @@ export const useBoardModel = () => {
         return;
       }
 
-      const miniCards = resolveTaskRunMiniCards(taskValue, runs);
+      const miniCards = resolveTaskRunMiniCards(taskValue, runs, deletedRunIds);
       applyTaskRunMiniCards(taskId, miniCards);
     } catch {
       // Ignore transient run refresh failures.
     }
+  };
+
+  const removeDeletedRunMiniCards = (runId: string) => {
+    const normalizedRunId = runId.trim();
+    if (!normalizedRunId) {
+      return;
+    }
+
+    deletedRunIds.add(normalizedRunId);
+
+    setTaskRunMiniCards((current) => {
+      let didChange = false;
+      const next: Record<string, BoardTaskRunMiniCard[]> = {};
+
+      for (const [taskId, miniCards] of Object.entries(current)) {
+        const remaining = miniCards.filter(
+          (miniCard) => miniCard.runId !== normalizedRunId,
+        );
+
+        if (remaining.length !== miniCards.length) {
+          didChange = true;
+        }
+
+        if (remaining.length > 0) {
+          next[taskId] = remaining;
+        }
+      }
+
+      return didChange ? next : current;
+    });
   };
 
   const selectedProject = createMemo(
@@ -761,7 +805,11 @@ export const useBoardModel = () => {
               return null;
             }
 
-            const miniCards = resolveTaskRunMiniCards(task, runs);
+            const miniCards = resolveTaskRunMiniCards(
+              task,
+              runs,
+              deletedRunIds,
+            );
             return { taskId: task.id, miniCards, taskRunRequestVersion };
           } catch {
             return null;
@@ -983,7 +1031,11 @@ export const useBoardModel = () => {
             return true;
           }
 
-          const miniCards = resolveTaskRunMiniCards(updatedTask, runs);
+          const miniCards = resolveTaskRunMiniCards(
+            updatedTask,
+            runs,
+            deletedRunIds,
+          );
           applyTaskRunMiniCards(taskId, miniCards);
         } catch {
           // Preserve current mini-card state when run refresh fails.
@@ -1086,7 +1138,10 @@ export const useBoardModel = () => {
           modelId: selectedRunModelId().trim() || resolved.modelId || undefined,
           sourceBranch: selectedRunSourceBranch().trim() || undefined,
         });
-        const createdRunMiniCard = runToBoardTaskRunMiniCard(createdRun);
+        const createdRunMiniCard = runToBoardTaskRunMiniCard(
+          createdRun,
+          deletedRunIds,
+        );
         if (createdRunMiniCard) {
           beginTaskRunRequest(taskId);
           setTaskRunMiniCards((current) => {
@@ -1204,6 +1259,14 @@ export const useBoardModel = () => {
       removeBoardRunStateSubscription = unlisten;
     })();
 
+    removeBoardRunDeletedSubscription = subscribeToRunDeleted((event) => {
+      if (boardEventSubscriptionDisposed) {
+        return;
+      }
+
+      removeDeletedRunMiniCards(event.runId);
+    });
+
     setError("");
     try {
       const loadedProjects = await listProjects();
@@ -1244,6 +1307,10 @@ export const useBoardModel = () => {
     if (removeBoardRunStateSubscription) {
       removeBoardRunStateSubscription();
       removeBoardRunStateSubscription = null;
+    }
+    if (removeBoardRunDeletedSubscription) {
+      removeBoardRunDeletedSubscription();
+      removeBoardRunDeletedSubscription = null;
     }
   });
 

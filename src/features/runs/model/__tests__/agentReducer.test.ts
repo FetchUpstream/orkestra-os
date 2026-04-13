@@ -290,6 +290,44 @@ describe("agentReducer text/reasoning lifecycle", () => {
     });
   });
 
+  it("prefers payload receivedAt when hydrating questions", () => {
+    const hydrated = hydrateAgentStore({
+      sessionId: "session-1",
+      messages: [],
+      questions: [
+        {
+          id: "question-1",
+          sessionID: "session-1",
+          received_at: "2026-01-01T00:00:05.000Z",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          questions: [{ header: "One", question: "First?", custom: true }],
+        },
+      ],
+      todos: [],
+    });
+
+    expect(hydrated.pendingQuestionsById["question-1"]?.receivedAt).toBe(
+      Date.parse("2026-01-01T00:00:05.000Z"),
+    );
+  });
+
+  it("keeps payload receivedAt precedence over event timestamp", () => {
+    const next = reduceOpenCodeEvent(createEmptyAgentStore("session-1"), {
+      type: "question.asked",
+      ts: "2026-01-01T00:00:10.000Z",
+      properties: {
+        requestID: "question-2",
+        sessionID: "session-1",
+        receivedAt: "2026-01-01T00:00:03.000Z",
+        questions: [{ header: "One", question: "First?", custom: true }],
+      },
+    });
+
+    expect(next.pendingQuestionsById["question-2"]?.receivedAt).toBe(
+      Date.parse("2026-01-01T00:00:03.000Z"),
+    );
+  });
+
   it("normalizes nested permission payloads and falls back to active session", () => {
     const base = createEmptyAgentStore("session-1");
     const next = reduceOpenCodeEvent(base, {

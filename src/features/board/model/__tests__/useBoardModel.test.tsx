@@ -23,6 +23,7 @@ const {
   listTaskRunSourceBranchesMock,
   getRunSelectionOptionsWithCacheMock,
   readRunSelectionOptionsCacheMock,
+  subscribeToRunDeletedMock,
 } = vi.hoisted(() => ({
   listProjectsMock: vi.fn(),
   getProjectMock: vi.fn(),
@@ -32,7 +33,12 @@ const {
   listTaskRunSourceBranchesMock: vi.fn(),
   getRunSelectionOptionsWithCacheMock: vi.fn(),
   readRunSelectionOptionsCacheMock: vi.fn(),
+  subscribeToRunDeletedMock: vi.fn(),
 }));
+
+let runDeletedListener:
+  | ((event: { runId: string; timestamp: string }) => void)
+  | null = null;
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => () => undefined),
@@ -61,6 +67,10 @@ vi.mock("../../../../app/lib/runSelectionOptionsCache", () => ({
   readRunSelectionOptionsCache: readRunSelectionOptionsCacheMock,
 }));
 
+vi.mock("../../../../app/lib/runDeletedEvents", () => ({
+  subscribeToRunDeleted: subscribeToRunDeletedMock,
+}));
+
 vi.mock("../../../../app/contexts/OpenCodeDependencyContext", () => ({
   useOpenCodeDependency: () => ({
     state: () => "available",
@@ -82,6 +92,18 @@ describe("useBoardModel run settings defaults", () => {
     listTaskRunSourceBranchesMock.mockReset();
     getRunSelectionOptionsWithCacheMock.mockReset();
     readRunSelectionOptionsCacheMock.mockReset();
+    subscribeToRunDeletedMock.mockReset();
+    runDeletedListener = null;
+    subscribeToRunDeletedMock.mockImplementation(
+      (onEvent: (event: { runId: string; timestamp: string }) => void) => {
+        runDeletedListener = onEvent;
+        return () => {
+          if (runDeletedListener === onEvent) {
+            runDeletedListener = null;
+          }
+        };
+      },
+    );
 
     listProjectsMock.mockResolvedValue([
       {
@@ -174,6 +196,102 @@ describe("useBoardModel run settings defaults", () => {
       expect(ref.current?.selectedRunAgentId()).toBe("");
       expect(ref.current?.selectedRunProviderId()).toBe("provider-1");
       expect(ref.current?.selectedRunModelId()).toBe("model-1");
+    });
+  });
+
+  it("removes deleted run mini-cards from active task surfaces", async () => {
+    listProjectTasksMock.mockResolvedValueOnce([
+      {
+        id: "task-1",
+        title: "Task",
+        status: "doing",
+        projectId: "project-1",
+      },
+    ]);
+    listTaskRunsMock.mockResolvedValueOnce([
+      {
+        id: "run-1",
+        taskId: "task-1",
+        projectId: "project-1",
+        status: "in_progress",
+        runState: "busy_coding",
+        triggeredBy: "user",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const ref: { current: ReturnType<typeof useBoardModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useBoardModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.taskRunMiniCards()["task-1"]?.[0]?.runId).toBe(
+        "run-1",
+      );
+    });
+
+    runDeletedListener?.({
+      runId: "run-1",
+      timestamp: "2026-01-01T00:00:03.000Z",
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.taskRunMiniCards()["task-1"]).toBeUndefined();
+    });
+  });
+
+  it("keeps deleted runs filtered during board task refresh", async () => {
+    const activeRun = {
+      id: "run-1",
+      taskId: "task-1",
+      projectId: "project-1",
+      status: "in_progress",
+      runState: "busy_coding",
+      triggeredBy: "user",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    listProjectTasksMock.mockResolvedValueOnce([
+      {
+        id: "task-1",
+        title: "Task",
+        status: "doing",
+        projectId: "project-1",
+      },
+    ]);
+    listTaskRunsMock.mockResolvedValue([activeRun]);
+
+    const ref: { current: ReturnType<typeof useBoardModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useBoardModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.taskRunMiniCards()["task-1"]?.[0]?.runId).toBe(
+        "run-1",
+      );
+    });
+
+    runDeletedListener?.({
+      runId: "run-1",
+      timestamp: "2026-01-01T00:00:03.000Z",
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.taskRunMiniCards()["task-1"]).toBeUndefined();
+    });
+
+    await ref.current?.refreshSelectedProjectTasks();
+
+    await waitFor(() => {
+      expect(ref.current?.taskRunMiniCards()["task-1"]).toBeUndefined();
     });
   });
 });

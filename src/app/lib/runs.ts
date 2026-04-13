@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { emitRunDeleted } from "./runDeletedEvents";
 
 export const RUN_STATUSES = [
   "queued",
@@ -28,6 +29,7 @@ export const RUN_STATES = [
   "warming_up",
   "busy_coding",
   "waiting_for_input",
+  "question_pending",
   "permission_requested",
   "committing_changes",
   "resolving_rebase_conflicts",
@@ -128,6 +130,7 @@ export type RunOpenCodeEvent = {
   ts: string | number | null;
   event: string;
   data: unknown;
+  runState?: RunState | null;
 };
 
 export type EnsureRunOpenCodeResult = {
@@ -171,6 +174,16 @@ export type RunSelectionOption = {
   label: string;
 };
 
+export type RunAgentScope = "project" | "global" | "inherited";
+
+export type RunAgentMode = "primary" | "subagent" | "all";
+
+export type RunAgentOption = RunSelectionOption & {
+  scope: RunAgentScope;
+  mode: RunAgentMode;
+  selectable: boolean;
+};
+
 export type RunModelOption = RunSelectionOption & {
   providerId?: string;
 };
@@ -181,7 +194,7 @@ export type RunSourceBranchOption = {
 };
 
 export type RunSelectionOptions = {
-  agents: RunSelectionOption[];
+  agents: RunAgentOption[];
   providers: RunSelectionOption[];
   models: RunModelOption[];
 };
@@ -191,6 +204,7 @@ export type SubmitRunOpenCodePromptResult = {
   reason?: string;
   queuedAt: string;
   clientRequestId?: string;
+  runState?: RunState | null;
 };
 
 export type ReplyRunOpenCodePermissionParams = {
@@ -205,6 +219,34 @@ export type ReplyRunOpenCodePermissionResult = {
   status: "accepted" | "unsupported";
   reason?: string;
   repliedAt: string;
+  runState?: RunState | null;
+};
+
+export type RunOpenCodeQuestionAnswer = string[];
+
+export type ReplyRunOpenCodeQuestionParams = {
+  runId: string;
+  requestId: string;
+  answers: RunOpenCodeQuestionAnswer[];
+};
+
+export type ReplyRunOpenCodeQuestionResult = {
+  status: "accepted" | "unsupported";
+  reason?: string;
+  repliedAt: string;
+  runState?: RunState | null;
+};
+
+export type RejectRunOpenCodeQuestionParams = {
+  runId: string;
+  requestId: string;
+};
+
+export type RejectRunOpenCodeQuestionResult = {
+  status: "accepted" | "unsupported";
+  reason?: string;
+  rejectedAt: string;
+  runState?: RunState | null;
 };
 
 export type StartRunOpenCodeResult = {
@@ -230,6 +272,11 @@ export type RunOpenCodeSessionTodosResult = {
   raw: unknown;
 };
 
+export type RunOpenCodeQuestionRequestsResult = {
+  questions: unknown[];
+  raw: unknown;
+};
+
 export type GetRunOpenCodeSessionTodosParams = {
   runId: string;
   sessionId?: string;
@@ -245,6 +292,30 @@ export type BootstrapRunOpenCodeResult = {
   sessionId?: string;
   streamConnected: boolean;
   readyPhase?: string;
+};
+
+type ReplyRunOpenCodeQuestionResponse = {
+  state?: string;
+  status?: string;
+  reason?: string | null;
+  repliedAt?: string;
+  replied_at?: string;
+  runState?: string | null;
+  run_state?: string | null;
+};
+
+type RejectRunOpenCodeQuestionResponse = {
+  state?: string;
+  status?: string;
+  reason?: string | null;
+  rejectedAt?: string;
+  rejected_at?: string;
+  runState?: string | null;
+  run_state?: string | null;
+};
+
+type RunOpenCodeQuestionRequestResponse = {
+  payload?: unknown;
 };
 
 export type RunGitBranchSync = {
@@ -409,6 +480,8 @@ type RunOpenCodeEventResponse = {
   event?: string;
   payload?: unknown;
   data?: unknown;
+  run_state?: string | null;
+  runState?: string | null;
 };
 
 type SubmitRunOpenCodePromptResponse = {
@@ -419,6 +492,8 @@ type SubmitRunOpenCodePromptResponse = {
   queuedAt?: string;
   client_request_id?: string | null;
   clientRequestId?: string | null;
+  run_state?: string | null;
+  runState?: string | null;
 };
 
 type ReplyRunOpenCodePermissionResponse = {
@@ -427,6 +502,8 @@ type ReplyRunOpenCodePermissionResponse = {
   reason?: string | null;
   replied_at?: string;
   repliedAt?: string;
+  run_state?: string | null;
+  runState?: string | null;
 };
 
 type RunOpenCodeSnapshotResponse = {
@@ -549,6 +626,9 @@ type RunSelectionItemResponse = {
   displayName?: string;
   provider_id?: string;
   providerId?: string;
+  scope?: string;
+  mode?: string;
+  selectable?: boolean;
 };
 
 type RunSelectionOptionsResponse = {
@@ -764,6 +844,7 @@ const toRunOpenCodeEvent = (
   ts: pick(event.timestamp, event.ts) ?? null,
   event: pick(event.eventName, event.event) ?? "unknown",
   data: pick(event.payload, event.data) ?? null,
+  runState: toRunState(pick(event.run_state, event.runState)),
 });
 
 const toUnknownArray = (value: unknown): unknown[] => {
@@ -957,6 +1038,69 @@ const toSelectionOptions = (
     .filter((item): item is RunSelectionOption => item !== null);
 };
 
+const toRunAgentScope = (value: unknown): RunAgentScope => {
+  if (value === "project" || value === "global") {
+    return value;
+  }
+  return "inherited";
+};
+
+const toRunAgentMode = (value: unknown): RunAgentMode => {
+  if (value === "all" || value === "subagent") {
+    return value;
+  }
+  return "primary";
+};
+
+const opaqueIdentifierPattern = /^[A-Za-z0-9_-]{20,}$/;
+const uuidLikePattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const isOpaqueIdentifierLabel = (value: string): boolean => {
+  return uuidLikePattern.test(value) || opaqueIdentifierPattern.test(value);
+};
+
+const toAgentSelectionLabel = (value: RunSelectionItemResponse): string => {
+  const label = toOptionalTrimmedString(
+    value.display_name ?? value.displayName ?? value.label ?? value.name,
+  );
+  if (!label) {
+    return "Agent";
+  }
+
+  if (isOpaqueIdentifierLabel(label)) {
+    return "Agent";
+  }
+
+  return label;
+};
+
+const toAgentSelectionOptions = (source: unknown): RunAgentOption[] => {
+  if (!Array.isArray(source)) {
+    return [];
+  }
+  return source
+    .map((item): RunAgentOption | null => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const value = item as RunSelectionItemResponse;
+      const id =
+        toSelectionId(value) || toOptionalTrimmedString(value.name) || "";
+      if (!id) {
+        return null;
+      }
+      return {
+        id,
+        label: toAgentSelectionLabel(value),
+        scope: toRunAgentScope(value.scope),
+        mode: toRunAgentMode(value.mode),
+        selectable: value.selectable ?? true,
+      };
+    })
+    .filter((item): item is RunAgentOption => item !== null);
+};
+
 const toModelSelectionOptions = (source: unknown): RunModelOption[] => {
   if (!Array.isArray(source)) {
     return [];
@@ -1001,7 +1145,7 @@ const unwrapRunSelectionOptionsPayload = (
 const toRunSelectionOptions = (response: unknown): RunSelectionOptions => {
   const payload = unwrapRunSelectionOptionsPayload(response);
   return {
-    agents: toSelectionOptions(payload.agents, "Agent"),
+    agents: toAgentSelectionOptions(payload.agents),
     providers: toSelectionOptions(payload.providers, "Provider"),
     models: toModelSelectionOptions(payload.models),
   };
@@ -1328,7 +1472,6 @@ export const getRunSelectionOptions = async (
     },
   );
 
-  const agentsPayload = toSelectionList(selectionCatalog, "agents");
   const providersPayload = toSelectionList(selectionCatalog, "providers");
 
   const providers = toSelectionOptions(providersPayload, "Provider");
@@ -1350,7 +1493,7 @@ export const getRunSelectionOptions = async (
   );
 
   return toRunSelectionOptions({
-    agents: agentsPayload,
+    agents: toSelectionList(selectionCatalog, "agents"),
     providers,
     models,
   });
@@ -1373,6 +1516,10 @@ export const getRun = async (runId: string): Promise<Run> => {
 
 export const deleteRun = async (runId: string): Promise<void> => {
   await invoke("delete_run", { runId });
+  emitRunDeleted({
+    runId,
+    timestamp: new Date().toISOString(),
+  });
 };
 
 export const listRunDiffFiles = async (
@@ -1680,6 +1827,7 @@ export const submitRunOpenCodePrompt = async ({
     queuedAt: pick(response.queued_at, response.queuedAt) ?? "",
     clientRequestId:
       pick(response.client_request_id, response.clientRequestId) ?? undefined,
+    runState: toRunState(pick(response.run_state, response.runState)),
   };
 };
 
@@ -1708,6 +1856,90 @@ export const replyRunOpenCodePermission = async ({
     status: state === "unsupported" ? "unsupported" : "accepted",
     reason: response.reason ?? undefined,
     repliedAt: pick(response.replied_at, response.repliedAt) ?? "",
+    runState: toRunState(pick(response.run_state, response.runState)),
+  };
+};
+
+export const listRunOpenCodeQuestionRequests = async (
+  runId: string,
+): Promise<RunOpenCodeQuestionRequestsResult> => {
+  const response = await invoke<unknown>(
+    "list_run_opencode_question_requests",
+    {
+      runId,
+    },
+  );
+
+  if (Array.isArray(response)) {
+    return {
+      questions: unwrapSnapshotItems(response),
+      raw: response,
+    };
+  }
+
+  const record =
+    response && typeof response === "object"
+      ? (response as { questions?: RunOpenCodeQuestionRequestResponse[] })
+      : null;
+
+  if (record && Array.isArray(record.questions)) {
+    return {
+      questions: unwrapSnapshotItems(record.questions),
+      raw: response,
+    };
+  }
+
+  return {
+    questions: unwrapSnapshotItems(toUnknownArray(response)),
+    raw: response,
+  };
+};
+
+export const replyRunOpenCodeQuestion = async ({
+  runId,
+  requestId,
+  answers,
+}: ReplyRunOpenCodeQuestionParams): Promise<ReplyRunOpenCodeQuestionResult> => {
+  const response = await invoke<ReplyRunOpenCodeQuestionResponse>(
+    "reply_run_opencode_question",
+    {
+      request: {
+        runId,
+        requestId,
+        answers,
+      },
+    },
+  );
+
+  const state = response.state ?? response.status;
+  return {
+    status: state === "unsupported" ? "unsupported" : "accepted",
+    reason: response.reason ?? undefined,
+    repliedAt: pick(response.replied_at, response.repliedAt) ?? "",
+    runState: toRunState(pick(response.run_state, response.runState)),
+  };
+};
+
+export const rejectRunOpenCodeQuestion = async ({
+  runId,
+  requestId,
+}: RejectRunOpenCodeQuestionParams): Promise<RejectRunOpenCodeQuestionResult> => {
+  const response = await invoke<RejectRunOpenCodeQuestionResponse>(
+    "reject_run_opencode_question",
+    {
+      request: {
+        runId,
+        requestId,
+      },
+    },
+  );
+
+  const state = response.state ?? response.status;
+  return {
+    status: state === "unsupported" ? "unsupported" : "accepted",
+    reason: response.reason ?? undefined,
+    rejectedAt: pick(response.rejected_at, response.rejectedAt) ?? "",
+    runState: toRunState(pick(response.run_state, response.runState)),
   };
 };
 

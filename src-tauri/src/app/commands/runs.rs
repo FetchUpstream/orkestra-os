@@ -12,8 +12,9 @@
 
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, OpenCodeDependencyStatusDto,
-    RawAgentEvent, ReplyRunOpenCodePermissionResponse, RunAgentsResponseDto, RunDiffFileDto,
-    RunDiffFilePayloadDto, RunDto, RunMergeResponseDto, RunMergeStatusDto,
+    RawAgentEvent, RejectRunOpenCodeQuestionResponse, ReplyRunOpenCodePermissionResponse,
+    ReplyRunOpenCodeQuestionResponse, RunAgentsResponseDto, RunDiffFileDto, RunDiffFilePayloadDto,
+    RunDto, RunMergeResponseDto, RunMergeStatusDto, RunOpenCodeQuestionRequestDto,
     RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, RunProvidersResponseDto,
     RunRebaseResponseDto, StartRunOpenCodeResponse, StopRunOpenCodeResponse,
     SubmitRunOpenCodePromptResponse,
@@ -55,6 +56,21 @@ pub struct ReplyRunOpenCodePermissionRequest {
     pub request_id: String,
     pub decision: String,
     pub remember: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyRunOpenCodeQuestionRequest {
+    pub run_id: String,
+    pub request_id: String,
+    pub answers: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RejectRunOpenCodeQuestionRequest {
+    pub run_id: String,
+    pub request_id: String,
 }
 
 #[tauri::command]
@@ -108,7 +124,7 @@ pub async fn get_run(state: tauri::State<'_, AppState>, run_id: String) -> Resul
 
 #[tauri::command]
 pub async fn delete_run(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), String> {
-    let service = context::runs_service(&state);
+    let service = context::runs_delete_service(&state);
     map_result(service.delete_run(&run_id).await)
 }
 
@@ -328,6 +344,41 @@ pub async fn reply_run_opencode_permission(
                 &request.decision,
                 request.remember.unwrap_or(false),
             )
+            .await,
+    )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn list_run_opencode_question_requests(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<Vec<RunOpenCodeQuestionRequestDto>, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(service.list_run_opencode_question_requests(&run_id).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn reply_run_opencode_question(
+    state: tauri::State<'_, AppState>,
+    request: ReplyRunOpenCodeQuestionRequest,
+) -> Result<ReplyRunOpenCodeQuestionResponse, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(
+        service
+            .reply_run_opencode_question(&request.run_id, &request.request_id, request.answers)
+            .await,
+    )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn reject_run_opencode_question(
+    state: tauri::State<'_, AppState>,
+    request: RejectRunOpenCodeQuestionRequest,
+) -> Result<RejectRunOpenCodeQuestionResponse, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(
+        service
+            .reject_run_opencode_question(&request.run_id, &request.request_id)
             .await,
     )
 }

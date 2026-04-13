@@ -136,7 +136,15 @@ describe("runs contract", () => {
 
   it("normalizes run selection options payload", async () => {
     invokeMock.mockResolvedValueOnce({
-      agents: [{ agentId: "agent-1", display_name: "Planner" }],
+      agents: [
+        {
+          id: "agent-1",
+          label: "Planner",
+          scope: "project",
+          mode: "primary",
+          selectable: true,
+        },
+      ],
       providers: [
         {
           id: "provider-1",
@@ -154,10 +162,37 @@ describe("runs contract", () => {
     );
 
     expect(options).toEqual({
-      agents: [{ id: "agent-1", label: "Planner" }],
+      agents: [
+        {
+          id: "agent-1",
+          label: "Planner",
+          scope: "project",
+          mode: "primary",
+          selectable: true,
+        },
+      ],
       providers: [{ id: "provider-1", label: "OpenAI" }],
       models: [{ id: "model-1", label: "GPT-5", providerId: "provider-1" }],
     });
+  });
+
+  it("falls back safely when agent scope metadata is absent", async () => {
+    invokeMock.mockResolvedValueOnce({
+      agents: [{ id: "agent-1", name: "Planner" }],
+      providers: [],
+    });
+
+    const options = await getRunSelectionOptions("project-1");
+
+    expect(options.agents).toEqual([
+      {
+        id: "agent-1",
+        label: "Planner",
+        scope: "inherited",
+        mode: "primary",
+        selectable: true,
+      },
+    ]);
   });
 
   it("normalizes model labels across backend name shapes", async () => {
