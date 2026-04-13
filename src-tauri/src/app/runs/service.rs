@@ -19,6 +19,7 @@ use crate::app::worktrees::dto::{CreateWorktreeRequest, LocalBranchDto, RemoveWo
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub struct RunsService {
@@ -70,15 +71,17 @@ impl RunsService {
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
         let repo_path = task_context.repository_path.clone();
+        let run_id = Uuid::new_v4().to_string();
         let worktree = self.worktrees_service.create(CreateWorktreeRequest {
             project_key: task_context.project_key,
             repo_path: repo_path.clone(),
             branch_title: task_context.branch_title,
+            unique_suffix_seed: Some(run_id.clone()),
             source_branch: selected_source_branch,
         })?;
 
         let new_run = NewRun {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: run_id,
             task_id: task_id.to_string(),
             project_id: task_context.project_id,
             target_repo_id: Some(task_context.repository_id),

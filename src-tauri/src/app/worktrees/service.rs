@@ -16,8 +16,7 @@ use crate::app::worktrees::dto::{
 };
 use crate::app::worktrees::error::WorktreesServiceError;
 use crate::app::worktrees::pathing::{
-    choose_unique_worktree_id, parse_worktree_id_typed, sanitize_branch_segment,
-    validate_project_key_segment_typed,
+    choose_unique_worktree_id, parse_worktree_id_typed, validate_project_key_segment_typed,
 };
 use git2::{BranchType, Error, ErrorCode, Repository, WorktreeAddOptions, WorktreePruneOptions};
 use std::io::ErrorKind;
@@ -25,6 +24,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 const CREATE_WORKTREE_MAX_RETRIES: usize = 8;
 
@@ -51,6 +51,12 @@ impl WorktreesService {
         input.project_key = input.project_key.trim().to_string();
         input.repo_path = input.repo_path.trim().to_string();
         input.branch_title = input.branch_title.trim().to_string();
+        input.unique_suffix_seed = input
+            .unique_suffix_seed
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
         input.source_branch = input
             .source_branch
             .as_deref()
@@ -86,10 +92,18 @@ impl WorktreesService {
         let (source_branch, start_point) =
             resolve_source_branch(&repo, input.source_branch.as_deref())?;
 
-        let branch_slug = sanitize_branch_segment(&input.branch_title);
+        let unique_suffix_seed = input
+            .unique_suffix_seed
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         for attempt in 0..CREATE_WORKTREE_MAX_RETRIES {
-            let worktree_id =
-                choose_unique_worktree_id(&self.base_root, &input.project_key, &branch_slug, &repo);
+            let worktree_id = choose_unique_worktree_id(
+                &self.base_root,
+                &input.project_key,
+                &input.branch_title,
+                &unique_suffix_seed,
+                &repo,
+            );
             let branch_name = worktree_id.clone();
             let worktree_path = self.base_root.join(&worktree_id);
             std::fs::create_dir_all(
@@ -209,8 +223,13 @@ impl WorktreesService {
             }
         }
 
-        let worktree_id =
-            choose_unique_worktree_id(&self.base_root, &input.project_key, &branch_slug, &repo);
+        let worktree_id = choose_unique_worktree_id(
+            &self.base_root,
+            &input.project_key,
+            &input.branch_title,
+            &unique_suffix_seed,
+            &repo,
+        );
         Err(WorktreesServiceError::CreateWorktree {
             worktree_id,
             source: Error::from_str(
@@ -877,7 +896,9 @@ mod tests {
     use super::WorktreesService;
     use crate::app::errors::AppError;
     use crate::app::worktrees::dto::CreateWorktreeRequest;
-    use crate::app::worktrees::pathing::{compose_worktree_id, sanitize_branch_segment};
+    use crate::app::worktrees::pathing::{
+        build_branch_segment, compose_worktree_id, sanitize_branch_segment,
+    };
     use git2::{BranchType, ErrorClass, ErrorCode, Repository, Signature};
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -886,12 +907,16 @@ mod tests {
     #[test]
     fn path_helpers_produce_project_key_and_slug_segments() {
         assert_eq!(
-            sanitize_branch_segment("  Fix Login --- Flow!!!  "),
-            "fix-login-flow"
+            sanitize_branch_segment("  Fix Login --- Flow!!! Again Later  "),
+            "fix-login-flow-again"
         );
         assert_eq!(
-            compose_worktree_id("ALP", "fix-login-flow"),
-            "ALP/fix-login-flow"
+            build_branch_segment("Fix Login Flow Again Later", "run-seed-1"),
+            "fix-login-flow-again-98adc61"
+        );
+        assert_eq!(
+            compose_worktree_id("ALP", "fix-login-flow-again-98adc61"),
+            "ALP/fix-login-flow-again-98adc61"
         );
     }
 
@@ -908,6 +933,7 @@ mod tests {
             project_key: "alp".to_string(),
             repo_path: "/path/that/does/not/matter/yet".to_string(),
             branch_title: "branch".to_string(),
+            unique_suffix_seed: None,
             source_branch: None,
         });
 
@@ -1158,6 +1184,7 @@ mod tests {
                 project_key: "PRJ".to_string(),
                 repo_path: repo_root.display().to_string(),
                 branch_title: "Run branch".to_string(),
+                unique_suffix_seed: Some("run-seed-1".to_string()),
                 source_branch: Some("feature/source".to_string()),
             })
             .unwrap();
@@ -1172,6 +1199,47 @@ mod tests {
         let linked_head = linked_repo.head().unwrap();
         let linked_commit = linked_head.peel_to_commit().unwrap();
         assert_eq!(linked_commit.id(), feature_commit_id);
+
+        let _ = fs::remove_dir_all(&temp_root);
+    }
+
+    #[test]
+    fn create_shortens_long_titles_and_keeps_same_task_runs_distinct() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "orkestra-worktrees-short-name-tests-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp_root).unwrap();
+
+        let repo_root = temp_root.join("repo");
+        seed_repo_with_initial_commit(&repo_root);
+        let service = WorktreesService::new(temp_root.join("app-data"));
+        let long_title =
+            "differentiate-run-cards-on-the-board-so-multiple-runs-are-easy-to-tell-apart";
+
+        let first = service
+            .create_typed(CreateWorktreeRequest {
+                project_key: "ORK".to_string(),
+                repo_path: repo_root.display().to_string(),
+                branch_title: long_title.to_string(),
+                unique_suffix_seed: Some("run-seed-1".to_string()),
+                source_branch: None,
+            })
+            .unwrap();
+        let second = service
+            .create_typed(CreateWorktreeRequest {
+                project_key: "ORK".to_string(),
+                repo_path: repo_root.display().to_string(),
+                branch_title: long_title.to_string(),
+                unique_suffix_seed: Some("run-seed-2".to_string()),
+                source_branch: None,
+            })
+            .unwrap();
+
+        assert_eq!(first.branch_name, "ORK/differentiate-run-cards-on-98adc61");
+        assert_eq!(second.branch_name, "ORK/differentiate-run-cards-on-98adc51");
+        assert!(first.branch_name.len() < long_title.len() + "ORK/".len());
+        assert_ne!(first.branch_name, second.branch_name);
 
         let _ = fs::remove_dir_all(&temp_root);
     }
