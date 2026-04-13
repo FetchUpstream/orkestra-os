@@ -16,6 +16,7 @@ import {
   createResource,
   createSignal,
   For,
+  onCleanup,
   Show,
   type Accessor,
   type Component,
@@ -93,12 +94,12 @@ const AboutModal: Component<AboutModalProps> = (props) => {
       props.onClose();
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => {
+    onCleanup(() => {
       window.removeEventListener("keydown", onKeyDown);
       if (previousActiveElement instanceof HTMLElement) {
         queueMicrotask(() => previousActiveElement.focus());
       }
-    };
+    });
   });
 
   createEffect(() => {

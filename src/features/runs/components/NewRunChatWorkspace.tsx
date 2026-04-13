@@ -2963,7 +2963,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     runChatComposerOffsetPx();
     transcriptLayoutRevision();
 
-    const wasNearBottomBeforeUpdate = isNearTranscriptBottom();
+    const wasNearBottomBeforeUpdate = isTranscriptNearBottom();
 
     requestAnimationFrame(() => {
       if (wasNearBottomBeforeUpdate) {
@@ -2974,8 +2974,13 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
 
   createEffect(() => {
+    const hasTranscriptItems = chatTranscriptItems().length > 0;
     const transcriptContent = transcriptContentRef;
-    if (!transcriptContent || typeof ResizeObserver === "undefined") {
+    if (
+      !hasTranscriptItems ||
+      !transcriptContent ||
+      typeof ResizeObserver === "undefined"
+    ) {
       return;
     }
 
