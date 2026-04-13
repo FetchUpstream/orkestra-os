@@ -604,6 +604,10 @@ textarea::placeholder {
   gap: 16px;
 }
 
+.form-section-break {
+  padding-top: 4px;
+}
+
 .form-section-title {
   margin: 0;
   font-size: 0.85rem;
@@ -727,6 +731,31 @@ textarea::placeholder {
   min-height: 96px;
 }
 
+.projects-settings-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+.projects-settings-head {
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.projects-settings-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.projects-settings-subtitle {
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
 /* Repository Section */
 .projects-repos-block {
   border: 1px solid var(--border);
@@ -752,6 +781,7 @@ textarea::placeholder {
   font-size: 0.8rem;
   color: var(--text-muted);
   margin: 2px 0 0;
+  line-height: 1.45;
 }
 
 .projects-repo-list {
