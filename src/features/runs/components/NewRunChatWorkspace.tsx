@@ -86,6 +86,8 @@ type NewRunChatWorkspaceProps = {
 const TRANSCRIPT_WINDOW_CHUNK = 60;
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+const INTERNAL_ID_DETECTION_PATTERN =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
 const INTERNAL_ATTRIBUTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -868,6 +870,18 @@ const sanitizeAttributionValue = (value: unknown): string => {
   return normalized;
 };
 
+const isOpaqueOptionRawValue = (value: string): boolean => {
+  const normalized = value.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    INTERNAL_ID_DETECTION_PATTERN.test(normalized) ||
+    /\binternal[-_\s]?id\b/i.test(normalized)
+  );
+};
+
 const formatMessageAttribution = (value: {
   agent?: string;
   model?: string;
@@ -1003,7 +1017,10 @@ const parseQuestionPrompts = (questions: unknown[]): QuestionWizardPrompt[] => {
                 return null;
               }
               const safeLabel =
-                toSingleLine(optionRecord?.label, 80) || "Option";
+                toSingleLine(optionRecord?.label, 80) ||
+                (isOpaqueOptionRawValue(rawValue)
+                  ? "Option"
+                  : toSingleLine(rawValue, 80) || "Option");
               return {
                 label: safeLabel,
                 value: rawValue,

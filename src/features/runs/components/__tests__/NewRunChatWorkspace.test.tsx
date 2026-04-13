@@ -448,7 +448,39 @@ describe("NewRunChatWorkspace", () => {
     ]);
   });
 
-  it("uses neutral option labels when only raw values are provided", async () => {
+  it("uses human-readable primitive raw values as option labels", async () => {
+    const replyQuestionMock = vi.fn(async () => true);
+    const { model } = createModelStub("running", false, {}, "interactive", {
+      pendingQuestionsById: {
+        "question-1": {
+          requestId: "question-1",
+          sessionId: "session-1",
+          questions: [
+            {
+              header: "Choose action",
+              question: "Which action should I take?",
+              options: ["yes", "no"],
+              custom: false,
+            },
+          ],
+        },
+      },
+    });
+    model.agent.replyQuestion = replyQuestionMock;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    expect(screen.getByRole("button", { name: "yes" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "no" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Option" })).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "yes" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+
+    expect(replyQuestionMock).toHaveBeenCalledWith("question-1", [["yes"]]);
+  });
+
+  it("uses neutral option labels for opaque internal-id raw values", async () => {
     const replyQuestionMock = vi.fn(async () => true);
     const rawValue = "tool.patch.apply:123e4567-e89b-12d3-a456-426614174000";
     const { model } = createModelStub("running", false, {}, "interactive", {

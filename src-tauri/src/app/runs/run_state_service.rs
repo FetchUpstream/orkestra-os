@@ -218,6 +218,18 @@ impl RunStateService {
             return Ok(None);
         }
 
+        let current_stored_state = latest_run
+            .run_state
+            .as_deref()
+            .map(str::trim)
+            .filter(|state| !state.is_empty());
+
+        if matches!(next_state, Some(BUSY_CODING))
+            && current_stored_state.is_some_and(Self::is_special_stored_state)
+        {
+            return Ok(None);
+        }
+
         let previous_run_state = self.resolve_effective_run_state(&latest_run).await?;
 
         let persisted_next_state = match next_state {
@@ -585,5 +597,32 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(run_state.as_deref(), Some("waiting_for_input"));
+    }
+
+    #[tokio::test]
+    async fn transition_to_busy_coding_does_not_overwrite_special_stored_state() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(
+            &pool,
+            "run-1",
+            "task-1",
+            "in_progress",
+            "question_pending",
+        )
+        .await;
+
+        let event = service.handle_run_started("run-1").await.unwrap();
+
+        assert!(event.is_none());
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = ?")
+                .bind("run-1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), Some("question_pending"));
     }
 }

@@ -14,9 +14,16 @@ use crate::app::errors::AppError;
 use crate::app::runs::errors::RunsRepositoryError;
 use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext, TaskRunContext};
 use sqlx::{Row, SqlitePool};
+use std::sync::LazyLock;
 
 pub(crate) const ACTIVE_RUN_STATUSES: [&str; 4] = ["queued", "preparing", "in_progress", "idle"];
-const ACTIVE_RUN_STATUSES_SQL: &str = "'queued', 'preparing', 'in_progress', 'idle'";
+static ACTIVE_RUN_STATUSES_SQL: LazyLock<String> = LazyLock::new(|| {
+    ACTIVE_RUN_STATUSES
+        .iter()
+        .map(|status| format!("'{status}'"))
+        .collect::<Vec<_>>()
+        .join(", ")
+});
 const TERMINAL_RUN_STATUSES: [&str; 3] = ["complete", "failed", "cancelled"];
 
 pub(crate) fn is_active_run_status(status: &str) -> bool {
@@ -281,9 +288,10 @@ impl RunsRepository {
                 cleanup_started_at,
                 cleanup_finished_at,
                 cleanup_error_message
-              FROM runs
-             WHERE status IN ({ACTIVE_RUN_STATUSES_SQL})
+             FROM runs
+             WHERE status IN ({})
              ORDER BY created_at DESC",
+            ACTIVE_RUN_STATUSES_SQL.as_str(),
         );
 
         let rows = sqlx::query(&query)
@@ -345,11 +353,12 @@ impl RunsRepository {
              WHERE id = ?
                AND status = 'doing'
                AND NOT EXISTS (
-                   SELECT 1
-                   FROM runs
-                   WHERE task_id = ?
-                     AND status IN ({ACTIVE_RUN_STATUSES_SQL})
-               )",
+                    SELECT 1
+                    FROM runs
+                    WHERE task_id = ?
+                      AND status IN ({})
+                )",
+            ACTIVE_RUN_STATUSES_SQL.as_str(),
         );
 
         let task_update = sqlx::query(&task_update_query)
@@ -390,7 +399,8 @@ impl RunsRepository {
                  run_state = NULL,
                  finished_at = COALESCE(finished_at, ?)
              WHERE id = ?
-                AND status IN ({ACTIVE_RUN_STATUSES_SQL})",
+                 AND status IN ({})",
+            ACTIVE_RUN_STATUSES_SQL.as_str(),
         );
 
         let result = sqlx::query(&query)
@@ -961,6 +971,17 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(task_status, "doing");
+    }
+
+    #[test]
+    fn active_run_statuses_sql_matches_active_run_statuses() {
+        let expected = ACTIVE_RUN_STATUSES
+            .iter()
+            .map(|status| format!("'{status}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        assert_eq!(ACTIVE_RUN_STATUSES_SQL.as_str(), expected);
     }
 
     #[tokio::test]
