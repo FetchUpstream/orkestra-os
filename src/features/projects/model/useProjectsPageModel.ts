@@ -856,7 +856,10 @@ export const useProjectsPageModel = () => {
     setIsSubmitting(true);
     try {
       const createdProject = await createProject(payload);
-      await loadProjects();
+      const nextProjects = await loadProjects();
+      window.dispatchEvent(
+        new CustomEvent("projects:updated", { detail: nextProjects }),
+      );
       resetForm();
       navigate(`/projects/${createdProject.id}`);
     } catch (submitError) {

@@ -15,6 +15,16 @@ import { createSignal } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import NewRunChatWorkspace from "../NewRunChatWorkspace";
 
+const installResizeObserverStub = () => {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+
+  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+};
+
 const { getRunOpenCodeSessionMessagesMock, getRunOpenCodeSessionTodosMock } =
   vi.hoisted(() => ({
     getRunOpenCodeSessionMessagesMock: vi.fn(async () => ({
@@ -149,6 +159,7 @@ const createModelStub = (
 
 describe("NewRunChatWorkspace", () => {
   beforeEach(() => {
+    installResizeObserverStub();
     getRunOpenCodeSessionMessagesMock.mockClear();
     getRunOpenCodeSessionTodosMock.mockClear();
     getRunOpenCodeSessionMessagesMock.mockResolvedValue({
@@ -897,7 +908,7 @@ describe("NewRunChatWorkspace", () => {
       sessionId: "session-root",
       status: "active",
       streamConnected: true,
-      lastSyncAt: Date.now(),
+      lastSyncAt: null as number | null,
       messageOrder: ["msg-root"],
       messagesById: {
         "msg-root": {
@@ -998,7 +1009,7 @@ describe("NewRunChatWorkspace", () => {
       sessionId: "session-root",
       status: "active",
       streamConnected: true,
-      lastSyncAt: Date.now(),
+      lastSyncAt: null as number | null,
       messageOrder: ["msg-root"],
       messagesById: {
         "msg-root": {
@@ -1506,7 +1517,7 @@ describe("NewRunChatWorkspace", () => {
     expect(taskRails[1]?.textContent).toContain("Second child output");
   });
 
-  it("anchors once to the latest parent message after initial history arrives", async () => {
+  it("anchors once to the true transcript bottom after initial history arrives", async () => {
     const [store, setStore] = createSignal({
       sessionId: "session-root",
       status: "active",
@@ -1553,18 +1564,7 @@ describe("NewRunChatWorkspace", () => {
       rawEvents: [],
     });
 
-    if (!("scrollIntoView" in HTMLElement.prototype)) {
-      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-        configurable: true,
-        value: () => {},
-      });
-    }
-    const scrollIntoViewMock = vi.fn<(id: string | null) => void>();
-    const scrollSpy = vi
-      .spyOn(HTMLElement.prototype, "scrollIntoView")
-      .mockImplementation(function (this: HTMLElement) {
-        scrollIntoViewMock(this.dataset.runChatMessageId ?? null);
-      });
+    let scrollTopValue = 0;
     const rafSpy = vi
       .spyOn(window, "requestAnimationFrame")
       .mockImplementation((callback: FrameRequestCallback) => {
@@ -1577,7 +1577,33 @@ describe("NewRunChatWorkspace", () => {
 
     render(() => <NewRunChatWorkspace model={model} />);
 
-    expect(scrollIntoViewMock).not.toHaveBeenCalled();
+    const transcript = screen.getByLabelText(
+      "Conversation transcript",
+    ) as HTMLDivElement;
+    const scrollToMock = vi.fn(({ top }: { top: number }) => {
+      scrollTopValue = top;
+    });
+    Object.defineProperty(transcript, "scrollHeight", {
+      value: 1_280,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "clientHeight", {
+      value: 320,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (next: number) => {
+        scrollTopValue = next;
+      },
+    });
+    Object.defineProperty(transcript, "scrollTo", {
+      configurable: true,
+      value: scrollToMock,
+    });
+
+    expect(scrollToMock).not.toHaveBeenCalled();
 
     setStore((current) => ({
       ...current,
@@ -1585,20 +1611,19 @@ describe("NewRunChatWorkspace", () => {
     }));
 
     await waitFor(() => {
-      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
-      expect(scrollIntoViewMock).toHaveBeenCalledWith("msg-root-2");
+      expect(scrollToMock).toHaveBeenCalled();
+      expect(scrollTopValue).toBe(960);
     });
 
     rafSpy.mockRestore();
-    scrollSpy.mockRestore();
   });
 
-  it("does not auto-scroll again when root transcript updates after initial anchor", async () => {
+  it("keeps transcript pinned when new root messages arrive near bottom", async () => {
     const [store, setStore] = createSignal({
       sessionId: "session-root",
       status: "active",
       streamConnected: true,
-      lastSyncAt: Date.now(),
+      lastSyncAt: null as number | null,
       messageOrder: ["msg-root-1", "msg-root-2"],
       messagesById: {
         "msg-root-1": {
@@ -1640,18 +1665,7 @@ describe("NewRunChatWorkspace", () => {
       rawEvents: [],
     });
 
-    if (!("scrollIntoView" in HTMLElement.prototype)) {
-      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-        configurable: true,
-        value: () => {},
-      });
-    }
-    const scrollIntoViewMock = vi.fn<(id: string | null) => void>();
-    const scrollSpy = vi
-      .spyOn(HTMLElement.prototype, "scrollIntoView")
-      .mockImplementation(function (this: HTMLElement) {
-        scrollIntoViewMock(this.dataset.runChatMessageId ?? null);
-      });
+    let scrollTopValue = 0;
     const rafSpy = vi
       .spyOn(window, "requestAnimationFrame")
       .mockImplementation((callback: FrameRequestCallback) => {
@@ -1664,15 +1678,44 @@ describe("NewRunChatWorkspace", () => {
 
     render(() => <NewRunChatWorkspace model={model} />);
 
+    const transcript = screen.getByLabelText(
+      "Conversation transcript",
+    ) as HTMLDivElement;
+    let scrollToCalls = 0;
+    Object.defineProperty(transcript, "scrollHeight", {
+      value: 1_280,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "clientHeight", {
+      value: 320,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (next: number) => {
+        scrollTopValue = next;
+      },
+    });
+    Object.defineProperty(transcript, "scrollTo", {
+      configurable: true,
+      value: ({ top }: { top: number }) => {
+        scrollToCalls += 1;
+        scrollTopValue = top;
+      },
+    });
+
     setStore((current) => ({
       ...current,
       lastSyncAt: Date.now(),
     }));
 
     await waitFor(() => {
-      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
-      expect(scrollIntoViewMock).toHaveBeenCalledWith("msg-root-2");
+      expect(scrollToCalls).toBeGreaterThan(0);
+      expect(scrollTopValue).toBe(960);
     });
+
+    scrollToCalls = 0;
 
     setStore((current) => ({
       ...current,
@@ -1698,13 +1741,12 @@ describe("NewRunChatWorkspace", () => {
     }));
 
     expect(screen.getByText("Newer root message")).toBeTruthy();
-    expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+    expect(scrollToCalls).toBeGreaterThan(0);
 
     rafSpy.mockRestore();
-    scrollSpy.mockRestore();
   });
 
-  it("ignores child transcript output when choosing initial anchor target", async () => {
+  it("anchors to the transcript bottom even when child output extends below the last parent row", async () => {
     const [store, setStore] = createSignal({
       sessionId: "session-root",
       status: "active",
@@ -1775,18 +1817,7 @@ describe("NewRunChatWorkspace", () => {
       ],
     });
 
-    if (!("scrollIntoView" in HTMLElement.prototype)) {
-      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-        configurable: true,
-        value: () => {},
-      });
-    }
-    const scrollIntoViewMock = vi.fn<(id: string | null) => void>();
-    const scrollSpy = vi
-      .spyOn(HTMLElement.prototype, "scrollIntoView")
-      .mockImplementation(function (this: HTMLElement) {
-        scrollIntoViewMock(this.dataset.runChatMessageId ?? null);
-      });
+    let scrollTopValue = 0;
     const rafSpy = vi
       .spyOn(window, "requestAnimationFrame")
       .mockImplementation((callback: FrameRequestCallback) => {
@@ -1800,18 +1831,163 @@ describe("NewRunChatWorkspace", () => {
     render(() => <NewRunChatWorkspace model={model} />);
     expect(screen.getByText("Child output should not anchor")).toBeTruthy();
 
+    const transcript = screen.getByLabelText(
+      "Conversation transcript",
+    ) as HTMLDivElement;
+    const scrollToMock = vi.fn(({ top }: { top: number }) => {
+      scrollTopValue = top;
+    });
+    Object.defineProperty(transcript, "scrollHeight", {
+      value: 1_520,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "clientHeight", {
+      value: 320,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (next: number) => {
+        scrollTopValue = next;
+      },
+    });
+    Object.defineProperty(transcript, "scrollTo", {
+      configurable: true,
+      value: scrollToMock,
+    });
+
     setStore((current) => ({
       ...current,
       lastSyncAt: Date.now(),
     }));
 
     await waitFor(() => {
-      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
-      expect(scrollIntoViewMock).toHaveBeenCalledWith("msg-root-2");
+      expect(scrollToMock).toHaveBeenCalled();
+      expect(scrollTopValue).toBe(1_200);
     });
 
     rafSpy.mockRestore();
-    scrollSpy.mockRestore();
+  });
+
+  it("shows a jump-to-bottom button when scrolled up and hides it again near the bottom", async () => {
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root-1", "msg-root-2"],
+      messagesById: {
+        "msg-root-1": {
+          id: "msg-root-1",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-root-1": {
+              id: "part-root-1",
+              kind: "text",
+              type: "text",
+              text: "Earlier root message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-root-1"],
+        },
+        "msg-root-2": {
+          id: "msg-root-2",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-root-2": {
+              id: "part-root-2",
+              kind: "text",
+              type: "text",
+              text: "Latest root message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-root-2"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    const transcript = screen.getByLabelText(
+      "Conversation transcript",
+    ) as HTMLDivElement;
+    let scrollTopValue = 960;
+    Object.defineProperty(transcript, "scrollHeight", {
+      value: 1_280,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "clientHeight", {
+      value: 320,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (next: number) => {
+        scrollTopValue = next;
+      },
+    });
+    const scrollToMock = vi.fn(({ top }: { top: number }) => {
+      scrollTopValue = top;
+    });
+    Object.defineProperty(transcript, "scrollTo", {
+      configurable: true,
+      value: scrollToMock,
+    });
+
+    fireEvent.scroll(transcript);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", {
+          name: "Jump to latest chat content",
+        }),
+      ).toBeNull();
+    });
+
+    scrollTopValue = 80;
+    fireEvent.scroll(transcript);
+
+    const jumpButton = await screen.findByRole("button", {
+      name: "Jump to latest chat content",
+    });
+
+    await fireEvent.click(jumpButton);
+
+    await waitFor(() => {
+      expect(scrollToMock).toHaveBeenCalledWith({
+        top: 960,
+        behavior: "smooth",
+      });
+      expect(
+        screen.queryByRole("button", {
+          name: "Jump to latest chat content",
+        }),
+      ).toBeNull();
+    });
+
+    rafSpy.mockRestore();
   });
 
   it("updates setup card state without remount", () => {

@@ -103,7 +103,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 vi.mock("@tauri-apps/api/app", () => ({
   getName: vi.fn().mockResolvedValue("OrkestraOS"),
-  getVersion: vi.fn().mockResolvedValue("0.0.0-test"),
+  getVersion: vi.fn().mockResolvedValue("v0.0.12+105"),
   getTauriVersion: vi.fn().mockResolvedValue("2.0.0-test"),
   getIdentifier: vi.fn().mockResolvedValue("com.test.orkestraos"),
 }));
@@ -484,6 +484,14 @@ describe("app routing and shell", () => {
     expect(
       await within(projectNav).findByRole("link", { name: /alpha/i }),
     ).toBeTruthy();
+  });
+
+  it("renders full exact version in desktop sidebar metadata", async () => {
+    renderAt("/projects");
+
+    const versionText = await screen.findByLabelText("Application version");
+    expect(versionText.textContent).toBe("v0.0.12+105");
+    expect(versionText.getAttribute("title")).toBe("v0.0.12+105");
   });
 
   it("opens and closes mobile overlay navigation", async () => {

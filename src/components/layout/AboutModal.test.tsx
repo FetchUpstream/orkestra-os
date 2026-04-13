@@ -12,23 +12,17 @@
 
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SUPPORT_LINKS } from "../../app/config/supportLinks";
 import AboutModal from "./AboutModal";
 
-const {
-  getNameMock,
-  getVersionMock,
-  getTauriVersionMock,
-  openUrlMock,
-  openMock,
-} = vi.hoisted(() => ({
-  getNameMock: vi.fn<() => Promise<string>>(),
-  getVersionMock: vi.fn<() => Promise<string>>(),
-  getTauriVersionMock: vi.fn<() => Promise<string>>(),
-  openUrlMock: vi.fn<(url: string) => Promise<void>>(),
-  openMock: vi.fn<(url: string) => Promise<void>>(),
-}));
+const { getNameMock, getVersionMock, getTauriVersionMock, openUrlMock } =
+  vi.hoisted(() => ({
+    getNameMock: vi.fn<() => Promise<string>>(),
+    getVersionMock: vi.fn<() => Promise<string>>(),
+    getTauriVersionMock: vi.fn<() => Promise<string>>(),
+    openUrlMock: vi.fn<(url: string) => Promise<void>>(),
+  }));
 
 vi.mock("@tauri-apps/api/app", () => ({
   getName: getNameMock,
@@ -38,22 +32,21 @@ vi.mock("@tauri-apps/api/app", () => ({
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: openUrlMock,
-  open: openMock,
 }));
 
 describe("AboutModal", () => {
+  let windowOpenMock: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     getNameMock.mockReset();
     getVersionMock.mockReset();
     getTauriVersionMock.mockReset();
     openUrlMock.mockReset();
-    openMock.mockReset();
 
     getNameMock.mockResolvedValue("OrkestraOS");
-    getVersionMock.mockResolvedValue("0.1.0");
+    getVersionMock.mockResolvedValue("0.0.12+105");
     getTauriVersionMock.mockResolvedValue("2.0.0");
     openUrlMock.mockResolvedValue();
-    openMock.mockResolvedValue();
 
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -61,6 +54,12 @@ describe("AboutModal", () => {
         writeText: vi.fn().mockResolvedValue(undefined),
       },
     });
+
+    windowOpenMock = vi.spyOn(window, "open").mockImplementation(() => null);
+  });
+
+  afterEach(() => {
+    windowOpenMock.mockRestore();
   });
 
   const renderOpenModal = () => {
@@ -74,16 +73,26 @@ describe("AboutModal", () => {
   it("renders support info and opens external links", async () => {
     renderOpenModal();
 
-    expect(await screen.findByRole("dialog", { name: "About" })).toBeTruthy();
-    expect(screen.getByText("OrkestraOS")).toBeTruthy();
+    expect(
+      await screen.findByRole("dialog", { name: "About Orkestra OS" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Orkestra OS")).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getByText("Version 0.1.0")).toBeTruthy();
+      expect(screen.getByText("Version v0.0.12+105")).toBeTruthy();
     });
+    expect(
+      screen.getByText(
+        "Desktop app for orchestrating AI agent runs across projects, tasks, and Git worktrees.",
+      ),
+    ).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "GitHub repository" }));
+    fireEvent.click(screen.getByRole("link", { name: "Source code" }));
     expect(openUrlMock).toHaveBeenCalledWith(SUPPORT_LINKS.githubRepository);
 
-    fireEvent.click(screen.getByRole("button", { name: "Report bug" }));
+    fireEvent.click(screen.getByRole("link", { name: "Documentation" }));
+    expect(openUrlMock).toHaveBeenCalledWith(SUPPORT_LINKS.documentation);
+
+    fireEvent.click(screen.getByRole("button", { name: "Report a bug" }));
     expect(openUrlMock).toHaveBeenCalledWith(SUPPORT_LINKS.issueReporting);
   });
 
@@ -91,7 +100,7 @@ describe("AboutModal", () => {
     renderOpenModal();
 
     await waitFor(() => {
-      expect(screen.getByText("Version 0.1.0")).toBeTruthy();
+      expect(screen.getByText("Version v0.0.12+105")).toBeTruthy();
     });
 
     fireEvent.click(
@@ -99,13 +108,29 @@ describe("AboutModal", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Debug info copied.")).toBeTruthy();
+      expect(screen.getByText("Copied support details.")).toBeTruthy();
     });
 
     const writeText = navigator.clipboard.writeText as ReturnType<typeof vi.fn>;
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(writeText.mock.calls[0]?.[0]).toContain("App: OrkestraOS");
-    expect(writeText.mock.calls[0]?.[0]).toContain("Version: 0.1.0");
+    expect(writeText.mock.calls[0]?.[0]).toContain("Version: 0.0.12+105");
     expect(writeText.mock.calls[0]?.[0]).toContain("Build:");
+  });
+
+  it("falls back to window.open when opener.openUrl rejects", async () => {
+    openUrlMock.mockRejectedValueOnce(new Error("failed to open"));
+    renderOpenModal();
+
+    await fireEvent.click(screen.getByRole("link", { name: "Source code" }));
+
+    await waitFor(() => {
+      expect(openUrlMock).toHaveBeenCalledWith(SUPPORT_LINKS.githubRepository);
+      expect(windowOpenMock).toHaveBeenCalledWith(
+        SUPPORT_LINKS.githubRepository,
+        "_blank",
+        "noopener,noreferrer",
+      );
+    });
   });
 });

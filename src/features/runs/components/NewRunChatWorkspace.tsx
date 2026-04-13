@@ -16,6 +16,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  on,
   onCleanup,
   type Component,
   type JSX,
@@ -84,6 +85,8 @@ type NewRunChatWorkspaceProps = {
 };
 
 const TRANSCRIPT_WINDOW_CHUNK = 60;
+const TRANSCRIPT_NEAR_BOTTOM_THRESHOLD = 96;
+const INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS = 6;
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 const INTERNAL_ID_DETECTION_PATTERN =
@@ -1679,6 +1682,10 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   );
   const [runChatComposerOffsetPx, setRunChatComposerOffsetPx] =
     createSignal("0px");
+  const [isTranscriptNearBottom, setIsTranscriptNearBottom] =
+    createSignal(true);
+  const [transcriptLayoutRevision, setTranscriptLayoutRevision] =
+    createSignal(0);
   const [overrideAgentId, setOverrideAgentId] = createSignal("");
   const [overrideProviderId, setOverrideProviderId] = createSignal("");
   const [overrideModelId, setOverrideModelId] = createSignal("");
@@ -1692,8 +1699,10 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
 
   let transcriptScrollRef: HTMLDivElement | undefined;
   let runChatComposerRef: HTMLDivElement | undefined;
+  let transcriptContentRef: HTMLDivElement | undefined;
   let initialTranscriptAnchorRaf: number | null = null;
-  let transcriptParentMessageRowRefs = new Map<string, HTMLDivElement>();
+  let initialTranscriptAnchorVerificationRaf: number | null = null;
+  let transcriptBottomSentinelRef: HTMLDivElement | undefined;
 
   const agentReadinessPhase = createMemo<AgentReadinessPhase>(() =>
     props.model.agent.readinessPhase(),
@@ -2119,10 +2128,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     const startIndex = Math.max(0, order.length - transcriptVisibleCount());
     return order.slice(startIndex);
   });
-  const latestParentTranscriptMessageId = createMemo(() => {
-    const messageIds = visibleTranscriptMessageIds();
-    return messageIds[messageIds.length - 1] ?? null;
-  });
   const hasLoadedInitialTranscriptHistory = createMemo(() => {
     const store = props.model.agent.store();
     return (
@@ -2421,9 +2426,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             <div
               data-run-chat-message-id={row.key}
               data-run-chat-message-kind="parent"
-              ref={(element) => {
-                transcriptParentMessageRowRefs.set(row.key, element);
-              }}
             >
               <RunChatMessage role="assistant" class="run-chat-message-item">
                 <RunChatAssistantMessage
@@ -2443,9 +2445,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             <div
               data-run-chat-message-id={row.key}
               data-run-chat-message-kind="parent"
-              ref={(element) => {
-                transcriptParentMessageRowRefs.set(row.key, element);
-              }}
             >
               <RunChatMessage role="user" class="run-chat-message-item">
                 <RunChatUserMessage>
@@ -2462,9 +2461,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           <div
             data-run-chat-message-id={row.key}
             data-run-chat-message-kind="parent"
-            ref={(element) => {
-              transcriptParentMessageRowRefs.set(row.key, element);
-            }}
           >
             <RunChatMessage role="system" class="run-chat-message-item">
               <RunChatSystemMessage>
@@ -2807,11 +2803,69 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     }
   });
 
-  createEffect(() => {
-    props.model.run()?.id;
-    transcriptParentMessageRowRefs = new Map<string, HTMLDivElement>();
-    setIsInitialTranscriptAnchorCompleted(false);
-  });
+  const cancelInitialTranscriptAnchorFrames = () => {
+    if (initialTranscriptAnchorRaf !== null) {
+      cancelAnimationFrame(initialTranscriptAnchorRaf);
+      initialTranscriptAnchorRaf = null;
+    }
+
+    if (initialTranscriptAnchorVerificationRaf !== null) {
+      cancelAnimationFrame(initialTranscriptAnchorVerificationRaf);
+      initialTranscriptAnchorVerificationRaf = null;
+    }
+  };
+
+  const getTranscriptDistanceFromBottom = (): number => {
+    const container = transcriptScrollRef;
+    if (!container) {
+      return 0;
+    }
+
+    return Math.max(
+      0,
+      container.scrollHeight - container.clientHeight - container.scrollTop,
+    );
+  };
+
+  const isNearTranscriptBottom = (): boolean => {
+    return (
+      getTranscriptDistanceFromBottom() <= TRANSCRIPT_NEAR_BOTTOM_THRESHOLD
+    );
+  };
+
+  const syncTranscriptNearBottom = () => {
+    setIsTranscriptNearBottom(isNearTranscriptBottom());
+  };
+
+  const scrollTranscriptToBottom = (behavior: ScrollBehavior = "auto") => {
+    const container = transcriptScrollRef;
+    if (!container) {
+      return;
+    }
+
+    const targetTop = Math.max(
+      0,
+      container.scrollHeight - container.clientHeight,
+    );
+    if (typeof container.scrollTo === "function") {
+      container.scrollTo({ top: targetTop, behavior });
+      return;
+    }
+
+    container.scrollTop = targetTop;
+  };
+
+  createEffect(
+    on(
+      () => props.model.run()?.id,
+      () => {
+        cancelInitialTranscriptAnchorFrames();
+        setTranscriptVisibleCount(TRANSCRIPT_WINDOW_CHUNK);
+        setIsTranscriptNearBottom(true);
+        setIsInitialTranscriptAnchorCompleted(false);
+      },
+    ),
+  );
 
   createEffect(() => {
     const phase = agentReadinessPhase();
@@ -2842,45 +2896,115 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       return;
     }
 
-    hasLoadedInitialTranscriptHistory();
-    const latestMessageId = latestParentTranscriptMessageId();
-
     const container = transcriptScrollRef;
     if (!container || !hasLoadedInitialTranscriptHistory()) {
       return;
     }
 
-    if (!latestMessageId) {
+    const transcriptItems = chatTranscriptItems();
+    const transcriptItemCount = transcriptItems.length;
+    transcriptVisibleCount();
+    runChatComposerOffsetPx();
+    transcriptLayoutRevision();
+
+    if (transcriptItemCount === 0) {
       setIsInitialTranscriptAnchorCompleted(true);
+      setIsTranscriptNearBottom(true);
       return;
     }
 
-    chatTranscriptItems().length;
-
-    const target = transcriptParentMessageRowRefs.get(latestMessageId);
-    if (!target) {
+    if (!transcriptBottomSentinelRef) {
       return;
     }
 
-    if (initialTranscriptAnchorRaf !== null) {
-      cancelAnimationFrame(initialTranscriptAnchorRaf);
-    }
+    cancelInitialTranscriptAnchorFrames();
 
-    initialTranscriptAnchorRaf = requestAnimationFrame(() => {
-      initialTranscriptAnchorRaf = null;
-      const row = transcriptParentMessageRowRefs.get(latestMessageId);
-      if (!row || !transcriptScrollRef) {
-        return;
-      }
+    const attemptAnchor = (attempt: number) => {
+      initialTranscriptAnchorRaf = requestAnimationFrame(() => {
+        initialTranscriptAnchorRaf = null;
+        if (!transcriptScrollRef || !transcriptBottomSentinelRef) {
+          return;
+        }
 
-      row.scrollIntoView({
-        block: "nearest",
-        inline: "nearest",
-        behavior: "auto",
+        scrollTranscriptToBottom("auto");
+        syncTranscriptNearBottom();
+
+        initialTranscriptAnchorVerificationRaf = requestAnimationFrame(() => {
+          initialTranscriptAnchorVerificationRaf = null;
+          if (!transcriptScrollRef) {
+            return;
+          }
+
+          if (isNearTranscriptBottom()) {
+            setIsTranscriptNearBottom(true);
+            setIsInitialTranscriptAnchorCompleted(true);
+            return;
+          }
+
+          if (attempt + 1 >= INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS) {
+            scrollTranscriptToBottom("auto");
+            const nearBottom = isNearTranscriptBottom();
+            setIsTranscriptNearBottom(nearBottom);
+            setIsInitialTranscriptAnchorCompleted(nearBottom);
+            return;
+          }
+
+          attemptAnchor(attempt + 1);
+        });
       });
-      setIsInitialTranscriptAnchorCompleted(true);
+    };
+
+    attemptAnchor(0);
+  });
+
+  createEffect(() => {
+    chatTranscriptItems();
+    transcriptVisibleCount();
+    runChatComposerOffsetPx();
+    transcriptLayoutRevision();
+
+    const wasNearBottomBeforeUpdate = isTranscriptNearBottom();
+
+    requestAnimationFrame(() => {
+      if (wasNearBottomBeforeUpdate) {
+        scrollTranscriptToBottom("auto");
+      }
+      syncTranscriptNearBottom();
     });
   });
+
+  createEffect(() => {
+    const hasTranscriptItems = chatTranscriptItems().length > 0;
+    const transcriptContent = transcriptContentRef;
+    if (
+      !hasTranscriptItems ||
+      !transcriptContent ||
+      typeof ResizeObserver === "undefined"
+    ) {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      setTranscriptLayoutRevision((current) => current + 1);
+      syncTranscriptNearBottom();
+    });
+    observer.observe(transcriptContent);
+
+    onCleanup(() => {
+      observer.disconnect();
+    });
+  });
+
+  const onTranscriptScroll = () => {
+    syncTranscriptNearBottom();
+  };
+
+  const jumpToLatestTranscript = () => {
+    scrollTranscriptToBottom("smooth");
+    requestAnimationFrame(() => {
+      syncTranscriptNearBottom();
+    });
+  };
 
   createEffect(() => {
     const composerElement = runChatComposerRef;
@@ -2906,9 +3030,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
 
   onCleanup(() => {
-    if (initialTranscriptAnchorRaf !== null) {
-      cancelAnimationFrame(initialTranscriptAnchorRaf);
-    }
+    cancelInitialTranscriptAnchorFrames();
+  });
+
+  const shouldShowJumpToBottom = createMemo(() => {
+    return chatTranscriptItems().length > 0 && !isTranscriptNearBottom();
   });
 
   return (
@@ -2930,6 +3056,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           }}
           aria-label="Conversation transcript"
           ref={transcriptScrollRef}
+          onScroll={onTranscriptScroll}
           style={{
             "padding-bottom": runChatComposerOffsetPx(),
           }}
@@ -2982,41 +3109,61 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               </section>
             }
           >
-            <RunChatTranscript
-              class="run-chat-transcript"
-              items={chatTranscriptItems()}
-              olderAffordance={
-                <Show when={transcriptHiddenMessageCount() > 0}>
-                  <button
-                    type="button"
-                    class="run-detail-load-older-button run-chat-load-older"
-                    onClick={() => {
-                      const container = transcriptScrollRef;
-                      const previousScrollHeight =
-                        container?.scrollHeight ?? null;
-                      setTranscriptVisibleCount(
-                        (current) => current + TRANSCRIPT_WINDOW_CHUNK,
-                      );
-                      if (!container || previousScrollHeight === null) {
-                        return;
-                      }
-
-                      requestAnimationFrame(() => {
-                        const nextScrollHeight = container.scrollHeight;
-                        const offset = nextScrollHeight - previousScrollHeight;
-                        if (offset > 0) {
-                          container.scrollTop += offset;
+            <div ref={transcriptContentRef}>
+              <RunChatTranscript
+                class="run-chat-transcript"
+                items={chatTranscriptItems()}
+                olderAffordance={
+                  <Show when={transcriptHiddenMessageCount() > 0}>
+                    <button
+                      type="button"
+                      class="run-detail-load-older-button run-chat-load-older"
+                      onClick={() => {
+                        const container = transcriptScrollRef;
+                        const previousScrollHeight =
+                          container?.scrollHeight ?? null;
+                        setTranscriptVisibleCount(
+                          (current) => current + TRANSCRIPT_WINDOW_CHUNK,
+                        );
+                        if (!container || previousScrollHeight === null) {
+                          return;
                         }
-                      });
-                    }}
-                  >
-                    {`Load older (${transcriptHiddenMessageCount()} hidden)`}
-                  </button>
-                </Show>
-              }
-            />
+
+                        requestAnimationFrame(() => {
+                          const nextScrollHeight = container.scrollHeight;
+                          const offset =
+                            nextScrollHeight - previousScrollHeight;
+                          if (offset > 0) {
+                            container.scrollTop += offset;
+                          }
+                        });
+                      }}
+                    >
+                      {`Load older (${transcriptHiddenMessageCount()} hidden)`}
+                    </button>
+                  </Show>
+                }
+              />
+              <div
+                ref={transcriptBottomSentinelRef}
+                class="run-chat-transcript__bottom-sentinel"
+                aria-hidden="true"
+              />
+            </div>
           </Show>
         </section>
+        <Show when={shouldShowJumpToBottom()}>
+          <div class="run-chat-transcript-jump-wrap">
+            <button
+              type="button"
+              class="run-chat-transcript-jump"
+              aria-label="Jump to latest chat content"
+              onClick={() => jumpToLatestTranscript()}
+            >
+              <AppIcon name="nav.down" size={14} aria-hidden="true" />
+            </button>
+          </div>
+        </Show>
         <div
           ref={runChatComposerRef}
           class="run-chat-composer-shell run-chat-composer-shell--pinned"
