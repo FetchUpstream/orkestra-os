@@ -42,7 +42,7 @@ describe("AboutModal", () => {
     openUrlMock.mockReset();
 
     getNameMock.mockResolvedValue("OrkestraOS");
-    getVersionMock.mockResolvedValue("0.1.0");
+    getVersionMock.mockResolvedValue("v0.0.12+105");
     getTauriVersionMock.mockResolvedValue("2.0.0");
     openUrlMock.mockResolvedValue();
 
@@ -70,7 +70,7 @@ describe("AboutModal", () => {
     ).toBeTruthy();
     expect(screen.getByText("Orkestra OS")).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getByText("Version 0.1.0")).toBeTruthy();
+      expect(screen.getByText("Version v0.0.12+105")).toBeTruthy();
     });
     expect(
       screen.getByText(
@@ -92,7 +92,7 @@ describe("AboutModal", () => {
     renderOpenModal();
 
     await waitFor(() => {
-      expect(screen.getByText("Version 0.1.0")).toBeTruthy();
+      expect(screen.getByText("Version v0.0.12+105")).toBeTruthy();
     });
 
     fireEvent.click(
@@ -106,7 +106,7 @@ describe("AboutModal", () => {
     const writeText = navigator.clipboard.writeText as ReturnType<typeof vi.fn>;
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(writeText.mock.calls[0]?.[0]).toContain("App: OrkestraOS");
-    expect(writeText.mock.calls[0]?.[0]).toContain("Version: 0.1.0");
+    expect(writeText.mock.calls[0]?.[0]).toContain("Version: v0.0.12+105");
     expect(writeText.mock.calls[0]?.[0]).toContain("Build:");
   });
 });

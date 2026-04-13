@@ -108,3 +108,6 @@ export const formatSupportDebugInfo = (metadata: AppSupportMetadata) => {
     .map(([label, value]) => `${label}: ${value}`)
     .join("\n");
 };
+
+export const formatAppVersionForDisplay = (version?: string | null) =>
+  normalize(version) ?? "unknown";

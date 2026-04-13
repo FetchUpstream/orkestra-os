@@ -20,6 +20,7 @@ import {
   type Component,
 } from "solid-js";
 import { buildProjectNavItem } from "../../app/lib/nav";
+import { formatAppVersionForDisplay } from "../../app/lib/appSupport";
 import type { Project } from "../../app/lib/projects";
 import appIcon from "../../assets/logo.svg";
 
@@ -37,7 +38,7 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
   const projectNavItems = createMemo(() =>
     (props.projects?.() ?? []).map(buildProjectNavItem),
   );
-  const versionLabel = createMemo(() => (version() ? `v${version()}` : "v--"));
+  const versionLabel = createMemo(() => formatAppVersionForDisplay(version()));
 
   const isProjectActive = (projectId: string) => {
     const params = new URLSearchParams(location.search);
@@ -205,11 +206,12 @@ const SidebarNav: Component<SidebarNavProps> = (props) => {
               >
                 <AppIcon name="project.settings" size={16} stroke={1.75} />
               </button>
-              <div class="flex w-full flex-col items-center gap-1">
+              <div class="flex w-full flex-col items-center gap-1 px-1.5 py-1.5">
                 <div
-                  class="text-base-content/40 max-w-full truncate px-1 text-center text-[10px] font-medium tracking-[0.14em] tabular-nums"
+                  class="text-base-content/45 w-full px-0.5 text-center text-[10px] leading-[1.2] font-medium tracking-[0.08em] whitespace-normal tabular-nums"
                   title={versionLabel()}
                   aria-label="Application version"
+                  style={{ "overflow-wrap": "anywhere" }}
                 >
                   {versionLabel()}
                 </div>
