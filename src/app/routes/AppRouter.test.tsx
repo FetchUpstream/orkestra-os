@@ -2091,6 +2091,23 @@ describe("app routing and shell", () => {
           ],
         });
       }
+      if (command === "get_task") {
+        return Promise.resolve({
+          id: "task-1",
+          title: "Draft onboarding flow",
+          status: "todo",
+          project_id: "p-1",
+          display_key: "ALP-1",
+          is_blocked: false,
+        });
+      }
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-1",
+          parents: [],
+          children: [],
+        });
+      }
       if (command === "list_task_runs") {
         return Promise.resolve([
           {
@@ -2142,9 +2159,11 @@ describe("app routing and shell", () => {
     await fireEvent.dragOver(inProgressSection, { dataTransfer });
     await fireEvent.drop(inProgressSection, { dataTransfer });
 
-    expect(
-      screen.getByRole("dialog", { name: "New run settings" }),
-    ).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: "New run settings" }),
+      ).toBeTruthy();
+    });
     expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
     expect(
       screen.getByRole("heading", { name: "In Progress (0)" }),
@@ -2152,9 +2171,11 @@ describe("app routing and shell", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
 
-    expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
-      id: "task-1",
-      input: { status: "doing", source_action: "board_manual_move" },
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
+        id: "task-1",
+        input: { status: "doing", source_action: "board_manual_move" },
+      });
     });
 
     resolveStatusUpdate?.({
@@ -4316,23 +4337,20 @@ describe("app routing and shell", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("dialog", { name: "New run settings" }),
-      ).toBeTruthy();
-    });
-
-    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("dialog", { name: "Run blocked" })).toBeTruthy();
+      const dialog = screen.getByRole("dialog", { name: "Task is blocked" });
+      expect(dialog).toBeTruthy();
       expect(
         screen.queryByRole("dialog", { name: "New run settings" }),
       ).toBeNull();
       expect(
-        screen.getByText(
-          "This task is blocked. Wait for ALP-1 - Schema, ALP-2 - Migrations, ALP-3 - Fixtures +1 more to complete first.",
+        within(dialog).getByText(
+          "This task cannot be started yet because it is blocked by:",
         ),
       ).toBeTruthy();
+      expect(within(dialog).getByText("ALP-1 - Schema")).toBeTruthy();
+      expect(within(dialog).getByText("ALP-2 - Migrations")).toBeTruthy();
+      expect(within(dialog).getByText("ALP-3 - Fixtures")).toBeTruthy();
+      expect(within(dialog).getByText("ALP-4 - Docs")).toBeTruthy();
     });
 
     const createRunCalls = invokeMock.mock.calls.filter(
@@ -4340,10 +4358,12 @@ describe("app routing and shell", () => {
     );
     expect(createRunCalls).toHaveLength(0);
 
-    await fireEvent.click(screen.getByRole("button", { name: "Got it" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Run blocked" })).toBeNull();
+      expect(
+        screen.queryByRole("dialog", { name: "Task is blocked" }),
+      ).toBeNull();
     });
   });
 

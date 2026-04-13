@@ -613,6 +613,20 @@ describe("useTaskDetailModel start run", () => {
       isBlocked: true,
       blockedByCount: 1,
     });
+    listTaskDependenciesMock.mockResolvedValue({
+      parents: [
+        {
+          id: "task-parent",
+          displayKey: "PRJ-1",
+          title: "Parent",
+          status: "doing",
+          targetRepositoryName: "Main",
+          targetRepositoryPath: "/repo/main",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      children: [],
+    });
 
     const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
       current: null,
@@ -632,6 +646,63 @@ describe("useTaskDetailModel start run", () => {
     expect(ref.current?.taskDependencyBadgeState()).toBe("blocked");
     expect(ref.current?.isBlockedRunWarningOpen()).toBe(true);
     expect(createRunMock).not.toHaveBeenCalled();
+  });
+
+  it("shows blocked warning instead of run settings when blockers remain", async () => {
+    getTaskMock.mockResolvedValue({
+      id: "task-1",
+      projectId: "project-1",
+      title: "Task",
+      description: "Desc",
+      implementationGuide: "Guide",
+      status: "todo",
+      isBlocked: true,
+      blockedByCount: 1,
+    });
+    listTaskDependenciesMock.mockResolvedValue({
+      parents: [
+        {
+          id: "task-parent",
+          displayKey: "PRJ-1",
+          title: "Parent",
+          status: "doing",
+          targetRepositoryName: "Main",
+          targetRepositoryPath: "/repo/main",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      children: [],
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    ref.current?.onOpenRunSettingsModal();
+
+    await waitFor(() => {
+      expect(ref.current?.isBlockedRunWarningOpen()).toBe(true);
+      expect(ref.current?.isRunSettingsModalOpen()).toBe(false);
+      expect(ref.current?.blockingParentTasks()).toEqual([
+        {
+          id: "task-parent",
+          displayKey: "PRJ-1",
+          title: "Parent",
+          status: "doing",
+          targetRepositoryName: "Main",
+          targetRepositoryPath: "/repo/main",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+    });
   });
 
   it("shows ready state and allows creating run when dependencies are resolved", async () => {
@@ -982,6 +1053,20 @@ describe("useTaskDetailModel start run", () => {
       isBlocked: true,
       blockedByCount: 1,
     });
+    listTaskDependenciesMock.mockResolvedValue({
+      parents: [
+        {
+          id: "task-parent",
+          displayKey: "PRJ-1",
+          title: "Parent",
+          status: "doing",
+          targetRepositoryName: "Main",
+          targetRepositoryPath: "/repo/main",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      children: [],
+    });
 
     const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
       current: null,
@@ -998,6 +1083,7 @@ describe("useTaskDetailModel start run", () => {
     await ref.current?.onStartRun("run-1");
 
     expect(startRunOpenCodeMock).not.toHaveBeenCalled();
+    expect(ref.current?.isBlockedRunWarningOpen()).toBe(true);
   });
 
   it("reconciles deleted runs across local run list and per-run ui state", async () => {

@@ -12,6 +12,7 @@
 
 import type {
   Task,
+  TaskDependencies,
   TaskDependencyTask,
   TaskStatus,
 } from "../../../app/lib/tasks";
@@ -50,6 +51,13 @@ export const dependencyDisplayLabel = (dependencyTask: TaskDependencyTask) => {
   const key = dependencyTask.displayKey.trim();
   return key ? `${key} - ${dependencyTask.title}` : dependencyTask.title;
 };
+
+export const getBlockingParentTasks = (
+  dependencies?: TaskDependencies | null,
+): TaskDependencyTask[] =>
+  (dependencies?.parents ?? []).filter(
+    (dependencyTask) => dependencyTask.status !== "done",
+  );
 
 type DependencyCandidateLike = {
   id: string;

@@ -17,20 +17,30 @@ import { useBoardModel } from "../useBoardModel";
 const {
   listProjectsMock,
   getProjectMock,
+  getTaskMock,
   listProjectTasksMock,
+  listTaskDependenciesMock,
   searchProjectTasksMock,
+  setTaskStatusMock,
+  createRunMock,
   listTaskRunsMock,
   listTaskRunSourceBranchesMock,
+  startRunOpenCodeMock,
   getRunSelectionOptionsWithCacheMock,
   readRunSelectionOptionsCacheMock,
   subscribeToRunDeletedMock,
 } = vi.hoisted(() => ({
   listProjectsMock: vi.fn(),
   getProjectMock: vi.fn(),
+  getTaskMock: vi.fn(),
   listProjectTasksMock: vi.fn(),
+  listTaskDependenciesMock: vi.fn(),
   searchProjectTasksMock: vi.fn(),
+  setTaskStatusMock: vi.fn(),
+  createRunMock: vi.fn(),
   listTaskRunsMock: vi.fn(),
   listTaskRunSourceBranchesMock: vi.fn(),
+  startRunOpenCodeMock: vi.fn(),
   getRunSelectionOptionsWithCacheMock: vi.fn(),
   readRunSelectionOptionsCacheMock: vi.fn(),
   subscribeToRunDeletedMock: vi.fn(),
@@ -50,16 +60,18 @@ vi.mock("../../../../app/lib/projects", () => ({
 }));
 
 vi.mock("../../../../app/lib/tasks", () => ({
+  getTask: getTaskMock,
   listProjectTasks: listProjectTasksMock,
+  listTaskDependencies: listTaskDependenciesMock,
   searchProjectTasks: searchProjectTasksMock,
-  setTaskStatus: vi.fn(),
+  setTaskStatus: setTaskStatusMock,
 }));
 
 vi.mock("../../../../app/lib/runs", () => ({
-  createRun: vi.fn(),
+  createRun: createRunMock,
   listTaskRuns: listTaskRunsMock,
   listTaskRunSourceBranches: listTaskRunSourceBranchesMock,
-  startRunOpenCode: vi.fn(),
+  startRunOpenCode: startRunOpenCodeMock,
 }));
 
 vi.mock("../../../../app/lib/runSelectionOptionsCache", () => ({
@@ -86,10 +98,15 @@ describe("useBoardModel run settings defaults", () => {
   beforeEach(() => {
     listProjectsMock.mockReset();
     getProjectMock.mockReset();
+    getTaskMock.mockReset();
     listProjectTasksMock.mockReset();
+    listTaskDependenciesMock.mockReset();
     searchProjectTasksMock.mockReset();
+    setTaskStatusMock.mockReset();
+    createRunMock.mockReset();
     listTaskRunsMock.mockReset();
     listTaskRunSourceBranchesMock.mockReset();
+    startRunOpenCodeMock.mockReset();
     getRunSelectionOptionsWithCacheMock.mockReset();
     readRunSelectionOptionsCacheMock.mockReset();
     subscribeToRunDeletedMock.mockReset();
@@ -129,6 +146,14 @@ describe("useBoardModel run settings defaults", () => {
         projectId: "project-1",
       },
     ]);
+    getTaskMock.mockResolvedValue({
+      id: "task-1",
+      title: "Task",
+      status: "todo",
+      projectId: "project-1",
+      isBlocked: false,
+    });
+    listTaskDependenciesMock.mockResolvedValue({ parents: [], children: [] });
     searchProjectTasksMock.mockResolvedValue([]);
     listTaskRunsMock.mockResolvedValue([]);
     listTaskRunSourceBranchesMock.mockResolvedValue([
@@ -197,6 +222,114 @@ describe("useBoardModel run settings defaults", () => {
       expect(ref.current?.selectedRunProviderId()).toBe("provider-1");
       expect(ref.current?.selectedRunModelId()).toBe("model-1");
     });
+  });
+
+  it("shows blocked task modal instead of run settings when blockers remain", async () => {
+    getTaskMock.mockResolvedValue({
+      id: "task-1",
+      title: "Task",
+      status: "todo",
+      projectId: "project-1",
+      isBlocked: true,
+    });
+    listTaskDependenciesMock.mockResolvedValue({
+      parents: [
+        {
+          id: "task-2",
+          displayKey: "PRJ-2",
+          title: "Finalize schema",
+          status: "doing",
+        },
+      ],
+      children: [],
+    });
+
+    const ref: { current: ReturnType<typeof useBoardModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useBoardModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().todo.length).toBe(1);
+    });
+
+    ref.current?.onRequestMoveTaskToInProgress("task-1");
+
+    await waitFor(() => {
+      expect(ref.current?.isBlockedTaskModalOpen()).toBe(true);
+      expect(ref.current?.isRunSettingsModalOpen()).toBe(false);
+      expect(ref.current?.blockingStartTasks()).toEqual([
+        {
+          id: "task-2",
+          displayKey: "PRJ-2",
+          title: "Finalize schema",
+          status: "doing",
+        },
+      ]);
+    });
+  });
+
+  it("rechecks blockers before confirm and avoids moving blocked work", async () => {
+    getTaskMock
+      .mockResolvedValueOnce({
+        id: "task-1",
+        title: "Task",
+        status: "todo",
+        projectId: "project-1",
+        isBlocked: false,
+      })
+      .mockResolvedValueOnce({
+        id: "task-1",
+        title: "Task",
+        status: "todo",
+        projectId: "project-1",
+        isBlocked: true,
+      });
+    listTaskDependenciesMock
+      .mockResolvedValueOnce({ parents: [], children: [] })
+      .mockResolvedValueOnce({
+        parents: [
+          {
+            id: "task-2",
+            displayKey: "PRJ-2",
+            title: "Finalize schema",
+            status: "doing",
+          },
+        ],
+        children: [],
+      });
+
+    const ref: { current: ReturnType<typeof useBoardModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useBoardModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().todo.length).toBe(1);
+    });
+
+    ref.current?.onRequestMoveTaskToInProgress("task-1");
+
+    await waitFor(() => {
+      expect(ref.current?.isRunSettingsModalOpen()).toBe(true);
+    });
+
+    await ref.current?.onConfirmMoveTaskToInProgress();
+
+    await waitFor(() => {
+      expect(ref.current?.isBlockedTaskModalOpen()).toBe(true);
+      expect(ref.current?.isRunSettingsModalOpen()).toBe(false);
+    });
+
+    expect(setTaskStatusMock).not.toHaveBeenCalled();
+    expect(createRunMock).not.toHaveBeenCalled();
+    expect(startRunOpenCodeMock).not.toHaveBeenCalled();
   });
 
   it("removes deleted run mini-cards from active task surfaces", async () => {

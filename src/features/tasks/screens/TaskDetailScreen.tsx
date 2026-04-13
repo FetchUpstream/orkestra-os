@@ -15,6 +15,7 @@ import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
 import { AppIcon } from "../../../components/ui/icons";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
+import BlockedTaskModal from "../components/BlockedTaskModal";
 import {
   TaskDependenciesSidebar,
   TaskLinkDependencyModal,
@@ -27,7 +28,6 @@ import {
 } from "../components/TaskDetailStates";
 import { useTaskDetailModel } from "../model/useTaskDetailModel";
 import {
-  dependencyDisplayLabel,
   formatDateTime,
   formatRunStatus,
   repositoryLabel,
@@ -778,60 +778,11 @@ const TaskDetailScreen: Component = () => {
         setShowDoneLinkCandidates={setShowDoneLinkCandidates}
         onLinkDependency={onLinkDependency}
       />
-      <Show when={isBlockedRunWarningOpen()}>
-        <div
-          class="projects-modal-backdrop"
-          role="presentation"
-          onClick={() => setIsBlockedRunWarningOpen(false)}
-        >
-          <section
-            class="projects-modal task-create-dependency-modal border-base-content/15 bg-base-200 rounded-none border"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="task-blocked-run-modal-title"
-            aria-describedby="task-blocked-run-modal-copy"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div class="border-base-content/10 border-b pb-3">
-              <h2
-                id="task-blocked-run-modal-title"
-                class="task-delete-modal-title"
-              >
-                Run blocked
-              </h2>
-            </div>
-            <p
-              id="task-blocked-run-modal-copy"
-              class="project-placeholder-text task-delete-modal-copy"
-            >
-              This task is blocked. Wait for{" "}
-              {(() => {
-                const blockers = blockingParentTasks().map((dependencyTask) =>
-                  dependencyDisplayLabel(dependencyTask),
-                );
-                const visible = blockers.slice(0, 3);
-                const hiddenCount = blockers.length - visible.length;
-                const blockerCopy =
-                  visible.length > 0
-                    ? visible.join(", ") +
-                      (hiddenCount > 0 ? ` +${hiddenCount} more` : "")
-                    : "prerequisite tasks";
-                return blockerCopy;
-              })()}{" "}
-              to complete first.
-            </p>
-            <div class="task-delete-modal-actions">
-              <button
-                type="button"
-                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
-                onClick={() => setIsBlockedRunWarningOpen(false)}
-              >
-                Got it
-              </button>
-            </div>
-          </section>
-        </div>
-      </Show>
+      <BlockedTaskModal
+        isOpen={isBlockedRunWarningOpen}
+        blockingTasks={blockingParentTasks}
+        onClose={() => setIsBlockedRunWarningOpen(false)}
+      />
       <RunSettingsModal
         isOpen={isRunSettingsModalOpen}
         isSubmitting={isCreatingRun}

@@ -35,6 +35,7 @@ import {
   setTaskStatus,
   updateTask,
   type TaskDependencies,
+  type TaskDependencyTask,
   type Task,
   type TaskStatus,
 } from "../../../app/lib/tasks";
@@ -62,6 +63,7 @@ import {
 import {
   filterDependencyCandidates,
   getActionErrorMessage,
+  getBlockingParentTasks,
   getValidTransitionTargets,
   isDependencyCandidateLinkable,
 } from "../utils/taskDetail";
@@ -368,9 +370,7 @@ export const useTaskDetailModel = () => {
     return getValidTransitionTargets(taskValue.status);
   });
   const blockingParentTasks = createMemo(() =>
-    (dependencies()?.parents || []).filter(
-      (dependencyTask) => dependencyTask.status !== "done",
-    ),
+    getBlockingParentTasks(dependencies()),
   );
   const isBlocked = createMemo(() => {
     const taskValue = task();
@@ -568,17 +568,53 @@ export const useTaskDetailModel = () => {
     });
   });
 
-  const refreshDependencies = async (taskId: string) => {
+  const refreshDependencies = async (
+    taskId: string,
+  ): Promise<TaskDependencies | null> => {
     setIsLoadingDependencies(true);
     setDependenciesError("");
     try {
       const loadedDependencies = await listTaskDependencies(taskId);
       setDependencies(loadedDependencies);
+      return loadedDependencies;
     } catch {
       setDependenciesError("Failed to load dependencies.");
+      return null;
     } finally {
       setIsLoadingDependencies(false);
     }
+  };
+
+  const syncTaskBlockedState = (taskId: string, isBlockedNow: boolean) => {
+    setTask((currentTask) =>
+      currentTask && currentTask.id === taskId
+        ? { ...currentTask, isBlocked: isBlockedNow }
+        : currentTask,
+    );
+  };
+
+  const revalidateBlockingParentTasks = async (
+    taskId: string,
+  ): Promise<TaskDependencyTask[]> => {
+    const [freshTask, loadedDependencies] = await Promise.all([
+      getTask(taskId),
+      refreshDependencies(taskId),
+    ]);
+    setTask(freshTask);
+    if (!loadedDependencies) {
+      throw new Error("Failed to verify task dependencies.");
+    }
+
+    const unresolvedParents = getBlockingParentTasks(loadedDependencies);
+    const isBlockedNow = freshTask.isBlocked ?? unresolvedParents.length > 0;
+    syncTaskBlockedState(taskId, isBlockedNow);
+    return isBlockedNow ? unresolvedParents : [];
+  };
+
+  const showBlockedTaskModal = (taskId: string) => {
+    syncTaskBlockedState(taskId, true);
+    setIsRunSettingsModalOpen(false);
+    setIsBlockedRunWarningOpen(true);
   };
 
   const refreshRuns = async (taskId: string) => {
@@ -1144,9 +1180,19 @@ export const useTaskDetailModel = () => {
   const onCreateRun = async (): Promise<Run | null> => {
     const taskValue = task();
     if (!taskValue) return null;
-    if (isBlocked()) {
-      setIsRunSettingsModalOpen(false);
-      setIsBlockedRunWarningOpen(true);
+    try {
+      const blockers = await revalidateBlockingParentTasks(taskValue.id);
+      if (blockers.length > 0) {
+        showBlockedTaskModal(taskValue.id);
+        return null;
+      }
+    } catch (mutationError) {
+      setActionError(
+        getActionErrorMessage(
+          "Failed to verify blocking tasks.",
+          mutationError,
+        ),
+      );
       return null;
     }
 
@@ -1205,8 +1251,32 @@ export const useTaskDetailModel = () => {
       void refreshRunSourceBranches(params.taskId);
     };
 
+    const verifyTaskCanStart = async () => {
+      try {
+        const blockers = await revalidateBlockingParentTasks(params.taskId);
+        if (blockers.length > 0) {
+          showBlockedTaskModal(params.taskId);
+          return false;
+        }
+
+        return true;
+      } catch (mutationError) {
+        setActionError(
+          getActionErrorMessage(
+            "Failed to verify blocking tasks.",
+            mutationError,
+          ),
+        );
+        return false;
+      }
+    };
+
     if (openCodeDependency.state() === "available") {
-      openRunSettingsModal();
+      void (async () => {
+        if (await verifyTaskCanStart()) {
+          openRunSettingsModal();
+        }
+      })();
       return;
     }
 
@@ -1217,7 +1287,9 @@ export const useTaskDetailModel = () => {
         return;
       }
 
-      openRunSettingsModal();
+      if (await verifyTaskCanStart()) {
+        openRunSettingsModal();
+      }
     })();
   };
 
@@ -1263,11 +1335,26 @@ export const useTaskDetailModel = () => {
     const taskValue = task();
     if (
       !taskValue ||
-      isBlocked() ||
       !runId ||
       isAnyRunStarting() ||
       deletingRunId() === runId
     ) {
+      return;
+    }
+
+    try {
+      const blockers = await revalidateBlockingParentTasks(taskValue.id);
+      if (blockers.length > 0) {
+        showBlockedTaskModal(taskValue.id);
+        return;
+      }
+    } catch (mutationError) {
+      setActionError(
+        getActionErrorMessage(
+          "Failed to verify blocking tasks.",
+          mutationError,
+        ),
+      );
       return;
     }
 

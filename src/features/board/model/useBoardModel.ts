@@ -32,10 +32,13 @@ import { subscribeToRunStateChanged } from "../../../app/lib/runStateEvents";
 import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
 import { subscribeToRunDeleted } from "../../../app/lib/runDeletedEvents";
 import {
+  getTask,
   listProjectTasks,
+  listTaskDependencies,
   searchProjectTasks,
   setTaskStatus,
   type Task,
+  type TaskDependencyTask,
   type TaskStatus,
 } from "../../../app/lib/tasks";
 import {
@@ -63,7 +66,11 @@ import {
   getDefaultRunSourceBranch,
   isRunSourceBranchAvailable,
 } from "../../runs/utils/sourceBranches";
-import { canTransitionStatus } from "../../tasks/utils/taskDetail";
+import {
+  canTransitionStatus,
+  getActionErrorMessage,
+  getBlockingParentTasks,
+} from "../../tasks/utils/taskDetail";
 import { groupTasksByStatus } from "../utils/board";
 const ACTIVE_RUN_STATUSES = new Set([
   "queued",
@@ -320,6 +327,11 @@ export const useBoardModel = () => {
   const [error, setError] = createSignal("");
   const [isRunSettingsModalOpen, setIsRunSettingsModalOpen] =
     createSignal(false);
+  const [isBlockedTaskModalOpen, setIsBlockedTaskModalOpen] =
+    createSignal(false);
+  const [blockingStartTasks, setBlockingStartTasks] = createSignal<
+    TaskDependencyTask[]
+  >([]);
   const [pendingInProgressTaskId, setPendingInProgressTaskId] =
     createSignal("");
   const [runAgentOptions, setRunAgentOptions] = createSignal<
@@ -375,6 +387,47 @@ export const useBoardModel = () => {
     const nextVersion = (taskRunRequestVersions[taskId] ?? 0) + 1;
     taskRunRequestVersions[taskId] = nextVersion;
     return nextVersion;
+  };
+
+  const syncTaskBlockedState = (taskId: string, isBlockedNow: boolean) => {
+    setTasks((currentTasks) =>
+      currentTasks.map((task) =>
+        task.id === taskId ? { ...task, isBlocked: isBlockedNow } : task,
+      ),
+    );
+  };
+
+  const syncTaskSnapshot = (taskId: string, freshTask: Task) => {
+    setTasks((currentTasks) =>
+      currentTasks.map((task) =>
+        task.id === taskId ? { ...task, ...freshTask } : task,
+      ),
+    );
+  };
+
+  const revalidateBlockingParentTasks = async (
+    taskId: string,
+  ): Promise<TaskDependencyTask[]> => {
+    const [freshTask, dependencies] = await Promise.all([
+      getTask(taskId),
+      listTaskDependencies(taskId),
+    ]);
+    const unresolvedParents = getBlockingParentTasks(dependencies);
+    const isBlockedNow = freshTask.isBlocked ?? unresolvedParents.length > 0;
+    syncTaskSnapshot(taskId, freshTask);
+    syncTaskBlockedState(taskId, isBlockedNow);
+    return isBlockedNow ? unresolvedParents : [];
+  };
+
+  const showBlockedTaskModal = (
+    taskId: string,
+    blockingTasks: TaskDependencyTask[],
+  ) => {
+    syncTaskBlockedState(taskId, true);
+    setBlockingStartTasks(blockingTasks);
+    setIsRunSettingsModalOpen(false);
+    setPendingInProgressTaskId("");
+    setIsBlockedTaskModalOpen(true);
   };
 
   const isTaskRunRequestCurrent = (taskId: string, requestVersion: number) => {
@@ -1086,8 +1139,32 @@ export const useBoardModel = () => {
       void refreshRunSourceBranches(taskId);
     };
 
+    const verifyTaskCanStart = async () => {
+      try {
+        const blockers = await revalidateBlockingParentTasks(taskId);
+        if (blockers.length > 0) {
+          showBlockedTaskModal(taskId, blockers);
+          return false;
+        }
+
+        return true;
+      } catch (mutationError) {
+        setError(
+          getActionErrorMessage(
+            "Failed to verify blocking tasks.",
+            mutationError,
+          ),
+        );
+        return false;
+      }
+    };
+
     if (openCodeDependency.state() === "available") {
-      openRunSettingsModal();
+      void (async () => {
+        if (await verifyTaskCanStart()) {
+          openRunSettingsModal();
+        }
+      })();
       return;
     }
 
@@ -1098,7 +1175,9 @@ export const useBoardModel = () => {
         return;
       }
 
-      openRunSettingsModal();
+      if (await verifyTaskCanStart()) {
+        openRunSettingsModal();
+      }
     })();
   };
 
@@ -1111,9 +1190,30 @@ export const useBoardModel = () => {
     setPendingInProgressTaskId("");
   };
 
+  const onCloseBlockedTaskModal = () => {
+    setIsBlockedTaskModalOpen(false);
+    setBlockingStartTasks([]);
+  };
+
   const onConfirmMoveTaskToInProgress = async () => {
     const taskId = pendingInProgressTaskId();
     if (!taskId || isTaskStatusUpdating(taskId)) return;
+    try {
+      const blockers = await revalidateBlockingParentTasks(taskId);
+      if (blockers.length > 0) {
+        showBlockedTaskModal(taskId, blockers);
+        return;
+      }
+    } catch (mutationError) {
+      setError(
+        getActionErrorMessage(
+          "Failed to verify blocking tasks.",
+          mutationError,
+        ),
+      );
+      return;
+    }
+
     const statusUpdated = await moveTaskToStatus(taskId, "doing");
     if (statusUpdated) {
       try {
@@ -1329,6 +1429,8 @@ export const useBoardModel = () => {
     isSearchLoading,
     searchMatchCount,
     isRunSettingsModalOpen,
+    isBlockedTaskModalOpen,
+    blockingStartTasks,
     hasRunSelectionOptions,
     isLoadingRunSelectionOptions,
     runSelectionOptionsError,
@@ -1357,6 +1459,7 @@ export const useBoardModel = () => {
     setSelectedRunSourceBranch,
     onRequestMoveTaskToInProgress,
     onCancelMoveTaskToInProgress,
+    onCloseBlockedTaskModal,
     onConfirmMoveTaskToInProgress,
   };
 };

@@ -19,6 +19,7 @@ import {
 } from "solid-js";
 import { A, useLocation } from "@solidjs/router";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
+import BlockedTaskModal from "../../tasks/components/BlockedTaskModal";
 import BoardTaskCard from "../components/BoardTaskCard";
 import { useBoardModel } from "../model/useBoardModel";
 import { BOARD_COLUMNS } from "../utils/board";
@@ -276,6 +277,11 @@ const BoardScreen: Component = () => {
         setSelectedRunSourceBranch={model.setSelectedRunSourceBranch}
         onCancel={model.onCancelMoveTaskToInProgress}
         onConfirm={model.onConfirmMoveTaskToInProgress}
+      />
+      <BlockedTaskModal
+        isOpen={model.isBlockedTaskModalOpen}
+        blockingTasks={model.blockingStartTasks}
+        onClose={model.onCloseBlockedTaskModal}
       />
     </div>
   );
