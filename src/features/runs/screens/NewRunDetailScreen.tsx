@@ -22,6 +22,7 @@ import {
   type Component,
 } from "solid-js";
 import type { RunState } from "../../../app/lib/runs";
+import ActionWarningModal from "../../tasks/components/ActionWarningModal";
 import NewRunChatWorkspace from "../components/NewRunChatWorkspace";
 import RunDiffDrawerPanel from "../components/RunDiffDrawerPanel";
 import { useRunDetailModel } from "../model/useRunDetailModel";
@@ -1500,7 +1501,7 @@ const NewRunDetailScreen: Component = () => {
                                     disabled={isMergeDisabled()}
                                     title={mergeDisabledReason() || undefined}
                                     onClick={() => {
-                                      void model.git.mergeWorktreeIntoSource();
+                                      void model.git.requestMergeWorktreeIntoSource();
                                     }}
                                   >
                                     Merge into {baseBranchName()}
@@ -1689,6 +1690,15 @@ const NewRunDetailScreen: Component = () => {
           </Show>
         </Show>
       </Show>
+      <ActionWarningModal
+        isOpen={model.git.isMergeWarningOpen}
+        title="Merge this run?"
+        body="This will mark this run as complete and reject the other open runs on this task."
+        confirmLabel="Merge run"
+        isConfirming={model.git.isMergePending}
+        onCancel={model.git.cancelMergeWorktreeIntoSourceWarning}
+        onConfirm={model.git.confirmMergeWorktreeIntoSourceWarning}
+      />
     </div>
   );
 };

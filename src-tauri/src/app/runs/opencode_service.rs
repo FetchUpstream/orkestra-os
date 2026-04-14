@@ -2318,7 +2318,7 @@ impl RunsOpenCodeService {
     }
 
     fn unsupported_reason_for_run_status(status: &str) -> Option<String> {
-        if matches!(status, "complete" | "failed" | "cancelled") {
+        if matches!(status, "complete" | "failed" | "cancelled" | "rejected") {
             return Some(format!("run status '{}' is not supported", status));
         }
 
@@ -2823,7 +2823,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
     }
 
     fn is_terminal_run_status(status: &str) -> bool {
-        matches!(status, "complete" | "failed" | "cancelled")
+        matches!(status, "complete" | "failed" | "cancelled" | "rejected")
     }
 
     fn cleanup_last_interaction_at(
@@ -2866,7 +2866,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             match snapshot.run_status_str() {
                 "idle" => summary.idle_handles += 1,
                 "queued" | "preparing" | "in_progress" => summary.in_progress_handles += 1,
-                "complete" | "failed" | "cancelled" => {
+                "complete" | "failed" | "cancelled" | "rejected" => {
                     summary.completed_handles += 1;
                     summary.completed_persistent_handles.push(format!(
                         "{}(status={}, state={}, viewers={}, ops={}, shutdown_requested={}, retention_hint={})",

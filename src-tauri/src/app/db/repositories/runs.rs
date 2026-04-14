@@ -24,7 +24,7 @@ static ACTIVE_RUN_STATUSES_SQL: LazyLock<String> = LazyLock::new(|| {
         .collect::<Vec<_>>()
         .join(", ")
 });
-const TERMINAL_RUN_STATUSES: [&str; 3] = ["complete", "failed", "cancelled"];
+const TERMINAL_RUN_STATUSES: [&str; 4] = ["complete", "failed", "cancelled", "rejected"];
 
 pub(crate) fn is_active_run_status(status: &str) -> bool {
     ACTIVE_RUN_STATUSES.contains(&status)
@@ -790,6 +790,105 @@ impl RunsRepository {
             .runs_db("committing completion transaction")?;
 
         Ok(run_update.rows_affected() > 0 || task_update.rows_affected() > 0)
+    }
+
+    pub async fn finalize_run_completion_and_reject_siblings(
+        &self,
+        run_id: &str,
+        finished_at: &str,
+    ) -> Result<bool, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .runs_db("starting merge completion transaction")?;
+
+        let run_update_query = format!(
+            "UPDATE runs
+             SET status = 'complete',
+                 run_state = NULL,
+                 finished_at = COALESCE(finished_at, ?)
+             WHERE id = ?
+               AND status IN ({})",
+            ACTIVE_RUN_STATUSES_SQL.as_str(),
+        );
+
+        let run_update = sqlx::query(&run_update_query)
+            .bind(finished_at)
+            .bind(run_id)
+            .execute(&mut *tx)
+            .await
+            .runs_db("marking merged run complete")?;
+
+        if run_update.rows_affected() == 0 {
+            tx.commit()
+                .await
+                .runs_db("committing merge completion transaction")?;
+            return Ok(false);
+        }
+
+        let sibling_update_query = format!(
+            "UPDATE runs
+             SET status = 'rejected',
+                 run_state = NULL,
+                 finished_at = COALESCE(finished_at, ?)
+             WHERE task_id = (SELECT task_id FROM runs WHERE id = ?)
+               AND id != ?
+               AND status IN ({})",
+            ACTIVE_RUN_STATUSES_SQL.as_str(),
+        );
+
+        sqlx::query(&sibling_update_query)
+            .bind(finished_at)
+            .bind(run_id)
+            .bind(run_id)
+            .execute(&mut *tx)
+            .await
+            .runs_db("rejecting sibling runs")?;
+
+        let task_update = sqlx::query(
+            "UPDATE tasks
+             SET status = 'done',
+                 updated_at = ?
+             WHERE id = (SELECT task_id FROM runs WHERE id = ?)
+               AND status != 'done'",
+        )
+        .bind(finished_at)
+        .bind(run_id)
+        .execute(&mut *tx)
+        .await
+        .runs_db("marking task done after merge")?;
+
+        tx.commit()
+            .await
+            .runs_db("committing merge completion transaction")?;
+
+        Ok(run_update.rows_affected() > 0 || task_update.rows_affected() > 0)
+    }
+
+    pub async fn cancel_task_active_runs(
+        &self,
+        task_id: &str,
+        finished_at: &str,
+    ) -> Result<u64, AppError> {
+        let query = format!(
+            "UPDATE runs
+             SET status = 'cancelled',
+                 run_state = NULL,
+                 finished_at = COALESCE(finished_at, ?)
+             WHERE task_id = ?
+               AND status IN ({})",
+            ACTIVE_RUN_STATUSES_SQL.as_str(),
+        );
+
+        let result = sqlx::query(&query)
+            .bind(finished_at)
+            .bind(task_id)
+            .execute(&self.pool)
+            .await
+            .runs_db("cancelling task active runs")?;
+
+        Ok(result.rows_affected())
     }
 
     pub async fn transition_task_doing_to_review_on_session_idle(

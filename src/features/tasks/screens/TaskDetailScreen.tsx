@@ -15,6 +15,7 @@ import { A } from "@solidjs/router";
 import type { TaskStatus } from "../../../app/lib/tasks";
 import { AppIcon } from "../../../components/ui/icons";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
+import ActionWarningModal from "../components/ActionWarningModal";
 import BlockedTaskModal from "../components/BlockedTaskModal";
 import {
   TaskDependenciesSidebar,
@@ -93,6 +94,9 @@ const getRunSummaryFallback = (status: string) => {
   if (status === "failed") {
     return "Execution stopped after an error during run stages.";
   }
+  if (status === "rejected") {
+    return "Execution was closed because another run on this task was merged.";
+  }
   return "Execution was stopped before completion.";
 };
 
@@ -159,6 +163,7 @@ const TaskDetailScreen: Component = () => {
     isMoving,
     isDeleting,
     isDeleteModalOpen,
+    isDoneStatusWarningOpen,
     isCreateDependencyModalOpen,
     createDependencyDirection,
     createDependencyTitle,
@@ -201,6 +206,9 @@ const TaskDetailScreen: Component = () => {
     onEditImplementationGuideInput,
     flushTaskDetailsAutosave,
     onSetStatus,
+    onRequestSetStatus,
+    onCancelDoneStatusWarning,
+    onConfirmDoneStatusWarning,
     onMoveTask,
     onRequestDeleteTask,
     onCancelDeleteTask,
@@ -237,7 +245,7 @@ const TaskDetailScreen: Component = () => {
           onToggleTransitionMenu: () =>
             setIsTransitionMenuOpen((current) => !current),
           onCloseTransitionMenu: () => setIsTransitionMenuOpen(false),
-          onSetStatus,
+          onSetStatus: onRequestSetStatus,
           onRequestDeleteTask,
         },
       }),
@@ -810,6 +818,15 @@ const TaskDetailScreen: Component = () => {
         setSelectedRunSourceBranch={setSelectedRunSourceBranch}
         onCancel={onCancelRunSettingsModal}
         onConfirm={onConfirmCreateRun}
+      />
+      <ActionWarningModal
+        isOpen={isDoneStatusWarningOpen}
+        title="Mark task as done?"
+        body="This task will be marked done and its remaining runs will be cancelled."
+        confirmLabel="Mark as done"
+        isConfirming={isChangingStatus}
+        onCancel={onCancelDoneStatusWarning}
+        onConfirm={onConfirmDoneStatusWarning}
       />
     </>
   );

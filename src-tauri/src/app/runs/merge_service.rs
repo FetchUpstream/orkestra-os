@@ -16,7 +16,7 @@ use crate::app::runs::dto::{
 };
 use crate::app::runs::run_state_service::RunStateService;
 use crate::app::runs::service::RunsService;
-use crate::app::runs::status_transition_service::RunStatusTransitionService;
+use crate::app::runs::task_completion_service::RunTaskCompletionService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
 use git2::{
     build::CheckoutBuilder, AnnotatedCommit, BranchType, ErrorCode, Repository, RepositoryState,
@@ -30,7 +30,7 @@ use std::process::Command;
 pub struct RunsMergeService {
     runs_service: RunsService,
     run_state_service: RunStateService,
-    run_status_transition_service: RunStatusTransitionService,
+    run_task_completion_service: RunTaskCompletionService,
     worktrees_root: PathBuf,
 }
 
@@ -61,7 +61,6 @@ impl MergeState {
 
 struct MergeContext {
     run_id: String,
-    task_id: String,
     run_status: String,
     source_branch: String,
     worktree_branch: String,
@@ -73,13 +72,13 @@ impl RunsMergeService {
     pub fn new(
         runs_service: RunsService,
         run_state_service: RunStateService,
-        run_status_transition_service: RunStatusTransitionService,
+        run_task_completion_service: RunTaskCompletionService,
         app_data_dir: PathBuf,
     ) -> Self {
         Self {
             runs_service,
             run_state_service,
-            run_status_transition_service,
+            run_task_completion_service,
             worktrees_root: app_data_dir.join("worktrees"),
         }
     }
@@ -247,9 +246,8 @@ impl RunsMergeService {
             }
         }
 
-        let _ = self
-            .run_status_transition_service
-            .handle_run_merged(&context.task_id, run_id)
+        self.run_task_completion_service
+            .resolve_after_run_merge(run_id)
             .await?;
         let mut status = self.compute_status(&context)?;
         status.state = MergeState::Merged.as_str().to_string();
@@ -290,7 +288,6 @@ impl RunsMergeService {
 
         Ok(MergeContext {
             run_id: run.id,
-            task_id: run.task_id,
             run_status: run.status,
             source_branch,
             worktree_branch,
@@ -652,7 +649,7 @@ impl RunsMergeService {
 
         if has_dirty_changes {
             Ok(Some(
-                "Conflicts Detected! We have sent the details of the conflicts to your agent to be resolved"
+                "Please clean the worktree before rebasing or merging this run."
                     .to_string(),
             ))
         } else {
@@ -740,11 +737,18 @@ impl RunsMergeService {
 mod tests {
     use super::RunsMergeService;
     use crate::app::db::migrations::run_migrations;
+    use crate::app::db::repositories::projects::ProjectsRepository;
     use crate::app::db::repositories::runs::RunsRepository;
+    use crate::app::db::repositories::tasks::TasksRepository;
     use crate::app::errors::AppError;
+    use crate::app::projects::search_service::ProjectFileSearchService;
+    use crate::app::projects::service::ProjectsService;
+    use crate::app::runs::opencode_service::RunsOpenCodeService;
     use crate::app::runs::run_state_service::RunStateService;
     use crate::app::runs::service::RunsService;
     use crate::app::runs::status_transition_service::RunStatusTransitionService;
+    use crate::app::runs::task_completion_service::RunTaskCompletionService;
+    use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
     use crate::app::worktrees::service::WorktreesService;
     use git2::{Repository, Signature};
     use sqlx::SqlitePool;
@@ -795,10 +799,34 @@ mod tests {
             run_state_service.clone(),
             None,
         );
+        let task_status_transition_service = TaskStatusTransitionService::new(
+            RunsRepository::new(pool.clone()),
+            TasksRepository::new(pool.clone()),
+            None,
+        );
+        let projects_service = ProjectsService::new(
+            ProjectsRepository::new(pool.clone()),
+            ProjectFileSearchService::new(),
+            WorktreesService::new(app_data_dir.clone()),
+        );
+        let runs_opencode_service = RunsOpenCodeService::new(
+            runs_service.clone(),
+            projects_service,
+            task_status_transition_service,
+            run_state_service.clone(),
+            run_status_transition_service.clone(),
+            app_data_dir.clone(),
+        );
+        let run_task_completion_service = RunTaskCompletionService::new(
+            RunsRepository::new(pool.clone()),
+            TasksRepository::new(pool.clone()),
+            runs_opencode_service,
+            run_status_transition_service.clone(),
+        );
         let merge_service = RunsMergeService::new(
             runs_service.clone(),
             run_state_service,
-            run_status_transition_service,
+            run_task_completion_service,
             app_data_dir,
         );
         (runs_service, merge_service, pool, temp_dir)

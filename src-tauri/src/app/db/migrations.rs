@@ -36,6 +36,8 @@ const MIGRATION_0018: &str = include_str!("../../../migrations/0018_add_runs_run
 const MIGRATION_0019: &str =
     include_str!("../../../migrations/0019_drop_runs_single_active_index.sql");
 const MIGRATION_0020: &str = include_str!("../../../migrations/0020_add_project_env_vars.sql");
+const MIGRATION_0021: &str =
+    include_str!("../../../migrations/0021_allow_rejected_run_status.sql");
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(MIGRATION_0001).execute(pool).await?;
@@ -322,6 +324,18 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
 
     if !has_run_state {
         sqlx::query(MIGRATION_0018).execute(pool).await?;
+    }
+
+    let runs_table_sql: Option<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runs' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+    let needs_rejected_run_status_migration =
+        runs_table_sql.as_deref().is_some_and(|sql| !sql.contains("'rejected'"));
+
+    if needs_rejected_run_status_migration {
+        sqlx::query(MIGRATION_0021).execute(pool).await?;
     }
 
     sqlx::query(MIGRATION_0019).execute(pool).await?;

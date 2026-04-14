@@ -432,7 +432,7 @@ impl RunStateService {
     }
 
     fn is_terminal_status(status: &str) -> bool {
-        matches!(status, "complete" | "failed" | "cancelled")
+        matches!(status, "complete" | "failed" | "cancelled" | "rejected")
     }
 
     fn is_special_stored_state(state: &str) -> bool {

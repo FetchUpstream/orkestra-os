@@ -79,6 +79,9 @@ const ACTIVE_RUN_STATUSES = new Set([
   "idle",
 ]);
 
+const hasActiveTaskRuns = (runs: Run[]): boolean =>
+  runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status));
+
 const persistBoardProjectId = (projectId: string) => {
   if (typeof window === "undefined") return;
   try {
@@ -329,9 +332,11 @@ export const useBoardModel = () => {
     createSignal(false);
   const [isBlockedTaskModalOpen, setIsBlockedTaskModalOpen] =
     createSignal(false);
+  const [isDoneTaskWarningOpen, setIsDoneTaskWarningOpen] = createSignal(false);
   const [blockingStartTasks, setBlockingStartTasks] = createSignal<
     TaskDependencyTask[]
   >([]);
+  const [pendingDoneTaskId, setPendingDoneTaskId] = createSignal("");
   const [pendingInProgressTaskId, setPendingInProgressTaskId] =
     createSignal("");
   const [runAgentOptions, setRunAgentOptions] = createSignal<
@@ -1018,6 +1023,30 @@ export const useBoardModel = () => {
     taskId: string,
     targetStatus: TaskStatus,
   ): Promise<boolean> => {
+    if (targetStatus === "done") {
+      try {
+        const taskRuns = await listTaskRuns(taskId);
+        if (hasActiveTaskRuns(taskRuns)) {
+          setError("");
+          setPendingDoneTaskId(taskId);
+          setIsDoneTaskWarningOpen(true);
+          return false;
+        }
+      } catch (mutationError) {
+        setError(
+          getActionErrorMessage("Failed to verify task runs.", mutationError),
+        );
+        return false;
+      }
+    }
+
+    return moveTaskToStatusWithoutWarning(taskId, targetStatus);
+  };
+
+  const moveTaskToStatusWithoutWarning = async (
+    taskId: string,
+    targetStatus: TaskStatus,
+  ): Promise<boolean> => {
     if (isTaskStatusUpdating(taskId)) return false;
 
     const currentTasks = tasks();
@@ -1117,6 +1146,23 @@ export const useBoardModel = () => {
     }
 
     return true;
+  };
+
+  const onCancelMoveTaskToDone = () => {
+    const taskId = pendingDoneTaskId();
+    if (taskId && isTaskStatusUpdating(taskId)) return;
+    setIsDoneTaskWarningOpen(false);
+    setPendingDoneTaskId("");
+  };
+
+  const onConfirmMoveTaskToDone = async () => {
+    const taskId = pendingDoneTaskId();
+    if (!taskId) return;
+    const updated = await moveTaskToStatusWithoutWarning(taskId, "done");
+    if (updated) {
+      setIsDoneTaskWarningOpen(false);
+      setPendingDoneTaskId("");
+    }
   };
 
   const onRequestMoveTaskToInProgress = (taskId: string) => {
@@ -1430,6 +1476,7 @@ export const useBoardModel = () => {
     searchMatchCount,
     isRunSettingsModalOpen,
     isBlockedTaskModalOpen,
+    isDoneTaskWarningOpen,
     blockingStartTasks,
     hasRunSelectionOptions,
     isLoadingRunSelectionOptions,
@@ -1460,6 +1507,8 @@ export const useBoardModel = () => {
     onRequestMoveTaskToInProgress,
     onCancelMoveTaskToInProgress,
     onCloseBlockedTaskModal,
+    onCancelMoveTaskToDone,
+    onConfirmMoveTaskToDone,
     onConfirmMoveTaskToInProgress,
   };
 };

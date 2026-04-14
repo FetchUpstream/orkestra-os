@@ -136,6 +136,7 @@ export const formatRunStatus = (status: RunStatus) => {
   if (status === "idle") return "Idle";
   if (status === "complete") return "Complete";
   if (status === "failed") return "Failed";
+  if (status === "rejected") return "Rejected";
   return "Cancelled";
 };
 

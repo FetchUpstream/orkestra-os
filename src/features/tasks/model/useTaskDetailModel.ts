@@ -80,6 +80,13 @@ import {
 
 export type DependencyCreateDirection = "parent" | "child";
 
+const ACTIVE_TASK_RUN_STATUSES = new Set([
+  "queued",
+  "preparing",
+  "in_progress",
+  "idle",
+]);
+
 export const useTaskDetailModel = () => {
   const AUTOSAVE_DEBOUNCE_MS = 900;
   const AUTOSAVE_MAX_WAIT_MS = 5000;
@@ -118,6 +125,8 @@ export const useTaskDetailModel = () => {
   const [isMoving, setIsMoving] = createSignal(false);
   const [isDeleting, setIsDeleting] = createSignal(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = createSignal(false);
+  const [isDoneStatusWarningOpen, setIsDoneStatusWarningOpen] =
+    createSignal(false);
   const [isCreateDependencyModalOpen, setIsCreateDependencyModalOpen] =
     createSignal(false);
   const [createDependencyDirection, setCreateDependencyDirection] =
@@ -1113,6 +1122,33 @@ export const useTaskDetailModel = () => {
     }
   };
 
+  const onRequestSetStatus = async (status: TaskStatus) => {
+    const taskValue = task();
+    if (!taskValue) return;
+    if (
+      status === "done" &&
+      taskValue.status !== "done" &&
+      runs().some((run) => ACTIVE_TASK_RUN_STATUSES.has(run.status))
+    ) {
+      setActionError("");
+      setIsTransitionMenuOpen(false);
+      setIsDoneStatusWarningOpen(true);
+      return;
+    }
+
+    await onSetStatus(status);
+  };
+
+  const onCancelDoneStatusWarning = () => {
+    if (isChangingStatus()) return;
+    setIsDoneStatusWarningOpen(false);
+  };
+
+  const onConfirmDoneStatusWarning = async () => {
+    setIsDoneStatusWarningOpen(false);
+    await onSetStatus("done");
+  };
+
   const onMoveTask = async () => {
     const taskValue = task();
     const targetRepositoryId = moveRepositoryId();
@@ -1457,6 +1493,7 @@ export const useTaskDetailModel = () => {
     isMoving,
     isDeleting,
     isDeleteModalOpen,
+    isDoneStatusWarningOpen,
     isCreateDependencyModalOpen,
     createDependencyDirection,
     createDependencyTitle,
@@ -1504,6 +1541,9 @@ export const useTaskDetailModel = () => {
     onEditImplementationGuideInput,
     flushTaskDetailsAutosave,
     onSetStatus,
+    onRequestSetStatus,
+    onCancelDoneStatusWarning,
+    onConfirmDoneStatusWarning,
     onMoveTask,
     onRequestDeleteTask,
     onCancelDeleteTask,

@@ -23,6 +23,7 @@ import {
   getRunDiffFile,
   killRunTerminal,
   listRunDiffFiles,
+  listTaskRuns,
   mergeRunWorktreeIntoSource,
   openRunTerminal,
   listRunOpenCodeQuestionRequests,
@@ -294,6 +295,13 @@ const hasCompletedRunStatus = (status: string | null | undefined): boolean => {
   return status === "complete" || status === "completed";
 };
 
+const ACTIVE_SIBLING_RUN_STATUSES = new Set([
+  "queued",
+  "preparing",
+  "in_progress",
+  "idle",
+]);
+
 type UpsertRunReviewDraftCommentInput = {
   id?: string;
   filePath: string;
@@ -394,6 +402,7 @@ export const useRunDetailModel = () => {
   const [gitStatusError, setGitStatusError] = createSignal("");
   const [isGitRebasePending, setIsGitRebasePending] = createSignal(false);
   const [isGitMergePending, setIsGitMergePending] = createSignal(false);
+  const [isMergeWarningOpen, setIsMergeWarningOpen] = createSignal(false);
   const [gitActionError, setGitActionError] = createSignal("");
   const [gitLastActionMessage, setGitLastActionMessage] = createSignal("");
   const [postMergeCompletionMessage, setPostMergeCompletionMessage] =
@@ -2280,6 +2289,34 @@ export const useRunDetailModel = () => {
     }
   };
 
+  const requestMergeWorktreeIntoSource = async (): Promise<void> => {
+    const runValue = run();
+    if (runValue) {
+      const taskRuns = await listTaskRuns(runValue.taskId);
+      const hasActiveSiblings = taskRuns.some(
+        (taskRun) =>
+          taskRun.id !== runValue.id &&
+          ACTIVE_SIBLING_RUN_STATUSES.has(taskRun.status),
+      );
+      if (hasActiveSiblings) {
+        setIsMergeWarningOpen(true);
+        return;
+      }
+    }
+
+    await mergeWorktreeIntoSource();
+  };
+
+  const cancelMergeWorktreeIntoSourceWarning = () => {
+    if (isGitMergePending()) return;
+    setIsMergeWarningOpen(false);
+  };
+
+  const confirmMergeWorktreeIntoSourceWarning = async (): Promise<void> => {
+    setIsMergeWarningOpen(false);
+    await mergeWorktreeIntoSource();
+  };
+
   createEffect(() => {
     const runId = params.runId?.trim() ?? "";
     if (!runId) {
@@ -4048,9 +4085,13 @@ export const useRunDetailModel = () => {
       lastActionMessage: gitLastActionMessage,
       isRebasePending: isGitRebasePending,
       isMergePending: isGitMergePending,
+      isMergeWarningOpen,
       refreshStatus: refreshGitMergeStatus,
       rebaseWorktreeOntoSource,
       mergeWorktreeIntoSource,
+      requestMergeWorktreeIntoSource,
+      cancelMergeWorktreeIntoSourceWarning,
+      confirmMergeWorktreeIntoSourceWarning,
     },
     isRunCompleted,
     postMergeCompletionMessage,
