@@ -1200,6 +1200,149 @@ describe("NewRunChatWorkspace", () => {
     expect(screen.getByText("README.md")).toBeTruthy();
   });
 
+  it("rebinds child output to the authoritative task box when explicit mapping arrives later", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root-1", "msg-root-2"],
+      messagesById: {
+        "msg-root-1": {
+          id: "msg-root-1",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task-1": {
+              id: "part-task-1",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "First task",
+            },
+          },
+          partOrder: ["part-task-1"],
+        },
+        "msg-root-2": {
+          id: "msg-root-2",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task-2": {
+              id: "part-task-2",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Second task",
+            },
+          },
+          partOrder: ["part-task-2"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-root",
+            part: {
+              id: "part-task-1",
+              messageID: "msg-root-1",
+              sessionID: "session-root",
+              type: "tool",
+              tool: "task",
+              state: { status: "running", title: "First task" },
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-root",
+            part: {
+              id: "part-task-2",
+              messageID: "msg-root-2",
+              sessionID: "session-root",
+              type: "tool",
+              tool: "task",
+              state: { status: "running", title: "Second task" },
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child",
+              sessionID: "session-child",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child",
+            messageID: "msg-child",
+            partID: "part-child",
+            field: "text",
+            delta: "Child output",
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    const getTaskRails = () =>
+      Array.from(container.querySelectorAll(".run-chat-tool-rail")).filter(
+        (node) =>
+          node.textContent?.includes("First task") ||
+          node.textContent?.includes("Second task"),
+      );
+
+    expect(getTaskRails()).toHaveLength(2);
+    expect(getTaskRails()[0]?.textContent).not.toContain("Child output");
+    expect(getTaskRails()[1]?.textContent).toContain("Child output");
+
+    setStore((current) => ({
+      ...current,
+      messagesById: {
+        ...current.messagesById,
+        "msg-root-1": {
+          ...current.messagesById["msg-root-1"],
+          partsById: {
+            ...current.messagesById["msg-root-1"].partsById,
+            "part-task-1": {
+              ...current.messagesById["msg-root-1"].partsById["part-task-1"],
+              raw: {
+                child: {
+                  sessionID: "session-child",
+                },
+              },
+            },
+          },
+        },
+      },
+      lastSyncAt: current.lastSyncAt + 1,
+    }));
+
+    await waitFor(() => {
+      expect(getTaskRails()[0]?.textContent).toContain("Child output");
+      expect(getTaskRails()[1]?.textContent).not.toContain("Child output");
+    });
+  });
+
   it("hydrates task subagent output from fetched child session history", async () => {
     getRunOpenCodeSessionMessagesMock.mockResolvedValue({
       messages: [
@@ -1269,6 +1412,103 @@ describe("NewRunChatWorkspace", () => {
         sessionId: "session-child",
       });
       expect(screen.getByText("Fetched child history output")).toBeTruthy();
+    });
+  });
+
+  it("hydrates lineage-routed child sessions from fetched history", async () => {
+    getRunOpenCodeSessionMessagesMock.mockImplementation(
+      async ({ sessionId }: { sessionId: string }) => {
+        if (sessionId === "session-grandchild") {
+          return {
+            messages: [
+              {
+                info: {
+                  id: "msg-grandchild",
+                  sessionID: "session-grandchild",
+                  role: "assistant",
+                },
+                parts: [
+                  {
+                    id: "part-grandchild",
+                    type: "text",
+                    text: "Fetched lineage output",
+                    messageID: "msg-grandchild",
+                    sessionID: "session-grandchild",
+                  },
+                ],
+              },
+            ],
+            raw: [],
+          } as any;
+        }
+
+        return {
+          messages: [],
+          raw: [],
+        } as any;
+      },
+    );
+
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Map workspace",
+              raw: {
+                child: {
+                  sessionID: "session-parent",
+                },
+              },
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-grandchild",
+            info: {
+              id: "session-grandchild",
+              parentID: "session-parent",
+              title: "Nested explorer",
+            },
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledWith({
+        runId: "run-1",
+        sessionId: "session-grandchild",
+      });
+      expect(screen.getByText("Fetched lineage output")).toBeTruthy();
     });
   });
 

@@ -72,6 +72,13 @@ import {
   normalizeToolPathForDisplay,
   type ToolPathDisplayContext,
 } from "../lib/normalizeToolPathForDisplay";
+import {
+  buildSubagentSessionAssignments,
+  buildTaskPartSessionIdsByPartId,
+  isTaskToolName,
+  type SubagentSessionAssignmentSnapshot,
+  type SubagentTaskAssignmentSource,
+} from "./subagentTaskAssignment";
 
 type AgentReadinessPhase =
   | "warming_backend"
@@ -521,21 +528,6 @@ const getSessionIdentifier = (value: unknown): string | null => {
   return sessionId?.trim() || null;
 };
 
-const getParentSessionIdentifier = (value: unknown): string | null => {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const nested = getNestedRecord(value, "part", "info", "properties");
-  const parentId =
-    (typeof value.parentID === "string" ? value.parentID : null) ||
-    (typeof value.parentId === "string" ? value.parentId : null) ||
-    (nested && typeof nested.parentID === "string" ? nested.parentID : null) ||
-    (nested && typeof nested.parentId === "string" ? nested.parentId : null);
-
-  return parentId?.trim() || null;
-};
-
 type SubagentMessageSnapshot = {
   id: string;
   role: "assistant" | "user" | "system" | "unknown";
@@ -552,6 +544,9 @@ type SubagentSessionSnapshot = {
   parentSessionId: string | null;
   parentMessageId: string | null;
   assignedTaskPartId: string | null;
+  assignmentSource: SubagentTaskAssignmentSource | null;
+  assignmentConfidence: number;
+  assignmentProvisional: boolean;
   status: string;
   title: string | null;
   agentType: string | null;
@@ -566,21 +561,6 @@ type SubagentHistorySnapshot = {
 };
 
 type FetchedSubagentHistorySnapshot = SubagentHistorySnapshot | null;
-
-const getParentMessageIdentifier = (value: unknown): string | null => {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const nested = getNestedRecord(value, "info", "part", "properties");
-  const parentId =
-    (typeof value.parentID === "string" ? value.parentID : null) ||
-    (typeof value.parentId === "string" ? value.parentId : null) ||
-    (nested && typeof nested.parentID === "string" ? nested.parentID : null) ||
-    (nested && typeof nested.parentId === "string" ? nested.parentId : null);
-
-  return parentId?.trim() || null;
-};
 
 const getStatusType = (value: unknown): string | null => {
   if (typeof value === "string") {
@@ -682,54 +662,6 @@ const formatSubagentLabel = (
   return "Subagent";
 };
 
-const collectSessionIdsFromValue = (
-  value: unknown,
-  sessionIds: Set<string>,
-  seen: Set<unknown>,
-): void => {
-  if (!value || typeof value !== "object" || seen.has(value)) {
-    return;
-  }
-  seen.add(value);
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectSessionIdsFromValue(item, sessionIds, seen);
-    }
-    return;
-  }
-
-  for (const [key, nestedValue] of Object.entries(
-    value as Record<string, unknown>,
-  )) {
-    if (
-      (key === "sessionID" || key === "sessionId") &&
-      typeof nestedValue === "string"
-    ) {
-      const normalized = nestedValue.trim();
-      if (normalized.length > 0) {
-        sessionIds.add(normalized);
-      }
-      continue;
-    }
-    collectSessionIdsFromValue(nestedValue, sessionIds, seen);
-  }
-};
-
-const extractTaskSubagentSessionIds = (
-  part: UiPart,
-  rootSessionId: string | null,
-): string[] => {
-  if (part.kind !== "tool" || !isTaskToolName(part.toolName)) {
-    return [];
-  }
-  const sessionIds = new Set<string>();
-  collectSessionIdsFromValue(part.raw, sessionIds, new Set<unknown>());
-  return Array.from(sessionIds).filter(
-    (sessionId) => sessionId !== rootSessionId,
-  );
-};
-
 const buildSubagentMessagesFromStore = (
   store: AgentStore,
   displayContext: ToolPathDisplayContext,
@@ -806,30 +738,6 @@ const buildSubagentMessagesFromStore = (
     );
 };
 
-const resolveTaskPartIdForParentMessage = (
-  parentMessageId: string | null,
-  rootMessagesById: Record<
-    string,
-    { partOrder: string[]; partsById: Record<string, UiPart> }
-  >,
-): string | null => {
-  if (!parentMessageId) {
-    return null;
-  }
-  const parentMessage = rootMessagesById[parentMessageId];
-  if (!parentMessage) {
-    return null;
-  }
-  const taskPartIds = parentMessage.partOrder.filter((partId) => {
-    const part = parentMessage.partsById[partId];
-    return part?.kind === "tool" && isTaskToolName(part.toolName);
-  });
-  if (taskPartIds.length === 0) {
-    return null;
-  }
-  return taskPartIds[taskPartIds.length - 1] ?? null;
-};
-
 const normalizeSubagentRole = (
   value: unknown,
 ): SubagentMessageSnapshot["role"] => {
@@ -841,47 +749,53 @@ const normalizeSubagentRole = (
     : "unknown";
 };
 
-const isTaskToolName = (value: unknown): boolean => {
-  return typeof value === "string" && value.trim().toLowerCase() === "task";
-};
-
 const buildSubagentPanels = (
   rawEvents: readonly OpenCodeBusEvent[],
   rootSessionId: string | null,
-  rootMessagesById: Record<
-    string,
-    { partOrder: string[]; partsById: Record<string, UiPart> }
-  >,
   displayContext: ToolPathDisplayContext,
-  taskPartSessionIdsByPartId: Record<string, string[]>,
+  subagentAssignmentsBySessionId: Record<
+    string,
+    SubagentSessionAssignmentSnapshot
+  >,
   fetchedSessionHistories: Record<string, FetchedSubagentHistorySnapshot>,
 ): Record<string, RunChatToolRailSubagentItem[]> => {
   const sessions = new Map<string, SubagentSessionSnapshot>();
-  let activeTaskPartId: string | null = null;
-  const allRootTaskPartIds = Object.values(rootMessagesById).flatMap(
-    (message) =>
-      message.partOrder.filter((partId) => {
-        const part = message.partsById[partId];
-        return part?.kind === "tool" && isTaskToolName(part.toolName);
-      }),
-  );
 
-  const ensureSession = (
+  const syncSessionAssignment = (
+    session: SubagentSessionSnapshot,
     sessionId: string,
-    parentSessionId: string | null,
   ): SubagentSessionSnapshot => {
+    const assignment = subagentAssignmentsBySessionId[sessionId];
+    if (!assignment) {
+      return session;
+    }
+
+    session.parentSessionId =
+      assignment.parentSessionId ?? session.parentSessionId;
+    session.parentMessageId =
+      assignment.parentMessageId ?? session.parentMessageId;
+    session.assignedTaskPartId = assignment.assignedTaskPartId;
+    session.assignmentSource = assignment.assignmentSource;
+    session.assignmentConfidence = assignment.assignmentConfidence;
+    session.assignmentProvisional = assignment.assignmentProvisional;
+    return session;
+  };
+
+  const ensureSession = (sessionId: string): SubagentSessionSnapshot => {
     const existing = sessions.get(sessionId);
     if (existing) {
-      if (!existing.parentSessionId && parentSessionId) {
-        existing.parentSessionId = parentSessionId;
-      }
-      return existing;
+      return syncSessionAssignment(existing, sessionId);
     }
+
+    const assignment = subagentAssignmentsBySessionId[sessionId];
     const created: SubagentSessionSnapshot = {
       sessionId,
-      parentSessionId,
-      parentMessageId: null,
-      assignedTaskPartId: null,
+      parentSessionId: assignment?.parentSessionId ?? null,
+      parentMessageId: assignment?.parentMessageId ?? null,
+      assignedTaskPartId: assignment?.assignedTaskPartId ?? null,
+      assignmentSource: assignment?.assignmentSource ?? null,
+      assignmentConfidence: assignment?.assignmentConfidence ?? 0,
+      assignmentProvisional: assignment?.assignmentProvisional ?? true,
       status: "running",
       title: null,
       agentType: null,
@@ -890,35 +804,12 @@ const buildSubagentPanels = (
       messagesById: {},
     };
     sessions.set(sessionId, created);
-    return created;
+    return syncSessionAssignment(created, sessionId);
   };
 
   for (const event of rawEvents) {
     const properties = getEventRecord(event.properties);
     const sessionId = getSessionIdentifier(properties);
-    const parentSessionId = getParentSessionIdentifier(properties);
-    const rootPart = getNestedRecord(properties, "part");
-
-    if (
-      sessionId &&
-      rootSessionId &&
-      sessionId === rootSessionId &&
-      rootPart &&
-      ((event.type === "message.part.updated" &&
-        typeof rootPart.type === "string" &&
-        rootPart.type === "tool" &&
-        isTaskToolName(rootPart.tool)) ||
-        (event.type === "message.updated" &&
-          typeof rootPart.type === "string" &&
-          rootPart.type === "tool" &&
-          isTaskToolName(rootPart.tool)))
-    ) {
-      activeTaskPartId =
-        (typeof rootPart.id === "string" ? rootPart.id.trim() : "") ||
-        (typeof rootPart.partID === "string" ? rootPart.partID.trim() : "") ||
-        (typeof rootPart.partId === "string" ? rootPart.partId.trim() : "") ||
-        activeTaskPartId;
-    }
 
     if (!sessionId) {
       continue;
@@ -928,17 +819,10 @@ const buildSubagentPanels = (
       continue;
     }
 
-    const session = ensureSession(sessionId, parentSessionId);
-    if (!session.assignedTaskPartId && activeTaskPartId) {
-      session.assignedTaskPartId = activeTaskPartId;
-    }
+    const session = ensureSession(sessionId);
 
     if (event.type === "session.updated") {
       const info = getNestedRecord(properties, "info") ?? properties;
-      const parentMessageId = getParentMessageIdentifier(info);
-      if (parentMessageId && !session.parentMessageId) {
-        session.parentMessageId = parentMessageId;
-      }
       const title =
         (typeof info.title === "string" ? info.title.trim() : "") ||
         (typeof info.slug === "string" ? info.slug.trim() : "");
@@ -961,10 +845,6 @@ const buildSubagentPanels = (
 
     if (event.type === "message.updated") {
       const info = getNestedRecord(properties, "info") ?? properties;
-      const parentMessageId = getParentMessageIdentifier(info);
-      if (parentMessageId && !session.parentMessageId) {
-        session.parentMessageId = parentMessageId;
-      }
       const attribution = readSubagentAttribution(info);
       const agentType =
         attribution.agent ||
@@ -975,13 +855,6 @@ const buildSubagentPanels = (
       }
       if (attribution.model && !session.model) {
         session.model = attribution.model;
-      }
-      const taskPartId = resolveTaskPartIdForParentMessage(
-        session.parentMessageId,
-        rootMessagesById,
-      );
-      if (taskPartId && !session.assignedTaskPartId) {
-        session.assignedTaskPartId = taskPartId;
       }
     }
 
@@ -1109,27 +982,8 @@ const buildSubagentPanels = (
     }
   }
 
-  for (const session of sessions.values()) {
-    if (!session.assignedTaskPartId && session.parentMessageId) {
-      session.assignedTaskPartId = resolveTaskPartIdForParentMessage(
-        session.parentMessageId,
-        rootMessagesById,
-      );
-    }
-    if (!session.assignedTaskPartId && allRootTaskPartIds.length === 1) {
-      session.assignedTaskPartId = allRootTaskPartIds[0] ?? null;
-    }
-  }
-
-  for (const [taskPartId, sessionIds] of Object.entries(
-    taskPartSessionIdsByPartId,
-  )) {
-    for (const sessionId of sessionIds) {
-      const session = ensureSession(sessionId, null);
-      if (!session.assignedTaskPartId) {
-        session.assignedTaskPartId = taskPartId;
-      }
-    }
+  for (const sessionId of Object.keys(subagentAssignmentsBySessionId)) {
+    ensureSession(sessionId);
   }
 
   return Array.from(sessions.values()).reduce<
@@ -2526,23 +2380,20 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   }));
 
   const taskPartSessionIdsByPartId = createMemo(() => {
-    const mapping: Record<string, string[]> = {};
-    const rootSessionId = props.model.agent.store().sessionId;
-    for (const message of Object.values(
+    return buildTaskPartSessionIdsByPartId(
       props.model.agent.store().messagesById,
-    )) {
-      for (const partId of message.partOrder) {
-        const part = message.partsById[partId];
-        if (!part) {
-          continue;
-        }
-        const sessionIds = extractTaskSubagentSessionIds(part, rootSessionId);
-        if (sessionIds.length > 0) {
-          mapping[part.id] = sessionIds;
-        }
-      }
-    }
-    return mapping;
+      props.model.agent.store().rawEvents ?? [],
+      props.model.agent.store().sessionId,
+    );
+  });
+
+  const subagentSessionAssignments = createMemo(() => {
+    return buildSubagentSessionAssignments(
+      props.model.agent.store().rawEvents ?? [],
+      props.model.agent.store().sessionId,
+      props.model.agent.store().messagesById,
+      taskPartSessionIdsByPartId(),
+    );
   });
 
   createEffect(() => {
@@ -2552,9 +2403,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     }
 
     const histories = fetchedSubagentHistories();
-    const sessionIds = Array.from(
-      new Set(Object.values(taskPartSessionIdsByPartId()).flat()),
-    );
+    const sessionIds = Object.values(subagentSessionAssignments())
+      .filter((assignment) => assignment.assignedTaskPartId)
+      .map((assignment) => assignment.sessionId);
 
     for (const sessionId of sessionIds) {
       if (histories[sessionId] !== undefined) {
@@ -2596,9 +2447,8 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     return buildSubagentPanels(
       props.model.agent.store().rawEvents ?? [],
       props.model.agent.store().sessionId,
-      props.model.agent.store().messagesById,
       toolPathDisplayContext(),
-      taskPartSessionIdsByPartId(),
+      subagentSessionAssignments(),
       fetchedSubagentHistories(),
     );
   });
