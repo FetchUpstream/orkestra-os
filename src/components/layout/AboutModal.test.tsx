@@ -172,11 +172,10 @@ describe("AboutModal", () => {
 
     expect(screen.getByText("A newer Linux package is available")).toBeTruthy();
     expect(screen.getByText("Sidebar polish")).toBeTruthy();
-    expect(
-      screen.getByText(
-        "Checked https://fetchupstream.github.io/orkestra-os/updates/latest.json. Update found.",
-      ),
-    ).toBeTruthy();
+    const updateStatus = screen.getByText(/Update found\./);
+    expect(updateStatus.textContent).toMatch(
+      /https:\/\/fetchupstream\.github\.io\/orkestra-os\/updates\/latest\.json/,
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
     expect(onCheckForUpdates).toHaveBeenCalledTimes(1);

@@ -31,6 +31,18 @@ pub enum WorktreePathError {
     InvalidWorktreeIdPathShape,
     #[error("worktree id must be '<PROJECT_KEY>/<branch-segment>'")]
     InvalidWorktreeId,
+    #[error("{function_name} requires non-empty unique_suffix_seed")]
+    UniqueSuffixSeedRequired { function_name: &'static str },
+    #[error(
+        "choose_unique_worktree_id failed after {max_numeric_suffix} numeric suffix attempts for '{candidate}' (path_exists={path_exists}, worktree_exists={worktree_exists}, branch_exists={branch_exists})"
+    )]
+    WorktreeIdExhausted {
+        candidate: String,
+        max_numeric_suffix: usize,
+        path_exists: bool,
+        worktree_exists: bool,
+        branch_exists: bool,
+    },
     #[error("failed to resolve worktrees root path '{path}'")]
     CanonicalizeWorktreesRoot {
         path: String,

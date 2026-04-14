@@ -155,6 +155,18 @@ describe("normalizeToolPathForDisplay", () => {
     expect(normalized).toBe(output);
   });
 
+  it("does not rewrite longer worktree ids that share a prefix", () => {
+    const output =
+      "Read /home/louis/.local/share/com.fetchupstream.orkestraos/worktrees/ORK/run-10/src/main.ts";
+
+    const normalized = normalizeToolOutputTextForDisplay(output, {
+      worktreeId: "ORK/run-1",
+      targetRepositoryPath: null,
+    });
+
+    expect(normalized).toBe(output);
+  });
+
   it("resolves absolute paths using multi-segment worktree ids", () => {
     const normalized = normalizeToolPathForDisplay(
       "/home/louis/.local/share/com.fetchupstream.orkestraos/worktrees/ORK/resolve-sibling-runs-when-one-run-is-merged-or-when-the-task-is-manually-marked-done/src-tauri/src/app/runs/merge_service.rs",

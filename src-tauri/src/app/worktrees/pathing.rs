@@ -79,19 +79,36 @@ fn stable_suffix_hex(unique_suffix_seed: &str) -> String {
     format!("{hash:016x}")
 }
 
+fn validate_unique_suffix_seed(
+    function_name: &'static str,
+    unique_suffix_seed: &str,
+) -> Result<(), WorktreePathError> {
+    if unique_suffix_seed.trim().is_empty() {
+        return Err(WorktreePathError::UniqueSuffixSeedRequired { function_name });
+    }
+
+    Ok(())
+}
+
 fn compose_branch_segment(
     branch_slug: &str,
     unique_suffix_seed: &str,
     suffix_hex_len: usize,
-) -> String {
+) -> Result<String, WorktreePathError> {
+    validate_unique_suffix_seed("compose_branch_segment", unique_suffix_seed)?;
+
     let stable_suffix = stable_suffix_hex(unique_suffix_seed);
     let suffix_len = suffix_hex_len
         .min(stable_suffix.len())
         .max(INITIAL_SUFFIX_HEX_LEN);
-    format!("{branch_slug}-{}", &stable_suffix[..suffix_len])
+    Ok(format!("{branch_slug}-{}", &stable_suffix[..suffix_len]))
 }
 
-pub fn build_branch_segment(branch_title: &str, unique_suffix_seed: &str) -> String {
+pub fn build_branch_segment(
+    branch_title: &str,
+    unique_suffix_seed: &str,
+) -> Result<String, WorktreePathError> {
+    validate_unique_suffix_seed("build_branch_segment", unique_suffix_seed)?;
     compose_branch_segment(
         &sanitize_branch_segment(branch_title),
         unique_suffix_seed,
@@ -229,40 +246,56 @@ pub fn choose_unique_worktree_id(
     branch_title: &str,
     unique_suffix_seed: &str,
     repo: &Repository,
-) -> String {
+) -> Result<String, WorktreePathError> {
+    validate_unique_suffix_seed("choose_unique_worktree_id", unique_suffix_seed)?;
+
     let branch_slug = sanitize_branch_segment(branch_title);
-    let initial_branch_segment = build_branch_segment(branch_title, unique_suffix_seed);
+    let initial_branch_segment = build_branch_segment(branch_title, unique_suffix_seed)?;
     for suffix_hex_len in [INITIAL_SUFFIX_HEX_LEN, 10, 12, MAX_SUFFIX_HEX_LEN] {
         let branch_segment = if suffix_hex_len == INITIAL_SUFFIX_HEX_LEN {
             initial_branch_segment.clone()
         } else {
-            compose_branch_segment(&branch_slug, unique_suffix_seed, suffix_hex_len)
+            compose_branch_segment(&branch_slug, unique_suffix_seed, suffix_hex_len)?
         };
         let candidate = compose_worktree_id(project_key, &branch_segment);
         let candidate_path = base_root.join(&candidate);
+        let path_exists = candidate_path.exists();
         let worktree_exists = repo.find_worktree(&candidate).is_ok();
         let branch_exists = repo.find_branch(&candidate, BranchType::Local).is_ok();
-        if !candidate_path.exists() && !worktree_exists && !branch_exists {
-            return candidate;
+        if !path_exists && !worktree_exists && !branch_exists {
+            return Ok(candidate);
         }
     }
 
     let branch_segment =
-        compose_branch_segment(&branch_slug, unique_suffix_seed, MAX_SUFFIX_HEX_LEN);
+        compose_branch_segment(&branch_slug, unique_suffix_seed, MAX_SUFFIX_HEX_LEN)?;
+    let mut last_collision = None;
     for numeric_suffix in 2..=MAX_NUMERIC_SUFFIX {
         let candidate =
             compose_worktree_id(project_key, &format!("{branch_segment}-{numeric_suffix}"));
         let candidate_path = base_root.join(&candidate);
+        let path_exists = candidate_path.exists();
         let worktree_exists = repo.find_worktree(&candidate).is_ok();
         let branch_exists = repo.find_branch(&candidate, BranchType::Local).is_ok();
-        if !candidate_path.exists() && !worktree_exists && !branch_exists {
-            return candidate;
+        if !path_exists && !worktree_exists && !branch_exists {
+            return Ok(candidate);
         }
+
+        last_collision = Some((candidate, path_exists, worktree_exists, branch_exists));
     }
 
-    panic!(
-        "failed to choose unique worktree id after {MAX_NUMERIC_SUFFIX} numeric suffix attempts"
-    );
+    let (candidate, path_exists, worktree_exists, branch_exists) =
+        last_collision.unwrap_or_else(|| {
+            let candidate = compose_worktree_id(project_key, &format!("{branch_segment}-2"));
+            (candidate, false, false, false)
+        });
+    Err(WorktreePathError::WorktreeIdExhausted {
+        candidate,
+        max_numeric_suffix: MAX_NUMERIC_SUFFIX,
+        path_exists,
+        worktree_exists,
+        branch_exists,
+    })
 }
 
 #[cfg(test)]
@@ -343,8 +376,19 @@ mod tests {
             build_branch_segment(
                 "differentiate run cards on the board so multiple runs are easy to tell apart",
                 "run-seed-1"
-            ),
+            )
+            .unwrap(),
             "differentiate-run-cards-on-98adc61"
+        );
+    }
+
+    #[test]
+    fn build_branch_segment_rejects_blank_unique_suffix_seed() {
+        assert_eq!(
+            build_branch_segment("fix-login", "   ")
+                .unwrap_err()
+                .to_string(),
+            "build_branch_segment requires non-empty unique_suffix_seed"
         );
     }
 
@@ -393,6 +437,20 @@ mod tests {
     }
 
     #[test]
+    fn choose_unique_worktree_id_rejects_blank_unique_suffix_seed() {
+        let temp_dir = TempDir::new();
+        let repo = init_git_repo(&temp_dir.path().join("repo"));
+        let root = temp_dir.path().join("worktrees");
+
+        assert_eq!(
+            choose_unique_worktree_id(&root, "ALP", "fix-login", "   ", &repo)
+                .unwrap_err()
+                .to_string(),
+            "choose_unique_worktree_id requires non-empty unique_suffix_seed"
+        );
+    }
+
+    #[test]
     fn choose_unique_worktree_id_extends_hash_before_numeric_suffix() {
         let temp_dir = TempDir::new();
         let repo = init_git_repo(&temp_dir.path().join("repo"));
@@ -402,7 +460,7 @@ mod tests {
         repo.branch("ALP/fix-login-98adc61", &head, false).unwrap();
         fs::create_dir_all(root.join("ALP/fix-login-98adc61794")).unwrap();
 
-        let id = choose_unique_worktree_id(&root, "ALP", "fix-login", "run-seed-1", &repo);
+        let id = choose_unique_worktree_id(&root, "ALP", "fix-login", "run-seed-1", &repo).unwrap();
         assert_eq!(id, "ALP/fix-login-98adc61794e5");
     }
 }

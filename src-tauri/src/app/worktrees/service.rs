@@ -103,7 +103,7 @@ impl WorktreesService {
                 &input.branch_title,
                 &unique_suffix_seed,
                 &repo,
-            );
+            )?;
             let branch_name = worktree_id.clone();
             let worktree_path = self.base_root.join(&worktree_id);
             std::fs::create_dir_all(
@@ -229,7 +229,7 @@ impl WorktreesService {
             &input.branch_title,
             &unique_suffix_seed,
             &repo,
-        );
+        )?;
         Err(WorktreesServiceError::CreateWorktree {
             worktree_id,
             source: Error::from_str(
@@ -911,7 +911,7 @@ mod tests {
             "fix-login-flow-again"
         );
         assert_eq!(
-            build_branch_segment("Fix Login Flow Again Later", "run-seed-1"),
+            build_branch_segment("Fix Login Flow Again Later", "run-seed-1").unwrap(),
             "fix-login-flow-again-98adc61"
         );
         assert_eq!(

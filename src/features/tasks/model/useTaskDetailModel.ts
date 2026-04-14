@@ -83,6 +83,7 @@ export type DependencyCreateDirection = "parent" | "child";
 const ACTIVE_TASK_RUN_STATUSES = new Set([
   "queued",
   "preparing",
+  "running",
   "in_progress",
   "idle",
 ]);

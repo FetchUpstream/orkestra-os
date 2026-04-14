@@ -128,9 +128,11 @@ const replaceWorktreeAbsolutePathsInText = (
     return rawText;
   }
 
-  const markerRegex = escapeRegExp(
-    `/worktrees/${normalizedWorktreePath}`,
-  ).replace(/\//g, String.raw`[\\/]`);
+  const markerRegex =
+    escapeRegExp(`/worktrees/${normalizedWorktreePath}`).replace(
+      /\//g,
+      String.raw`[\\/]`,
+    ) + String.raw`(?=$|[\\/])`;
   const pattern = new RegExp(
     String.raw`(^|[\s([{"'])(${FILESYSTEM_PATH_PREFIX}[^\s<>"')]*${markerRegex}(?:[\\/]([^\s<>"')]*))?)`,
     "g",

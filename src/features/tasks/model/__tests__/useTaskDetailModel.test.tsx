@@ -29,6 +29,7 @@ const {
   deleteRunMock,
   listTaskDependenciesMock,
   deleteTaskMock,
+  setTaskStatusMock,
   getRunSelectionOptionsWithCacheMock,
   readRunSelectionOptionsCacheMock,
   subscribeToRunDeletedMock,
@@ -43,6 +44,7 @@ const {
   deleteRunMock: vi.fn(),
   listTaskDependenciesMock: vi.fn(),
   deleteTaskMock: vi.fn(),
+  setTaskStatusMock: vi.fn(),
   getRunSelectionOptionsWithCacheMock: vi.fn(),
   readRunSelectionOptionsCacheMock: vi.fn(),
   subscribeToRunDeletedMock: vi.fn(),
@@ -71,7 +73,7 @@ vi.mock("../../../../app/lib/tasks", () => ({
   deleteTask: deleteTaskMock,
   moveTask: vi.fn(),
   removeTaskDependency: vi.fn(),
-  setTaskStatus: vi.fn(),
+  setTaskStatus: setTaskStatusMock,
   updateTask: vi.fn(),
 }));
 
@@ -126,6 +128,7 @@ describe("useTaskDetailModel start run", () => {
     deleteRunMock.mockReset();
     listTaskDependenciesMock.mockReset();
     deleteTaskMock.mockReset();
+    setTaskStatusMock.mockReset();
     getRunSelectionOptionsWithCacheMock.mockReset();
     readRunSelectionOptionsCacheMock.mockReset();
     subscribeToRunDeletedMock.mockReset();
@@ -1245,6 +1248,36 @@ describe("useTaskDetailModel start run", () => {
 
     expect(ref.current?.runs().some((run) => run.id === "run-2")).toBe(true);
     expect(ref.current?.actionError()).toContain("Failed to delete run");
+  });
+
+  it("warns before marking done when a run is already running", async () => {
+    listTaskRunsMock.mockResolvedValue([
+      {
+        id: "run-1",
+        taskId: "task-1",
+        projectId: "project-1",
+        status: "running",
+        triggeredBy: "user",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.runs().length).toBe(1);
+    });
+
+    await ref.current?.onRequestSetStatus("done");
+
+    expect(ref.current?.isDoneStatusWarningOpen()).toBe(true);
+    expect(setTaskStatusMock).not.toHaveBeenCalled();
   });
 
   it("resolves task detail close destination to the current task project board", async () => {
