@@ -13,6 +13,7 @@
 import { Show, type Component, type JSX } from "solid-js";
 import type { UiAssistantStreamingMetadata } from "../../model/agentTypes";
 import RunChatMarkdown from "./RunChatMarkdown";
+import useStreamingTextPresentation from "./useStreamingTextPresentation";
 
 type RunChatAssistantMessageProps = {
   content: string;
@@ -26,7 +27,13 @@ type RunChatAssistantMessageProps = {
 const RunChatAssistantMessage: Component<RunChatAssistantMessageProps> = (
   props,
 ) => {
-  const content = () => props.streaming?.targetText ?? props.content;
+  const targetText = () => props.streaming?.targetText ?? props.content;
+  const presentation = useStreamingTextPresentation({
+    messageId: () => props.streaming?.messageId,
+    targetText,
+    isStreaming: () => props.streaming?.text.isStreaming ?? false,
+    streamRevision: () => props.streaming?.text.streamRevision ?? 0,
+  });
 
   return (
     <div
@@ -36,6 +43,8 @@ const RunChatAssistantMessage: Component<RunChatAssistantMessageProps> = (
       data-streaming={props.streaming?.isStreaming ? "true" : "false"}
       data-stream-revision={props.streaming?.streamRevision}
       data-stream-token={props.streaming?.streamToken}
+      data-stream-animating={presentation.isAnimating() ? "true" : "false"}
+      data-stream-catching-up={presentation.isCatchingUp() ? "true" : "false"}
     >
       <Show when={props.reasoning}>
         <div class="run-chat-assistant-message__reasoning">
@@ -43,7 +52,7 @@ const RunChatAssistantMessage: Component<RunChatAssistantMessageProps> = (
         </div>
       </Show>
       <RunChatMarkdown
-        content={content()}
+        content={presentation.displayedText()}
         class="run-chat-assistant-message__content"
       />
       <Show when={props.toolRail}>
