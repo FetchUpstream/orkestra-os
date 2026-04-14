@@ -3997,7 +3997,6 @@ textarea::placeholder {
 .run-chat-workspace {
   --run-chat-rail-max: 820px;
   --run-chat-prose-max: 72ch;
-  --run-chat-surface-max: 680px;
   --run-chat-user-bubble-max: min(76%, 600px);
   --run-chat-composer-gap: 148px;
   --run-chat-composer-offset: var(--run-chat-composer-gap, 148px);
@@ -5324,7 +5323,7 @@ textarea::placeholder {
 .run-chat-details,
 .run-chat-tool-rail {
   margin-top: 2px;
-  width: min(100%, var(--run-chat-surface-max));
+  width: 100%;
   border: 1px solid var(--border-subtle);
   border-radius: 0;
   background: rgba(255, 255, 255, 0.015);
@@ -5334,7 +5333,6 @@ textarea::placeholder {
   .run-chat-workspace {
     --run-chat-rail-max: clamp(900px, 60vw, 980px);
     --run-chat-prose-max: 84ch;
-    --run-chat-surface-max: 760px;
     --run-chat-user-bubble-max: min(78%, 680px);
   }
 }
