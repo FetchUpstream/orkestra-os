@@ -2403,30 +2403,10 @@ impl RunsOpenCodeService {
         false
     }
 
-    async fn fetch_session_history_with_client(
+    async fn fetch_session_todos_with_client(
         client: &OpencodeClient,
         session_id: &str,
-    ) -> Result<
-        (
-            Vec<RunOpenCodeSessionMessageDto>,
-            Vec<RunOpenCodeSessionTodoDto>,
-        ),
-        AppError,
-    > {
-        let request = RequestOptions::default().with_path("id", session_id.to_string());
-        let messages_response = client
-            .session()
-            .messages(request)
-            .await
-            .map_err(|source| OpenCodeServiceError::SessionMessages {
-                session_id: session_id.to_string(),
-                source,
-            })
-            .with_context(|| {
-                format!("while fetching OpenCode message history for session '{session_id}'")
-            })
-            .map_err(app_error_from_anyhow)?;
-
+    ) -> Result<Vec<RunOpenCodeSessionTodoDto>, AppError> {
         let request = RequestOptions::default().with_path("id", session_id.to_string());
         let todos_response = client
             .session()
@@ -2441,10 +2421,7 @@ impl RunsOpenCodeService {
             })
             .map_err(app_error_from_anyhow)?;
 
-        Ok((
-            value_array_to_message_wrappers(messages_response.data),
-            value_array_to_todo_wrappers(todos_response.data),
-        ))
+        Ok(value_array_to_todo_wrappers(todos_response.data))
     }
 
     async fn fetch_session_message_page_with_client(
@@ -5435,86 +5412,6 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         })
     }
 
-    pub async fn get_run_opencode_session_messages(
-        &self,
-        run_id: &str,
-        session_id: Option<&str>,
-    ) -> Result<Vec<RunOpenCodeSessionMessageDto>, AppError> {
-        let run = self.runs_service.get_run_model(run_id).await?;
-        let session_id = session_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-            .or(run.opencode_session_id);
-        let Some(session_id) = session_id else {
-            return Ok(vec![]);
-        };
-        let session_id_for_error = session_id.clone();
-
-        if Self::should_use_completed_read_only_bootstrap(run.status.as_str()) {
-            let cwd = self.resolve_read_only_fetch_cwd(run.worktree_id.as_deref());
-            let persistent_handle_present = self.handles.read().await.contains_key(run_id);
-            info!(
-                target: "opencode.runtime",
-                marker = "completed_read_only_session_messages_ephemeral",
-                run_id = run_id,
-                session_id = session_id.as_str(),
-                run_status = run.status.as_str(),
-                persistent_handle_present = persistent_handle_present,
-                "OpenCode completed/read-only session message fetch using ephemeral path"
-            );
-            let result = self
-                .with_ephemeral_client(cwd, HashMap::new(), |client| {
-                    Box::pin(async move {
-                        let request = RequestOptions::default().with_path("id", session_id.clone());
-                        let response = client
-                            .session()
-                            .messages(request)
-                            .await
-                            .map_err(|source| OpenCodeServiceError::SessionMessages {
-                                session_id: session_id_for_error.clone(),
-                                source,
-                            })
-                            .context("while loading run OpenCode session messages")
-                            .map_err(app_error_from_anyhow)?;
-
-                        Ok(value_array_to_message_wrappers(response.data))
-                    })
-                })
-                .await;
-            self.shutdown_leftover_completed_handle_if_unused(run_id, "session_messages")
-                .await;
-            return result;
-        }
-
-        let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
-        if ensured.state == "unsupported" {
-            return Ok(vec![]);
-        }
-
-        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
-        let _operation_guard = handle.acquire_active_operation_guard("get_session_messages")?;
-        handle.touch_interaction("get_session_messages")?;
-
-        let request = RequestOptions::default().with_path("id", session_id);
-        let response = handle
-            .client
-            .session()
-            .messages(request)
-            .await
-            .map_err(|source| OpenCodeServiceError::SessionMessages {
-                session_id: session_id_for_error.clone(),
-                source,
-            })
-            .context("while loading run OpenCode session messages")
-            .map_err(app_error_from_anyhow)?;
-
-        Ok(value_array_to_message_wrappers(response.data))
-    }
-
-    /// Additive paged transcript API retained alongside the legacy full-array
-    /// history fetch so the current run-details UI remains compatible until the
-    /// frontend model intentionally adopts paging in a later phase.
     pub async fn get_run_opencode_session_messages_page(
         &self,
         run_id: &str,
@@ -5600,7 +5497,6 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         let Some(session_id) = session_id else {
             return Ok(vec![]);
         };
-        let session_id_for_error = session_id.clone();
 
         if Self::should_use_completed_read_only_bootstrap(run.status.as_str()) {
             let cwd = self.resolve_read_only_fetch_cwd(run.worktree_id.as_deref());
@@ -5616,21 +5512,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             );
             let result = self
                 .with_ephemeral_client(cwd, HashMap::new(), |client| {
-                    Box::pin(async move {
-                        let request = RequestOptions::default().with_path("id", session_id.clone());
-                        let response = client
-                            .session()
-                            .todo(request)
-                            .await
-                            .map_err(|source| OpenCodeServiceError::SessionTodos {
-                                session_id: session_id_for_error.clone(),
-                                source,
-                            })
-                            .context("while loading run OpenCode session todos")
-                            .map_err(app_error_from_anyhow)?;
-
-                        Ok(value_array_to_todo_wrappers(response.data))
-                    })
+                    Box::pin(async move { Self::fetch_session_todos_with_client(client, &session_id).await })
                 })
                 .await;
             self.shutdown_leftover_completed_handle_if_unused(run_id, "session_todos")
@@ -5647,20 +5529,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         let _operation_guard = handle.acquire_active_operation_guard("get_session_todos")?;
         handle.touch_interaction("get_session_todos")?;
 
-        let request = RequestOptions::default().with_path("id", session_id);
-        let response = handle
-            .client
-            .session()
-            .todo(request)
-            .await
-            .map_err(|source| OpenCodeServiceError::SessionTodos {
-                session_id: session_id_for_error.clone(),
-                source,
-            })
-            .context("while loading run OpenCode session todos")
-            .map_err(app_error_from_anyhow)?;
-
-        Ok(value_array_to_todo_wrappers(response.data))
+        Self::fetch_session_todos_with_client(&handle.client, &session_id).await
     }
 
     pub async fn subscribe_run_opencode_events(
@@ -5843,38 +5712,6 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 
         if Self::should_use_completed_read_only_bootstrap(run.status.as_str()) {
             let session_id = run.opencode_session_id.filter(|id| !id.trim().is_empty());
-            let cwd = self.resolve_read_only_fetch_cwd(run.worktree_id.as_deref());
-            let persistent_handle_present = self.handles.read().await.contains_key(run_id);
-            let (messages, todos) = if let Some(session_id) = session_id.as_ref() {
-                let session_id_for_fetch = session_id.clone();
-                info!(
-                    target: "opencode.runtime",
-                    marker = "completed_read_only_bootstrap_ephemeral",
-                    run_id = run_id,
-                    session_id = session_id_for_fetch.as_str(),
-                    run_status = run.status.as_str(),
-                    persistent_handle_present = persistent_handle_present,
-                    "OpenCode completed/read-only bootstrap using ephemeral path"
-                );
-                self.with_ephemeral_client(cwd, HashMap::new(), |client| {
-                    Box::pin(async move {
-                        Self::fetch_session_history_with_client(client, &session_id_for_fetch).await
-                    })
-                })
-                .await
-                .unwrap_or_else(|err| {
-                    warn!(
-                        target: "opencode.runtime",
-                        marker = "bootstrap_completed_history_failed",
-                        run_id = run_id,
-                        error = %err,
-                        "OpenCode completed run history fetch failed"
-                    );
-                    (vec![], vec![])
-                })
-            } else {
-                (vec![], vec![])
-            };
 
             info!(
                 target: "opencode.runtime",
@@ -5894,8 +5731,6 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 reason: None,
                 chat_mode: RunOpenCodeChatModeDto::ReadOnly,
                 buffered_events: vec![],
-                messages,
-                todos,
                 session_id,
                 stream_connected: false,
                 ready_phase: Some("completed_history".to_string()),
@@ -5919,8 +5754,6 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 reason: ensured.reason,
                 chat_mode: RunOpenCodeChatModeDto::Unavailable,
                 buffered_events: vec![],
-                messages: vec![],
-                todos: vec![],
                 session_id: None,
                 stream_connected: false,
                 ready_phase: Some(ready_phase.to_string()),
@@ -5940,12 +5773,6 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 
         let session_id = run.opencode_session_id.filter(|id| !id.trim().is_empty());
 
-        let (messages, todos) = if let Some(session_id) = session_id.as_ref() {
-            Self::fetch_session_history_with_client(&handle.client, session_id).await?
-        } else {
-            (vec![], vec![])
-        };
-
         let stream_connected = Self::compute_stream_connected(&buffered_events);
         info!(
             target: "opencode.runtime",
@@ -5962,8 +5789,6 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             reason: ensured.reason,
             chat_mode: RunOpenCodeChatModeDto::Interactive,
             buffered_events,
-            messages,
-            todos,
             session_id,
             stream_connected,
             ready_phase: Some(ready_phase.to_string()),
@@ -7159,7 +6984,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn completed_session_history_fetch_does_not_create_persistent_handle() {
+    async fn completed_session_history_page_and_todos_fetch_do_not_create_persistent_handle() {
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -7170,7 +6995,7 @@ mod tests {
         assert!(!opencode_service.handles.read().await.contains_key("run-1"));
 
         let _ = opencode_service
-            .get_run_opencode_session_messages("run-1", None)
+            .get_run_opencode_session_messages_page("run-1", None, Some(25), None)
             .await;
         assert!(!opencode_service.handles.read().await.contains_key("run-1"));
 
@@ -7293,46 +7118,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_session_messages_fetch_omits_paging_query_parameters() {
-        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
-        let repo_path = temp_dir.path().join("repo");
-        fs::create_dir_all(&repo_path).unwrap();
-        seed_task(&pool, "task-1", &repo_path).await;
-        seed_run(&pool, "run-1", "task-1", "running").await;
-
-        let response = concat!(
-            "HTTP/1.1 200 OK\r\n",
-            "Content-Type: application/json\r\n",
-            "Connection: close\r\n",
-            "\r\n",
-            "[",
-            r#"{"info":{"id":"msg-1","role":"assistant","sessionID":"session-1","time":{"created":1}},"parts":[]}"#,
-            "]"
-        );
-        let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
-        insert_running_handle(
-            &opencode_service,
-            "run-1",
-            "task-1",
-            &repo_path,
-            Some(base_url),
-        )
-        .await;
-
-        let messages = opencode_service
-            .get_run_opencode_session_messages("run-1", Some("session-1"))
-            .await
-            .unwrap();
-
-        assert_eq!(messages.len(), 1);
-
-        let request = request_rx.await.expect("request capture");
-        assert!(request.contains("/session/session-1/message"));
-        assert!(!request.contains("limit="));
-        assert!(!request.contains("before="));
-    }
-
-    #[tokio::test]
     async fn bootstrap_completed_run_shuts_down_existing_unused_persistent_handle() {
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
@@ -7371,8 +7156,8 @@ mod tests {
             super::RunOpenCodeChatModeDto::Unavailable
         );
         assert_eq!(response.state, "unsupported");
-        assert!(response.messages.is_empty());
-        assert!(response.todos.is_empty());
+        assert!(response.buffered_events.is_empty());
+        assert!(response.session_id.is_none());
         assert!(!opencode_service.handles.read().await.contains_key("run-1"));
     }
 

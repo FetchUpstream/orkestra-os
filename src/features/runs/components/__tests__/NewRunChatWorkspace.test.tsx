@@ -27,20 +27,25 @@ const installResizeObserverStub = () => {
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 };
 
-const { getRunOpenCodeSessionMessagesMock, getRunOpenCodeSessionTodosMock } =
-  vi.hoisted(() => ({
-    getRunOpenCodeSessionMessagesMock: vi.fn(async () => ({
-      messages: [],
-      raw: [],
-    })),
-    getRunOpenCodeSessionTodosMock: vi.fn(async () => ({ todos: [], raw: [] })),
-  }));
+const {
+  getRunOpenCodeSessionMessagesPageMock,
+  getRunOpenCodeSessionTodosMock,
+} = vi.hoisted(() => ({
+  getRunOpenCodeSessionMessagesPageMock: vi.fn(async () => ({
+    messages: [],
+    hasMore: false,
+    nextCursor: undefined,
+    beforeCursor: undefined,
+    raw: [],
+  })),
+  getRunOpenCodeSessionTodosMock: vi.fn(async () => ({ todos: [], raw: [] })),
+}));
 
 vi.mock("../../../../app/lib/runs", async () => {
   const actual = await vi.importActual<object>("../../../../app/lib/runs");
   return {
     ...actual,
-    getRunOpenCodeSessionMessages: getRunOpenCodeSessionMessagesMock,
+    getRunOpenCodeSessionMessagesPage: getRunOpenCodeSessionMessagesPageMock,
     getRunOpenCodeSessionTodos: getRunOpenCodeSessionTodosMock,
   };
 });
@@ -112,6 +117,12 @@ const createModelStub = (
         diffSummary: null,
         rawEvents: [],
       }),
+      history: {
+        canLoadOlder: () => false,
+        isLoadingOlder: () => false,
+        error: () => "",
+        loadOlder: vi.fn(async () => false),
+      },
       isSubmittingPrompt: () => false,
       isReplyingQuestion: () => agentOverrides.isReplyingQuestion ?? false,
       isReplyingPermission: () => agentOverrides.isReplyingPermission ?? false,
@@ -175,10 +186,13 @@ const createModelStub = (
 describe("NewRunChatWorkspace", () => {
   beforeEach(() => {
     installResizeObserverStub();
-    getRunOpenCodeSessionMessagesMock.mockClear();
+    getRunOpenCodeSessionMessagesPageMock.mockClear();
     getRunOpenCodeSessionTodosMock.mockClear();
-    getRunOpenCodeSessionMessagesMock.mockResolvedValue({
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
       messages: [],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
       raw: [],
     });
     getRunOpenCodeSessionTodosMock.mockResolvedValue({ todos: [], raw: [] });
@@ -199,6 +213,85 @@ describe("NewRunChatWorkspace", () => {
     expect(
       screen.getByText("No chat history is available for this completed run."),
     ).toBeTruthy();
+  });
+
+  it("loads older transcript history through the model paging API", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-1",
+      status: "idle",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-newer"],
+      messagesById: {
+        "msg-newer": {
+          id: "msg-newer",
+          sessionId: "session-1",
+          role: "assistant",
+          partsById: {
+            "part-newer": {
+              id: "part-newer",
+              kind: "text",
+              type: "text",
+              text: "Newer message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-newer"],
+        },
+      },
+      pendingQuestionsById: {},
+      resolvedQuestionsById: {},
+      failedQuestionsById: {},
+      pendingPermissionsById: {},
+      resolvedPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+    const loadOlder = vi.fn(async () => {
+      setStore((current) => ({
+        ...current,
+        messageOrder: ["msg-older", ...current.messageOrder],
+        messagesById: {
+          ...current.messagesById,
+          "msg-older": {
+            id: "msg-older",
+            sessionId: "session-1",
+            role: "assistant",
+            partsById: {
+              "part-older": {
+                id: "part-older",
+                kind: "text",
+                type: "text",
+                text: "Older message",
+                streaming: false,
+              },
+            },
+            partOrder: ["part-older"],
+          },
+        },
+      }));
+      return true;
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+    model.agent.history = {
+      canLoadOlder: () => true,
+      isLoadingOlder: () => false,
+      error: () => "",
+      loadOlder,
+    } as unknown as typeof model.agent.history;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Load older history" }));
+
+    await waitFor(() => {
+      expect(loadOlder).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Older message")).toBeTruthy();
+    });
   });
 
   it("renders actionable permission item in transcript and disables composer", () => {
@@ -1344,7 +1437,7 @@ describe("NewRunChatWorkspace", () => {
   });
 
   it("hydrates task subagent output from fetched child session history", async () => {
-    getRunOpenCodeSessionMessagesMock.mockResolvedValue({
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
       messages: [
         {
           info: {
@@ -1363,6 +1456,9 @@ describe("NewRunChatWorkspace", () => {
           ],
         },
       ],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
       raw: [],
     } as any);
 
@@ -1407,7 +1503,7 @@ describe("NewRunChatWorkspace", () => {
     render(() => <NewRunChatWorkspace model={model} />);
 
     await waitFor(() => {
-      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledWith({
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledWith({
         runId: "run-1",
         sessionId: "session-child",
       });
@@ -1416,7 +1512,7 @@ describe("NewRunChatWorkspace", () => {
   });
 
   it("hydrates lineage-routed child sessions from fetched history", async () => {
-    getRunOpenCodeSessionMessagesMock.mockImplementation(
+    getRunOpenCodeSessionMessagesPageMock.mockImplementation(
       async ({ sessionId }: { sessionId: string }) => {
         if (sessionId === "session-grandchild") {
           return {
@@ -1438,12 +1534,18 @@ describe("NewRunChatWorkspace", () => {
                 ],
               },
             ],
+            hasMore: false,
+            nextCursor: undefined,
+            beforeCursor: undefined,
             raw: [],
           } as any;
         }
 
         return {
           messages: [],
+          hasMore: false,
+          nextCursor: undefined,
+          beforeCursor: undefined,
           raw: [],
         } as any;
       },
@@ -1504,7 +1606,7 @@ describe("NewRunChatWorkspace", () => {
     render(() => <NewRunChatWorkspace model={model} />);
 
     await waitFor(() => {
-      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledWith({
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledWith({
         runId: "run-1",
         sessionId: "session-grandchild",
       });
@@ -1811,10 +1913,13 @@ describe("NewRunChatWorkspace", () => {
   it("deduplicates subagent history fetches while pending and after failure", async () => {
     const messagesDeferred = createDeferred<{
       messages: never[];
+      hasMore: false;
+      nextCursor: undefined;
+      beforeCursor: undefined;
       raw: never[];
     }>();
     const todosDeferred = createDeferred<{ todos: never[]; raw: never[] }>();
-    getRunOpenCodeSessionMessagesMock.mockImplementation(
+    getRunOpenCodeSessionMessagesPageMock.mockImplementation(
       () => messagesDeferred.promise,
     );
     getRunOpenCodeSessionTodosMock.mockImplementation(
@@ -1862,7 +1967,7 @@ describe("NewRunChatWorkspace", () => {
     render(() => <NewRunChatWorkspace model={model} />);
 
     await waitFor(() => {
-      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledTimes(1);
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(1);
       expect(getRunOpenCodeSessionTodosMock).toHaveBeenCalledTimes(1);
     });
 
@@ -1872,7 +1977,7 @@ describe("NewRunChatWorkspace", () => {
     });
 
     await waitFor(() => {
-      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledTimes(1);
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(1);
       expect(getRunOpenCodeSessionTodosMock).toHaveBeenCalledTimes(1);
     });
 
@@ -1880,7 +1985,7 @@ describe("NewRunChatWorkspace", () => {
     todosDeferred.resolve({ todos: [], raw: [] });
 
     await waitFor(() => {
-      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledTimes(1);
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(1);
       expect(getRunOpenCodeSessionTodosMock).toHaveBeenCalledTimes(1);
     });
 
@@ -1890,7 +1995,7 @@ describe("NewRunChatWorkspace", () => {
     });
 
     await waitFor(() => {
-      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledTimes(1);
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(1);
       expect(getRunOpenCodeSessionTodosMock).toHaveBeenCalledTimes(1);
     });
   });

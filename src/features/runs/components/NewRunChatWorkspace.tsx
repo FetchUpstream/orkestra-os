@@ -52,7 +52,7 @@ import { formatDateTime } from "../../tasks/utils/taskDetail";
 import { AppIcon } from "../../../components/ui/icons";
 import RunInlineLoader from "../../../components/ui/RunInlineLoader";
 import {
-  getRunOpenCodeSessionMessages,
+  getRunOpenCodeSessionMessagesPage,
   getRunOpenCodeSessionTodos,
 } from "../../../app/lib/runs";
 import {
@@ -401,7 +401,6 @@ const buildStreamingTextPart = (
   };
 };
 
-const TRANSCRIPT_WINDOW_CHUNK = 60;
 const TRANSCRIPT_NEAR_BOTTOM_THRESHOLD = 96;
 const INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS = 6;
 const INTERNAL_ID_PATTERN =
@@ -1736,9 +1735,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     isInitialTranscriptAnchorCompleted,
     setIsInitialTranscriptAnchorCompleted,
   ] = createSignal(false);
-  const [transcriptVisibleCount, setTranscriptVisibleCount] = createSignal(
-    TRANSCRIPT_WINDOW_CHUNK,
-  );
   const [runChatComposerOffsetPx, setRunChatComposerOffsetPx] =
     createSignal("0px");
   const [isTranscriptNearBottom, setIsTranscriptNearBottom] =
@@ -2151,19 +2147,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const transcriptMessageOrder = createMemo(
     () => props.model.agent.store().messageOrder,
   );
-
-  const transcriptHiddenMessageCount = createMemo(() => {
-    return Math.max(
-      0,
-      transcriptMessageOrder().length - transcriptVisibleCount(),
-    );
-  });
-
-  const visibleTranscriptMessageIds = createMemo(() => {
-    const order = transcriptMessageOrder();
-    const startIndex = Math.max(0, order.length - transcriptVisibleCount());
-    return order.slice(startIndex);
-  });
   const hasLoadedInitialTranscriptHistory = createMemo(() => {
     const store = props.model.agent.store();
     return (
@@ -2172,6 +2155,15 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       props.model.agent.state() === "error"
     );
   });
+  const canLoadOlderTranscript = createMemo(
+    () => props.model.agent.history?.canLoadOlder?.() ?? false,
+  );
+  const isLoadingOlderTranscript = createMemo(
+    () => props.model.agent.history?.isLoadingOlder?.() ?? false,
+  );
+  const transcriptHistoryError = createMemo(
+    () => props.model.agent.history?.error?.() ?? "",
+  );
 
   const formatAgentPayload = (payload: unknown): string => {
     if (payload === undefined) {
@@ -2272,14 +2264,36 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       }
 
       pendingSubagentHistorySessionIds.add(sessionId);
+      const loadSubagentMessages = async (): Promise<unknown[]> => {
+        const pages: unknown[][] = [];
+        let before: string | undefined;
+
+        while (true) {
+          const page = await getRunOpenCodeSessionMessagesPage({
+            runId,
+            sessionId,
+            ...(before ? { before } : {}),
+          });
+          pages.unshift(page.messages);
+
+          if (!page.hasMore || !page.nextCursor) {
+            break;
+          }
+
+          before = page.nextCursor;
+        }
+
+        return pages.flat();
+      };
+
       void Promise.all([
-        getRunOpenCodeSessionMessages({ runId, sessionId }),
+        loadSubagentMessages(),
         getRunOpenCodeSessionTodos({ runId, sessionId }),
       ])
-        .then(([messagesResult, todosResult]) => {
+        .then(([messages, todosResult]) => {
           const hydrated = hydrateAgentStore({
             sessionId,
-            messages: messagesResult.messages,
+            messages,
             todos: todosResult.todos,
           });
           setFetchedSubagentHistories((current) => ({
@@ -2336,7 +2350,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   };
 
   const buildChatRows = createMemo<ChatRow[]>(() => {
-    return visibleTranscriptMessageIds()
+    return transcriptMessageOrder()
       .map((messageId) => {
         const message = props.model.agent.store().messagesById[messageId];
         if (!message) {
@@ -2852,12 +2866,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     ];
   });
 
-  createEffect(() => {
-    if (transcriptMessageOrder().length === 0) {
-      setTranscriptVisibleCount(TRANSCRIPT_WINDOW_CHUNK);
-    }
-  });
-
   const cancelInitialTranscriptAnchorFrames = () => {
     if (initialTranscriptAnchorRaf !== null) {
       cancelAnimationFrame(initialTranscriptAnchorRaf);
@@ -2915,7 +2923,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       () => props.model.run()?.id,
       () => {
         cancelInitialTranscriptAnchorFrames();
-        setTranscriptVisibleCount(TRANSCRIPT_WINDOW_CHUNK);
         setIsTranscriptNearBottom(true);
         setIsInitialTranscriptAnchorCompleted(false);
       },
@@ -2958,7 +2965,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
 
     const transcriptItems = chatTranscriptItems();
     const transcriptItemCount = transcriptItems.length;
-    transcriptVisibleCount();
     runChatComposerOffsetPx();
     transcriptLayoutRevision();
 
@@ -3014,7 +3020,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
 
   createEffect(() => {
     chatTranscriptItems();
-    transcriptVisibleCount();
     runChatComposerOffsetPx();
     transcriptLayoutRevision();
 
@@ -3057,6 +3062,28 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const jumpToLatestTranscript = () => {
     scrollTranscriptToBottom("smooth");
     requestAnimationFrame(() => {
+      syncTranscriptNearBottom();
+    });
+  };
+
+  const loadOlderTranscript = async (): Promise<void> => {
+    if (!canLoadOlderTranscript()) {
+      return;
+    }
+
+    const container = transcriptScrollRef;
+    const previousScrollHeight = container?.scrollHeight ?? null;
+    const didLoad = (await props.model.agent.history?.loadOlder?.()) ?? false;
+    if (!didLoad || !container || previousScrollHeight === null) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      const nextScrollHeight = container.scrollHeight;
+      const offset = nextScrollHeight - previousScrollHeight;
+      if (offset > 0) {
+        container.scrollTop += offset;
+      }
       syncTranscriptNearBottom();
     });
   };
@@ -3119,6 +3146,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           <Show when={props.model.agent.error().length > 0}>
             <p class="projects-error">{props.model.agent.error()}</p>
           </Show>
+          <Show when={transcriptHistoryError().length > 0}>
+            <p class="projects-error">{transcriptHistoryError()}</p>
+          </Show>
           <section
             class="run-setup-status-box"
             data-state={setupState()}
@@ -3168,36 +3198,12 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               <RunChatTranscript
                 class="run-chat-transcript"
                 items={chatTranscriptItems()}
-                olderAffordance={
-                  <Show when={transcriptHiddenMessageCount() > 0}>
-                    <button
-                      type="button"
-                      class="run-detail-load-older-button run-chat-load-older"
-                      onClick={() => {
-                        const container = transcriptScrollRef;
-                        const previousScrollHeight =
-                          container?.scrollHeight ?? null;
-                        setTranscriptVisibleCount(
-                          (current) => current + TRANSCRIPT_WINDOW_CHUNK,
-                        );
-                        if (!container || previousScrollHeight === null) {
-                          return;
-                        }
-
-                        requestAnimationFrame(() => {
-                          const nextScrollHeight = container.scrollHeight;
-                          const offset =
-                            nextScrollHeight - previousScrollHeight;
-                          if (offset > 0) {
-                            container.scrollTop += offset;
-                          }
-                        });
-                      }}
-                    >
-                      {`Load older (${transcriptHiddenMessageCount()} hidden)`}
-                    </button>
-                  </Show>
-                }
+                canLoadOlder={canLoadOlderTranscript()}
+                loadingOlder={isLoadingOlderTranscript()}
+                onLoadOlder={() => {
+                  void loadOlderTranscript();
+                }}
+                loadOlderLabel="Load older history"
               />
               <div
                 ref={transcriptBottomSentinelRef}

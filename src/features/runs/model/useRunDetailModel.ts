@@ -19,6 +19,7 @@ import {
   appendCappedHistory,
   getBufferedRunOpenCodeEvents,
   getRun,
+  getRunOpenCodeSessionMessagesPage,
   getRunGitMergeStatus,
   getRunDiffFile,
   killRunTerminal,
@@ -132,7 +133,7 @@ export type PendingRunPrompt = {
   text: string;
   submittedAt: number;
   acceptedAt: number | null;
-  messageCountAtSubmit: number;
+  knownMessageIdsAtSubmit: string[];
   attempts: number;
   reconnectAttempts: number;
   status: "sending" | "failed";
@@ -146,9 +147,31 @@ export type PendingRunPrompt = {
 };
 
 const PENDING_PROMPT_ACK_TIMEOUT_MS = 8000;
+const RUN_DETAIL_TRANSCRIPT_PAGE_LIMIT = 100;
 const UUID_LIKE_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HEX_INTERNAL_ID_PATTERN = /^[0-9a-f]{24,}$/i;
+
+type RootTranscriptHistoryState = {
+  sessionId: string | null;
+  recentMessages: unknown[];
+  olderMessages: unknown[];
+  hasMore: boolean;
+  nextCursor: string | null;
+  isLoadingOlder: boolean;
+  error: string;
+};
+
+const createEmptyRootTranscriptHistoryState =
+  (): RootTranscriptHistoryState => ({
+    sessionId: null,
+    recentMessages: [],
+    olderMessages: [],
+    hasMore: false,
+    nextCursor: null,
+    isLoadingOlder: false,
+    error: "",
+  });
 
 const isInternalAttributionId = (value: string): boolean => {
   return UUID_LIKE_PATTERN.test(value) || HEX_INTERNAL_ID_PATTERN.test(value);
@@ -368,6 +391,10 @@ export const useRunDetailModel = () => {
   const [agentStore, setAgentStore] = createSignal<AgentStore>(
     createEmptyAgentStore(null),
   );
+  const [rootTranscriptHistory, setRootTranscriptHistory] =
+    createSignal<RootTranscriptHistoryState>(
+      createEmptyRootTranscriptHistoryState(),
+    );
   const [agentError, setAgentError] = createSignal("");
   const [agentReadinessPhase, setAgentReadinessPhase] = createSignal<
     | "warming_backend"
@@ -747,7 +774,9 @@ export const useRunDetailModel = () => {
       },
     };
 
-    setAgentEvents((current) => appendCappedHistory(current, syntheticEvent));
+    setAgentEvents((current) =>
+      appendDedupedAgentEvents(current, syntheticEvent),
+    );
     setAgentStore((current) => {
       return reduceOpenCodeEvent(current, toOpenCodeBusEvent(syntheticEvent));
     });
@@ -807,7 +836,9 @@ export const useRunDetailModel = () => {
       },
     };
 
-    setAgentEvents((current) => appendCappedHistory(current, syntheticEvent));
+    setAgentEvents((current) =>
+      appendDedupedAgentEvents(current, syntheticEvent),
+    );
     setAgentStore((current) => {
       return reduceOpenCodeEvent(current, toOpenCodeBusEvent(syntheticEvent));
     });
@@ -1580,6 +1611,56 @@ export const useRunDetailModel = () => {
     };
   };
 
+  const toAgentEventSignature = (event: RunOpenCodeEvent): string => {
+    return JSON.stringify([
+      event.runId,
+      event.ts ?? null,
+      event.event,
+      event.runState ?? null,
+      event.data ?? null,
+    ]);
+  };
+
+  const dedupeRunOpenCodeEvents = (
+    events: RunOpenCodeEvent[],
+  ): RunOpenCodeEvent[] => {
+    const seen = new Set<string>();
+    return events.filter((event) => {
+      const signature = toAgentEventSignature(event);
+      if (seen.has(signature)) {
+        return false;
+      }
+      seen.add(signature);
+      return true;
+    });
+  };
+
+  const appendDedupedAgentEvents = (
+    current: RunOpenCodeEvent[],
+    incoming: RunOpenCodeEvent[] | RunOpenCodeEvent,
+  ): RunOpenCodeEvent[] => {
+    const nextEvents = Array.isArray(incoming) ? incoming : [incoming];
+    if (nextEvents.length === 0) {
+      return current;
+    }
+
+    const known = new Set(current.map(toAgentEventSignature));
+    const missing = nextEvents.filter((event) => {
+      const signature = toAgentEventSignature(event);
+      if (known.has(signature)) {
+        return false;
+      }
+      known.add(signature);
+      return true;
+    });
+
+    if (missing.length === 0) {
+      return current;
+    }
+
+    return appendCappedHistory(current, missing);
+  };
+
   const AGENT_ACTIVITY_EVIDENCE_EVENT_TYPES = new Set<string>([
     "message.updated",
     "message.removed",
@@ -1744,36 +1825,6 @@ export const useRunDetailModel = () => {
     return indicatorState;
   };
 
-  const extractSessionIdFromMessages = (messages: unknown[]): string | null => {
-    for (const item of messages) {
-      if (!isRecord(item)) {
-        continue;
-      }
-
-      const info = isRecord(item.info)
-        ? item.info
-        : (item as Record<string, unknown>);
-      const sessionId = info.sessionID ?? info.sessionId;
-      if (typeof sessionId === "string" && sessionId.trim()) {
-        return sessionId.trim();
-      }
-    }
-    return null;
-  };
-
-  const extractSessionIdFromTodos = (todos: unknown[]): string | null => {
-    for (const item of todos) {
-      if (!isRecord(item)) {
-        continue;
-      }
-      const sessionId = item.sessionID ?? item.sessionId;
-      if (typeof sessionId === "string" && sessionId.trim()) {
-        return sessionId.trim();
-      }
-    }
-    return null;
-  };
-
   const extractSessionIdFromEvents = (
     events: RunOpenCodeEvent[],
   ): string | null => {
@@ -1798,6 +1849,111 @@ export const useRunDetailModel = () => {
       }
     }
     return null;
+  };
+
+  const buildLoadedRootTranscriptMessages = (
+    history: RootTranscriptHistoryState,
+  ): unknown[] => {
+    return [...history.olderMessages, ...history.recentMessages];
+  };
+
+  const resolveRootTranscriptSessionId = (
+    bootstrapSessionId: string | undefined,
+    replaySource: RunOpenCodeEvent[],
+  ): string | null => {
+    const historySessionId = rootTranscriptHistory().sessionId?.trim() || "";
+    const storeSessionId = agentStore().sessionId?.trim() || "";
+    return (
+      bootstrapSessionId?.trim() ||
+      extractSessionIdFromEvents(replaySource) ||
+      historySessionId ||
+      storeSessionId ||
+      null
+    );
+  };
+
+  const rebuildAgentStoreWithLoadedTranscript = (
+    current: AgentStore,
+    options: {
+      sessionId: string | null;
+      messages: unknown[];
+      pendingQuestions?: unknown[] | null;
+      streamConnected: boolean;
+      replayEvents?: OpenCodeBusEvent[];
+    },
+  ): AgentStore => {
+    const hydrated = hydrateAgentStore({
+      sessionId: options.sessionId,
+      messages: options.messages,
+      questions:
+        options.pendingQuestions ?? Object.values(current.pendingQuestionsById),
+      todos: [],
+    });
+    const seededHydrated = seedHydratedAgentStore(
+      hydrated,
+      options.streamConnected,
+    );
+    const replayEvents = options.replayEvents ?? current.rawEvents;
+    const rebuilt = replayEvents.reduce((nextState, item) => {
+      return reduceOpenCodeEvent(nextState, item);
+    }, seededHydrated);
+
+    const failedQuestionsById = {
+      ...rebuilt.failedQuestionsById,
+      ...current.failedQuestionsById,
+    };
+    const failedPermissionsById = {
+      ...rebuilt.failedPermissionsById,
+      ...current.failedPermissionsById,
+    };
+    const pendingQuestionsById = { ...rebuilt.pendingQuestionsById };
+    const pendingPermissionsById = { ...rebuilt.pendingPermissionsById };
+
+    for (const requestId of Object.keys(failedQuestionsById)) {
+      delete pendingQuestionsById[requestId];
+    }
+    for (const requestId of Object.keys(failedPermissionsById)) {
+      delete pendingPermissionsById[requestId];
+    }
+
+    return {
+      ...rebuilt,
+      pendingQuestionsById,
+      pendingPermissionsById,
+      failedQuestionsById,
+      failedPermissionsById,
+    };
+  };
+
+  const fetchRecentRootTranscriptPage = async (
+    runId: string,
+    sessionId: string | null,
+  ): Promise<{
+    messages: unknown[];
+    hasMore: boolean;
+    nextCursor: string | null;
+    error: string;
+  }> => {
+    try {
+      const page = await getRunOpenCodeSessionMessagesPage({
+        runId,
+        ...(sessionId ? { sessionId } : {}),
+        limit: RUN_DETAIL_TRANSCRIPT_PAGE_LIMIT,
+      });
+      return {
+        messages: page.messages,
+        hasMore: page.hasMore,
+        nextCursor: page.nextCursor?.trim() || null,
+        error: "",
+      };
+    } catch {
+      return {
+        messages: [],
+        hasMore: false,
+        nextCursor: null,
+        error: "Failed to load transcript history.",
+      };
+    }
   };
 
   const extractSessionIdFromBusProperties = (value: unknown): string | null => {
@@ -1836,8 +1992,10 @@ export const useRunDetailModel = () => {
     subscriptionVersion: number,
     baseEvents: RunOpenCodeEvent[] = [],
   ): Promise<void> => {
-    const bootstrap = await bootstrapRunOpenCode(runId);
-    const pendingQuestions = await loadPendingRunQuestions(runId);
+    const [bootstrap, pendingQuestions] = await Promise.all([
+      bootstrapRunOpenCode(runId),
+      loadPendingRunQuestions(runId),
+    ]);
     const chatMode = resolveChatMode(bootstrap);
     const bufferedEvents =
       chatMode === "interactive"
@@ -1877,8 +2035,12 @@ export const useRunDetailModel = () => {
       return;
     }
 
-    const replaySource = appendCappedHistory(bufferedEvents, baseEvents);
-    setAgentEvents((current) => appendCappedHistory(current, replaySource));
+    const replaySource = dedupeRunOpenCodeEvents(
+      appendCappedHistory(bufferedEvents, baseEvents),
+    );
+    setAgentEvents((current) =>
+      appendDedupedAgentEvents(current, replaySource),
+    );
     setAgentReadinessPhase(normalizeReadinessPhase(bootstrap));
     setAgentState(bootstrap.state);
     setAgentError("");
@@ -1887,34 +2049,59 @@ export const useRunDetailModel = () => {
       replaySource,
     );
 
-    const sessionId =
-      bootstrap.sessionId?.trim() ||
-      extractSessionIdFromMessages(bootstrap.messages) ||
-      extractSessionIdFromTodos(bootstrap.todos) ||
-      extractSessionIdFromEvents(replaySource) ||
-      agentStore().sessionId;
+    const sessionId = resolveRootTranscriptSessionId(
+      bootstrap.sessionId,
+      replaySource,
+    );
+    const transcriptPage = await fetchRecentRootTranscriptPage(
+      runId,
+      sessionId,
+    );
+
+    if (
+      requestVersion !== activeAgentRequestVersion ||
+      subscriptionVersion !== activeAgentSubscriptionVersion ||
+      !isAgentUiSubscribed ||
+      params.runId !== runId
+    ) {
+      return;
+    }
+
+    const currentHistory = rootTranscriptHistory();
+    const hasLoadedHistory =
+      buildLoadedRootTranscriptMessages(currentHistory).length > 0;
+    const nextHistory: RootTranscriptHistoryState = {
+      sessionId: sessionId ?? currentHistory.sessionId,
+      recentMessages:
+        transcriptPage.error && currentHistory.recentMessages.length > 0
+          ? currentHistory.recentMessages
+          : transcriptPage.messages,
+      olderMessages: currentHistory.olderMessages,
+      hasMore: transcriptPage.error
+        ? currentHistory.hasMore
+        : transcriptPage.hasMore,
+      nextCursor:
+        transcriptPage.error && currentHistory.nextCursor
+          ? currentHistory.nextCursor
+          : transcriptPage.nextCursor,
+      isLoadingOlder: false,
+      error: hasLoadedHistory ? "" : transcriptPage.error,
+    };
+
+    setRootTranscriptHistory(nextHistory);
+    const replayEvents =
+      replaySource.length > 0
+        ? replaySource.map(toOpenCodeBusEvent)
+        : undefined;
 
     setAgentStore((current) => {
-      const hydrated = hydrateAgentStore({
-        sessionId,
-        messages: bootstrap.messages,
-        questions:
-          pendingQuestions ?? Object.values(current.pendingQuestionsById),
-        todos: bootstrap.todos,
+      return rebuildAgentStoreWithLoadedTranscript(current, {
+        sessionId: nextHistory.sessionId,
+        messages: buildLoadedRootTranscriptMessages(nextHistory),
+        pendingQuestions,
+        streamConnected: bootstrap.streamConnected,
+        replayEvents,
       });
-      const seededHydrated = seedHydratedAgentStore(
-        hydrated,
-        bootstrap.streamConnected,
-      );
-
-      const replayEvents: OpenCodeBusEvent[] =
-        replaySource.length > 0
-          ? replaySource.map(toOpenCodeBusEvent)
-          : current.rawEvents;
-
-      return replayEvents.reduce((nextState, item) => {
-        return reduceOpenCodeEvent(nextState, item);
-      }, seededHydrated);
     });
     setAgentTransportState(indicatorState.transportState);
     setAgentActivityState(indicatorState.activityState);
@@ -2739,8 +2926,10 @@ export const useRunDetailModel = () => {
     setAgentError("");
 
     try {
-      const result = await bootstrapRunOpenCode(normalizedRunId);
-      const pendingQuestions = await loadPendingRunQuestions(normalizedRunId);
+      const [result, pendingQuestions] = await Promise.all([
+        bootstrapRunOpenCode(normalizedRunId),
+        loadPendingRunQuestions(normalizedRunId),
+      ]);
       if (
         requestVersion !== activeAgentRequestVersion ||
         params.runId !== normalizedRunId
@@ -2782,40 +2971,65 @@ export const useRunDetailModel = () => {
               )
               .catch(() => result.bufferedEvents)
           : result.bufferedEvents;
-      setAgentEvents((current) => appendCappedHistory(current, replaySource));
+      setAgentEvents((current) =>
+        appendDedupedAgentEvents(current, replaySource),
+      );
       const indicatorState = resolveAgentIndicatorStateFromBootstrap(
         result,
         replaySource,
       );
 
-      const sessionId =
-        result.sessionId?.trim() ||
-        extractSessionIdFromMessages(result.messages) ||
-        extractSessionIdFromTodos(result.todos) ||
-        extractSessionIdFromEvents(replaySource) ||
-        agentStore().sessionId;
+      const sessionId = resolveRootTranscriptSessionId(
+        result.sessionId,
+        replaySource,
+      );
+      const transcriptPage = await fetchRecentRootTranscriptPage(
+        normalizedRunId,
+        sessionId,
+      );
+
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== normalizedRunId
+      ) {
+        return;
+      }
+
+      const currentHistory = rootTranscriptHistory();
+      const hasLoadedHistory =
+        buildLoadedRootTranscriptMessages(currentHistory).length > 0;
+      const nextHistory: RootTranscriptHistoryState = {
+        sessionId: sessionId ?? currentHistory.sessionId,
+        recentMessages:
+          transcriptPage.error && currentHistory.recentMessages.length > 0
+            ? currentHistory.recentMessages
+            : transcriptPage.messages,
+        olderMessages: currentHistory.olderMessages,
+        hasMore: transcriptPage.error
+          ? currentHistory.hasMore
+          : transcriptPage.hasMore,
+        nextCursor:
+          transcriptPage.error && currentHistory.nextCursor
+            ? currentHistory.nextCursor
+            : transcriptPage.nextCursor,
+        isLoadingOlder: false,
+        error: hasLoadedHistory ? "" : transcriptPage.error,
+      };
+
+      setRootTranscriptHistory(nextHistory);
+      const replayEvents =
+        replaySource.length > 0
+          ? replaySource.map(toOpenCodeBusEvent)
+          : undefined;
 
       setAgentStore((current) => {
-        const hydrated = hydrateAgentStore({
-          sessionId,
-          messages: result.messages,
-          questions:
-            pendingQuestions ?? Object.values(current.pendingQuestionsById),
-          todos: result.todos,
+        return rebuildAgentStoreWithLoadedTranscript(current, {
+          sessionId: nextHistory.sessionId,
+          messages: buildLoadedRootTranscriptMessages(nextHistory),
+          pendingQuestions,
+          streamConnected: result.streamConnected,
+          replayEvents,
         });
-        const seededHydrated = seedHydratedAgentStore(
-          hydrated,
-          result.streamConnected,
-        );
-
-        const replayEvents: OpenCodeBusEvent[] =
-          replaySource.length > 0
-            ? replaySource.map(toOpenCodeBusEvent)
-            : current.rawEvents;
-
-        return replayEvents.reduce((nextStateValue, item) => {
-          return reduceOpenCodeEvent(nextStateValue, item);
-        }, seededHydrated);
       });
       setAgentTransportState(indicatorState.transportState);
       setAgentActivityState(indicatorState.activityState);
@@ -2902,7 +3116,7 @@ export const useRunDetailModel = () => {
       activityState: agentActivityState(),
     };
 
-    setAgentEvents((current) => appendCappedHistory(current, batch));
+    setAgentEvents((current) => appendDedupedAgentEvents(current, batch));
     setAgentStore((current) => {
       return batch.reduce((nextState, event) => {
         const busEvent = toOpenCodeBusEvent(event);
@@ -3123,6 +3337,39 @@ export const useRunDetailModel = () => {
       removeAgentEventForwarder = removeForwarder;
       setAgentState("running");
       setAgentReadinessPhase("ready");
+      void getBufferedRunOpenCodeEvents(normalizedRunId)
+        .then((events) => {
+          if (
+            requestVersion !== activeAgentRequestVersion ||
+            subscriptionVersion !== activeAgentSubscriptionVersion ||
+            !isAgentUiSubscribed ||
+            params.runId !== normalizedRunId
+          ) {
+            return;
+          }
+
+          const knownEvents = new Set(
+            [...agentEvents(), ...pendingAgentEvents].map(
+              toAgentEventSignature,
+            ),
+          );
+          const missingEvents = events.filter(
+            (event) => !knownEvents.has(toAgentEventSignature(event)),
+          );
+          if (missingEvents.length === 0) {
+            return;
+          }
+
+          pendingAgentEvents.push(...missingEvents);
+          schedulePendingAgentEventFlush(
+            normalizedRunId,
+            requestVersion,
+            subscriptionVersion,
+          );
+        })
+        .catch(() => {
+          // Ignore reconciliation failures and rely on the live stream.
+        });
     } catch {
       if (
         requestVersion !== activeAgentRequestVersion ||
@@ -3136,6 +3383,106 @@ export const useRunDetailModel = () => {
       setAgentTransportState("disconnected");
       setAgentActivityState("unknown");
       setAgentError("Failed to subscribe to agent events.");
+    }
+  };
+
+  const canLoadOlderTranscriptHistory = createMemo(() => {
+    const history = rootTranscriptHistory();
+    return Boolean(
+      params.runId?.trim() &&
+      (agentChatMode() === "interactive" || agentChatMode() === "read_only") &&
+      history.hasMore &&
+      history.nextCursor &&
+      !history.isLoadingOlder,
+    );
+  });
+
+  const loadOlderTranscriptHistory = async (): Promise<boolean> => {
+    const runId = params.runId?.trim() ?? "";
+    const requestVersion = activeAgentRequestVersion;
+    const currentHistory = rootTranscriptHistory();
+    const before = currentHistory.nextCursor?.trim() || "";
+    const sessionId =
+      currentHistory.sessionId?.trim() || agentStore().sessionId?.trim() || "";
+
+    if (!runId || !before || currentHistory.isLoadingOlder) {
+      return false;
+    }
+
+    setRootTranscriptHistory((current) => ({
+      ...current,
+      isLoadingOlder: true,
+      error: "",
+    }));
+
+    try {
+      const page = await getRunOpenCodeSessionMessagesPage({
+        runId,
+        ...(sessionId ? { sessionId } : {}),
+        limit: RUN_DETAIL_TRANSCRIPT_PAGE_LIMIT,
+        before,
+      });
+
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== runId
+      ) {
+        return false;
+      }
+
+      let nextHistory: RootTranscriptHistoryState | null = null;
+      setRootTranscriptHistory((current) => {
+        if ((current.nextCursor?.trim() || "") !== before) {
+          return current;
+        }
+
+        nextHistory = {
+          ...current,
+          sessionId: sessionId || current.sessionId,
+          olderMessages: [...page.messages, ...current.olderMessages],
+          hasMore: page.hasMore,
+          nextCursor: page.nextCursor?.trim() || null,
+          isLoadingOlder: false,
+          error: "",
+        };
+        return nextHistory;
+      });
+
+      if (!nextHistory) {
+        return false;
+      }
+
+      setAgentStore((current) => {
+        return rebuildAgentStoreWithLoadedTranscript(current, {
+          sessionId: nextHistory!.sessionId,
+          messages: buildLoadedRootTranscriptMessages(nextHistory!),
+          streamConnected: current.streamConnected,
+        });
+      });
+
+      return true;
+    } catch (loadError) {
+      if (
+        requestVersion !== activeAgentRequestVersion ||
+        params.runId !== runId
+      ) {
+        return false;
+      }
+
+      setRootTranscriptHistory((current) => {
+        if ((current.nextCursor?.trim() || "") !== before) {
+          return current;
+        }
+
+        return {
+          ...current,
+          isLoadingOlder: false,
+          error:
+            getErrorMessage(loadError) ||
+            "Failed to load older transcript history.",
+        };
+      });
+      return false;
     }
   };
 
@@ -3227,7 +3574,7 @@ export const useRunDetailModel = () => {
       text: prompt,
       submittedAt: Date.now(),
       acceptedAt: null,
-      messageCountAtSubmit: agentStore().messageOrder.length,
+      knownMessageIdsAtSubmit: [...agentStore().messageOrder],
       attempts: nextAttemptCount,
       reconnectAttempts: 0,
       status: "sending",
@@ -3343,8 +3690,11 @@ export const useRunDetailModel = () => {
     }
 
     const store = agentStore();
-    const recentMessageIds = store.messageOrder.slice(
-      currentPendingPrompt.messageCountAtSubmit,
+    const knownMessageIdsAtSubmit = new Set(
+      currentPendingPrompt.knownMessageIdsAtSubmit,
+    );
+    const recentMessageIds = store.messageOrder.filter(
+      (messageId) => !knownMessageIdsAtSubmit.has(messageId),
     );
     const acknowledged = recentMessageIds.some((messageId) => {
       const message = store.messagesById[messageId];
@@ -3801,6 +4151,7 @@ export const useRunDetailModel = () => {
     clearPendingAgentSnapshotHydrate();
     setAgentEvents([]);
     setAgentStore(createEmptyAgentStore(null));
+    setRootTranscriptHistory(createEmptyRootTranscriptHistoryState());
     setAgentTransportState("warming");
     setAgentActivityState("unknown");
     setAgentError("");
@@ -4328,6 +4679,12 @@ export const useRunDetailModel = () => {
       readinessPhase: agentReadinessPhase,
       events: agentEvents,
       store: agentStore,
+      history: {
+        canLoadOlder: canLoadOlderTranscriptHistory,
+        isLoadingOlder: () => rootTranscriptHistory().isLoadingOlder,
+        error: () => rootTranscriptHistory().error,
+        loadOlder: loadOlderTranscriptHistory,
+      },
       questionState,
       permissionState,
       error: agentError,

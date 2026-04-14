@@ -224,10 +224,6 @@ pub struct RunOpenCodeSessionMessageDto {
     pub payload: Value,
 }
 
-/// Additive paged transcript contract for Phase 2 frontend adoption.
-///
-/// The legacy full-array history APIs remain available in this phase so the
-/// existing run-details UI can continue hydrating from full snapshots.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunOpenCodeSessionMessagesPageDto {
@@ -305,10 +301,6 @@ pub struct BootstrapRunOpenCodeResponse {
     pub reason: Option<String>,
     pub chat_mode: RunOpenCodeChatModeDto,
     pub buffered_events: Vec<RawAgentEvent>,
-    /// Legacy full-history bootstrap retained for compatibility during the
-    /// staged transcript paging rollout.
-    pub messages: Vec<RunOpenCodeSessionMessageDto>,
-    pub todos: Vec<RunOpenCodeSessionTodoDto>,
     pub session_id: Option<String>,
     pub stream_connected: bool,
     pub ready_phase: Option<String>,

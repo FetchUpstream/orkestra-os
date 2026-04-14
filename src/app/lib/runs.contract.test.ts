@@ -18,7 +18,6 @@ import {
   listTaskRunSourceBranches,
   getRunSelectionOptions,
   getRunGitMergeStatus,
-  getRunOpenCodeSessionMessages,
   getRunOpenCodeSessionMessagesPage,
   getRunOpenCodeSessionTodos,
   listActiveRuns,
@@ -390,8 +389,6 @@ describe("runs contract", () => {
     invokeMock.mockResolvedValue({
       state: "running",
       bufferedEvents: [],
-      messages: [],
-      todos: [],
       streamConnected: true,
     });
 
@@ -402,22 +399,15 @@ describe("runs contract", () => {
     });
   });
 
-  it("invokes child session history commands with optional sessionId", async () => {
+  it("invokes child session todo history command with optional sessionId", async () => {
     invokeMock.mockResolvedValue([]);
 
-    await getRunOpenCodeSessionMessages({ runId: "run-1", sessionId: "ses-2" });
     await getRunOpenCodeSessionTodos({ runId: "run-1", sessionId: "ses-2" });
 
-    expect(invokeMock).toHaveBeenNthCalledWith(
-      1,
-      "get_run_opencode_session_messages",
-      { runId: "run-1", sessionId: "ses-2" },
-    );
-    expect(invokeMock).toHaveBeenNthCalledWith(
-      2,
-      "get_run_opencode_session_todos",
-      { runId: "run-1", sessionId: "ses-2" },
-    );
+    expect(invokeMock).toHaveBeenCalledWith("get_run_opencode_session_todos", {
+      runId: "run-1",
+      sessionId: "ses-2",
+    });
   });
 
   it("invokes paged session history command with limit and before cursor", async () => {
@@ -446,12 +436,10 @@ describe("runs contract", () => {
 
   it("normalizes paged session history payload", async () => {
     invokeMock.mockResolvedValue({
-      result: {
-        messages: { items: [{ payload: { id: "msg-2" } }] },
-        has_more: true,
-        next_cursor: "cursor-older",
-        before_cursor: "cursor-current",
-      },
+      messages: [{ payload: { id: "msg-2" } }],
+      hasMore: true,
+      nextCursor: "cursor-older",
+      beforeCursor: "cursor-current",
     });
 
     const result = await getRunOpenCodeSessionMessagesPage({
@@ -465,12 +453,10 @@ describe("runs contract", () => {
       nextCursor: "cursor-older",
       beforeCursor: "cursor-current",
       raw: {
-        result: {
-          messages: { items: [{ payload: { id: "msg-2" } }] },
-          has_more: true,
-          next_cursor: "cursor-older",
-          before_cursor: "cursor-current",
-        },
+        messages: [{ payload: { id: "msg-2" } }],
+        hasMore: true,
+        nextCursor: "cursor-older",
+        beforeCursor: "cursor-current",
       },
     } satisfies RunOpenCodeSessionMessagesPageResult);
   });
@@ -485,25 +471,21 @@ describe("runs contract", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
-  it("normalizes bootstrap snake_case wrapped payload", async () => {
+  it("normalizes bootstrap payload", async () => {
     invokeMock.mockResolvedValue({
-      result: {
-        state: "starting",
-        reason: "warming",
-        buffered_events: [
-          {
-            run_id: "run-server",
-            timestamp: "2026-01-01T00:00:00.000Z",
-            event: "stdout",
-            payload: { line: "hello" },
-          },
-        ],
-        messages: { items: [{ payload: { role: "assistant" } }] },
-        todos: { data: [{ payload: { text: "Do thing" } }] },
-        session_id: "session-1",
-        stream_connected: true,
-        ready_phase: "hydrated",
-      },
+      state: "starting",
+      reason: "warming",
+      bufferedEvents: [
+        {
+          runId: "run-server",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          event: "stdout",
+          payload: { line: "hello" },
+        },
+      ],
+      sessionId: "session-1",
+      streamConnected: true,
+      readyPhase: "hydrated",
     });
 
     const result = await bootstrapRunOpenCode("run-1");
@@ -521,8 +503,6 @@ describe("runs contract", () => {
           runState: null,
         },
       ],
-      messages: [{ role: "assistant" }],
-      todos: [{ text: "Do thing" }],
       sessionId: "session-1",
       streamConnected: true,
       readyPhase: "hydrated",
@@ -539,8 +519,6 @@ describe("runs contract", () => {
           data: { ok: true },
         },
       ],
-      messages: [{ payload: { id: "msg-1" } }],
-      todos: [{ payload: { id: "todo-1" } }],
       streamConnected: false,
     });
 
@@ -559,8 +537,6 @@ describe("runs contract", () => {
           runState: null,
         },
       ],
-      messages: [{ id: "msg-1" }],
-      todos: [{ id: "todo-1" }],
       sessionId: undefined,
       streamConnected: false,
       readyPhase: undefined,
@@ -570,11 +546,9 @@ describe("runs contract", () => {
   it("normalizes completed read-only bootstrap ready state", async () => {
     invokeMock.mockResolvedValue({
       state: "ready",
-      chat_mode: "read_only",
-      messages: [{ payload: { id: "msg-1" } }],
-      todos: [],
-      stream_connected: false,
-      ready_phase: "completed_history",
+      chatMode: "read_only",
+      streamConnected: false,
+      readyPhase: "completed_history",
     });
 
     const result = await bootstrapRunOpenCode("run-complete");
@@ -584,8 +558,6 @@ describe("runs contract", () => {
       chatMode: "read_only",
       reason: undefined,
       bufferedEvents: [],
-      messages: [{ id: "msg-1" }],
-      todos: [],
       sessionId: undefined,
       streamConnected: false,
       readyPhase: "completed_history",
