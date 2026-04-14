@@ -144,6 +144,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
     createSignal<LinuxPackageUpdateCheckState>({ status: "idle" });
   const [startupLinuxPackageUpdate, setStartupLinuxPackageUpdate] =
     createSignal<LinuxPackageUpdateAvailableResult | null>(null);
+  let linuxPackageUpdateRequestId = 0;
 
   const isSidebarVisible = () => (isMobile() ? mobileSidebarOpen() : true);
 
@@ -164,11 +165,17 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   }: {
     silent?: boolean;
   } = {}) => {
+    const requestId = ++linuxPackageUpdateRequestId;
+
     if (!silent) {
       setLinuxPackageUpdateState({ status: "checking" });
     }
 
     const result = await checkForLinuxPackageUpdate();
+
+    if (requestId !== linuxPackageUpdateRequestId) {
+      return result;
+    }
 
     if (silent && result.status === "error") {
       console.warn("Linux package update check failed", result.message);

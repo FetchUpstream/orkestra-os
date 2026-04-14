@@ -4358,7 +4358,7 @@ describe("app routing and shell", () => {
     );
     expect(createRunCalls).toHaveLength(0);
 
-    await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await fireEvent.keyDown(window, { key: "Escape" });
 
     await waitFor(() => {
       expect(

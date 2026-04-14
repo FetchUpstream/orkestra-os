@@ -217,4 +217,26 @@ describe("linuxPackageUpdates", () => {
 
     expect(result.status).toBe("error");
   });
+
+  it("returns an error when fetching update metadata fails", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValue(new Error("failed to fetch update metadata"));
+    const cacheBustValue = "1";
+
+    const result = await checkForLinuxPackageUpdate({
+      runtimeContext: {
+        bundleType: "deb",
+        currentVersion: "0.0.1",
+      },
+      fetchImpl,
+      cacheBustValue,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      status: "error",
+      message: expect.stringContaining("failed"),
+    });
+  });
 });

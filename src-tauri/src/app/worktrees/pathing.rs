@@ -21,6 +21,7 @@ const MAX_BRANCH_SLUG_WORDS: usize = 4;
 const MAX_BRANCH_SLUG_LEN: usize = 32;
 const INITIAL_SUFFIX_HEX_LEN: usize = 7;
 const MAX_SUFFIX_HEX_LEN: usize = 16;
+const MAX_NUMERIC_SUFFIX: usize = 10_000;
 
 pub fn sanitize_branch_segment(branch_title: &str) -> String {
     let mut words = Vec::with_capacity(MAX_BRANCH_SLUG_WORDS);
@@ -248,8 +249,7 @@ pub fn choose_unique_worktree_id(
 
     let branch_segment =
         compose_branch_segment(&branch_slug, unique_suffix_seed, MAX_SUFFIX_HEX_LEN);
-    let mut numeric_suffix = 2_usize;
-    loop {
+    for numeric_suffix in 2..=MAX_NUMERIC_SUFFIX {
         let candidate =
             compose_worktree_id(project_key, &format!("{branch_segment}-{numeric_suffix}"));
         let candidate_path = base_root.join(&candidate);
@@ -258,8 +258,11 @@ pub fn choose_unique_worktree_id(
         if !candidate_path.exists() && !worktree_exists && !branch_exists {
             return candidate;
         }
-        numeric_suffix += 1;
     }
+
+    panic!(
+        "failed to choose unique worktree id after {MAX_NUMERIC_SUFFIX} numeric suffix attempts"
+    );
 }
 
 #[cfg(test)]

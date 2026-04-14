@@ -194,4 +194,19 @@ describe("AboutModal", () => {
       "sudo apt update && sudo apt install --only-upgrade orkestraos",
     );
   });
+
+  it("disables the update button when no handler is provided", () => {
+    const [isOpen] = createSignal(true);
+    const [updateState] = createSignal<LinuxPackageUpdateCheckState>({
+      status: "idle",
+    });
+
+    render(() => (
+      <AboutModal isOpen={isOpen} onClose={vi.fn()} updateState={updateState} />
+    ));
+
+    expect(
+      screen.getByRole("button", { name: "Check for updates" }),
+    ).toHaveProperty("disabled", true);
+  });
 });

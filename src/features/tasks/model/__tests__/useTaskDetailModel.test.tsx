@@ -705,6 +705,110 @@ describe("useTaskDetailModel start run", () => {
     });
   });
 
+  it("revalidates unresolved parents even when the persisted blocked flag is false", async () => {
+    getTaskMock.mockResolvedValue({
+      id: "task-1",
+      projectId: "project-1",
+      title: "Task",
+      description: "Desc",
+      implementationGuide: "Guide",
+      status: "todo",
+      isBlocked: false,
+      blockedByCount: 1,
+    });
+    listTaskDependenciesMock.mockResolvedValue({
+      parents: [
+        {
+          id: "task-parent",
+          displayKey: "PRJ-1",
+          title: "Parent",
+          status: "doing",
+          targetRepositoryName: "Main",
+          targetRepositoryPath: "/repo/main",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      children: [],
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    await ref.current?.onCreateRun();
+
+    expect(ref.current?.isBlocked()).toBe(true);
+    expect(ref.current?.taskDependencyBadgeState()).toBe("blocked");
+    expect(ref.current?.isBlockedRunWarningOpen()).toBe(true);
+    expect(ref.current?.blockingParentTasks()).toEqual([
+      {
+        id: "task-parent",
+        displayKey: "PRJ-1",
+        title: "Parent",
+        status: "doing",
+        targetRepositoryName: "Main",
+        targetRepositoryPath: "/repo/main",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    expect(createRunMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps run creation blocked when the persisted blocked flag stays true", async () => {
+    getTaskMock.mockResolvedValue({
+      id: "task-1",
+      projectId: "project-1",
+      title: "Task",
+      description: "Desc",
+      implementationGuide: "Guide",
+      status: "todo",
+      isBlocked: true,
+      blockedByCount: 0,
+    });
+    listTaskDependenciesMock.mockResolvedValue({
+      parents: [
+        {
+          id: "task-parent",
+          displayKey: "PRJ-1",
+          title: "Parent",
+          status: "done",
+          targetRepositoryName: "Main",
+          targetRepositoryPath: "/repo/main",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      children: [],
+    });
+
+    const ref: { current: ReturnType<typeof useTaskDetailModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useTaskDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.task()).toBeTruthy();
+    });
+
+    await ref.current?.onCreateRun();
+
+    expect(ref.current?.isBlocked()).toBe(true);
+    expect(ref.current?.taskDependencyBadgeState()).toBe("blocked");
+    expect(ref.current?.isBlockedRunWarningOpen()).toBe(true);
+    expect(ref.current?.blockingParentTasks()).toEqual([]);
+    expect(createRunMock).not.toHaveBeenCalled();
+  });
+
   it("shows ready state and allows creating run when dependencies are resolved", async () => {
     getTaskMock.mockResolvedValue({
       id: "task-1",
@@ -722,7 +826,7 @@ describe("useTaskDetailModel start run", () => {
           id: "task-parent",
           displayKey: "PRJ-1",
           title: "Parent",
-          status: "doing",
+          status: "done",
           targetRepositoryName: "Main",
           targetRepositoryPath: "/repo/main",
           updatedAt: "2026-01-01T00:00:00.000Z",

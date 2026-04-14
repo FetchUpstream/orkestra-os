@@ -408,7 +408,7 @@ const hasCompletedRunStatus = (status: string | null | undefined): boolean => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-const toSingleLine = (value: unknown, maxLength = 140): string | null => {
+const normalizeToSingleLine = (value: unknown): string | null => {
   if (value === null || value === undefined) {
     return null;
   }
@@ -432,33 +432,22 @@ const toSingleLine = (value: unknown, maxLength = 140): string | null => {
     return null;
   }
 
+  return normalized;
+};
+
+const toSingleLine = (value: unknown, maxLength = 140): string | null => {
+  const normalized = normalizeToSingleLine(value);
+  if (normalized === null) {
+    return null;
+  }
+
   return normalized.length <= maxLength
     ? normalized
     : `${normalized.slice(0, maxLength - 3)}...`;
 };
 
-const toSingleLineWithoutTruncation = (value: unknown): string | null => {
-  if (value === null || value === undefined) {
-    return null;
-  }
-
-  const asText =
-    typeof value === "string"
-      ? value
-      : typeof value === "number" || typeof value === "boolean"
-        ? String(value)
-        : null;
-
-  if (asText === null) {
-    return null;
-  }
-
-  const normalized = asText
-    .replace(INTERNAL_ID_PATTERN, "[internal-id]")
-    .replace(/\s+/g, " ")
-    .trim();
-  return normalized.length > 0 ? normalized : null;
-};
+const toSingleLineWithoutTruncation = (value: unknown): string | null =>
+  normalizeToSingleLine(value);
 
 const getNestedValueByKeys = (
   value: unknown,

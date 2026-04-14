@@ -313,7 +313,10 @@ const AboutModal: Component<AboutModalProps> = (props) => {
                     setUpdateCommandCopyStatus("idle");
                     void props.onCheckForUpdates?.();
                   }}
-                  disabled={updateState().status === "checking"}
+                  disabled={
+                    !props.onCheckForUpdates ||
+                    updateState().status === "checking"
+                  }
                 >
                   {updateState().status === "checking"
                     ? "Checking..."

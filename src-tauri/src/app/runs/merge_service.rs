@@ -1027,9 +1027,9 @@ mod tests {
             .chat_prompt
             .contains("A rebase is already in progress for this worktree. Continue the existing rebase safely."));
         assert!(conflict.chat_prompt.contains("`git status`"));
-        assert!(conflict
-            .chat_prompt
-            .contains("Do not run `git status --short --branch` while the rebase is still in progress."));
+        assert!(conflict.chat_prompt.contains(
+            "Do not run `git status --short --branch` while the rebase is still in progress."
+        ));
         assert!(conflict.chat_prompt.contains(&format!(
             "`{}`-intended changes",
             run.source_branch.clone().unwrap()
@@ -1053,10 +1053,10 @@ mod tests {
         assert!(conflict
             .chat_prompt
             .contains("Do not try to repair Git internals manually."));
-        assert!(conflict.chat_prompt.contains("fails because rebase metadata is missing/corrupt"));
         assert!(conflict
             .chat_prompt
-            .contains("Final full `git status`"));
+            .contains("fails because rebase metadata is missing/corrupt"));
+        assert!(conflict.chat_prompt.contains("Final full `git status`"));
 
         let repo = Repository::open(&worktree_path).unwrap();
         let head = repo.head().unwrap();

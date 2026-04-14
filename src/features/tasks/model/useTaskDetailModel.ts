@@ -602,9 +602,14 @@ export const useTaskDetailModel = () => {
     );
   };
 
+  type BlockingParentTaskRevalidation = {
+    blockers: TaskDependencyTask[];
+    isBlockedNow: boolean;
+  };
+
   const revalidateBlockingParentTasks = async (
     taskId: string,
-  ): Promise<TaskDependencyTask[]> => {
+  ): Promise<BlockingParentTaskRevalidation> => {
     const [freshTask, loadedDependencies] = await Promise.all([
       getTask(taskId),
       refreshDependencies(taskId),
@@ -615,9 +620,13 @@ export const useTaskDetailModel = () => {
     }
 
     const unresolvedParents = getBlockingParentTasks(loadedDependencies);
-    const isBlockedNow = freshTask.isBlocked ?? unresolvedParents.length > 0;
+    const hasUnresolved = unresolvedParents.length > 0;
+    const isBlockedNow = hasUnresolved || Boolean(freshTask.isBlocked);
     syncTaskBlockedState(taskId, isBlockedNow);
-    return isBlockedNow ? unresolvedParents : [];
+    return {
+      blockers: isBlockedNow ? unresolvedParents : [],
+      isBlockedNow,
+    };
   };
 
   const showBlockedTaskModal = (taskId: string) => {
@@ -1217,8 +1226,10 @@ export const useTaskDetailModel = () => {
     const taskValue = task();
     if (!taskValue) return null;
     try {
-      const blockers = await revalidateBlockingParentTasks(taskValue.id);
-      if (blockers.length > 0) {
+      const { isBlockedNow } = await revalidateBlockingParentTasks(
+        taskValue.id,
+      );
+      if (isBlockedNow) {
         showBlockedTaskModal(taskValue.id);
         return null;
       }
@@ -1289,8 +1300,10 @@ export const useTaskDetailModel = () => {
 
     const verifyTaskCanStart = async () => {
       try {
-        const blockers = await revalidateBlockingParentTasks(params.taskId);
-        if (blockers.length > 0) {
+        const { isBlockedNow } = await revalidateBlockingParentTasks(
+          params.taskId,
+        );
+        if (isBlockedNow) {
           showBlockedTaskModal(params.taskId);
           return false;
         }
@@ -1379,8 +1392,10 @@ export const useTaskDetailModel = () => {
     }
 
     try {
-      const blockers = await revalidateBlockingParentTasks(taskValue.id);
-      if (blockers.length > 0) {
+      const { isBlockedNow } = await revalidateBlockingParentTasks(
+        taskValue.id,
+      );
+      if (isBlockedNow) {
         showBlockedTaskModal(taskValue.id);
         return;
       }

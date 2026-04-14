@@ -10,7 +10,14 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { For, Show, type Accessor, type Component } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  onCleanup,
+  type Accessor,
+  type Component,
+} from "solid-js";
 import type { TaskDependencyTask } from "../../../app/lib/tasks";
 import { dependencyDisplayLabel } from "../utils/taskDetail";
 
@@ -21,6 +28,23 @@ type BlockedTaskModalProps = {
 };
 
 const BlockedTaskModal: Component<BlockedTaskModalProps> = (props) => {
+  createEffect(() => {
+    if (!props.isOpen()) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        props.onClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    onCleanup(() => {
+      window.removeEventListener("keydown", handleKeyDown);
+    });
+  });
+
   return (
     <Show when={props.isOpen()}>
       <div

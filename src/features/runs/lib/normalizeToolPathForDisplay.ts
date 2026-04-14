@@ -18,6 +18,7 @@ export type ToolPathDisplayContext = {
 const normalizeSlashes = (value: string): string => value.replace(/\\+/g, "/");
 const escapeRegExp = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const FILESYSTEM_PATH_PREFIX = String.raw`(?:[A-Za-z]:[\\/]|/(?!/)|\\\\)`;
 
 const trimTrailingSlashes = (value: string): string =>
   value.replace(/\/+$/, "") || "/";
@@ -104,7 +105,7 @@ const toWorktreeRelativePath = (
 
   const trailingIndex = segmentIndex + worktreeIdSegments.length;
   if (trailingIndex >= segments.length) {
-    return null;
+    return ".";
   }
 
   return segments.slice(trailingIndex).join("/");
@@ -127,16 +128,18 @@ const replaceWorktreeAbsolutePathsInText = (
     return rawText;
   }
 
-  const marker = `/worktrees/${normalizedWorktreePath}/`;
+  const markerRegex = escapeRegExp(
+    `/worktrees/${normalizedWorktreePath}`,
+  ).replace(/\//g, String.raw`[\\/]`);
   const pattern = new RegExp(
-    `((?:[A-Za-z]:)?[^\\s<>"')]*${escapeRegExp(marker)}([^\\s<>"')]+))`,
+    String.raw`(^|[\s([{"'])(${FILESYSTEM_PATH_PREFIX}[^\s<>"')]*${markerRegex}(?:[\\/]([^\s<>"')]*))?)`,
     "g",
   );
 
   return rawText.replace(
     pattern,
-    (_match, _fullPath: string, relativePath: string) => {
-      return toDisplayRelativePath(normalizeSlashes(relativePath));
+    (_match, leadingBoundary: string, _fullPath: string, relativePath = "") => {
+      return `${leadingBoundary}${toDisplayRelativePath(normalizeSlashes(relativePath))}`;
     },
   );
 };

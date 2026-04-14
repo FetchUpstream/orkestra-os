@@ -119,6 +119,42 @@ describe("normalizeToolPathForDisplay", () => {
     );
   });
 
+  it("shows the worktree root as a relative path", () => {
+    const normalized = normalizeToolPathForDisplay(
+      "/home/louis/.local/share/com.fetchupstream.orkestraos/worktrees/ORK/feature-branch",
+      {
+        worktreeId: "ORK/feature-branch",
+        targetRepositoryPath: null,
+      },
+    );
+
+    expect(normalized).toBe("./");
+  });
+
+  it("normalizes Windows worktree paths in plain rendered text", () => {
+    const output =
+      "Read C:\\Users\\louis\\AppData\\Local\\orkestraos\\worktrees\\ORK\\feature-branch\\src\\main.ts";
+
+    const normalized = normalizeToolOutputTextForDisplay(output, {
+      worktreeId: "ORK/feature-branch",
+      targetRepositoryPath: null,
+    });
+
+    expect(normalized).toBe("Read ./src/main.ts");
+  });
+
+  it("does not rewrite URLs that happen to contain worktree-like segments", () => {
+    const output =
+      "Docs: https://example.com/worktrees/ORK/feature-branch/src/main.ts";
+
+    const normalized = normalizeToolOutputTextForDisplay(output, {
+      worktreeId: "ORK/feature-branch",
+      targetRepositoryPath: null,
+    });
+
+    expect(normalized).toBe(output);
+  });
+
   it("resolves absolute paths using multi-segment worktree ids", () => {
     const normalized = normalizeToolPathForDisplay(
       "/home/louis/.local/share/com.fetchupstream.orkestraos/worktrees/ORK/resolve-sibling-runs-when-one-run-is-merged-or-when-the-task-is-manually-marked-done/src-tauri/src/app/runs/merge_service.rs",
