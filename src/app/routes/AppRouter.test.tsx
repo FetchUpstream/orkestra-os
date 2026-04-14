@@ -103,7 +103,8 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 vi.mock("@tauri-apps/api/app", () => ({
   getName: vi.fn().mockResolvedValue("OrkestraOS"),
-  getVersion: vi.fn().mockResolvedValue("v0.0.12+105"),
+  getVersion: vi.fn().mockResolvedValue("0.0.12+105"),
+  getBundleType: vi.fn().mockResolvedValue("appimage"),
   getTauriVersion: vi.fn().mockResolvedValue("2.0.0-test"),
   getIdentifier: vi.fn().mockResolvedValue("com.test.orkestraos"),
 }));
@@ -193,6 +194,17 @@ const renderCreateTaskPage = async (path = "/projects/p-1/tasks/new") => {
     expect(screen.getByText("Create task")).toBeTruthy();
     expect(screen.getByLabelText("Task title")).toBeTruthy();
   });
+};
+
+const clickEnabledCreateRun = async () => {
+  await waitFor(() => {
+    expect(
+      (screen.getByRole("button", { name: "Create run" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
 };
 
 let activeRunsResponse: unknown[] = [];
@@ -786,8 +798,23 @@ describe("app routing and shell", () => {
           id: "p-1",
           name: "Alpha",
           key: "ALP",
+          default_run_agent: "agent-a",
+          default_run_provider: "provider-a",
+          default_run_model: "model-a",
           repositories: [
             { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
           ],
         });
       }
@@ -903,8 +930,23 @@ describe("app routing and shell", () => {
           id: "p-1",
           name: "Alpha",
           key: "ALP",
+          default_run_agent: "agent-a",
+          default_run_provider: "provider-a",
+          default_run_model: "model-a",
           repositories: [
             { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
           ],
         });
       }
@@ -1622,7 +1664,7 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(screen.getByText("Run Details")).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Run Details" })).toBeTruthy();
       expect(screen.getByText("Busy Coding")).toBeTruthy();
       expect(
         document.querySelector(".board-task-run-details .run-inline-loader"),
@@ -1784,7 +1826,9 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(screen.getAllByText("Run Details")).toHaveLength(2);
+      expect(screen.getAllByRole("link", { name: "Run Details" })).toHaveLength(
+        2,
+      );
       expect(screen.getByText("Waiting for Input")).toBeTruthy();
       expect(screen.getByText("Busy Coding")).toBeTruthy();
     });
@@ -1847,7 +1891,7 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(screen.queryByText("Run Details")).toBeNull();
+      expect(screen.queryByLabelText("Run Details")).toBeNull();
     });
   });
 
@@ -1954,7 +1998,7 @@ describe("app routing and shell", () => {
       ).toBeTruthy();
     });
 
-    expect(screen.queryByText("Run Details")).toBeNull();
+    expect(screen.queryByLabelText("Run Details")).toBeNull();
     expect(document.querySelector(".board-task-run-details")).toBeNull();
   });
 
@@ -2052,13 +2096,9 @@ describe("app routing and shell", () => {
           created_at: "2026-01-02T00:00:00.000Z",
         });
       }
-      if (command === "list_run_opencode_agents") {
+      if (command === "get_project_opencode_selection_catalog") {
         return Promise.resolve({
           agents: [{ id: "agent-a", name: "Agent A" }],
-        });
-      }
-      if (command === "list_run_opencode_providers") {
-        return Promise.resolve({
           providers: [
             {
               id: "provider-a",
@@ -2075,21 +2115,11 @@ describe("app routing and shell", () => {
           client_request_id: "req-1",
         });
       }
-      if (command === "list_run_opencode_agents") {
-        return Promise.resolve({
-          agents: [{ id: "agent-a", name: "Agent A" }],
-        });
-      }
-      if (command === "list_run_opencode_providers") {
-        return Promise.resolve({
-          providers: [
-            {
-              id: "provider-a",
-              name: "Provider A",
-              models: [{ id: "model-a", name: "Model A" }],
-            },
-          ],
-        });
+      if (command === "list_task_run_source_branches") {
+        return Promise.resolve([
+          { name: "main", is_checked_out: true },
+          { name: "feature/source", is_checked_out: false },
+        ]);
       }
       if (command === "get_task") {
         return Promise.resolve({
@@ -2169,7 +2199,7 @@ describe("app routing and shell", () => {
       screen.getByRole("heading", { name: "In Progress (0)" }),
     ).toBeTruthy();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+    await clickEnabledCreateRun();
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("set_task_status", {
@@ -2187,17 +2217,9 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(
-          "Run defaults are unavailable. A run will use system defaults.",
-        ),
-      ).toBeTruthy();
-    });
-
-    await waitFor(() => {
-      expect(
         screen.getByRole("heading", { name: "In Progress (1)" }),
       ).toBeTruthy();
-      expect(screen.getByText("Run Details")).toBeTruthy();
+      expect(screen.getByLabelText("Run Details")).toBeTruthy();
       expect(screen.getByText("Busy Coding")).toBeTruthy();
     });
   });
@@ -2231,7 +2253,56 @@ describe("app routing and shell", () => {
           },
         ]);
       }
+      if (command === "get_project") {
+        return Promise.resolve({
+          project: {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            default_run_agent: "agent-a",
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+          },
+          repositories: [
+            {
+              id: "r-1",
+              name: "Main",
+              repo_path: "/repo/main",
+              is_default: true,
+            },
+          ],
+        });
+      }
       if (command === "set_task_status") return statusUpdatePromise;
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
+      }
+      if (command === "get_task") {
+        return Promise.resolve({
+          id: "task-optimistic-mini-card",
+          title: "Optimistic mini-card",
+          status: "todo",
+          project_id: "p-1",
+          display_key: "ALP-31",
+          is_blocked: false,
+        });
+      }
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-optimistic-mini-card",
+          parents: [],
+          children: [],
+        });
+      }
       if (command === "create_run") {
         return Promise.resolve({
           id: "run-task-optimistic-mini-card",
@@ -2261,6 +2332,12 @@ describe("app routing and shell", () => {
             triggered_by: "user",
             created_at: "2026-01-02T00:00:00.000Z",
           },
+        ]);
+      }
+      if (command === "list_task_run_source_branches") {
+        return Promise.resolve([
+          { name: "main", is_checked_out: true },
+          { name: "feature/source", is_checked_out: false },
         ]);
       }
       if (command === "get_opencode_dependency_status") {
@@ -2304,15 +2381,20 @@ describe("app routing and shell", () => {
       ).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+    await clickEnabledCreateRun();
 
-    expect(
-      screen.getByRole("heading", { name: "In Progress (1)" }),
-    ).toBeTruthy();
-    expect(screen.getByText("Run Details")).toBeTruthy();
-    expect(screen.getByText("Busy Coding")).toBeTruthy();
-    expect(window.location.pathname).toBe("/board");
-    expect(document.querySelector(".board-task-run-details-link")).toBeNull();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "In Progress (1)" }),
+      ).toBeTruthy();
+      expect(
+        document.querySelector(
+          '.board-task-run-details[data-run-id="pending-task-optimistic-mini-card"]',
+        ),
+      ).toBeTruthy();
+      expect(screen.getAllByText("Busy Coding").length).toBeGreaterThan(0);
+      expect(window.location.pathname).toBe("/board");
+    });
 
     const optimisticMiniCard = document.querySelector(
       ".board-task-run-details",
@@ -2377,6 +2459,55 @@ describe("app routing and shell", () => {
           },
         ]);
       }
+      if (command === "get_project") {
+        return Promise.resolve({
+          project: {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            default_run_agent: "agent-a",
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+          },
+          repositories: [
+            {
+              id: "r-1",
+              name: "Main",
+              repo_path: "/repo/main",
+              is_default: true,
+            },
+          ],
+        });
+      }
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
+      }
+      if (command === "get_task") {
+        return Promise.resolve({
+          id: "task-1",
+          title: "Drag payload preference",
+          status: "todo",
+          project_id: "p-1",
+          display_key: "ALP-1",
+          is_blocked: false,
+        });
+      }
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-1",
+          parents: [],
+          children: [],
+        });
+      }
       if (command === "set_task_status") {
         return Promise.resolve({
           id: "task-1",
@@ -2402,6 +2533,12 @@ describe("app routing and shell", () => {
           queued_at: "2026-01-02T00:00:01.000Z",
           client_request_id: "req-1",
         });
+      }
+      if (command === "list_task_run_source_branches") {
+        return Promise.resolve([
+          { name: "main", is_checked_out: true },
+          { name: "feature/source", is_checked_out: false },
+        ]);
       }
       if (command === "get_opencode_dependency_status") {
         return Promise.resolve({ state: "available" });
@@ -2448,7 +2585,7 @@ describe("app routing and shell", () => {
       ).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+    await clickEnabledCreateRun();
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
@@ -2486,6 +2623,55 @@ describe("app routing and shell", () => {
           },
         ]);
       }
+      if (command === "get_project") {
+        return Promise.resolve({
+          project: {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            default_run_agent: "agent-a",
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+          },
+          repositories: [
+            {
+              id: "r-1",
+              name: "Main",
+              repo_path: "/repo/main",
+              is_default: true,
+            },
+          ],
+        });
+      }
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
+      }
+      if (command === "get_task") {
+        return Promise.resolve({
+          id: "task-review-doing",
+          title: "Review to in progress",
+          status: "review",
+          project_id: "p-1",
+          display_key: "ALP-11",
+          is_blocked: false,
+        });
+      }
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-review-doing",
+          parents: [],
+          children: [],
+        });
+      }
       if (command === "set_task_status") {
         return Promise.resolve({
           id: "task-review-doing",
@@ -2511,6 +2697,12 @@ describe("app routing and shell", () => {
           queued_at: "2026-01-02T00:00:01.000Z",
           client_request_id: "req-11",
         });
+      }
+      if (command === "list_task_run_source_branches") {
+        return Promise.resolve([
+          { name: "main", is_checked_out: true },
+          { name: "feature/source", is_checked_out: false },
+        ]);
       }
       if (command === "get_opencode_dependency_status") {
         return Promise.resolve({ state: "available" });
@@ -2556,7 +2748,7 @@ describe("app routing and shell", () => {
       ).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+    await clickEnabledCreateRun();
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Review (0)" })).toBeTruthy();
@@ -2832,6 +3024,61 @@ describe("app routing and shell", () => {
           },
         ]);
       }
+      if (command === "get_project") {
+        return Promise.resolve({
+          project: {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            default_run_agent: "agent-a",
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+          },
+          repositories: [
+            {
+              id: "r-1",
+              name: "Main",
+              repo_path: "/repo/main",
+              is_default: true,
+            },
+          ],
+        });
+      }
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
+      }
+      if (command === "get_task") {
+        return Promise.resolve({
+          id: "task-rollback",
+          title: "Rollback candidate",
+          status: "todo",
+          project_id: "p-1",
+          display_key: "ALP-2",
+          is_blocked: false,
+        });
+      }
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-rollback",
+          parents: [],
+          children: [],
+        });
+      }
+      if (command === "list_task_run_source_branches") {
+        return Promise.resolve([
+          { name: "main", is_checked_out: true },
+          { name: "feature/source", is_checked_out: false },
+        ]);
+      }
       if (command === "set_task_status") {
         return Promise.reject(new Error("save failed"));
       }
@@ -2876,12 +3123,14 @@ describe("app routing and shell", () => {
       ).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+    await clickEnabledCreateRun();
 
-    expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
-    expect(
-      screen.getByRole("heading", { name: "In Progress (1)" }),
-    ).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "In Progress (1)" }),
+      ).toBeTruthy();
+    });
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Todo (1)" })).toBeTruthy();
@@ -2916,6 +3165,61 @@ describe("app routing and shell", () => {
             status: "todo",
             display_key: "ALP-44",
           },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          project: {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            default_run_agent: "agent-a",
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+          },
+          repositories: [
+            {
+              id: "r-1",
+              name: "Main",
+              repo_path: "/repo/main",
+              is_default: true,
+            },
+          ],
+        });
+      }
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
+      }
+      if (command === "get_task") {
+        return Promise.resolve({
+          id: "task-cancel",
+          title: "Cancel move",
+          status: "todo",
+          project_id: "p-1",
+          display_key: "ALP-44",
+          is_blocked: false,
+        });
+      }
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id: "task-cancel",
+          parents: [],
+          children: [],
+        });
+      }
+      if (command === "list_task_run_source_branches") {
+        return Promise.resolve([
+          { name: "main", is_checked_out: true },
+          { name: "feature/source", is_checked_out: false },
         ]);
       }
       if (command === "set_task_status") {
@@ -3038,7 +3342,7 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Review (1)" })).toBeTruthy();
-      expect(screen.queryByText("Run Details")).toBeNull();
+      expect(screen.queryByLabelText("Run Details")).toBeNull();
     });
 
     const doneSection = screen
@@ -3064,12 +3368,14 @@ describe("app routing and shell", () => {
     await fireEvent.dragOver(doneSection, { dataTransfer });
     await fireEvent.drop(doneSection, { dataTransfer });
 
-    expect(screen.getByRole("heading", { name: "Done (1)" })).toBeTruthy();
-    expect(screen.queryByText("Run Details")).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Done (1)" })).toBeTruthy();
+      expect(screen.queryByLabelText("Run Details")).toBeNull();
+    });
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Review (1)" })).toBeTruthy();
-      expect(screen.queryByText("Run Details")).toBeNull();
+      expect(screen.queryByLabelText("Run Details")).toBeNull();
       expect(
         screen.getByText("Failed to update task status. Please try again."),
       ).toBeTruthy();
@@ -3077,7 +3383,7 @@ describe("app routing and shell", () => {
   });
 
   it("rolls back only the failed task when another optimistic move succeeds", async () => {
-    invokeMock.mockImplementation((command: string) => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
       if (command === "list_projects") {
         return Promise.resolve([
           {
@@ -3104,6 +3410,63 @@ describe("app routing and shell", () => {
             status: "todo",
             display_key: "ALP-2",
           },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          project: {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            default_run_agent: "agent-a",
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+          },
+          repositories: [
+            {
+              id: "r-1",
+              name: "Main",
+              repo_path: "/repo/main",
+              is_default: true,
+            },
+          ],
+        });
+      }
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
+      }
+      if (command === "get_task") {
+        const taskId = (args as { id?: string } | undefined)?.id;
+        return Promise.resolve({
+          id: taskId || "task-1",
+          title: taskId === "task-2" ? "Task two" : "Task one",
+          status: "todo",
+          project_id: "p-1",
+          display_key: taskId === "task-2" ? "ALP-2" : "ALP-1",
+          is_blocked: false,
+        });
+      }
+      if (command === "list_task_dependencies") {
+        return Promise.resolve({
+          task_id:
+            (args as { taskId?: string } | undefined)?.taskId || "task-1",
+          parents: [],
+          children: [],
+        });
+      }
+      if (command === "list_task_run_source_branches") {
+        return Promise.resolve([
+          { name: "main", is_checked_out: true },
+          { name: "feature/source", is_checked_out: false },
         ]);
       }
       if (command === "set_task_status") {
@@ -3239,9 +3602,17 @@ describe("app routing and shell", () => {
     await fireEvent.click(
       within(sidebarNav).getByRole("link", { name: "Beta" }),
     );
+    await waitFor(() => {
+      expect(window.location.search).toBe("?projectId=p-2");
+    });
     await fireEvent.click(
       within(sidebarNav).getByRole("link", { name: "Alpha" }),
     );
+
+    await waitFor(() => {
+      expect(window.location.search).toBe("?projectId=p-1");
+      expect(resolveProjectOneLatest).toBeTruthy();
+    });
 
     resolveProjectOneLatest?.([
       {
@@ -3625,7 +3996,8 @@ describe("app routing and shell", () => {
       expect(invokeMock).toHaveBeenCalledWith("delete_task", {
         id: "task-123",
       });
-      expect(window.location.pathname).toBe("/projects/p-1");
+      expect(window.location.pathname).toBe("/board");
+      expect(window.location.search).toBe("?projectId=p-1");
     });
   });
 
@@ -4130,6 +4502,12 @@ describe("app routing and shell", () => {
           },
         ]);
       }
+      if (command === "list_task_run_source_branches") {
+        return Promise.resolve([
+          { name: "main", is_checked_out: true },
+          { name: "feature/source", is_checked_out: false },
+        ]);
+      }
       if (command === "create_run") {
         return Promise.resolve({
           id: "run-new",
@@ -4167,8 +4545,8 @@ describe("app routing and shell", () => {
       expect(screen.getByRole("heading", { name: "Runs" })).toBeTruthy();
       expect(screen.getByText("Run #12")).toBeTruthy();
       expect(screen.getByText("Run #14")).toBeTruthy();
-      expect(screen.getByText("Completed")).toBeTruthy();
-      expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
+      expect(screen.getByText("Complete")).toBeTruthy();
+      expect(screen.getAllByText("In progress").length).toBeGreaterThan(0);
       const completedRunRow = screen.getByText("Run #12").closest("li");
       const runningRunRow = screen.getByText("Run #14").closest("li");
       expect(completedRunRow).toBeTruthy();
@@ -4201,7 +4579,7 @@ describe("app routing and shell", () => {
       ).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+    await clickEnabledCreateRun();
 
     await waitFor(() => {
       expect(
@@ -4424,6 +4802,12 @@ describe("app routing and shell", () => {
           children: [],
         });
       }
+      if (command === "list_task_run_source_branches") {
+        return Promise.resolve([
+          { name: "main", is_checked_out: true },
+          { name: "feature/source", is_checked_out: false },
+        ]);
+      }
       if (command === "create_run") {
         return Promise.resolve({
           id: "run-created",
@@ -4456,7 +4840,7 @@ describe("app routing and shell", () => {
       ).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+    await clickEnabledCreateRun();
 
     await waitFor(() => {
       expect(
@@ -4550,7 +4934,7 @@ describe("app routing and shell", () => {
       ).toHaveLength(2);
       expect(screen.getByText("Run #5")).toBeTruthy();
       expect(screen.getAllByText("Queued").length).toBeGreaterThan(0);
-      expect(screen.getByText("Completed")).toBeTruthy();
+      expect(screen.getByText("Complete")).toBeTruthy();
     });
 
     const pathBeforeDelete = window.location.pathname;
@@ -4568,7 +4952,7 @@ describe("app routing and shell", () => {
         runId: "run-delete",
       });
       expect(screen.queryByText("Run #5")).toBeNull();
-      expect(screen.getByText("Completed")).toBeTruthy();
+      expect(screen.getByText("Complete")).toBeTruthy();
       expect(window.location.pathname).toBe(pathBeforeDelete);
     });
   });
