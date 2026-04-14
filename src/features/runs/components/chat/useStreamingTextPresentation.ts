@@ -32,9 +32,24 @@ type StreamingTextPresentationState = {
   isCatchingUp: Accessor<boolean>;
 };
 
-const BASE_UNITS_PER_SECOND = 84;
-const MAX_UNITS_PER_SECOND = 1_800;
-const CATCH_UP_BACKLOG_UNITS = 48;
+const BASE_UNITS_PER_SECOND = 54;
+const MAX_UNITS_PER_SECOND = 420;
+const CATCH_UP_BACKLOG_UNITS = 72;
+const MAX_UNITS_PER_FRAME = 12;
+
+const getUnitsPerSecond = (backlog: number): number => {
+  if (backlog <= 0) {
+    return BASE_UNITS_PER_SECOND;
+  }
+
+  const catchUpBoost = Math.sqrt(backlog) * 18;
+  const largeBacklogBoost = backlog > 160 ? (backlog - 160) * 0.35 : 0;
+
+  return Math.min(
+    MAX_UNITS_PER_SECOND,
+    BASE_UNITS_PER_SECOND + catchUpBoost + largeBacklogBoost,
+  );
+};
 
 const graphemeSegmenter =
   typeof Intl !== "undefined" && "Segmenter" in Intl
@@ -121,13 +136,14 @@ const useStreamingTextPresentation = (
       lastTimestamp = timestamp;
 
       const backlog = total - shown;
-      const unitsPerSecond = Math.min(
-        MAX_UNITS_PER_SECOND,
-        BASE_UNITS_PER_SECOND + backlog * 14,
-      );
+      const unitsPerSecond = getUnitsPerSecond(backlog);
       const nextCount = Math.min(
         total,
-        shown + Math.max(1, Math.round((unitsPerSecond * deltaMs) / 1_000)),
+        shown +
+          Math.min(
+            MAX_UNITS_PER_FRAME,
+            Math.max(1, Math.round((unitsPerSecond * deltaMs) / 1_000)),
+          ),
       );
       const remaining = total - nextCount;
 
