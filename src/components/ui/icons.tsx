@@ -23,7 +23,6 @@ import {
   IconGitBranch,
   IconGitCompare,
   IconLink,
-  IconLoader2,
   IconMenu2,
   IconPencil,
   IconPlus,
@@ -54,7 +53,6 @@ const iconRegistry = {
   "run.terminal": IconTerminal2,
   "run.review": IconGitCompare,
   "run.git": IconGitBranch,
-  "status.loading": IconLoader2,
   "status.error": IconX,
   "project.settings": IconSettings,
 } as const;

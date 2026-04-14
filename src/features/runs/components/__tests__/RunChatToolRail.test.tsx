@@ -62,7 +62,7 @@ describe("RunChatToolRail", () => {
 
     expect(
       container.querySelector(
-        ".run-chat-tool-rail__status-slot .run-inline-spinner",
+        ".run-chat-tool-rail__status-slot .run-inline-loader",
       ),
     ).toBeTruthy();
     expect(
@@ -119,7 +119,7 @@ describe("RunChatToolRail", () => {
     ).toBeTruthy();
     expect(
       container.querySelectorAll(
-        ".run-chat-tool-rail__subagent-header .run-inline-spinner",
+        ".run-chat-tool-rail__subagent-header .run-inline-loader",
       ).length,
     ).toBe(0);
     expect(

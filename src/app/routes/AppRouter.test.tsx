@@ -1625,7 +1625,7 @@ describe("app routing and shell", () => {
       expect(screen.getByText("Run Details")).toBeTruthy();
       expect(screen.getByText("Busy Coding")).toBeTruthy();
       expect(
-        document.querySelector(".board-task-run-details .run-inline-spinner"),
+        document.querySelector(".board-task-run-details .run-inline-loader"),
       ).toBeTruthy();
       const runLink = document.querySelector(
         '.board-task-run-details-link[href="/runs/run-1?origin=board"]',
@@ -1899,7 +1899,7 @@ describe("app routing and shell", () => {
     await waitFor(() => {
       expect(screen.getByText("Busy Coding")).toBeTruthy();
       expect(
-        document.querySelector(".board-task-run-details .run-inline-spinner"),
+        document.querySelector(".board-task-run-details .run-inline-loader"),
       ).toBeTruthy();
     });
   });
