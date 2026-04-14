@@ -111,5 +111,14 @@ export const formatSupportDebugInfo = (metadata: AppSupportMetadata) => {
 
 export const formatAppVersionForDisplay = (version?: string | null) => {
   const normalized = normalize(version);
-  return normalized ? `v${normalized}` : "unknown";
+  if (!normalized) {
+    return "unknown";
+  }
+
+  const stripped = normalized.replace(/^v/i, "");
+  if (!stripped) {
+    return "unknown";
+  }
+
+  return `v${stripped}`;
 };

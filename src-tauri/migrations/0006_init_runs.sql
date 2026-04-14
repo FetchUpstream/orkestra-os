@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS runs (
   task_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
   target_repo_id TEXT NULL,
-  status TEXT NOT NULL CHECK (status IN ('queued', 'preparing', 'in_progress', 'idle', 'complete', 'failed', 'cancelled')),
+  status TEXT NOT NULL CHECK (status IN ('queued', 'preparing', 'in_progress', 'idle', 'complete', 'failed', 'cancelled', 'rejected')),
   triggered_by TEXT NOT NULL,
   created_at TEXT NOT NULL,
   started_at TEXT NULL,

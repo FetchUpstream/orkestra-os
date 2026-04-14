@@ -32,10 +32,13 @@ import { subscribeToRunStateChanged } from "../../../app/lib/runStateEvents";
 import { subscribeToRunStatusChanged } from "../../../app/lib/runStatusEvents";
 import { subscribeToRunDeleted } from "../../../app/lib/runDeletedEvents";
 import {
+  getTask,
   listProjectTasks,
+  listTaskDependencies,
   searchProjectTasks,
   setTaskStatus,
   type Task,
+  type TaskDependencyTask,
   type TaskStatus,
 } from "../../../app/lib/tasks";
 import {
@@ -45,6 +48,7 @@ import {
   startRunOpenCode,
   type Run,
   type RunState,
+  type RunStatus,
   type RunSourceBranchOption,
 } from "../../../app/lib/runs";
 import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
@@ -63,7 +67,11 @@ import {
   getDefaultRunSourceBranch,
   isRunSourceBranchAvailable,
 } from "../../runs/utils/sourceBranches";
-import { canTransitionStatus } from "../../tasks/utils/taskDetail";
+import {
+  canTransitionStatus,
+  getActionErrorMessage,
+  getBlockingParentTasks,
+} from "../../tasks/utils/taskDetail";
 import { groupTasksByStatus } from "../utils/board";
 const ACTIVE_RUN_STATUSES = new Set([
   "queued",
@@ -71,6 +79,9 @@ const ACTIVE_RUN_STATUSES = new Set([
   "in_progress",
   "idle",
 ]);
+
+const hasActiveTaskRuns = (runs: Run[]): boolean =>
+  runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status));
 
 const persistBoardProjectId = (projectId: string) => {
   if (typeof window === "undefined") return;
@@ -114,19 +125,158 @@ const resolveInitialProjectSelection = (loadedProjects: Project[]): string => {
 
 const optimisticDoingMiniCard = (taskId: string): BoardTaskRunMiniCard => ({
   runId: `pending-${taskId}`,
+  identityLabel: "Current run",
   label: "Busy Coding",
   state: "busy_coding",
+  status: "in_progress",
+  statusLabel: "In Progress",
+  agentLabel: "Default agent",
+  modelLabel: "Default model",
   isNavigable: false,
 });
 
 export type BoardTaskRunMiniCard = {
   runId: string;
+  identityLabel: string;
   label: string;
   state: RunState;
+  status: RunStatus;
+  statusLabel: string;
+  agentLabel: string;
+  modelLabel: string;
   isNavigable: boolean;
   createdAt?: string;
   runNumber?: number | null;
   isOptimistic?: boolean;
+};
+
+const UUID_LIKE_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HEX_INTERNAL_ID_PATTERN = /^[0-9a-f]{24,}$/i;
+
+const isInternalDisplayId = (value: string): boolean => {
+  return UUID_LIKE_PATTERN.test(value) || HEX_INTERNAL_ID_PATTERN.test(value);
+};
+
+const sanitizeDisplayLabel = (
+  value: string | null | undefined,
+): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (!normalized || isInternalDisplayId(normalized)) {
+    return null;
+  }
+
+  return normalized;
+};
+
+const sanitizeModelDisplayLabel = (
+  value: string | null | undefined,
+): string | null => {
+  const normalized = sanitizeDisplayLabel(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const slashParts = normalized.split("/").map((segment) => segment.trim());
+  const slashTail = slashParts[slashParts.length - 1];
+  if (slashParts.length > 1 && slashTail && !isInternalDisplayId(slashTail)) {
+    return slashTail;
+  }
+
+  const colonParts = normalized.split(":").map((segment) => segment.trim());
+  const colonTail = colonParts[colonParts.length - 1];
+  if (colonParts.length > 1 && colonTail && !isInternalDisplayId(colonTail)) {
+    return colonTail;
+  }
+
+  return normalized;
+};
+
+const boardIdentityForRun = (run: Run): string => {
+  const displayKey = sanitizeDisplayLabel(run.displayKey);
+  if (displayKey) {
+    return displayKey;
+  }
+
+  if (typeof run.runNumber === "number" && Number.isFinite(run.runNumber)) {
+    return `Run #${run.runNumber}`;
+  }
+
+  return "Run";
+};
+
+const boardLabelForRunStatus = (status: RunStatus): string => {
+  switch (status) {
+    case "queued":
+      return "Queued";
+    case "preparing":
+      return "Preparing";
+    case "in_progress":
+      return "In Progress";
+    case "idle":
+      return "Idle";
+    case "complete":
+      return "Complete";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+    case "rejected":
+      return "Rejected";
+  }
+};
+
+type RunOptionLookup = {
+  agentLabels: Map<string, string>;
+  modelLabels: Map<string, string>;
+};
+
+const resolveRunOptionLookup = (
+  agents: RunSelectionOption[],
+  models: RunModelOption[],
+): RunOptionLookup => ({
+  agentLabels: new Map(
+    agents.flatMap((option) => {
+      const label = sanitizeDisplayLabel(option.label);
+      return label ? [[option.id, label] as const] : [];
+    }),
+  ),
+  modelLabels: new Map(
+    models.flatMap((option) => {
+      const label = sanitizeModelDisplayLabel(option.label);
+      return label ? [[option.id, label] as const] : [];
+    }),
+  ),
+});
+
+const resolveRunAgentLabel = (run: Run, lookup: RunOptionLookup): string => {
+  const agentId = run.agentId?.trim();
+  if (!agentId) {
+    return "Default agent";
+  }
+
+  return (
+    lookup.agentLabels.get(agentId) ??
+    sanitizeDisplayLabel(agentId) ??
+    "Default agent"
+  );
+};
+
+const resolveRunModelLabel = (run: Run, lookup: RunOptionLookup): string => {
+  const modelId = run.modelId?.trim();
+  if (!modelId) {
+    return "Default model";
+  }
+
+  return (
+    lookup.modelLabels.get(modelId) ??
+    sanitizeModelDisplayLabel(modelId) ??
+    "Default model"
+  );
 };
 
 const boardLabelForRunState = (state: RunState): string => {
@@ -213,8 +363,13 @@ const areMiniCardsEquivalent = (
 ): boolean => {
   return (
     previous.runId === next.runId &&
+    previous.identityLabel === next.identityLabel &&
     previous.label === next.label &&
     previous.state === next.state &&
+    previous.status === next.status &&
+    previous.statusLabel === next.statusLabel &&
+    previous.agentLabel === next.agentLabel &&
+    previous.modelLabel === next.modelLabel &&
     previous.isNavigable === next.isNavigable &&
     previous.createdAt === next.createdAt &&
     previous.runNumber === next.runNumber &&
@@ -244,6 +399,7 @@ const reconcileMiniCards = (
 
 const runToBoardTaskRunMiniCard = (
   run: Run,
+  lookup: RunOptionLookup,
   deletedRunIds?: ReadonlySet<string>,
 ): BoardTaskRunMiniCard | null => {
   const normalizedRunId = run.id.trim();
@@ -258,8 +414,13 @@ const runToBoardTaskRunMiniCard = (
 
   return {
     runId: normalizedRunId,
+    identityLabel: boardIdentityForRun(run),
     label: boardLabelForRunState(runState),
     state: runState,
+    status: run.status,
+    statusLabel: boardLabelForRunStatus(run.status),
+    agentLabel: resolveRunAgentLabel(run, lookup),
+    modelLabel: resolveRunModelLabel(run, lookup),
     isNavigable: true,
     createdAt: run.createdAt,
     runNumber: run.runNumber,
@@ -286,6 +447,7 @@ const mergeTaskRunMiniCards = (
 const resolveTaskRunMiniCards = (
   task: Task,
   runItems: Awaited<ReturnType<typeof listTaskRuns>>,
+  lookup: RunOptionLookup,
   deletedRunIds?: ReadonlySet<string>,
 ): BoardTaskRunMiniCard[] => {
   if (task.status === "done") return [];
@@ -293,7 +455,7 @@ const resolveTaskRunMiniCards = (
   return sortRunsForBoard(runItems)
     .filter((run) => ACTIVE_RUN_STATUSES.has(run.status))
     .flatMap((run) => {
-      const miniCard = runToBoardTaskRunMiniCard(run, deletedRunIds);
+      const miniCard = runToBoardTaskRunMiniCard(run, lookup, deletedRunIds);
       return miniCard ? [miniCard] : [];
     });
 };
@@ -320,6 +482,13 @@ export const useBoardModel = () => {
   const [error, setError] = createSignal("");
   const [isRunSettingsModalOpen, setIsRunSettingsModalOpen] =
     createSignal(false);
+  const [isBlockedTaskModalOpen, setIsBlockedTaskModalOpen] =
+    createSignal(false);
+  const [isDoneTaskWarningOpen, setIsDoneTaskWarningOpen] = createSignal(false);
+  const [blockingStartTasks, setBlockingStartTasks] = createSignal<
+    TaskDependencyTask[]
+  >([]);
+  const [pendingDoneTaskId, setPendingDoneTaskId] = createSignal("");
   const [pendingInProgressTaskId, setPendingInProgressTaskId] =
     createSignal("");
   const [runAgentOptions, setRunAgentOptions] = createSignal<
@@ -377,6 +546,51 @@ export const useBoardModel = () => {
     return nextVersion;
   };
 
+  const syncTaskBlockedState = (taskId: string, isBlockedNow: boolean) => {
+    setTasks((currentTasks) =>
+      currentTasks.map((task) =>
+        task.id === taskId ? { ...task, isBlocked: isBlockedNow } : task,
+      ),
+    );
+  };
+
+  const syncTaskSnapshot = (taskId: string, freshTask: Task) => {
+    setTasks((currentTasks) =>
+      currentTasks.map((task) =>
+        task.id === taskId ? { ...task, ...freshTask } : task,
+      ),
+    );
+  };
+
+  const revalidateBlockingParentTasks = async (
+    taskId: string,
+  ): Promise<{ isBlockedNow: boolean; blockers: TaskDependencyTask[] }> => {
+    const [freshTask, dependencies] = await Promise.all([
+      getTask(taskId),
+      listTaskDependencies(taskId),
+    ]);
+    const unresolvedParents = getBlockingParentTasks(dependencies);
+    const isBlockedNow =
+      unresolvedParents.length > 0 || Boolean(freshTask.isBlocked);
+    syncTaskSnapshot(taskId, freshTask);
+    syncTaskBlockedState(taskId, isBlockedNow);
+    return {
+      isBlockedNow,
+      blockers: unresolvedParents,
+    };
+  };
+
+  const showBlockedTaskModal = (
+    taskId: string,
+    blockingTasks: TaskDependencyTask[],
+  ) => {
+    syncTaskBlockedState(taskId, true);
+    setBlockingStartTasks(blockingTasks);
+    setIsRunSettingsModalOpen(false);
+    setPendingInProgressTaskId("");
+    setIsBlockedTaskModalOpen(true);
+  };
+
   const isTaskRunRequestCurrent = (taskId: string, requestVersion: number) => {
     return taskRunRequestVersions[taskId] === requestVersion;
   };
@@ -404,7 +618,12 @@ export const useBoardModel = () => {
         return;
       }
 
-      const miniCards = resolveTaskRunMiniCards(taskValue, runs, deletedRunIds);
+      const miniCards = resolveTaskRunMiniCards(
+        taskValue,
+        runs,
+        runOptionLookup(),
+        deletedRunIds,
+      );
       applyTaskRunMiniCards(taskId, miniCards);
     } catch {
       // Ignore transient run refresh failures.
@@ -444,6 +663,9 @@ export const useBoardModel = () => {
   const selectedProject = createMemo(
     () =>
       projects().find((project) => project.id === selectedProjectId()) ?? null,
+  );
+  const runOptionLookup = createMemo(() =>
+    resolveRunOptionLookup(runAgentOptions(), runModelOptions()),
   );
 
   const normalizedSearchQuery = createMemo(() => searchQuery().trim());
@@ -808,6 +1030,7 @@ export const useBoardModel = () => {
             const miniCards = resolveTaskRunMiniCards(
               task,
               runs,
+              runOptionLookup(),
               deletedRunIds,
             );
             return { taskId: task.id, miniCards, taskRunRequestVersion };
@@ -928,14 +1151,18 @@ export const useBoardModel = () => {
       activeProjectDetailRequestVersion += 1;
       activeTaskRunsRequestVersion += 1;
       setSelectedProjectDetail(null);
+      setRunAgentOptions([]);
+      setRunProviderOptions([]);
+      setRunModelOptions([]);
       setTasks([]);
       setTaskRunMiniCards({});
       return;
     }
     await Promise.allSettled([
-      loadTasks(projectId),
+      refreshRunSelectionOptions(),
       loadSelectedProjectDetail(projectId),
     ]);
+    await loadTasks(projectId);
   };
 
   const refreshSelectedProjectTasks = async () => {
@@ -962,6 +1189,30 @@ export const useBoardModel = () => {
   };
 
   const moveTaskToStatus = async (
+    taskId: string,
+    targetStatus: TaskStatus,
+  ): Promise<boolean> => {
+    if (targetStatus === "done") {
+      try {
+        const taskRuns = await listTaskRuns(taskId);
+        if (hasActiveTaskRuns(taskRuns)) {
+          setError("");
+          setPendingDoneTaskId(taskId);
+          setIsDoneTaskWarningOpen(true);
+          return false;
+        }
+      } catch (mutationError) {
+        setError(
+          getActionErrorMessage("Failed to verify task runs.", mutationError),
+        );
+        return false;
+      }
+    }
+
+    return moveTaskToStatusWithoutWarning(taskId, targetStatus);
+  };
+
+  const moveTaskToStatusWithoutWarning = async (
     taskId: string,
     targetStatus: TaskStatus,
   ): Promise<boolean> => {
@@ -1034,6 +1285,7 @@ export const useBoardModel = () => {
           const miniCards = resolveTaskRunMiniCards(
             updatedTask,
             runs,
+            runOptionLookup(),
             deletedRunIds,
           );
           applyTaskRunMiniCards(taskId, miniCards);
@@ -1066,6 +1318,23 @@ export const useBoardModel = () => {
     return true;
   };
 
+  const onCancelMoveTaskToDone = () => {
+    const taskId = pendingDoneTaskId();
+    if (taskId && isTaskStatusUpdating(taskId)) return;
+    setIsDoneTaskWarningOpen(false);
+    setPendingDoneTaskId("");
+  };
+
+  const onConfirmMoveTaskToDone = async () => {
+    const taskId = pendingDoneTaskId();
+    if (!taskId) return;
+    const updated = await moveTaskToStatusWithoutWarning(taskId, "done");
+    if (updated) {
+      setIsDoneTaskWarningOpen(false);
+      setPendingDoneTaskId("");
+    }
+  };
+
   const onRequestMoveTaskToInProgress = (taskId: string) => {
     if (isTaskStatusUpdating(taskId)) return;
     if (!canTaskTransitionToStatus(taskId, "doing")) return;
@@ -1086,8 +1355,33 @@ export const useBoardModel = () => {
       void refreshRunSourceBranches(taskId);
     };
 
+    const verifyTaskCanStart = async () => {
+      try {
+        const { isBlockedNow, blockers } =
+          await revalidateBlockingParentTasks(taskId);
+        if (isBlockedNow) {
+          showBlockedTaskModal(taskId, blockers);
+          return false;
+        }
+
+        return true;
+      } catch (mutationError) {
+        setError(
+          getActionErrorMessage(
+            "Failed to verify blocking tasks.",
+            mutationError,
+          ),
+        );
+        return false;
+      }
+    };
+
     if (openCodeDependency.state() === "available") {
-      openRunSettingsModal();
+      void (async () => {
+        if (await verifyTaskCanStart()) {
+          openRunSettingsModal();
+        }
+      })();
       return;
     }
 
@@ -1098,7 +1392,9 @@ export const useBoardModel = () => {
         return;
       }
 
-      openRunSettingsModal();
+      if (await verifyTaskCanStart()) {
+        openRunSettingsModal();
+      }
     })();
   };
 
@@ -1111,9 +1407,31 @@ export const useBoardModel = () => {
     setPendingInProgressTaskId("");
   };
 
+  const onCloseBlockedTaskModal = () => {
+    setIsBlockedTaskModalOpen(false);
+    setBlockingStartTasks([]);
+  };
+
   const onConfirmMoveTaskToInProgress = async () => {
     const taskId = pendingInProgressTaskId();
     if (!taskId || isTaskStatusUpdating(taskId)) return;
+    try {
+      const { isBlockedNow, blockers } =
+        await revalidateBlockingParentTasks(taskId);
+      if (isBlockedNow) {
+        showBlockedTaskModal(taskId, blockers);
+        return;
+      }
+    } catch (mutationError) {
+      setError(
+        getActionErrorMessage(
+          "Failed to verify blocking tasks.",
+          mutationError,
+        ),
+      );
+      return;
+    }
+
     const statusUpdated = await moveTaskToStatus(taskId, "doing");
     if (statusUpdated) {
       try {
@@ -1140,6 +1458,7 @@ export const useBoardModel = () => {
         });
         const createdRunMiniCard = runToBoardTaskRunMiniCard(
           createdRun,
+          runOptionLookup(),
           deletedRunIds,
         );
         if (createdRunMiniCard) {
@@ -1329,6 +1648,9 @@ export const useBoardModel = () => {
     isSearchLoading,
     searchMatchCount,
     isRunSettingsModalOpen,
+    isBlockedTaskModalOpen,
+    isDoneTaskWarningOpen,
+    blockingStartTasks,
     hasRunSelectionOptions,
     isLoadingRunSelectionOptions,
     runSelectionOptionsError,
@@ -1357,6 +1679,9 @@ export const useBoardModel = () => {
     setSelectedRunSourceBranch,
     onRequestMoveTaskToInProgress,
     onCancelMoveTaskToInProgress,
+    onCloseBlockedTaskModal,
+    onCancelMoveTaskToDone,
+    onConfirmMoveTaskToDone,
     onConfirmMoveTaskToInProgress,
   };
 };

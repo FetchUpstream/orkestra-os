@@ -35,6 +35,7 @@ import {
   setTaskStatus,
   updateTask,
   type TaskDependencies,
+  type TaskDependencyTask,
   type Task,
   type TaskStatus,
 } from "../../../app/lib/tasks";
@@ -62,6 +63,7 @@ import {
 import {
   filterDependencyCandidates,
   getActionErrorMessage,
+  getBlockingParentTasks,
   getValidTransitionTargets,
   isDependencyCandidateLinkable,
 } from "../utils/taskDetail";
@@ -77,6 +79,14 @@ import {
 } from "../../projects/utils/projectDetail";
 
 export type DependencyCreateDirection = "parent" | "child";
+
+const ACTIVE_TASK_RUN_STATUSES = new Set([
+  "queued",
+  "preparing",
+  "running",
+  "in_progress",
+  "idle",
+]);
 
 export const useTaskDetailModel = () => {
   const AUTOSAVE_DEBOUNCE_MS = 900;
@@ -116,6 +126,8 @@ export const useTaskDetailModel = () => {
   const [isMoving, setIsMoving] = createSignal(false);
   const [isDeleting, setIsDeleting] = createSignal(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = createSignal(false);
+  const [isDoneStatusWarningOpen, setIsDoneStatusWarningOpen] =
+    createSignal(false);
   const [isCreateDependencyModalOpen, setIsCreateDependencyModalOpen] =
     createSignal(false);
   const [createDependencyDirection, setCreateDependencyDirection] =
@@ -368,9 +380,7 @@ export const useTaskDetailModel = () => {
     return getValidTransitionTargets(taskValue.status);
   });
   const blockingParentTasks = createMemo(() =>
-    (dependencies()?.parents || []).filter(
-      (dependencyTask) => dependencyTask.status !== "done",
-    ),
+    getBlockingParentTasks(dependencies()),
   );
   const isBlocked = createMemo(() => {
     const taskValue = task();
@@ -568,17 +578,62 @@ export const useTaskDetailModel = () => {
     });
   });
 
-  const refreshDependencies = async (taskId: string) => {
+  const refreshDependencies = async (
+    taskId: string,
+  ): Promise<TaskDependencies | null> => {
     setIsLoadingDependencies(true);
     setDependenciesError("");
     try {
       const loadedDependencies = await listTaskDependencies(taskId);
       setDependencies(loadedDependencies);
+      return loadedDependencies;
     } catch {
       setDependenciesError("Failed to load dependencies.");
+      return null;
     } finally {
       setIsLoadingDependencies(false);
     }
+  };
+
+  const syncTaskBlockedState = (taskId: string, isBlockedNow: boolean) => {
+    setTask((currentTask) =>
+      currentTask && currentTask.id === taskId
+        ? { ...currentTask, isBlocked: isBlockedNow }
+        : currentTask,
+    );
+  };
+
+  type BlockingParentTaskRevalidation = {
+    blockers: TaskDependencyTask[];
+    isBlockedNow: boolean;
+  };
+
+  const revalidateBlockingParentTasks = async (
+    taskId: string,
+  ): Promise<BlockingParentTaskRevalidation> => {
+    const [freshTask, loadedDependencies] = await Promise.all([
+      getTask(taskId),
+      refreshDependencies(taskId),
+    ]);
+    setTask(freshTask);
+    if (!loadedDependencies) {
+      throw new Error("Failed to verify task dependencies.");
+    }
+
+    const unresolvedParents = getBlockingParentTasks(loadedDependencies);
+    const hasUnresolved = unresolvedParents.length > 0;
+    const isBlockedNow = hasUnresolved || Boolean(freshTask.isBlocked);
+    syncTaskBlockedState(taskId, isBlockedNow);
+    return {
+      blockers: isBlockedNow ? unresolvedParents : [],
+      isBlockedNow,
+    };
+  };
+
+  const showBlockedTaskModal = (taskId: string) => {
+    syncTaskBlockedState(taskId, true);
+    setIsRunSettingsModalOpen(false);
+    setIsBlockedRunWarningOpen(true);
   };
 
   const refreshRuns = async (taskId: string) => {
@@ -1077,6 +1132,33 @@ export const useTaskDetailModel = () => {
     }
   };
 
+  const onRequestSetStatus = async (status: TaskStatus) => {
+    const taskValue = task();
+    if (!taskValue) return;
+    if (
+      status === "done" &&
+      taskValue.status !== "done" &&
+      runs().some((run) => ACTIVE_TASK_RUN_STATUSES.has(run.status))
+    ) {
+      setActionError("");
+      setIsTransitionMenuOpen(false);
+      setIsDoneStatusWarningOpen(true);
+      return;
+    }
+
+    await onSetStatus(status);
+  };
+
+  const onCancelDoneStatusWarning = () => {
+    if (isChangingStatus()) return;
+    setIsDoneStatusWarningOpen(false);
+  };
+
+  const onConfirmDoneStatusWarning = async () => {
+    setIsDoneStatusWarningOpen(false);
+    await onSetStatus("done");
+  };
+
   const onMoveTask = async () => {
     const taskValue = task();
     const targetRepositoryId = moveRepositoryId();
@@ -1144,9 +1226,21 @@ export const useTaskDetailModel = () => {
   const onCreateRun = async (): Promise<Run | null> => {
     const taskValue = task();
     if (!taskValue) return null;
-    if (isBlocked()) {
-      setIsRunSettingsModalOpen(false);
-      setIsBlockedRunWarningOpen(true);
+    try {
+      const { isBlockedNow } = await revalidateBlockingParentTasks(
+        taskValue.id,
+      );
+      if (isBlockedNow) {
+        showBlockedTaskModal(taskValue.id);
+        return null;
+      }
+    } catch (mutationError) {
+      setActionError(
+        getActionErrorMessage(
+          "Failed to verify blocking tasks.",
+          mutationError,
+        ),
+      );
       return null;
     }
 
@@ -1205,8 +1299,34 @@ export const useTaskDetailModel = () => {
       void refreshRunSourceBranches(params.taskId);
     };
 
+    const verifyTaskCanStart = async () => {
+      try {
+        const { isBlockedNow } = await revalidateBlockingParentTasks(
+          params.taskId,
+        );
+        if (isBlockedNow) {
+          showBlockedTaskModal(params.taskId);
+          return false;
+        }
+
+        return true;
+      } catch (mutationError) {
+        setActionError(
+          getActionErrorMessage(
+            "Failed to verify blocking tasks.",
+            mutationError,
+          ),
+        );
+        return false;
+      }
+    };
+
     if (openCodeDependency.state() === "available") {
-      openRunSettingsModal();
+      void (async () => {
+        if (await verifyTaskCanStart()) {
+          openRunSettingsModal();
+        }
+      })();
       return;
     }
 
@@ -1217,7 +1337,9 @@ export const useTaskDetailModel = () => {
         return;
       }
 
-      openRunSettingsModal();
+      if (await verifyTaskCanStart()) {
+        openRunSettingsModal();
+      }
     })();
   };
 
@@ -1263,11 +1385,28 @@ export const useTaskDetailModel = () => {
     const taskValue = task();
     if (
       !taskValue ||
-      isBlocked() ||
       !runId ||
       isAnyRunStarting() ||
       deletingRunId() === runId
     ) {
+      return;
+    }
+
+    try {
+      const { isBlockedNow } = await revalidateBlockingParentTasks(
+        taskValue.id,
+      );
+      if (isBlockedNow) {
+        showBlockedTaskModal(taskValue.id);
+        return;
+      }
+    } catch (mutationError) {
+      setActionError(
+        getActionErrorMessage(
+          "Failed to verify blocking tasks.",
+          mutationError,
+        ),
+      );
       return;
     }
 
@@ -1370,6 +1509,7 @@ export const useTaskDetailModel = () => {
     isMoving,
     isDeleting,
     isDeleteModalOpen,
+    isDoneStatusWarningOpen,
     isCreateDependencyModalOpen,
     createDependencyDirection,
     createDependencyTitle,
@@ -1417,6 +1557,9 @@ export const useTaskDetailModel = () => {
     onEditImplementationGuideInput,
     flushTaskDetailsAutosave,
     onSetStatus,
+    onRequestSetStatus,
+    onCancelDoneStatusWarning,
+    onConfirmDoneStatusWarning,
     onMoveTask,
     onRequestDeleteTask,
     onCancelDeleteTask,

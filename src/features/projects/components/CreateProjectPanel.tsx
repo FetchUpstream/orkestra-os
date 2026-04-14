@@ -98,7 +98,8 @@ const CreateProjectPanel: Component<Props> = (props) =>
               {props.mode() === "edit" ? "Edit Project" : "Create Project"}
             </h2>
             <p class="text-base-content/55 mt-1 text-xs">
-              Configure project identity and tracked repositories.
+              Configure project identity, run defaults, and tracked
+              repositories.
             </p>
           </div>
         </div>
@@ -285,123 +286,152 @@ const CreateProjectPanel: Component<Props> = (props) =>
               </Show>
             </div>
           </div>
-          <div class="form-section">
+          <div class="form-section form-section-break">
             <div>
-              <h3 class="form-section-title">Default Run Configuration</h3>
+              <h3 class="form-section-title">Default run settings</h3>
               <p class="form-section-subtitle">
-                These agent/provider/model defaults are used for future runs in
-                this project.
+                These defaults are used for future runs in this project. You can
+                change them later when starting a run.
               </p>
             </div>
-            <Show when={props.hasRunSelectionOptions()}>
-              <div class="task-runs-defaults-grid">
-                <label class="projects-field task-runs-default-field">
-                  <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
-                    <span class="field-label-text">Agent</span>
-                    <span class="field-optional">optional</span>
-                  </span>
-                  <select
-                    class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
-                    value={props.defaultRunAgent()}
-                    onChange={(event) =>
-                      props.setDefaultRunAgent(event.currentTarget.value)
-                    }
-                    onBlur={() => void props.flushAutosave()}
-                    disabled={isFormDisabled()}
-                    aria-label="Project default run agent"
-                  >
-                    <RunAgentSelectOptions
-                      options={props.runAgentOptions()}
-                      includeSystemDefaultOption
-                    />
-                  </select>
-                </label>
-                <label class="projects-field task-runs-default-field">
-                  <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
-                    <span class="field-label-text">Provider</span>
-                  </span>
-                  <select
-                    class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
-                    value={props.defaultRunProvider()}
-                    onChange={(event) =>
-                      props.setDefaultRunProvider(event.currentTarget.value)
-                    }
-                    onBlur={() => void props.flushAutosave()}
-                    disabled={isFormDisabled()}
-                    aria-label="Project default run provider"
-                    required
-                  >
-                    <option value="">Select provider</option>
-                    <For each={props.runProviderOptions()}>
-                      {(option) => (
-                        <option value={option.id}>{option.label}</option>
-                      )}
-                    </For>
-                  </select>
-                </label>
-                <label class="projects-field task-runs-default-field">
-                  <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
-                    <span class="field-label-text">Model</span>
-                  </span>
-                  <select
-                    class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
-                    value={props.defaultRunModel()}
-                    onChange={(event) =>
-                      props.setDefaultRunModel(event.currentTarget.value)
-                    }
-                    onBlur={() => void props.flushAutosave()}
-                    disabled={isFormDisabled()}
-                    aria-label="Project default run model"
-                    required
-                  >
-                    <option value="">Select model</option>
-                    <For each={props.visibleRunModelOptions()}>
-                      {(option) => (
-                        <option value={option.id}>{option.label}</option>
-                      )}
-                    </For>
-                  </select>
-                </label>
+            <div class="projects-settings-block border-base-content/15 bg-base-100 rounded-none border">
+              <div class="projects-settings-head">
+                <div>
+                  <h3 class="projects-settings-title">Run defaults</h3>
+                  <p class="projects-settings-subtitle">
+                    Available agents, providers, and models come from your
+                    configured OpenCode environment.
+                  </p>
+                </div>
               </div>
-            </Show>
-            <Show
-              when={
-                !props.hasRunSelectionOptions() && props.isLoadingRunDefaults()
-              }
-            >
-              <p class="project-placeholder-text text-sm">
-                Loading run defaults...
-              </p>
-            </Show>
-            <Show
-              when={
-                !props.hasRunSelectionOptions() &&
-                !props.isLoadingRunDefaults() &&
-                !props.runDefaultsError()
-              }
-            >
-              <p class="project-placeholder-text text-sm">
-                Run defaults are unavailable right now.
-              </p>
-            </Show>
-            <Show when={props.runDefaultsError()}>
-              {(message) => (
-                <p class="projects-error border-error/35 bg-error/10 m-0 text-sm">
-                  {message()}
+              <Show when={props.hasRunSelectionOptions()}>
+                <div class="task-runs-defaults-grid px-4 pb-4">
+                  <label class="projects-field task-runs-default-field">
+                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                      <span class="field-label-text">Agent</span>
+                      <span class="field-optional">optional</span>
+                    </span>
+                    <select
+                      class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
+                      value={props.defaultRunAgent()}
+                      onChange={(event) =>
+                        props.setDefaultRunAgent(event.currentTarget.value)
+                      }
+                      onBlur={() => void props.flushAutosave()}
+                      disabled={isFormDisabled()}
+                      aria-label="Project default run agent"
+                    >
+                      <RunAgentSelectOptions
+                        options={props.runAgentOptions()}
+                        includeSystemDefaultOption
+                      />
+                    </select>
+                    <p class="field-help">
+                      Choose the default agent for new runs in this project. If
+                      you leave this unset, the system default is used.
+                    </p>
+                  </label>
+                  <label class="projects-field task-runs-default-field">
+                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                      <span class="field-label-text">Provider</span>
+                      <span class="field-required">required</span>
+                    </span>
+                    <select
+                      class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
+                      value={props.defaultRunProvider()}
+                      onChange={(event) =>
+                        props.setDefaultRunProvider(event.currentTarget.value)
+                      }
+                      onBlur={() => void props.flushAutosave()}
+                      disabled={isFormDisabled()}
+                      aria-label="Project default run provider"
+                      required
+                    >
+                      <option value="">Select provider</option>
+                      <For each={props.runProviderOptions()}>
+                        {(option) => (
+                          <option value={option.id}>{option.label}</option>
+                        )}
+                      </For>
+                    </select>
+                    <p class="field-help">
+                      Choose the default AI provider available in your
+                      configured environment.
+                    </p>
+                  </label>
+                  <label class="projects-field task-runs-default-field">
+                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                      <span class="field-label-text">Model</span>
+                      <span class="field-required">required</span>
+                    </span>
+                    <select
+                      class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
+                      value={props.defaultRunModel()}
+                      onChange={(event) =>
+                        props.setDefaultRunModel(event.currentTarget.value)
+                      }
+                      onBlur={() => void props.flushAutosave()}
+                      disabled={isFormDisabled()}
+                      aria-label="Project default run model"
+                      required
+                    >
+                      <option value="">Select model</option>
+                      <For each={props.visibleRunModelOptions()}>
+                        {(option) => (
+                          <option value={option.id}>{option.label}</option>
+                        )}
+                      </For>
+                    </select>
+                    <p class="field-help">
+                      Choose the default model for new runs with this project.
+                    </p>
+                  </label>
+                </div>
+              </Show>
+              <Show
+                when={
+                  !props.hasRunSelectionOptions() &&
+                  props.isLoadingRunDefaults()
+                }
+              >
+                <p class="project-placeholder-text px-4 pb-4 text-sm">
+                  Loading run defaults...
                 </p>
-              )}
-            </Show>
-            <Show when={props.runDefaultsValidationError()}>
-              {(message) => <p class="field-error">{message()}</p>}
-            </Show>
+              </Show>
+              <Show
+                when={
+                  !props.hasRunSelectionOptions() &&
+                  !props.isLoadingRunDefaults() &&
+                  !props.runDefaultsError()
+                }
+              >
+                <p class="project-placeholder-text px-4 pb-4 text-sm">
+                  Run defaults are unavailable right now. You can still save the
+                  project and use environment defaults until these options are
+                  available.
+                </p>
+              </Show>
+              <Show when={props.runDefaultsError()}>
+                {(message) => (
+                  <p class="projects-error border-error/35 bg-error/10 mx-4 mt-0 mb-4 text-sm">
+                    {message()}
+                  </p>
+                )}
+              </Show>
+              <Show when={props.runDefaultsValidationError()}>
+                {(message) => <p class="field-error px-4 pb-4">{message()}</p>}
+              </Show>
+            </div>
           </div>
-          <div class="form-section">
+          <div class="form-section form-section-break">
             <div class="projects-repos-block border-base-content/15 bg-base-100 rounded-none border">
               <div class="projects-repos-head">
                 <div>
-                  <h3 class="projects-repos-title">Repositories</h3>
+                  <h3 class="projects-repos-title">Project repositories</h3>
                   <p class="projects-repos-subtitle">
-                    Add code repositories to track with this project.
+                    Add the code repositories that belong to this project. These
+                    repositories are tracked by the project and are separate
+                    from the default run settings above.
                   </p>
                 </div>
                 <button
@@ -423,6 +453,7 @@ const CreateProjectPanel: Component<Props> = (props) =>
                       <label class="projects-field">
                         <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                           <span class="field-label-text">Repository path</span>
+                          <span class="field-required">required</span>
                         </span>
                         <RepositoryPathPicker
                           value={repo().path}

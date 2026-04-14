@@ -395,6 +395,6 @@ impl RunStatusTransitionService {
     }
 
     fn is_terminal_status(status: &str) -> bool {
-        matches!(status, "complete" | "failed" | "cancelled")
+        matches!(status, "complete" | "failed" | "cancelled" | "rejected")
     }
 }

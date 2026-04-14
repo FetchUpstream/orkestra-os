@@ -18,6 +18,7 @@ import {
   createSignal,
   onCleanup,
   onMount,
+  Show,
   type Component,
 } from "solid-js";
 import { searchProjectFiles } from "../../app/lib/projects";
@@ -34,6 +35,7 @@ type TaskImplementationGuideCrepeEditorProps = {
   ariaLabel?: string;
   disabled?: boolean;
   placeholder?: string;
+  helperText?: string;
   projectId?: string;
   repositoryId?: string;
 };
@@ -314,6 +316,18 @@ const TaskImplementationGuideCrepeEditor: Component<
         onHover={setHighlightedIndex}
         onSelect={insertMentionSelection}
       />
+      <Show
+        when={
+          props.helperText &&
+          props.projectId &&
+          props.repositoryId &&
+          !props.value.trim()
+        }
+      >
+        <p class="project-placeholder-text task-guide-crepe-helper">
+          {props.helperText}
+        </p>
+      </Show>
     </div>
   );
 };

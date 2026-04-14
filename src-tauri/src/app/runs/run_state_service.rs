@@ -128,7 +128,7 @@ impl RunStateService {
             transition_source,
             !Self::is_non_authoritative_source(transition_source),
         )
-            .await
+        .await
     }
 
     pub async fn handle_question_pending(
@@ -144,8 +144,13 @@ impl RunStateService {
         &self,
         run_id: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
-        self.transition_to_state(run_id, Some(PERMISSION_REQUESTED), "permission_requested", true)
-            .await
+        self.transition_to_state(
+            run_id,
+            Some(PERMISSION_REQUESTED),
+            "permission_requested",
+            true,
+        )
+        .await
     }
 
     pub async fn handle_commit_requested(
@@ -217,8 +222,13 @@ impl RunStateService {
             return Ok(None);
         };
 
-        self.transition_to_state_from_snapshot(latest_run, next_state, transition_source, authoritative)
-            .await
+        self.transition_to_state_from_snapshot(
+            latest_run,
+            next_state,
+            transition_source,
+            authoritative,
+        )
+        .await
     }
 
     async fn transition_to_state_from_snapshot(
@@ -432,7 +442,7 @@ impl RunStateService {
     }
 
     fn is_terminal_status(status: &str) -> bool {
-        matches!(status, "complete" | "failed" | "cancelled")
+        matches!(status, "complete" | "failed" | "cancelled" | "rejected")
     }
 
     fn is_special_stored_state(state: &str) -> bool {
@@ -600,6 +610,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejected_status_is_terminal_and_blocks_transitions() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "rejected", "busy_coding").await;
+
+        assert!(RunStateService::is_terminal_status("rejected"));
+
+        let event = service
+            .handle_waiting_for_input("run-1", "test_transition")
+            .await
+            .unwrap();
+
+        assert!(event.is_none());
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = ?")
+                .bind("run-1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), Some("busy_coding"));
+    }
+
+    #[tokio::test]
     async fn transition_to_state_updates_non_terminal_runs() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");
@@ -628,14 +663,7 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
         seed_task(&pool, "task-1", &repo_path).await;
-        seed_run(
-            &pool,
-            "run-1",
-            "task-1",
-            "in_progress",
-            "question_pending",
-        )
-        .await;
+        seed_run(&pool, "run-1", "task-1", "in_progress", "question_pending").await;
 
         let event = service.handle_run_started("run-1").await.unwrap();
 
@@ -685,14 +713,7 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
         seed_task(&pool, "task-1", &repo_path).await;
-        seed_run(
-            &pool,
-            "run-1",
-            "task-1",
-            "idle",
-            "committing_changes",
-        )
-        .await;
+        seed_run(&pool, "run-1", "task-1", "idle", "committing_changes").await;
 
         let event = service
             .handle_question_pending("run-1", "question_refresh")

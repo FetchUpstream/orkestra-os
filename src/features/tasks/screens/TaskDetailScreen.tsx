@@ -12,9 +12,12 @@
 
 import { For, Show, createEffect, onCleanup, type Component } from "solid-js";
 import { A } from "@solidjs/router";
+import { runDisplayLabel } from "../../../app/lib/runs";
 import type { TaskStatus } from "../../../app/lib/tasks";
 import { AppIcon } from "../../../components/ui/icons";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
+import ActionWarningModal from "../components/ActionWarningModal";
+import BlockedTaskModal from "../components/BlockedTaskModal";
 import {
   TaskDependenciesSidebar,
   TaskLinkDependencyModal,
@@ -27,7 +30,6 @@ import {
 } from "../components/TaskDetailStates";
 import { useTaskDetailModel } from "../model/useTaskDetailModel";
 import {
-  dependencyDisplayLabel,
   formatDateTime,
   formatRunStatus,
   repositoryLabel,
@@ -93,18 +95,16 @@ const getRunSummaryFallback = (status: string) => {
   if (status === "failed") {
     return "Execution stopped after an error during run stages.";
   }
+  if (status === "rejected") {
+    return "Execution was closed because another run on this task was merged.";
+  }
   return "Execution was stopped before completion.";
 };
 
 const getRunPrimaryLabel = (runItem: {
   runNumber?: number | null;
   displayKey?: string | null;
-}) => {
-  if (typeof runItem.runNumber === "number") return `Run #${runItem.runNumber}`;
-  const displayKey = runItem.displayKey?.trim();
-  if (displayKey) return displayKey;
-  return "Run";
-};
+}) => runDisplayLabel(runItem);
 
 const TaskDetailScreen: Component = () => {
   const {
@@ -159,6 +159,7 @@ const TaskDetailScreen: Component = () => {
     isMoving,
     isDeleting,
     isDeleteModalOpen,
+    isDoneStatusWarningOpen,
     isCreateDependencyModalOpen,
     createDependencyDirection,
     createDependencyTitle,
@@ -201,6 +202,9 @@ const TaskDetailScreen: Component = () => {
     onEditImplementationGuideInput,
     flushTaskDetailsAutosave,
     onSetStatus,
+    onRequestSetStatus,
+    onCancelDoneStatusWarning,
+    onConfirmDoneStatusWarning,
     onMoveTask,
     onRequestDeleteTask,
     onCancelDeleteTask,
@@ -237,7 +241,7 @@ const TaskDetailScreen: Component = () => {
           onToggleTransitionMenu: () =>
             setIsTransitionMenuOpen((current) => !current),
           onCloseTransitionMenu: () => setIsTransitionMenuOpen(false),
-          onSetStatus,
+          onSetStatus: onRequestSetStatus,
           onRequestDeleteTask,
         },
       }),
@@ -778,60 +782,11 @@ const TaskDetailScreen: Component = () => {
         setShowDoneLinkCandidates={setShowDoneLinkCandidates}
         onLinkDependency={onLinkDependency}
       />
-      <Show when={isBlockedRunWarningOpen()}>
-        <div
-          class="projects-modal-backdrop"
-          role="presentation"
-          onClick={() => setIsBlockedRunWarningOpen(false)}
-        >
-          <section
-            class="projects-modal task-create-dependency-modal border-base-content/15 bg-base-200 rounded-none border"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="task-blocked-run-modal-title"
-            aria-describedby="task-blocked-run-modal-copy"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div class="border-base-content/10 border-b pb-3">
-              <h2
-                id="task-blocked-run-modal-title"
-                class="task-delete-modal-title"
-              >
-                Run blocked
-              </h2>
-            </div>
-            <p
-              id="task-blocked-run-modal-copy"
-              class="project-placeholder-text task-delete-modal-copy"
-            >
-              This task is blocked. Wait for{" "}
-              {(() => {
-                const blockers = blockingParentTasks().map((dependencyTask) =>
-                  dependencyDisplayLabel(dependencyTask),
-                );
-                const visible = blockers.slice(0, 3);
-                const hiddenCount = blockers.length - visible.length;
-                const blockerCopy =
-                  visible.length > 0
-                    ? visible.join(", ") +
-                      (hiddenCount > 0 ? ` +${hiddenCount} more` : "")
-                    : "prerequisite tasks";
-                return blockerCopy;
-              })()}{" "}
-              to complete first.
-            </p>
-            <div class="task-delete-modal-actions">
-              <button
-                type="button"
-                class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
-                onClick={() => setIsBlockedRunWarningOpen(false)}
-              >
-                Got it
-              </button>
-            </div>
-          </section>
-        </div>
-      </Show>
+      <BlockedTaskModal
+        isOpen={isBlockedRunWarningOpen}
+        blockingTasks={blockingParentTasks}
+        onClose={() => setIsBlockedRunWarningOpen(false)}
+      />
       <RunSettingsModal
         isOpen={isRunSettingsModalOpen}
         isSubmitting={isCreatingRun}
@@ -859,6 +814,15 @@ const TaskDetailScreen: Component = () => {
         setSelectedRunSourceBranch={setSelectedRunSourceBranch}
         onCancel={onCancelRunSettingsModal}
         onConfirm={onConfirmCreateRun}
+      />
+      <ActionWarningModal
+        isOpen={isDoneStatusWarningOpen}
+        title="Mark task as done?"
+        body="This task will be marked done and its remaining runs will be cancelled."
+        confirmLabel="Mark as done"
+        isConfirming={isChangingStatus}
+        onCancel={onCancelDoneStatusWarning}
+        onConfirm={onConfirmDoneStatusWarning}
       />
     </>
   );

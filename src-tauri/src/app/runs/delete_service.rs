@@ -141,12 +141,11 @@ mod tests {
             run_status_transition_service,
             app_data_dir,
         );
-        let runs_delete_service =
-            RunsDeleteService::new(
-                runs_service.clone(),
-                runs_opencode_service.clone(),
-                task_status_transition_service,
-            );
+        let runs_delete_service = RunsDeleteService::new(
+            runs_service.clone(),
+            runs_opencode_service.clone(),
+            task_status_transition_service,
+        );
 
         (
             runs_delete_service,

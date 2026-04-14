@@ -51,6 +51,32 @@ export type UiReasoningPart = UiBasePart & {
   metadata?: unknown;
 };
 
+export type UiAssistantStreamLifecycle = "static" | "streaming" | "settled";
+
+export type UiAssistantStreamChannelMetadata = {
+  targetText: string;
+  isStreaming: boolean;
+  streamRevision: number;
+  streamToken: string;
+  lifecycle: UiAssistantStreamLifecycle;
+  hasVisibleContent: boolean;
+  isPlaceholderOnly: boolean;
+};
+
+export type UiAssistantStreamingMetadata = {
+  messageId: string;
+  isStreaming: boolean;
+  streamRevision: number;
+  streamToken: string;
+  lifecycle: UiAssistantStreamLifecycle;
+  targetText: string;
+  reasoningTargetText: string;
+  hasVisibleContent: boolean;
+  isPlaceholderOnly: boolean;
+  text: UiAssistantStreamChannelMetadata;
+  reasoning: UiAssistantStreamChannelMetadata;
+};
+
 export type UiToolPart = UiBasePart & {
   kind: "tool";
   toolName: string;

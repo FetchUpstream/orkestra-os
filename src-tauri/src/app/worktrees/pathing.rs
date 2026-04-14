@@ -17,26 +17,46 @@ use std::path::{Component, Path, PathBuf};
 
 const PROJECT_KEY_MIN_LEN: usize = 2;
 const PROJECT_KEY_MAX_LEN: usize = 4;
+const MAX_BRANCH_SLUG_WORDS: usize = 4;
+const MAX_BRANCH_SLUG_LEN: usize = 32;
+const INITIAL_SUFFIX_HEX_LEN: usize = 7;
+const MAX_SUFFIX_HEX_LEN: usize = 16;
+const MAX_NUMERIC_SUFFIX: usize = 10_000;
 
 pub fn sanitize_branch_segment(branch_title: &str) -> String {
-    let mut slug = String::new();
-    let mut in_separator = false;
+    let mut words = Vec::with_capacity(MAX_BRANCH_SLUG_WORDS);
+    let mut current_word = String::new();
 
     for ch in branch_title.chars() {
-        if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
-            slug.push(ch);
-            in_separator = false;
-        } else if ch.is_ascii_uppercase() {
-            slug.push(ch.to_ascii_lowercase());
-            in_separator = false;
-        } else if !slug.is_empty() && !in_separator {
-            slug.push('-');
-            in_separator = true;
+        if ch.is_ascii_alphanumeric() {
+            current_word.push(ch.to_ascii_lowercase());
+            continue;
+        }
+
+        if !current_word.is_empty() {
+            words.push(std::mem::take(&mut current_word));
+            if words.len() == MAX_BRANCH_SLUG_WORDS {
+                break;
+            }
         }
     }
 
-    while slug.ends_with('-') {
-        slug.pop();
+    if !current_word.is_empty() && words.len() < MAX_BRANCH_SLUG_WORDS {
+        words.push(current_word);
+    }
+
+    let mut slug = String::new();
+    for word in words {
+        let separator_len = usize::from(!slug.is_empty());
+        if slug.len() + separator_len >= MAX_BRANCH_SLUG_LEN {
+            break;
+        }
+
+        let remaining = MAX_BRANCH_SLUG_LEN - slug.len() - separator_len;
+        if !slug.is_empty() {
+            slug.push('-');
+        }
+        slug.push_str(&word[..word.len().min(remaining)]);
     }
 
     if slug.is_empty() {
@@ -44,6 +64,56 @@ pub fn sanitize_branch_segment(branch_title: &str) -> String {
     } else {
         slug
     }
+}
+
+fn stable_suffix_hex(unique_suffix_seed: &str) -> String {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    let mut hash = FNV_OFFSET_BASIS;
+    for byte in unique_suffix_seed.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+
+    format!("{hash:016x}")
+}
+
+fn validate_unique_suffix_seed(
+    function_name: &'static str,
+    unique_suffix_seed: &str,
+) -> Result<(), WorktreePathError> {
+    if unique_suffix_seed.trim().is_empty() {
+        return Err(WorktreePathError::UniqueSuffixSeedRequired { function_name });
+    }
+
+    Ok(())
+}
+
+fn compose_branch_segment(
+    branch_slug: &str,
+    unique_suffix_seed: &str,
+    suffix_hex_len: usize,
+) -> Result<String, WorktreePathError> {
+    validate_unique_suffix_seed("compose_branch_segment", unique_suffix_seed)?;
+
+    let stable_suffix = stable_suffix_hex(unique_suffix_seed);
+    let suffix_len = suffix_hex_len
+        .min(stable_suffix.len())
+        .max(INITIAL_SUFFIX_HEX_LEN);
+    Ok(format!("{branch_slug}-{}", &stable_suffix[..suffix_len]))
+}
+
+pub fn build_branch_segment(
+    branch_title: &str,
+    unique_suffix_seed: &str,
+) -> Result<String, WorktreePathError> {
+    validate_unique_suffix_seed("build_branch_segment", unique_suffix_seed)?;
+    compose_branch_segment(
+        &sanitize_branch_segment(branch_title),
+        unique_suffix_seed,
+        INITIAL_SUFFIX_HEX_LEN,
+    )
 }
 
 pub fn compose_worktree_id(project_key: &str, branch_segment: &str) -> String {
@@ -173,32 +243,66 @@ pub fn resolve_worktree_path_typed(
 pub fn choose_unique_worktree_id(
     base_root: &Path,
     project_key: &str,
-    branch_slug: &str,
+    branch_title: &str,
+    unique_suffix_seed: &str,
     repo: &Repository,
-) -> String {
-    let mut suffix = 1_usize;
-    loop {
-        let branch_segment = if suffix == 1 {
-            branch_slug.to_string()
+) -> Result<String, WorktreePathError> {
+    validate_unique_suffix_seed("choose_unique_worktree_id", unique_suffix_seed)?;
+
+    let branch_slug = sanitize_branch_segment(branch_title);
+    let initial_branch_segment = build_branch_segment(branch_title, unique_suffix_seed)?;
+    for suffix_hex_len in [INITIAL_SUFFIX_HEX_LEN, 10, 12, MAX_SUFFIX_HEX_LEN] {
+        let branch_segment = if suffix_hex_len == INITIAL_SUFFIX_HEX_LEN {
+            initial_branch_segment.clone()
         } else {
-            format!("{branch_slug}-{suffix}")
+            compose_branch_segment(&branch_slug, unique_suffix_seed, suffix_hex_len)?
         };
         let candidate = compose_worktree_id(project_key, &branch_segment);
         let candidate_path = base_root.join(&candidate);
+        let path_exists = candidate_path.exists();
         let worktree_exists = repo.find_worktree(&candidate).is_ok();
         let branch_exists = repo.find_branch(&candidate, BranchType::Local).is_ok();
-        if !candidate_path.exists() && !worktree_exists && !branch_exists {
-            return candidate;
+        if !path_exists && !worktree_exists && !branch_exists {
+            return Ok(candidate);
         }
-        suffix += 1;
     }
+
+    let branch_segment =
+        compose_branch_segment(&branch_slug, unique_suffix_seed, MAX_SUFFIX_HEX_LEN)?;
+    let mut last_collision = None;
+    for numeric_suffix in 2..=MAX_NUMERIC_SUFFIX {
+        let candidate =
+            compose_worktree_id(project_key, &format!("{branch_segment}-{numeric_suffix}"));
+        let candidate_path = base_root.join(&candidate);
+        let path_exists = candidate_path.exists();
+        let worktree_exists = repo.find_worktree(&candidate).is_ok();
+        let branch_exists = repo.find_branch(&candidate, BranchType::Local).is_ok();
+        if !path_exists && !worktree_exists && !branch_exists {
+            return Ok(candidate);
+        }
+
+        last_collision = Some((candidate, path_exists, worktree_exists, branch_exists));
+    }
+
+    let (candidate, path_exists, worktree_exists, branch_exists) =
+        last_collision.unwrap_or_else(|| {
+            let candidate = compose_worktree_id(project_key, &format!("{branch_segment}-2"));
+            (candidate, false, false, false)
+        });
+    Err(WorktreePathError::WorktreeIdExhausted {
+        candidate,
+        max_numeric_suffix: MAX_NUMERIC_SUFFIX,
+        path_exists,
+        worktree_exists,
+        branch_exists,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        choose_unique_worktree_id, compose_worktree_id, parse_worktree_id, resolve_worktree_path,
-        sanitize_branch_segment,
+        build_branch_segment, choose_unique_worktree_id, compose_worktree_id, parse_worktree_id,
+        resolve_worktree_path, sanitize_branch_segment,
     };
     use git2::{Repository, Signature};
     use std::fs;
@@ -257,13 +361,35 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_branch_segment_formats_ascii_groups() {
+    fn sanitize_branch_segment_limits_to_first_four_words() {
         assert_eq!(
-            sanitize_branch_segment("  Fix Login --- Flow!!!  "),
-            "fix-login-flow"
+            sanitize_branch_segment("  Fix Login --- Flow!!! Again Later  "),
+            "fix-login-flow-again"
         );
         assert_eq!(sanitize_branch_segment("___"), "run");
         assert_eq!(sanitize_branch_segment("a__b--c"), "a-b-c");
+    }
+
+    #[test]
+    fn build_branch_segment_appends_short_stable_suffix() {
+        assert_eq!(
+            build_branch_segment(
+                "differentiate run cards on the board so multiple runs are easy to tell apart",
+                "run-seed-1"
+            )
+            .unwrap(),
+            "differentiate-run-cards-on-98adc61"
+        );
+    }
+
+    #[test]
+    fn build_branch_segment_rejects_blank_unique_suffix_seed() {
+        assert_eq!(
+            build_branch_segment("fix-login", "   ")
+                .unwrap_err()
+                .to_string(),
+            "build_branch_segment requires non-empty unique_suffix_seed"
+        );
     }
 
     #[test]
@@ -311,16 +437,30 @@ mod tests {
     }
 
     #[test]
-    fn choose_unique_worktree_id_uses_deterministic_numeric_suffixes() {
+    fn choose_unique_worktree_id_rejects_blank_unique_suffix_seed() {
+        let temp_dir = TempDir::new();
+        let repo = init_git_repo(&temp_dir.path().join("repo"));
+        let root = temp_dir.path().join("worktrees");
+
+        assert_eq!(
+            choose_unique_worktree_id(&root, "ALP", "fix-login", "   ", &repo)
+                .unwrap_err()
+                .to_string(),
+            "choose_unique_worktree_id requires non-empty unique_suffix_seed"
+        );
+    }
+
+    #[test]
+    fn choose_unique_worktree_id_extends_hash_before_numeric_suffix() {
         let temp_dir = TempDir::new();
         let repo = init_git_repo(&temp_dir.path().join("repo"));
         let root = temp_dir.path().join("worktrees");
 
         let head = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.branch("ALP/fix-login", &head, false).unwrap();
-        fs::create_dir_all(root.join("ALP/fix-login-2")).unwrap();
+        repo.branch("ALP/fix-login-98adc61", &head, false).unwrap();
+        fs::create_dir_all(root.join("ALP/fix-login-98adc61794")).unwrap();
 
-        let id = choose_unique_worktree_id(&root, "ALP", "fix-login", &repo);
-        assert_eq!(id, "ALP/fix-login-3");
+        let id = choose_unique_worktree_id(&root, "ALP", "fix-login", "run-seed-1", &repo).unwrap();
+        assert_eq!(id, "ALP/fix-login-98adc61794e5");
     }
 }

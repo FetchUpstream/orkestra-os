@@ -19,6 +19,8 @@ import {
 } from "solid-js";
 import { A, useLocation } from "@solidjs/router";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
+import ActionWarningModal from "../../tasks/components/ActionWarningModal";
+import BlockedTaskModal from "../../tasks/components/BlockedTaskModal";
 import BoardTaskCard from "../components/BoardTaskCard";
 import { useBoardModel } from "../model/useBoardModel";
 import { BOARD_COLUMNS } from "../utils/board";
@@ -276,6 +278,19 @@ const BoardScreen: Component = () => {
         setSelectedRunSourceBranch={model.setSelectedRunSourceBranch}
         onCancel={model.onCancelMoveTaskToInProgress}
         onConfirm={model.onConfirmMoveTaskToInProgress}
+      />
+      <BlockedTaskModal
+        isOpen={model.isBlockedTaskModalOpen}
+        blockingTasks={model.blockingStartTasks}
+        onClose={model.onCloseBlockedTaskModal}
+      />
+      <ActionWarningModal
+        isOpen={model.isDoneTaskWarningOpen}
+        title="Mark task as done?"
+        body="This task will be marked done and its remaining runs will be cancelled."
+        confirmLabel="Mark as done"
+        onCancel={model.onCancelMoveTaskToDone}
+        onConfirm={model.onConfirmMoveTaskToDone}
       />
     </div>
   );

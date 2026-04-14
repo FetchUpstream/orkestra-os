@@ -23,6 +23,7 @@ use crate::app::runs::opencode_service::RunsOpenCodeService;
 use crate::app::runs::run_state_service::RunStateService;
 use crate::app::runs::service::RunsService;
 use crate::app::runs::status_transition_service::RunStatusTransitionService;
+use crate::app::runs::task_completion_service::RunTaskCompletionService;
 use crate::app::tasks::search_service::TaskSearchService;
 use crate::app::tasks::service::TasksService;
 use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
@@ -77,18 +78,24 @@ impl AppState {
             Some(app_handle),
         );
         let runs_diff_service = RunsDiffService::new(runs_service.clone(), app_data_dir.clone());
-        let runs_merge_service = RunsMergeService::new(
-            runs_service.clone(),
-            run_state_service.clone(),
-            run_status_transition_service.clone(),
-            app_data_dir.clone(),
-        );
         let runs_opencode_service = RunsOpenCodeService::new(
             runs_service.clone(),
             projects_service.clone(),
             task_status_transition_service.clone(),
             run_state_service.clone(),
             run_status_transition_service.clone(),
+            app_data_dir.clone(),
+        );
+        let run_task_completion_service = RunTaskCompletionService::new(
+            RunsRepository::new(db_pool.clone()),
+            TasksRepository::new(db_pool.clone()),
+            runs_opencode_service.clone(),
+            run_status_transition_service.clone(),
+        );
+        let runs_merge_service = RunsMergeService::new(
+            runs_service.clone(),
+            run_state_service.clone(),
+            run_task_completion_service.clone(),
             app_data_dir.clone(),
         );
         let runs_delete_service = RunsDeleteService::new(
@@ -98,7 +105,11 @@ impl AppState {
         );
         let terminal_service =
             TerminalService::new(projects_service.clone(), runs_service.clone(), app_data_dir);
-        let tasks_service = TasksService::new(tasks_repository, task_search_service);
+        let tasks_service = TasksService::new(
+            tasks_repository,
+            task_search_service,
+            run_task_completion_service,
+        );
         Self {
             projects_service,
             runs_service,

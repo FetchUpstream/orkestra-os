@@ -12,6 +12,7 @@
 
 use crate::app::db::repositories::tasks::TasksRepository;
 use crate::app::errors::AppError;
+use crate::app::runs::task_completion_service::RunTaskCompletionService;
 use crate::app::tasks::dto::{
     AddTaskDependencyRequest, CreateTaskRequest, DeleteTaskResponse, MoveTaskRequest,
     RemoveTaskDependencyRequest, RemoveTaskDependencyResponse, SetTaskStatusRequest,
@@ -28,13 +29,19 @@ use chrono::Utc;
 pub struct TasksService {
     repository: TasksRepository,
     search_service: TaskSearchService,
+    run_task_completion_service: RunTaskCompletionService,
 }
 
 impl TasksService {
-    pub fn new(repository: TasksRepository, search_service: TaskSearchService) -> Self {
+    pub fn new(
+        repository: TasksRepository,
+        search_service: TaskSearchService,
+        run_task_completion_service: RunTaskCompletionService,
+    ) -> Self {
         Self {
             repository,
             search_service,
+            run_task_completion_service,
         }
     }
 
@@ -188,18 +195,24 @@ impl TasksService {
             return Err(AppError::validation("invalid task status transition"));
         }
 
-        let (updated_task, _) = self
-            .repository
-            .update_task_status(
-                id,
-                UpdateTaskStatus {
-                    status: input.status,
-                    updated_at: Utc::now().to_rfc3339(),
-                },
-            )
-            .await
-            .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?;
-        let updated = updated_task.ok_or_else(|| AppError::not_found("task not found"))?;
+        let updated = if input.status == "done" && existing_task.status != "done" {
+            self.run_task_completion_service
+                .complete_task_and_cancel_runs(id)
+                .await?
+        } else {
+            let (updated_task, _) = self
+                .repository
+                .update_task_status(
+                    id,
+                    UpdateTaskStatus {
+                        status: input.status,
+                        updated_at: Utc::now().to_rfc3339(),
+                    },
+                )
+                .await
+                .map_err(|source| TaskServiceError::Repository { source }.into_app_error())?;
+            updated_task.ok_or_else(|| AppError::not_found("task not found"))?
+        };
 
         Ok(Self::to_dto(updated))
     }
@@ -469,16 +482,98 @@ impl TasksService {
 mod tests {
     use super::*;
     use crate::app::db::migrations::run_migrations;
+    use crate::app::db::repositories::projects::ProjectsRepository;
+    use crate::app::db::repositories::runs::RunsRepository;
     use crate::app::db::repositories::task_search::TaskSearchRepository;
+    use crate::app::projects::search_service::ProjectFileSearchService;
+    use crate::app::projects::service::ProjectsService;
+    use crate::app::runs::opencode_service::RunsOpenCodeService;
+    use crate::app::runs::run_state_service::RunStateService;
+    use crate::app::runs::service::RunsService;
+    use crate::app::runs::status_transition_service::RunStatusTransitionService;
+    use crate::app::runs::task_completion_service::RunTaskCompletionService;
+    use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
+    use crate::app::worktrees::service::WorktreesService;
     use sqlx::SqlitePool;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use uuid::Uuid;
 
-    async fn setup_service() -> (TasksService, SqlitePool) {
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("orkestra-tasks-tests-{}", Uuid::new_v4()));
+            fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    async fn setup_service() -> (TasksService, SqlitePool, TempDir) {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
         let repository = TasksRepository::new(pool.clone());
         let search_service =
             TaskSearchService::new(repository.clone(), TaskSearchRepository::new(pool.clone()));
-        (TasksService::new(repository, search_service), pool)
+        let temp_dir = TempDir::new();
+        let app_data_dir = temp_dir.path().join("app-data");
+        let runs_service = RunsService::new(
+            RunsRepository::new(pool.clone()),
+            WorktreesService::new(app_data_dir.clone()),
+        );
+        let run_state_service = RunStateService::new(
+            RunsRepository::new(pool.clone()),
+            runs_service.clone(),
+            None,
+            app_data_dir.clone(),
+        );
+        let run_status_transition_service = RunStatusTransitionService::new(
+            RunsRepository::new(pool.clone()),
+            run_state_service.clone(),
+            None,
+        );
+        let task_status_transition_service = TaskStatusTransitionService::new(
+            RunsRepository::new(pool.clone()),
+            repository.clone(),
+            None,
+        );
+        let projects_service = ProjectsService::new(
+            ProjectsRepository::new(pool.clone()),
+            ProjectFileSearchService::new(),
+            WorktreesService::new(app_data_dir.clone()),
+        );
+        let runs_opencode_service = RunsOpenCodeService::new(
+            runs_service,
+            projects_service,
+            task_status_transition_service,
+            run_state_service,
+            run_status_transition_service.clone(),
+            app_data_dir,
+        );
+        let run_task_completion_service = RunTaskCompletionService::new(
+            RunsRepository::new(pool.clone()),
+            repository.clone(),
+            runs_opencode_service,
+            run_status_transition_service,
+        );
+        (
+            TasksService::new(repository, search_service, run_task_completion_service),
+            pool,
+            temp_dir,
+        )
     }
 
     async fn seed_project_and_repository(pool: &SqlitePool) {
@@ -541,7 +636,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_task_keeps_implementation_guide_optional_when_omitted() {
-        let (service, pool) = setup_service().await;
+        let (service, pool, _temp_dir) = setup_service().await;
         seed_project_and_repository(&pool).await;
 
         let created = service
@@ -562,7 +657,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_and_update_task_trim_implementation_guide_when_present() {
-        let (service, pool) = setup_service().await;
+        let (service, pool, _temp_dir) = setup_service().await;
         seed_project_and_repository(&pool).await;
 
         let created = service
@@ -597,7 +692,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_task_keeps_implementation_guide_when_omitted() {
-        let (service, pool) = setup_service().await;
+        let (service, pool, _temp_dir) = setup_service().await;
         seed_project_and_repository(&pool).await;
 
         let created = service
@@ -629,7 +724,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_task_clears_implementation_guide_when_null_or_empty() {
-        let (service, pool) = setup_service().await;
+        let (service, pool, _temp_dir) = setup_service().await;
         seed_project_and_repository(&pool).await;
 
         let created = service
@@ -703,7 +798,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_task_status_allows_review_to_doing() {
-        let (service, pool) = setup_service().await;
+        let (service, pool, _temp_dir) = setup_service().await;
         seed_task(&pool, "review").await;
 
         let result = service
@@ -728,7 +823,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_task_status_allows_review_to_todo() {
-        let (service, pool) = setup_service().await;
+        let (service, pool, _temp_dir) = setup_service().await;
         seed_task(&pool, "review").await;
 
         let result = service
@@ -753,7 +848,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_task_status_allows_doing_to_todo() {
-        let (service, pool) = setup_service().await;
+        let (service, pool, _temp_dir) = setup_service().await;
         seed_task(&pool, "doing").await;
 
         let result = service
@@ -778,7 +873,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_task_status_rejects_invalid_transition_and_keeps_state() {
-        let (service, pool) = setup_service().await;
+        let (service, pool, _temp_dir) = setup_service().await;
         seed_task(&pool, "todo").await;
 
         let result = service
@@ -807,7 +902,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_task_status_with_board_source_action_updates_status_without_creating_run() {
-        let (service, pool) = setup_service().await;
+        let (service, pool, _temp_dir) = setup_service().await;
         seed_task(&pool, "todo").await;
 
         let result = service

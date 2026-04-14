@@ -23,6 +23,7 @@ import {
   getRunDiffFile,
   killRunTerminal,
   listRunDiffFiles,
+  listTaskRuns,
   mergeRunWorktreeIntoSource,
   openRunTerminal,
   listRunOpenCodeQuestionRequests,
@@ -294,6 +295,13 @@ const hasCompletedRunStatus = (status: string | null | undefined): boolean => {
   return status === "complete" || status === "completed";
 };
 
+const ACTIVE_SIBLING_RUN_STATUSES = new Set([
+  "queued",
+  "preparing",
+  "in_progress",
+  "idle",
+]);
+
 type UpsertRunReviewDraftCommentInput = {
   id?: string;
   filePath: string;
@@ -394,6 +402,8 @@ export const useRunDetailModel = () => {
   const [gitStatusError, setGitStatusError] = createSignal("");
   const [isGitRebasePending, setIsGitRebasePending] = createSignal(false);
   const [isGitMergePending, setIsGitMergePending] = createSignal(false);
+  const [isMergeWarningOpen, setIsMergeWarningOpen] = createSignal(false);
+  const [mergeWarningRunId, setMergeWarningRunId] = createSignal("");
   const [gitActionError, setGitActionError] = createSignal("");
   const [gitLastActionMessage, setGitLastActionMessage] = createSignal("");
   const [postMergeCompletionMessage, setPostMergeCompletionMessage] =
@@ -1925,7 +1935,7 @@ export const useRunDetailModel = () => {
 
   const runLabel = createMemo(() => {
     const runValue = run();
-    if (!runValue) return "Current run";
+    if (!runValue) return "Run";
 
     const displayKey = runValue.displayKey?.trim();
     if (displayKey) return displayKey;
@@ -1937,12 +1947,7 @@ export const useRunDetailModel = () => {
       return `Run #${runValue.runNumber}`;
     }
 
-    const match = runValue.id.match(/(?:^|[^0-9])(\d+)(?:[^0-9]|$)/);
-    if (match?.[1]) {
-      return `Run #${match[1]}`;
-    }
-
-    return "Current run";
+    return "Run";
   });
 
   const repositorySummary = createMemo(() => {
@@ -2279,6 +2284,61 @@ export const useRunDetailModel = () => {
       }
     }
   };
+
+  const requestMergeWorktreeIntoSource = async (): Promise<void> => {
+    const runValue = run();
+    if (runValue) {
+      const capturedRunId = runValue.id;
+      let taskRuns;
+      try {
+        taskRuns = await listTaskRuns(runValue.taskId);
+      } catch (error) {
+        if (params.runId === capturedRunId) {
+          setGitActionError(
+            getErrorMessage(error) || "Failed to verify task runs.",
+          );
+        }
+        return;
+      }
+      if (params.runId !== capturedRunId) {
+        return;
+      }
+      const hasActiveSiblings = taskRuns.some(
+        (taskRun) =>
+          taskRun.id !== runValue.id &&
+          ACTIVE_SIBLING_RUN_STATUSES.has(taskRun.status),
+      );
+      if (hasActiveSiblings) {
+        setMergeWarningRunId(capturedRunId);
+        setIsMergeWarningOpen(true);
+        return;
+      }
+    }
+
+    await mergeWorktreeIntoSource();
+  };
+
+  const cancelMergeWorktreeIntoSourceWarning = () => {
+    if (isGitMergePending()) return;
+    setIsMergeWarningOpen(false);
+    setMergeWarningRunId("");
+  };
+
+  const confirmMergeWorktreeIntoSourceWarning = async (): Promise<void> => {
+    const capturedRunId = mergeWarningRunId();
+    setIsMergeWarningOpen(false);
+    setMergeWarningRunId("");
+    if (!capturedRunId || params.runId !== capturedRunId) {
+      return;
+    }
+    await mergeWorktreeIntoSource();
+  };
+
+  createEffect(() => {
+    params.runId;
+    setIsMergeWarningOpen(false);
+    setMergeWarningRunId("");
+  });
 
   createEffect(() => {
     const runId = params.runId?.trim() ?? "";
@@ -4048,9 +4108,13 @@ export const useRunDetailModel = () => {
       lastActionMessage: gitLastActionMessage,
       isRebasePending: isGitRebasePending,
       isMergePending: isGitMergePending,
+      isMergeWarningOpen,
       refreshStatus: refreshGitMergeStatus,
       rebaseWorktreeOntoSource,
       mergeWorktreeIntoSource,
+      requestMergeWorktreeIntoSource,
+      cancelMergeWorktreeIntoSourceWarning,
+      confirmMergeWorktreeIntoSourceWarning,
     },
     isRunCompleted,
     postMergeCompletionMessage,

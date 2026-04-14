@@ -792,6 +792,20 @@ export const upsertPart = (
 
     if (hasIncomingTextSnapshot) {
       const shouldStream = normalizedPart.streaming;
+      const previousRevision = toStreamRevision(
+        existingTextPart?.streamRevision,
+      );
+      const previousRenderedText = materializeStreamText(
+        existingStreamBaseText,
+        existingStreamTail,
+      );
+      const targetTextChanged = incomingText !== previousRenderedText;
+      const nextStreamRevision =
+        previousRevision > 0
+          ? previousRevision + (targetTextChanged ? 1 : 0)
+          : shouldStream || incomingText.length > 0
+            ? 1
+            : 0;
       nextPart = {
         ...normalizedPart,
         text: incomingText,
@@ -799,8 +813,8 @@ export const upsertPart = (
         streamBaseText: shouldStream ? incomingText : undefined,
         streamTail: shouldStream ? undefined : undefined,
         streamText: undefined,
-        streamTextLength: shouldStream ? incomingText.length : undefined,
-        streamRevision: shouldStream ? 1 : undefined,
+        streamTextLength: incomingText.length,
+        streamRevision: nextStreamRevision > 0 ? nextStreamRevision : undefined,
       };
     } else if (hasDelta) {
       const nextStreamTextLength =
@@ -828,6 +842,9 @@ export const upsertPart = (
         existingStreamBaseText,
         existingStreamTail,
       );
+      const nextStreamRevision = toStreamRevision(
+        existingTextPart?.streamRevision,
+      );
       nextPart = {
         ...normalizedPart,
         text: nextStreaming ? existingStreamBaseText : finalizedText,
@@ -839,10 +856,8 @@ export const upsertPart = (
           ? typeof existingTextPart?.streamTextLength === "number"
             ? existingTextPart.streamTextLength
             : finalizedText.length
-          : undefined,
-        streamRevision: nextStreaming
-          ? toStreamRevision(existingTextPart?.streamRevision)
-          : undefined,
+          : finalizedText.length,
+        streamRevision: nextStreamRevision > 0 ? nextStreamRevision : undefined,
       };
     } else {
       nextPart = {

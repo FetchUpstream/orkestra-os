@@ -21,6 +21,7 @@ export const RUN_STATUSES = [
   "complete",
   "failed",
   "cancelled",
+  "rejected",
 ] as const;
 
 export type RunStatus = (typeof RUN_STATUSES)[number];
@@ -68,6 +69,20 @@ export type Run = {
   cleanupStartedAt?: string | null;
   cleanupFinishedAt?: string | null;
   cleanupErrorMessage?: string | null;
+};
+
+export const runDisplayLabel = (run: {
+  displayKey?: string | null;
+  runNumber?: number | null;
+}): string => {
+  const displayKey = run.displayKey?.trim();
+  if (displayKey) return displayKey;
+
+  if (typeof run.runNumber === "number" && Number.isFinite(run.runNumber)) {
+    return `Run #${run.runNumber}`;
+  }
+
+  return "Run";
 };
 
 export type RunDiffFile = {

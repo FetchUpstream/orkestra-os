@@ -37,9 +37,13 @@ import RunAgentSelectOptions from "./RunAgentSelectOptions";
 import type {
   AgentStore,
   OpenCodeBusEvent,
+  UiAssistantStreamChannelMetadata,
+  UiAssistantStreamingMetadata,
   UiPart,
   UiPermissionRequest,
   UiQuestionRequest,
+  UiReasoningPart,
+  UiTextPart,
 } from "../model/agentTypes";
 import { hydrateAgentStore } from "../model/agentReducer";
 import { useRunDetailModel } from "../model/useRunDetailModel";
@@ -63,6 +67,11 @@ import {
   type QuestionWizardDraftAnswer,
   type QuestionWizardPrompt,
 } from "./questionWizard";
+import {
+  normalizeToolOutputTextForDisplay,
+  normalizeToolPathForDisplay,
+  type ToolPathDisplayContext,
+} from "../lib/normalizeToolPathForDisplay";
 
 type AgentReadinessPhase =
   | "warming_backend"
@@ -84,6 +93,306 @@ type NewRunChatWorkspaceProps = {
   hideTranscriptScrollbar?: boolean;
 };
 
+type ChatRow = {
+  key: string;
+  role: string;
+  content: string;
+  reasoningContent: string;
+  assistantStreaming?: UiAssistantStreamingMetadata;
+  toolItems: RunChatToolRailItem[];
+  timestamp: string;
+  attributionLabel: string;
+  hasRenderableContent: boolean;
+};
+
+const resolveTranscriptPartText = (
+  part: UiTextPart | UiReasoningPart,
+  displayContext: ToolPathDisplayContext,
+): string => {
+  if (typeof part.streamText === "string") {
+    return normalizeToolOutputTextForDisplay(part.streamText, displayContext);
+  }
+
+  const streamTail = part.streamTail;
+  if (!streamTail) {
+    return normalizeToolOutputTextForDisplay(part.text, displayContext);
+  }
+
+  const deltas: string[] = [];
+  let cursor: typeof streamTail | undefined = streamTail;
+  while (cursor) {
+    deltas.push(cursor.delta);
+    cursor = cursor.prev;
+  }
+  deltas.reverse();
+
+  const baseText =
+    typeof part.streamBaseText === "string" ? part.streamBaseText : part.text;
+  return normalizeToolOutputTextForDisplay(
+    `${baseText}${deltas.join("")}`,
+    displayContext,
+  );
+};
+
+const resolveAssistantStreamChannel = (
+  messageId: string,
+  channelKey: "text" | "reasoning",
+  parts: Array<UiTextPart | UiReasoningPart>,
+  displayContext: ToolPathDisplayContext,
+): UiAssistantStreamChannelMetadata => {
+  const resolvedParts = parts.map((part) => {
+    const targetText = resolveTranscriptPartText(part, displayContext);
+    const streamRevision =
+      typeof part.streamRevision === "number" &&
+      Number.isFinite(part.streamRevision)
+        ? part.streamRevision
+        : 0;
+    const hasStreamHistory =
+      part.streaming ||
+      typeof part.streamBaseText === "string" ||
+      typeof part.streamTail !== "undefined" ||
+      streamRevision > 0;
+    const lifecycle = part.streaming
+      ? "streaming"
+      : hasStreamHistory
+        ? "settled"
+        : "static";
+    const hasVisibleContent = targetText.trim().length > 0;
+
+    return {
+      targetText,
+      isStreaming: part.streaming,
+      streamRevision,
+      streamToken: `${part.id}:${streamRevision}:${part.streaming ? "live" : lifecycle}:${targetText.length}`,
+      lifecycle,
+      hasVisibleContent,
+      isPlaceholderOnly: !hasVisibleContent && part.streaming,
+    };
+  });
+
+  const targetText = resolvedParts
+    .map((part) => part.targetText)
+    .join("\n\n")
+    .trim();
+  const isStreaming = resolvedParts.some((part) => part.isStreaming);
+  const streamRevision = resolvedParts.reduce(
+    (maxRevision, part) => Math.max(maxRevision, part.streamRevision),
+    0,
+  );
+  const lifecycle = isStreaming
+    ? "streaming"
+    : resolvedParts.some((part) => part.lifecycle === "settled")
+      ? "settled"
+      : "static";
+  const hasVisibleContent = targetText.length > 0;
+
+  return {
+    targetText,
+    isStreaming,
+    streamRevision,
+    streamToken:
+      resolvedParts.length > 0
+        ? `${messageId}:${channelKey}:${resolvedParts.map((part) => part.streamToken).join("|")}`
+        : `${messageId}:${channelKey}:empty`,
+    lifecycle,
+    hasVisibleContent,
+    isPlaceholderOnly: !hasVisibleContent && isStreaming,
+  };
+};
+
+const buildAssistantStreamingMetadata = (
+  messageId: string,
+  textParts: UiTextPart[],
+  reasoningParts: UiReasoningPart[],
+  displayContext: ToolPathDisplayContext,
+): UiAssistantStreamingMetadata => {
+  const text = resolveAssistantStreamChannel(
+    messageId,
+    "text",
+    textParts,
+    displayContext,
+  );
+  const reasoning = resolveAssistantStreamChannel(
+    messageId,
+    "reasoning",
+    reasoningParts,
+    displayContext,
+  );
+  const isStreaming = text.isStreaming || reasoning.isStreaming;
+  const streamRevision = Math.max(
+    text.streamRevision,
+    reasoning.streamRevision,
+  );
+  const lifecycle = isStreaming
+    ? "streaming"
+    : text.lifecycle === "settled" || reasoning.lifecycle === "settled"
+      ? "settled"
+      : "static";
+  const hasVisibleContent =
+    text.hasVisibleContent || reasoning.hasVisibleContent;
+
+  return {
+    messageId,
+    isStreaming,
+    streamRevision,
+    streamToken: `${messageId}:${text.streamToken}:${reasoning.streamToken}`,
+    lifecycle,
+    targetText: text.targetText,
+    reasoningTargetText: reasoning.targetText,
+    hasVisibleContent,
+    isPlaceholderOnly: !hasVisibleContent && isStreaming,
+    text,
+    reasoning,
+  };
+};
+
+const toStreamRevision = (value: unknown): number => {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+};
+
+const materializeStreamText = (
+  baseText: string,
+  tail?: UiTextPart["streamTail"] | UiReasoningPart["streamTail"],
+): string => {
+  if (!tail) {
+    return baseText;
+  }
+
+  const deltas: string[] = [];
+  let cursor = tail;
+  while (cursor) {
+    deltas.push(cursor.delta);
+    cursor = cursor.prev;
+  }
+  deltas.reverse();
+  return `${baseText}${deltas.join("")}`;
+};
+
+const buildStreamingTextPart = (
+  partId: string,
+  partType: "text" | "reasoning",
+  rawPart: Record<string, unknown>,
+  existingPart: UiPart | undefined,
+  delta: string,
+  eventType: string,
+): UiTextPart | UiReasoningPart => {
+  const existingTypedPart =
+    existingPart && existingPart.kind === partType ? existingPart : undefined;
+  const incomingText =
+    typeof rawPart.text === "string" ? rawPart.text : undefined;
+  const hasIncomingTextSnapshot = typeof incomingText === "string";
+  const explicitStreaming =
+    typeof rawPart.streaming === "boolean"
+      ? rawPart.streaming
+      : eventType === "message.part.delta";
+  const existingStreamBaseText =
+    typeof existingTypedPart?.streamBaseText === "string"
+      ? existingTypedPart.streamBaseText
+      : (existingTypedPart?.text ?? "");
+  const existingStreamTail = existingTypedPart?.streamTail;
+
+  if (hasIncomingTextSnapshot) {
+    const previousRevision = toStreamRevision(
+      existingTypedPart?.streamRevision,
+    );
+    const previousRenderedText = materializeStreamText(
+      existingStreamBaseText,
+      existingStreamTail,
+    );
+    const targetTextChanged = incomingText !== previousRenderedText;
+    const nextStreamRevision =
+      previousRevision > 0
+        ? previousRevision + (targetTextChanged ? 1 : 0)
+        : explicitStreaming || incomingText.length > 0
+          ? 1
+          : 0;
+
+    return {
+      kind: partType,
+      id: partId,
+      type: partType,
+      text: incomingText,
+      streaming: explicitStreaming,
+      streamBaseText: explicitStreaming ? incomingText : undefined,
+      streamTail: undefined,
+      streamText: undefined,
+      streamTextLength: incomingText.length,
+      streamRevision: nextStreamRevision > 0 ? nextStreamRevision : undefined,
+      raw: rawPart,
+    };
+  }
+
+  if (delta.length > 0) {
+    const nextStreamText =
+      (existingTypedPart?.streamText ?? existingStreamBaseText) + delta;
+    const nextStreamTextLength =
+      typeof existingTypedPart?.streamTextLength === "number"
+        ? existingTypedPart.streamTextLength + delta.length
+        : existingStreamBaseText.length + delta.length;
+    const nextStreamRevision =
+      toStreamRevision(existingTypedPart?.streamRevision) + 1;
+
+    return {
+      kind: partType,
+      id: partId,
+      type: partType,
+      text: existingStreamBaseText,
+      streaming: true,
+      streamBaseText: existingStreamBaseText,
+      streamTail: {
+        delta,
+        prev: existingStreamTail,
+      },
+      streamText: nextStreamText,
+      streamTextLength: nextStreamTextLength,
+      streamRevision: nextStreamRevision,
+      raw: rawPart,
+    };
+  }
+
+  if (existingTypedPart?.streamTail || existingTypedPart?.streaming) {
+    const finalizedText = materializeStreamText(
+      existingStreamBaseText,
+      existingStreamTail,
+    );
+    const nextStreamRevision = toStreamRevision(
+      existingTypedPart?.streamRevision,
+    );
+
+    return {
+      kind: partType,
+      id: partId,
+      type: partType,
+      text: explicitStreaming ? existingStreamBaseText : finalizedText,
+      streaming: explicitStreaming,
+      streamBaseText: explicitStreaming ? existingStreamBaseText : undefined,
+      streamTail: explicitStreaming ? existingStreamTail : undefined,
+      streamText: undefined,
+      streamTextLength: explicitStreaming
+        ? typeof existingTypedPart?.streamTextLength === "number"
+          ? existingTypedPart.streamTextLength
+          : finalizedText.length
+        : finalizedText.length,
+      streamRevision: nextStreamRevision > 0 ? nextStreamRevision : undefined,
+      raw: rawPart,
+    };
+  }
+
+  return {
+    kind: partType,
+    id: partId,
+    type: partType,
+    text: existingTypedPart?.text ?? "",
+    streaming: false,
+    streamBaseText: undefined,
+    streamTail: undefined,
+    streamText: undefined,
+    streamTextLength: existingTypedPart?.text.length ?? 0,
+    streamRevision: undefined,
+    raw: rawPart,
+  };
+};
+
 const TRANSCRIPT_WINDOW_CHUNK = 60;
 const TRANSCRIPT_NEAR_BOTTOM_THRESHOLD = 96;
 const INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS = 6;
@@ -101,7 +410,7 @@ const hasCompletedRunStatus = (status: string | null | undefined): boolean => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-const toSingleLine = (value: unknown, maxLength = 140): string | null => {
+const normalizeToSingleLine = (value: unknown): string | null => {
   if (value === null || value === undefined) {
     return null;
   }
@@ -125,10 +434,22 @@ const toSingleLine = (value: unknown, maxLength = 140): string | null => {
     return null;
   }
 
+  return normalized;
+};
+
+const toSingleLine = (value: unknown, maxLength = 140): string | null => {
+  const normalized = normalizeToSingleLine(value);
+  if (normalized === null) {
+    return null;
+  }
+
   return normalized.length <= maxLength
     ? normalized
     : `${normalized.slice(0, maxLength - 3)}...`;
 };
+
+const toSingleLineWithoutTruncation = (value: unknown): string | null =>
+  normalizeToSingleLine(value);
 
 const getNestedValueByKeys = (
   value: unknown,
@@ -243,6 +564,8 @@ type SubagentHistorySnapshot = {
   sessionId: string;
   store: AgentStore;
 };
+
+type FetchedSubagentHistorySnapshot = SubagentHistorySnapshot | null;
 
 const getParentMessageIdentifier = (value: unknown): string | null => {
   if (!isRecord(value)) {
@@ -407,41 +730,71 @@ const extractTaskSubagentSessionIds = (
   );
 };
 
-const buildSubagentMessagesFromStore = (store: AgentStore) => {
+const buildSubagentMessagesFromStore = (
+  store: AgentStore,
+  displayContext: ToolPathDisplayContext,
+) => {
   return store.messageOrder
     .map((messageId) => store.messagesById[messageId])
     .filter(Boolean)
     .map((message) => {
-      const textParts: string[] = [];
-      const reasoningParts: string[] = [];
+      const textParts: UiTextPart[] = [];
+      const reasoningParts: UiReasoningPart[] = [];
       const toolItems: Array<{ id: string; summary: string; status?: string }> =
         [];
 
       for (const partId of message.partOrder) {
         const part = message.partsById[partId];
         if (!part) continue;
-        if (part.kind === "text" && part.text.trim().length > 0) {
-          textParts.push(part.text);
+        if (part.kind === "text") {
+          const text = resolveTranscriptPartText(part, displayContext);
+          if (text.trim().length > 0 || part.streaming) {
+            textParts.push(part);
+          }
           continue;
         }
-        if (part.kind === "reasoning" && part.text.trim().length > 0) {
-          reasoningParts.push(part.text);
+        if (part.kind === "reasoning") {
+          const text = resolveTranscriptPartText(part, displayContext);
+          if (text.trim().length > 0 || part.streaming) {
+            reasoningParts.push(part);
+          }
           continue;
         }
         if (part.kind === "tool") {
           toolItems.push({
             id: part.id,
-            summary: buildToolSummary(part),
+            summary: buildToolSummary(part, displayContext),
             status: part.status,
           });
         }
       }
 
+      const assistantStreaming =
+        message.role === "assistant"
+          ? buildAssistantStreamingMetadata(
+              message.id,
+              textParts,
+              reasoningParts,
+              displayContext,
+            )
+          : undefined;
+
       return {
         id: message.id,
         role: message.role,
-        content: textParts.join("\n\n").trim(),
-        reasoningContent: reasoningParts.join("\n\n").trim(),
+        content: assistantStreaming
+          ? assistantStreaming.targetText
+          : textParts
+              .map((part) => resolveTranscriptPartText(part, displayContext))
+              .join("\n\n")
+              .trim(),
+        reasoningContent: assistantStreaming
+          ? assistantStreaming.reasoningTargetText
+          : reasoningParts
+              .map((part) => resolveTranscriptPartText(part, displayContext))
+              .join("\n\n")
+              .trim(),
+        assistantStreaming,
         toolItems,
       };
     })
@@ -499,8 +852,9 @@ const buildSubagentPanels = (
     string,
     { partOrder: string[]; partsById: Record<string, UiPart> }
   >,
+  displayContext: ToolPathDisplayContext,
   taskPartSessionIdsByPartId: Record<string, string[]>,
-  fetchedSessionHistories: Record<string, SubagentHistorySnapshot>,
+  fetchedSessionHistories: Record<string, FetchedSubagentHistorySnapshot>,
 ): Record<string, RunChatToolRailSubagentItem[]> => {
   const sessions = new Map<string, SubagentSessionSnapshot>();
   let activeTaskPartId: string | null = null;
@@ -704,23 +1058,14 @@ const buildSubagentPanels = (
       partType === "reasoning" ||
       (existingPart && existingPart.kind === "reasoning")
     ) {
-      const previousText =
-        existingPart && existingPart.kind === "reasoning"
-          ? existingPart.text
-          : "";
-      nextPart = {
-        kind: "reasoning",
-        id: normalizedPartId,
-        type: "reasoning",
-        text:
-          typeof rawPart.text === "string"
-            ? rawPart.text
-            : `${previousText}${delta}`,
-        streaming:
-          event.type === "message.part.delta" ||
-          (typeof rawPart.streaming === "boolean" ? rawPart.streaming : false),
-        raw: rawPart,
-      };
+      nextPart = buildStreamingTextPart(
+        normalizedPartId,
+        "reasoning",
+        rawPart,
+        existingPart,
+        delta,
+        event.type,
+      );
     } else if (partType === "tool") {
       const state = getNestedRecord(rawPart, "state") ?? {};
       nextPart = {
@@ -739,21 +1084,14 @@ const buildSubagentPanels = (
         raw: rawPart,
       };
     } else {
-      const previousText =
-        existingPart && existingPart.kind === "text" ? existingPart.text : "";
-      nextPart = {
-        kind: "text",
-        id: normalizedPartId,
-        type: "text",
-        text:
-          typeof rawPart.text === "string"
-            ? rawPart.text
-            : `${previousText}${delta}`,
-        streaming:
-          event.type === "message.part.delta" ||
-          (typeof rawPart.streaming === "boolean" ? rawPart.streaming : false),
-        raw: rawPart,
-      };
+      nextPart = buildStreamingTextPart(
+        normalizedPartId,
+        "text",
+        rawPart,
+        existingPart,
+        delta,
+        event.type,
+      );
     }
 
     session.messagesById[normalizedMessageId] = {
@@ -802,35 +1140,37 @@ const buildSubagentPanels = (
       return acc;
     }
 
-    const liveMessages = buildSubagentMessagesFromStore({
-      sessionId: session.sessionId,
-      status: "idle",
-      streamConnected: false,
-      lastSyncAt: null,
-      messagesById: Object.fromEntries(
-        session.messageOrder
-          .map((messageId) => [messageId, session.messagesById[messageId]])
-          .filter((entry) => Boolean(entry[1])),
-      ) as AgentStore["messagesById"],
-      messageOrder: session.messageOrder,
-      pendingQuestionsById: {},
-      pendingPermissionsById: {},
-      resolvedPermissionsById: {},
-      failedPermissionsById: {},
-      todos: [],
-      diffSummary: null,
-      rawEvents: [],
-    });
+    const liveMessages = buildSubagentMessagesFromStore(
+      {
+        sessionId: session.sessionId,
+        status: "idle",
+        streamConnected: false,
+        lastSyncAt: null,
+        messagesById: Object.fromEntries(
+          session.messageOrder
+            .map((messageId) => [messageId, session.messagesById[messageId]])
+            .filter((entry) => Boolean(entry[1])),
+        ) as AgentStore["messagesById"],
+        messageOrder: session.messageOrder,
+        pendingQuestionsById: {},
+        pendingPermissionsById: {},
+        resolvedPermissionsById: {},
+        failedPermissionsById: {},
+        todos: [],
+        diffSummary: null,
+        rawEvents: [],
+      },
+      displayContext,
+    );
+    const fetchedSnapshot = fetchedSessionHistories[session.sessionId] ?? null;
     const fetchedMessages =
-      fetchedSessionHistories[session.sessionId]?.store !== undefined
-        ? buildSubagentMessagesFromStore(
-            fetchedSessionHistories[session.sessionId].store,
-          )
+      fetchedSnapshot !== null
+        ? buildSubagentMessagesFromStore(fetchedSnapshot.store, displayContext)
         : [];
     const messages = liveMessages.length > 0 ? liveMessages : fetchedMessages;
 
     const fetchedHistoryMessages = Object.values(
-      fetchedSessionHistories[session.sessionId]?.store.messagesById ?? {},
+      fetchedSnapshot?.store.messagesById ?? {},
     );
     const fallbackAgentType =
       session.agentType ||
@@ -1564,7 +1904,10 @@ const toToolLabel = (toolName: string | null | undefined): string => {
     .join(" ");
 };
 
-const buildToolSummary = (part: UiPart): string => {
+const buildToolSummary = (
+  part: UiPart,
+  displayContext: ToolPathDisplayContext,
+): string => {
   if (part.kind !== "tool") {
     return "";
   }
@@ -1574,9 +1917,12 @@ const buildToolSummary = (part: UiPart): string => {
   const input = part.input;
   const include = toSingleLine(getNestedValueByKeys(input, ["include"]), 60);
 
-  const asPath = toSingleLine(
+  const rawPath = toSingleLineWithoutTruncation(
     getNestedValueByKeys(input, ["filePath", "path", "filename"]),
   );
+  const asPath = rawPath
+    ? normalizeToolPathForDisplay(rawPath, displayContext)
+    : null;
   const asCommand = toSingleLine(
     getNestedValueByKeys(input, ["command", "bash", "script", "cmd"]),
   );
@@ -1655,9 +2001,12 @@ const buildToolSummary = (part: UiPart): string => {
       (getNestedValueByKeys(input, ["all"]) === true ? "all tasks" : focused);
   } else if (normalizedToolName.includes("lsp_")) {
     focused =
-      toSingleLine(
+      toSingleLineWithoutTruncation(
         getNestedValueByKeys(input, ["filePath", "newName", "line"]),
       ) || focused;
+    if (focused) {
+      focused = normalizeToolPathForDisplay(focused, displayContext);
+    }
   } else if (normalizedToolName.includes("ast_grep_")) {
     focused = toSingleLine(getNestedValueByKeys(input, ["pattern"])) || focused;
   }
@@ -1690,8 +2039,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const [overrideProviderId, setOverrideProviderId] = createSignal("");
   const [overrideModelId, setOverrideModelId] = createSignal("");
   const [fetchedSubagentHistories, setFetchedSubagentHistories] = createSignal<
-    Record<string, SubagentHistorySnapshot>
+    Record<string, FetchedSubagentHistorySnapshot>
   >({});
+  const pendingSubagentHistorySessionIds = new Set<string>();
   const [
     composerSelectionValidationError,
     setComposerSelectionValidationError,
@@ -2045,30 +2395,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     () => pendingQuestionCards()[0] ?? null,
   );
 
-  createEffect(() => {
-    const pending = pendingPermissionCards();
-    console.info("[runs] pending permission count changed", {
-      runId: props.model.run()?.id ?? null,
-      pendingCount: pending.length,
-      requestIds: pending.map((card) => card.requestId),
-      queuedRequestIds: queuedPermissionRequests().map(
-        (item) => item.requestId,
-      ),
-    });
-  });
-
-  createEffect(() => {
-    const pending = pendingPermissionCards();
-    if (pending.length === 0) {
-      return;
-    }
-    console.debug("[runs] rendering permission transcript items", {
-      runId: props.model.run()?.id ?? null,
-      pendingCount: pending.length,
-      requestIds: pending.map((card) => card.requestId),
-      permissionTypes: pending.map((card) => card.kind),
-    });
-  });
   const setupState = createMemo(() => {
     const state = props.model.run()?.setupState?.trim().toLowerCase();
     if (state === "running" || state === "succeeded" || state === "failed") {
@@ -2183,32 +2509,21 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     return formatted === "Unavailable" ? String(value) : formatted;
   };
 
-  const resolvePartText = (part: UiPart): string => {
+  const resolvePartText = (
+    part: UiPart,
+    displayContext: ToolPathDisplayContext,
+  ): string => {
     if (part.kind !== "text" && part.kind !== "reasoning") {
       return "";
     }
 
-    if (typeof part.streamText === "string") {
-      return part.streamText;
-    }
-
-    const streamTail = part.streamTail;
-    if (!streamTail) {
-      return part.text;
-    }
-
-    const deltas: string[] = [];
-    let cursor: typeof streamTail | undefined = streamTail;
-    while (cursor) {
-      deltas.push(cursor.delta);
-      cursor = cursor.prev;
-    }
-    deltas.reverse();
-
-    const baseText =
-      typeof part.streamBaseText === "string" ? part.streamBaseText : part.text;
-    return `${baseText}${deltas.join("")}`;
+    return resolveTranscriptPartText(part, displayContext);
   };
+
+  const toolPathDisplayContext = createMemo<ToolPathDisplayContext>(() => ({
+    worktreeId: props.model.run()?.worktreeId,
+    targetRepositoryPath: props.model.task()?.targetRepositoryPath,
+  }));
 
   const taskPartSessionIdsByPartId = createMemo(() => {
     const mapping: Record<string, string[]> = {};
@@ -2242,10 +2557,14 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     );
 
     for (const sessionId of sessionIds) {
-      if (histories[sessionId]) {
+      if (histories[sessionId] !== undefined) {
+        continue;
+      }
+      if (pendingSubagentHistorySessionIds.has(sessionId)) {
         continue;
       }
 
+      pendingSubagentHistorySessionIds.add(sessionId);
       void Promise.all([
         getRunOpenCodeSessionMessages({ runId, sessionId }),
         getRunOpenCodeSessionTodos({ runId, sessionId }),
@@ -2261,7 +2580,15 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             [sessionId]: { sessionId, store: hydrated },
           }));
         })
-        .catch(() => undefined);
+        .catch(() => {
+          setFetchedSubagentHistories((current) => ({
+            ...current,
+            [sessionId]: null,
+          }));
+        })
+        .finally(() => {
+          pendingSubagentHistorySessionIds.delete(sessionId);
+        });
     }
   });
 
@@ -2270,6 +2597,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       props.model.agent.store().rawEvents ?? [],
       props.model.agent.store().sessionId,
       props.model.agent.store().messagesById,
+      toolPathDisplayContext(),
       taskPartSessionIdsByPartId(),
       fetchedSubagentHistories(),
     );
@@ -2301,91 +2629,114 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     return null;
   };
 
-  const buildChatRows = createMemo(() => {
-    return visibleTranscriptMessageIds().map((messageId) => {
-      const message = props.model.agent.store().messagesById[messageId];
-      if (!message) {
-        return null;
-      }
-
-      const textParts: string[] = [];
-      const reasoningParts: string[] = [];
-      const toolItems: RunChatToolRailItem[] = [];
-
-      for (const partId of message.partOrder) {
-        const part = message.partsById[partId];
-        if (!part) {
-          continue;
+  const buildChatRows = createMemo<ChatRow[]>(() => {
+    return visibleTranscriptMessageIds()
+      .map((messageId) => {
+        const message = props.model.agent.store().messagesById[messageId];
+        if (!message) {
+          return null;
         }
 
-        if (part.kind === "text") {
-          const text = resolvePartText(part);
-          if (text.trim().length > 0 || part.streaming) {
-            textParts.push(text);
+        const textParts: UiTextPart[] = [];
+        const reasoningParts: UiReasoningPart[] = [];
+        const toolItems: RunChatToolRailItem[] = [];
+
+        for (const partId of message.partOrder) {
+          const part = message.partsById[partId];
+          if (!part) {
+            continue;
           }
-          continue;
-        }
 
-        if (part.kind === "reasoning") {
-          const text = resolvePartText(part);
-          if (text.trim().length > 0 || part.streaming) {
-            reasoningParts.push(text);
+          if (part.kind === "text") {
+            const text = resolvePartText(part, toolPathDisplayContext());
+            if (text.trim().length > 0 || part.streaming) {
+              textParts.push(part);
+            }
+            continue;
           }
-          continue;
+
+          if (part.kind === "reasoning") {
+            const text = resolvePartText(part, toolPathDisplayContext());
+            if (text.trim().length > 0 || part.streaming) {
+              reasoningParts.push(part);
+            }
+            continue;
+          }
+
+          if (part.kind === "tool") {
+            const summary = buildToolSummary(part, toolPathDisplayContext());
+            const isTask = isTaskToolName(part.toolName);
+            toolItems.push({
+              id: part.id,
+              label: part.title?.trim() || part.toolName || "Tool",
+              summary,
+              status: part.status,
+              isTask,
+              subagents: subagentPanelsByTaskPartId()[part.id] ?? [],
+            });
+            continue;
+          }
+
+          if (part.kind === "patch") {
+            continue;
+          }
+
+          if (part.kind === "file") {
+            continue;
+          }
+
+          const stepSummary = getStepDetailsSummary(part);
+          if (stepSummary) {
+            continue;
+          }
+
+          if (part.kind === "unknown") {
+            continue;
+          }
         }
 
-        if (part.kind === "tool") {
-          const summary = buildToolSummary(part);
-          const isTask = isTaskToolName(part.toolName);
-          toolItems.push({
-            id: part.id,
-            label: part.title?.trim() || part.toolName || "Tool",
-            summary,
-            status: part.status,
-            isTask,
-            subagents: subagentPanelsByTaskPartId()[part.id] ?? [],
-          });
-          continue;
-        }
+        const assistantStreaming =
+          message.role === "assistant"
+            ? buildAssistantStreamingMetadata(
+                message.id,
+                textParts,
+                reasoningParts,
+                toolPathDisplayContext(),
+              )
+            : undefined;
+        const content = assistantStreaming
+          ? assistantStreaming.targetText
+          : textParts
+              .map((part) => resolvePartText(part, toolPathDisplayContext()))
+              .join("\n\n")
+              .trim();
+        const reasoningContent = assistantStreaming
+          ? assistantStreaming.reasoningTargetText
+          : reasoningParts
+              .map((part) => resolvePartText(part, toolPathDisplayContext()))
+              .join("\n\n")
+              .trim();
+        const timestamp = formatAgentTimestamp(
+          message.updatedAt ?? message.createdAt ?? null,
+        );
 
-        if (part.kind === "patch") {
-          continue;
-        }
-
-        if (part.kind === "file") {
-          continue;
-        }
-
-        const stepSummary = getStepDetailsSummary(part);
-        if (stepSummary) {
-          continue;
-        }
-
-        if (part.kind === "unknown") {
-          continue;
-        }
-      }
-
-      const content = textParts.join("\n\n").trim();
-      const reasoningContent = reasoningParts.join("\n\n").trim();
-      const timestamp = formatAgentTimestamp(
-        message.updatedAt ?? message.createdAt ?? null,
-      );
-
-      return {
-        key: message.id,
-        role: message.role,
-        content,
-        reasoningContent,
-        toolItems,
-        timestamp,
-        attributionLabel: formatMessageAttribution(message.attribution ?? {}),
-        hasRenderableContent:
-          content.length > 0 ||
-          reasoningContent.length > 0 ||
-          toolItems.length > 0,
-      };
-    });
+        return {
+          key: message.id,
+          role: message.role,
+          content,
+          reasoningContent,
+          assistantStreaming,
+          toolItems,
+          timestamp,
+          attributionLabel: formatMessageAttribution(message.attribution ?? {}),
+          hasRenderableContent:
+            (assistantStreaming?.hasVisibleContent ?? content.length > 0) ||
+            (assistantStreaming?.reasoning.hasVisibleContent ??
+              reasoningContent.length > 0) ||
+            toolItems.length > 0,
+        };
+      })
+      .filter((row): row is ChatRow => row !== null);
   });
 
   const chatTranscriptItems = createMemo<JSX.Element[]>(() => {
@@ -2398,80 +2749,78 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       />
     );
 
-    const messageItems = buildChatRows()
-      .filter((row): row is NonNullable<typeof row> => row !== null)
-      .map((row) => {
-        const reasoningNode =
-          row.reasoningContent.length > 0 ? (
-            <div class="run-chat-assistant-message__reasoning-inline">
-              <RunChatMarkdown
-                content={`*Thinking:* ${row.reasoningContent}`}
-              />
-            </div>
-          ) : undefined;
+    const messageItems = buildChatRows().map((row) => {
+      const reasoningNode =
+        row.reasoningContent.length > 0 ? (
+          <div class="run-chat-assistant-message__reasoning-inline">
+            <RunChatMarkdown content={`*Thinking:* ${row.reasoningContent}`} />
+          </div>
+        ) : undefined;
 
-        const toolRailNode =
-          row.toolItems.length > 0 ? (
-            <RunChatToolRail items={row.toolItems} />
-          ) : undefined;
-        const attributionNode =
-          row.attributionLabel.length > 0 ? (
-            <p class="run-chat-assistant-message__attribution">
-              {row.attributionLabel}
-            </p>
-          ) : undefined;
+      const toolRailNode =
+        row.toolItems.length > 0 ? (
+          <RunChatToolRail items={row.toolItems} />
+        ) : undefined;
+      const attributionNode =
+        row.attributionLabel.length > 0 ? (
+          <p class="run-chat-assistant-message__attribution">
+            {row.attributionLabel}
+          </p>
+        ) : undefined;
 
-        if (row.role === "assistant") {
-          return (
-            <div
-              data-run-chat-message-id={row.key}
-              data-run-chat-message-kind="parent"
-            >
-              <RunChatMessage role="assistant" class="run-chat-message-item">
-                <RunChatAssistantMessage
-                  content={row.content.length > 0 ? row.content : " "}
-                  reasoning={reasoningNode}
-                  toolRail={toolRailNode}
-                  details={attributionNode}
-                />
-                <Show when={!row.hasRenderableContent}>{waitingRow}</Show>
-              </RunChatMessage>
-            </div>
-          );
-        }
-
-        if (row.role === "user") {
-          return (
-            <div
-              data-run-chat-message-id={row.key}
-              data-run-chat-message-kind="parent"
-            >
-              <RunChatMessage role="user" class="run-chat-message-item">
-                <RunChatUserMessage>
-                  <RunChatMarkdown
-                    content={row.content.length > 0 ? row.content : "(empty)"}
-                  />
-                </RunChatUserMessage>
-              </RunChatMessage>
-            </div>
-          );
-        }
-
+      if (row.role === "assistant") {
         return (
           <div
             data-run-chat-message-id={row.key}
             data-run-chat-message-kind="parent"
           >
-            <RunChatMessage role="system" class="run-chat-message-item">
-              <RunChatSystemMessage>
-                <RunChatMarkdown
-                  content={row.content.length > 0 ? row.content : row.timestamp}
-                />
-              </RunChatSystemMessage>
+            <RunChatMessage role="assistant" class="run-chat-message-item">
+              <RunChatAssistantMessage
+                content={row.content.length > 0 ? row.content : " "}
+                streaming={row.assistantStreaming}
+                isStreamingActive={row.assistantStreaming?.isStreaming === true}
+                reasoning={reasoningNode}
+                toolRail={toolRailNode}
+                details={attributionNode}
+              />
+              <Show when={!row.hasRenderableContent}>{waitingRow}</Show>
             </RunChatMessage>
           </div>
         );
-      });
+      }
+
+      if (row.role === "user") {
+        return (
+          <div
+            data-run-chat-message-id={row.key}
+            data-run-chat-message-kind="parent"
+          >
+            <RunChatMessage role="user" class="run-chat-message-item">
+              <RunChatUserMessage>
+                <RunChatMarkdown
+                  content={row.content.length > 0 ? row.content : "(empty)"}
+                />
+              </RunChatUserMessage>
+            </RunChatMessage>
+          </div>
+        );
+      }
+
+      return (
+        <div
+          data-run-chat-message-id={row.key}
+          data-run-chat-message-kind="parent"
+        >
+          <RunChatMessage role="system" class="run-chat-message-item">
+            <RunChatSystemMessage>
+              <RunChatMarkdown
+                content={row.content.length > 0 ? row.content : row.timestamp}
+              />
+            </RunChatSystemMessage>
+          </RunChatMessage>
+        </div>
+      );
+    });
 
     const failedQuestionItems = failedQuestionCards().map((card) => {
       return (
@@ -2722,7 +3071,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         <RunChatUserMessage>
           <div class="space-y-2">
             <RunChatMarkdown content={pendingPromptItem.text} />
-            <p class="text-[11px] font-medium tracking-[0.18em] text-white/75 uppercase">
+            <p class="run-chat-user-message__status">
               {pendingPromptItem.status === "failed"
                 ? "Send failed"
                 : chatSessionHealth() === "reconnecting"
@@ -2730,10 +3079,10 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                   : "Sending…"}
             </p>
             <Show when={pendingPromptItem.status === "failed"}>
-              <div class="flex flex-wrap justify-end gap-2">
+              <div class="run-chat-user-message__actions">
                 <button
                   type="button"
-                  class="btn btn-xs border-primary-content/30 text-primary-content hover:bg-primary-content/10 rounded-none border bg-transparent px-3 text-[11px] font-medium"
+                  class="run-chat-user-message__action"
                   onClick={() => {
                     void props.model.agent.retryPendingPrompt?.();
                   }}
@@ -2742,7 +3091,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 </button>
                 <button
                   type="button"
-                  class="btn btn-xs border-primary-content/30 text-primary-content hover:bg-primary-content/10 rounded-none border bg-transparent px-3 text-[11px] font-medium"
+                  class="run-chat-user-message__action"
                   onClick={() => {
                     void props.model.agent.reconnectSession?.();
                   }}
@@ -3415,4 +3764,5 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   );
 };
 
+export { buildStreamingTextPart };
 export default NewRunChatWorkspace;

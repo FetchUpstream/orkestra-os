@@ -15,6 +15,8 @@ pub struct Run {
     pub id: String,
     pub task_id: String,
     pub project_id: String,
+    pub run_number: i64,
+    pub display_key: String,
     pub target_repo_id: Option<String>,
     pub status: String,
     pub run_state: Option<String>,
@@ -63,6 +65,7 @@ pub struct NewRun {
 pub struct TaskRunContext {
     pub project_id: String,
     pub project_key: String,
+    pub task_display_key: String,
     pub repository_id: String,
     pub repository_path: String,
     pub branch_title: String,

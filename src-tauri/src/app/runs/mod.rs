@@ -20,3 +20,4 @@ pub mod opencode_service;
 pub mod run_state_service;
 pub mod service;
 pub mod status_transition_service;
+pub mod task_completion_service;

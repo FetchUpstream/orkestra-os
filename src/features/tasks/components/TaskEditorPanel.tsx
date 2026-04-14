@@ -47,6 +47,15 @@ type Props = {
   fieldErrors?: Accessor<FieldErrors>;
 };
 
+const TASK_EDITOR_FILE_MENTION_HINT =
+  "Tip: Type @ to search files in the selected repository.";
+
+const TASK_DESCRIPTION_PLACEHOLDER =
+  "Describe the goal of this task. Type @ to mention files from the repository.";
+
+const TASK_IMPLEMENTATION_GUIDE_PLACEHOLDER =
+  "Write the implementation plan for the agent. Type @ to mention files from the repository.";
+
 const TaskEditorPanel: Component<Props> = (props) => {
   const fieldErrors = () => props.fieldErrors?.() ?? {};
   const statusOptions: TaskStatus[] = ["todo", "doing", "review", "done"];
@@ -196,7 +205,8 @@ const TaskEditorPanel: Component<Props> = (props) => {
         <TaskImplementationGuideCrepeEditor
           value={props.description()}
           onChange={props.onDescriptionInput}
-          placeholder="Describe the goal of this task in short .."
+          placeholder={TASK_DESCRIPTION_PLACEHOLDER}
+          helperText={TASK_EDITOR_FILE_MENTION_HINT}
           onBlur={props.onDescriptionBlur}
           ariaLabel="Task description"
           projectId={props.projectId?.()}
@@ -210,7 +220,8 @@ const TaskEditorPanel: Component<Props> = (props) => {
         <TaskImplementationGuideCrepeEditor
           value={props.implementationGuide()}
           onChange={props.onImplementationGuideInput}
-          placeholder="Create a detailed specific implementation guide for the AI to follow ..."
+          placeholder={TASK_IMPLEMENTATION_GUIDE_PLACEHOLDER}
+          helperText={TASK_EDITOR_FILE_MENTION_HINT}
           onBlur={props.onImplementationGuideBlur}
           ariaLabel="Task implementation guide"
           projectId={props.projectId?.()}

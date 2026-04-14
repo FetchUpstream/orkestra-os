@@ -12,7 +12,6 @@
 
 import type { Component, JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { AppIcon } from "./icons";
 
 type Props = {
   as?: keyof JSX.IntrinsicElements;
@@ -36,11 +35,10 @@ const RunInlineLoader: Component<Props> = (props) => {
       class={`run-inline-loading-row${className ? ` ${className}` : ""}`}
       {...rest}
     >
-      <AppIcon
-        name="status.loading"
-        class="run-inline-spinner"
-        aria-hidden="true"
-      />
+      <span class="run-inline-loader" aria-hidden="true">
+        <span class="run-inline-loader__pulse" />
+        <span class="run-inline-loader__dot" />
+      </span>
       <span class="sr-only">{srLabel}</span>
       {children}
     </Dynamic>

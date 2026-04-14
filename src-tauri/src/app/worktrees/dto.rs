@@ -17,6 +17,7 @@ pub struct CreateWorktreeRequest {
     pub project_key: String,
     pub repo_path: String,
     pub branch_title: String,
+    pub unique_suffix_seed: Option<String>,
     pub source_branch: Option<String>,
 }
 

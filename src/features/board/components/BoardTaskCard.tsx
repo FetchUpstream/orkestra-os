@@ -61,6 +61,59 @@ const BoardTaskCard: Component<Props> = (props) => {
         return <span class="board-task-run-warning font-semibold">…</span>;
     }
   };
+  const runStatusClass = (miniCard: BoardTaskRunMiniCard) => {
+    switch (miniCard.status) {
+      case "queued":
+        return "board-task-run-status board-task-run-status--queued";
+      case "preparing":
+        return "board-task-run-status board-task-run-status--preparing";
+      case "in_progress":
+        return "board-task-run-status board-task-run-status--in-progress";
+      case "idle":
+        return "board-task-run-status board-task-run-status--idle";
+      case "complete":
+        return "board-task-run-status board-task-run-status--complete";
+      case "failed":
+        return "board-task-run-status board-task-run-status--failed";
+      case "cancelled":
+        return "board-task-run-status board-task-run-status--cancelled";
+      case "rejected":
+        return "board-task-run-status board-task-run-status--rejected";
+    }
+  };
+
+  const runDetailsContent = (miniCard: BoardTaskRunMiniCard) => (
+    <>
+      <div class="board-task-run-header">
+        <p class="board-task-run-identity">{miniCard.identityLabel}</p>
+        <span class={runStatusClass(miniCard)}>{miniCard.statusLabel}</span>
+      </div>
+      <p class="board-task-run-meta">
+        <span>{miniCard.agentLabel}</span>
+        <span aria-hidden="true" class="board-task-run-meta-separator">
+          •
+        </span>
+        <span>{miniCard.modelLabel}</span>
+      </p>
+      <Show
+        when={isRunStateActive(miniCard)}
+        fallback={
+          <p class="run-inline-loading-row board-task-run-state-row">
+            <span aria-hidden="true">{runStateIcon(miniCard)}</span>
+            <span>{miniCard.label}</span>
+          </p>
+        }
+      >
+        <RunInlineLoader
+          as="p"
+          class="board-task-run-state-row"
+          srLabel={`Run ${miniCard.statusLabel.toLowerCase()}`}
+        >
+          <span>{miniCard.label}</span>
+        </RunInlineLoader>
+      </Show>
+    </>
+  );
 
   const onDragStart = (event: DragEvent) => {
     setDragJustEnded(false);
@@ -162,26 +215,7 @@ const BoardTaskCard: Component<Props> = (props) => {
                       onDragStart={forwardTaskDragStart}
                       onDragEnd={forwardTaskDragEnd}
                     >
-                      <p class="board-task-run-details-title">Run Details</p>
-                      <Show
-                        when={isRunStateActive(miniCard)}
-                        fallback={
-                          <p class="run-inline-loading-row board-task-run-details-row">
-                            <span aria-hidden="true">
-                              {runStateIcon(miniCard)}
-                            </span>
-                            <span>{miniCard.label}</span>
-                          </p>
-                        }
-                      >
-                        <RunInlineLoader
-                          as="p"
-                          class="board-task-run-details-row"
-                          srLabel="Run pending"
-                        >
-                          <span>{miniCard.label}</span>
-                        </RunInlineLoader>
-                      </Show>
+                      {runDetailsContent(miniCard)}
                     </div>
                   }
                 >
@@ -200,26 +234,7 @@ const BoardTaskCard: Component<Props> = (props) => {
                       event.stopPropagation();
                     }}
                   >
-                    <p class="board-task-run-details-title">Run Details</p>
-                    <Show
-                      when={isRunStateActive(miniCard)}
-                      fallback={
-                        <p class="run-inline-loading-row board-task-run-details-row">
-                          <span aria-hidden="true">
-                            {runStateIcon(miniCard)}
-                          </span>
-                          <span>{miniCard.label}</span>
-                        </p>
-                      }
-                    >
-                      <RunInlineLoader
-                        as="p"
-                        class="board-task-run-details-row"
-                        srLabel="Run pending"
-                      >
-                        <span>{miniCard.label}</span>
-                      </RunInlineLoader>
-                    </Show>
+                    {runDetailsContent(miniCard)}
                   </A>
                 </Show>
               )}

@@ -16,7 +16,7 @@ use crate::app::runs::dto::{
 };
 use crate::app::runs::run_state_service::RunStateService;
 use crate::app::runs::service::RunsService;
-use crate::app::runs::status_transition_service::RunStatusTransitionService;
+use crate::app::runs::task_completion_service::RunTaskCompletionService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
 use git2::{
     build::CheckoutBuilder, AnnotatedCommit, BranchType, ErrorCode, Repository, RepositoryState,
@@ -30,7 +30,7 @@ use std::process::Command;
 pub struct RunsMergeService {
     runs_service: RunsService,
     run_state_service: RunStateService,
-    run_status_transition_service: RunStatusTransitionService,
+    run_task_completion_service: RunTaskCompletionService,
     worktrees_root: PathBuf,
 }
 
@@ -61,7 +61,6 @@ impl MergeState {
 
 struct MergeContext {
     run_id: String,
-    task_id: String,
     run_status: String,
     source_branch: String,
     worktree_branch: String,
@@ -73,13 +72,13 @@ impl RunsMergeService {
     pub fn new(
         runs_service: RunsService,
         run_state_service: RunStateService,
-        run_status_transition_service: RunStatusTransitionService,
+        run_task_completion_service: RunTaskCompletionService,
         app_data_dir: PathBuf,
     ) -> Self {
         Self {
             runs_service,
             run_state_service,
-            run_status_transition_service,
+            run_task_completion_service,
             worktrees_root: app_data_dir.join("worktrees"),
         }
     }
@@ -247,9 +246,8 @@ impl RunsMergeService {
             }
         }
 
-        let _ = self
-            .run_status_transition_service
-            .handle_run_merged(&context.task_id, run_id)
+        self.run_task_completion_service
+            .resolve_after_run_merge(run_id)
             .await?;
         let mut status = self.compute_status(&context)?;
         status.state = MergeState::Merged.as_str().to_string();
@@ -290,7 +288,6 @@ impl RunsMergeService {
 
         Ok(MergeContext {
             run_id: run.id,
-            task_id: run.task_id,
             run_status: run.status,
             source_branch,
             worktree_branch,
@@ -652,8 +649,7 @@ impl RunsMergeService {
 
         if has_dirty_changes {
             Ok(Some(
-                "Conflicts Detected! We have sent the details of the conflicts to your agent to be resolved"
-                    .to_string(),
+                "Please clean the worktree before rebasing or merging this run.".to_string(),
             ))
         } else {
             Ok(None)
@@ -726,7 +722,7 @@ impl RunsMergeService {
         };
 
         let prompt = format!(
-            "A rebase is already in progress for this worktree. Resolve the conflicts in the listed files and continue the existing rebase safely.\n\nConflicting files:\n{conflicted_files}\nRequirements:\n\n* First confirm a rebase is in progress with `git status`.\n\n* This is an existing rebase continuation flow, not a normal standalone commit flow.\n\n* Resolve only the listed conflict markers and preserve both `{source_branch}`-intended changes and this run's valid changes.\n\n* Before continuing, verify there are no unresolved conflicts with `git diff --name-only --diff-filter=U`.\n\n* Stage only the resolved conflicted files.\n\n* Continue the rebase non-interactively using:\n  `GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true git rebase --continue`\n\n* Inspect the real exit status and stderr/stdout of `git rebase --continue`. Do not assume success just because the command ran.\n\n* Do not create a normal commit unless Git explicitly requires it as part of the rebase flow.\n\n* Never edit, recreate, or patch files inside `.git`, `rebase-merge`, or `git-rebase-todo`.\n\n* Never try to repair broken rebase metadata manually.\n\n* If `git rebase --continue` fails because rebase metadata is missing or corrupt, stop and report that the rebase state is broken instead of trying to repair Git internals manually.\n\n* After attempting to continue, run `git status --short --branch` and report the exact resulting rebase state, including whether the rebase completed or more conflicts remain."
+            "A rebase is already in progress for this worktree. Continue the existing rebase safely.\n\nConflicting files:\n{conflicted_files}\nRules:\n\n- This is a rebase-continuation task, not a normal commit task.\n- Do not create a standalone/manual commit unless `git rebase --continue` explicitly requires one.\n- Do not run `git status --short --branch` while the rebase is still in progress. Use full `git status` during the rebase.\n- First run `git status` and confirm:\n  - a rebase is in progress\n  - the current unmerged paths\n- Resolve only the conflict markers in the listed files.\n- Preserve both:\n  - the upstream/rebased branch’s intended changes\n  - this branch’s valid changes\n- Resolve only the listed conflict markers and preserve both `{source_branch}`-intended changes and this run's valid changes.\n- Do not change unrelated files.\n- Do not edit or repair anything inside `.git`, `rebase-merge`, `rebase-apply`, or `git-rebase-todo`.\n- Do not abort, skip, or restart the rebase unless explicitly requested.\n\nRequired flow:\n1. Run `git status`.\n2. Inspect and resolve only the listed conflicted files.\n3. Before staging, run:\n   `git diff --name-only --diff-filter=U`\n4. If any unmerged paths remain outside the listed files, stop and report them.\n5. Stage only the resolved conflicted files with `git add <files>`.\n6. Run:\n   `GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true git rebase --continue`\n7. Inspect the real stdout/stderr and exit result of `git rebase --continue`.\n8. If the rebase stops on new conflicts, do not improvise:\n   - run full `git status`\n   - report the new unmerged paths\n   - stop unless explicitly asked to continue through subsequent conflicts too\n9. If the rebase completes, then run:\n   `git status`\n   and report the final state.\n\nImportant failure handling:\n- If `git rebase --continue` fails because rebase metadata is missing/corrupt, stop and report that exactly.\n- Do not try to repair Git internals manually.\n- Do not assume success just because the command executed.\n\nOutput format:\n- Rebase status from initial `git status`\n- Files you resolved\n- Result of `git diff --name-only --diff-filter=U`\n- Exact result of `git rebase --continue`\n- Final full `git status`"
         );
 
         Ok(RunMergeConflictDto {
@@ -740,11 +736,18 @@ impl RunsMergeService {
 mod tests {
     use super::RunsMergeService;
     use crate::app::db::migrations::run_migrations;
+    use crate::app::db::repositories::projects::ProjectsRepository;
     use crate::app::db::repositories::runs::RunsRepository;
+    use crate::app::db::repositories::tasks::TasksRepository;
     use crate::app::errors::AppError;
+    use crate::app::projects::search_service::ProjectFileSearchService;
+    use crate::app::projects::service::ProjectsService;
+    use crate::app::runs::opencode_service::RunsOpenCodeService;
     use crate::app::runs::run_state_service::RunStateService;
     use crate::app::runs::service::RunsService;
     use crate::app::runs::status_transition_service::RunStatusTransitionService;
+    use crate::app::runs::task_completion_service::RunTaskCompletionService;
+    use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
     use crate::app::worktrees::service::WorktreesService;
     use git2::{Repository, Signature};
     use sqlx::SqlitePool;
@@ -795,10 +798,34 @@ mod tests {
             run_state_service.clone(),
             None,
         );
+        let task_status_transition_service = TaskStatusTransitionService::new(
+            RunsRepository::new(pool.clone()),
+            TasksRepository::new(pool.clone()),
+            None,
+        );
+        let projects_service = ProjectsService::new(
+            ProjectsRepository::new(pool.clone()),
+            ProjectFileSearchService::new(),
+            WorktreesService::new(app_data_dir.clone()),
+        );
+        let runs_opencode_service = RunsOpenCodeService::new(
+            runs_service.clone(),
+            projects_service,
+            task_status_transition_service,
+            run_state_service.clone(),
+            run_status_transition_service.clone(),
+            app_data_dir.clone(),
+        );
+        let run_task_completion_service = RunTaskCompletionService::new(
+            RunsRepository::new(pool.clone()),
+            TasksRepository::new(pool.clone()),
+            runs_opencode_service,
+            run_status_transition_service.clone(),
+        );
         let merge_service = RunsMergeService::new(
             runs_service.clone(),
             run_state_service,
-            run_status_transition_service,
+            run_task_completion_service,
             app_data_dir,
         );
         (runs_service, merge_service, pool, temp_dir)
@@ -998,8 +1025,11 @@ mod tests {
         assert!(conflict.chat_prompt.contains("Conflicting files"));
         assert!(conflict
             .chat_prompt
-            .contains("A rebase is already in progress for this worktree."));
+            .contains("A rebase is already in progress for this worktree. Continue the existing rebase safely."));
         assert!(conflict.chat_prompt.contains("`git status`"));
+        assert!(conflict.chat_prompt.contains(
+            "Do not run `git status --short --branch` while the rebase is still in progress."
+        ));
         assert!(conflict.chat_prompt.contains(&format!(
             "`{}`-intended changes",
             run.source_branch.clone().unwrap()
@@ -1018,15 +1048,15 @@ mod tests {
             .contains("Inspect the real exit status and stderr/stdout"));
         assert!(conflict
             .chat_prompt
-            .contains("Do not create a normal commit unless Git explicitly requires it"));
-        assert!(conflict.chat_prompt.contains("Never edit, recreate, or patch files inside `.git`, `rebase-merge`, or `git-rebase-todo`."));
+            .contains("Do not create a standalone/manual commit unless `git rebase --continue` explicitly requires one."));
+        assert!(conflict.chat_prompt.contains("Do not edit or repair anything inside `.git`, `rebase-merge`, `rebase-apply`, or `git-rebase-todo`."));
         assert!(conflict
             .chat_prompt
-            .contains("Never try to repair broken rebase metadata manually."));
-        assert!(conflict.chat_prompt.contains("rebase state is broken"));
+            .contains("Do not try to repair Git internals manually."));
         assert!(conflict
             .chat_prompt
-            .contains("`git status --short --branch`"));
+            .contains("fails because rebase metadata is missing/corrupt"));
+        assert!(conflict.chat_prompt.contains("Final full `git status`"));
 
         let repo = Repository::open(&worktree_path).unwrap();
         let head = repo.head().unwrap();

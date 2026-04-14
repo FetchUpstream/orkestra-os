@@ -2318,7 +2318,7 @@ impl RunsOpenCodeService {
     }
 
     fn unsupported_reason_for_run_status(status: &str) -> Option<String> {
-        if matches!(status, "complete" | "failed" | "cancelled") {
+        if Self::is_terminal_run_status(status) {
             return Some(format!("run status '{}' is not supported", status));
         }
 
@@ -2823,7 +2823,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
     }
 
     fn is_terminal_run_status(status: &str) -> bool {
-        matches!(status, "complete" | "failed" | "cancelled")
+        matches!(status, "complete" | "failed" | "cancelled" | "rejected")
     }
 
     fn cleanup_last_interaction_at(
@@ -2866,7 +2866,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             match snapshot.run_status_str() {
                 "idle" => summary.idle_handles += 1,
                 "queued" | "preparing" | "in_progress" => summary.in_progress_handles += 1,
-                "complete" | "failed" | "cancelled" => {
+                status if Self::is_terminal_run_status(status) => {
                     summary.completed_handles += 1;
                     summary.completed_persistent_handles.push(format!(
                         "{}(status={}, state={}, viewers={}, ops={}, shutdown_requested={}, retention_hint={})",
@@ -3732,6 +3732,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 id: run_id.to_string(),
                 task_id: task_id.to_string(),
                 project_id: "project-1".to_string(),
+                run_number: 1,
+                display_key: "ORK-1-R1".to_string(),
                 target_repo_id: None,
                 status: "in_progress".to_string(),
                 run_state: None,
@@ -6347,6 +6349,8 @@ mod tests {
                     id: run_id.to_string(),
                     task_id: task_id.to_string(),
                     project_id: "project-1".to_string(),
+                    run_number: 1,
+                    display_key: "ORK-1-R1".to_string(),
                     target_repo_id: None,
                     status: "running".to_string(),
                     run_state: None,
@@ -7052,6 +7056,8 @@ mod tests {
                     id: "run-1".to_string(),
                     task_id: "task-1".to_string(),
                     project_id: "project-1".to_string(),
+                    run_number: 1,
+                    display_key: "ORK-1-R1".to_string(),
                     target_repo_id: None,
                     status: "running".to_string(),
                     run_state: None,
@@ -7238,6 +7244,8 @@ mod tests {
                     id: "run-1".to_string(),
                     task_id: "task-1".to_string(),
                     project_id: "project-1".to_string(),
+                    run_number: 1,
+                    display_key: "ORK-1-R1".to_string(),
                     target_repo_id: None,
                     status: "running".to_string(),
                     run_state: None,
@@ -8522,6 +8530,21 @@ mod tests {
         seed_run(&pool, "run-1", "task-1", "running").await;
         insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
         set_run_status(&pool, "run-1", "complete").await;
+
+        opencode_service.run_cleanup_pass().await.unwrap();
+
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_pass_stops_rejected_runs_when_unused() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+        set_run_status(&pool, "run-1", "rejected").await;
 
         opencode_service.run_cleanup_pass().await.unwrap();
 
