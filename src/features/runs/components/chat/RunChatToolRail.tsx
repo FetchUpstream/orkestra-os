@@ -318,6 +318,10 @@ const RunChatToolRail: Component<RunChatToolRailProps> = (props) => {
                                             streaming={
                                               message.assistantStreaming
                                             }
+                                            isStreamingActive={
+                                              message.assistantStreaming
+                                                ?.lifecycle === "streaming"
+                                            }
                                             reasoning={reasoningNode}
                                             toolRail={toolRailNode}
                                           />

@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { Show, type Component, type JSX } from "solid-js";
+import { Show, createMemo, type Component, type JSX } from "solid-js";
 import type { UiAssistantStreamingMetadata } from "../../model/agentTypes";
 import RunChatMarkdown from "./RunChatMarkdown";
 import useStreamingTextPresentation from "./useStreamingTextPresentation";
@@ -18,6 +18,7 @@ import useStreamingTextPresentation from "./useStreamingTextPresentation";
 type RunChatAssistantMessageProps = {
   content: string;
   streaming?: UiAssistantStreamingMetadata;
+  isStreamingActive?: boolean;
   class?: string;
   reasoning?: JSX.Element;
   toolRail?: JSX.Element;
@@ -27,6 +28,12 @@ type RunChatAssistantMessageProps = {
 const RunChatAssistantMessage: Component<RunChatAssistantMessageProps> = (
   props,
 ) => {
+  const isStreamingActive = createMemo(
+    () =>
+      props.isStreamingActive ??
+      (props.streaming?.isStreaming === true &&
+        props.streaming.lifecycle === "streaming"),
+  );
   const targetText = () => props.streaming?.targetText ?? props.content;
   const presentation = useStreamingTextPresentation({
     messageId: () => props.streaming?.messageId,
@@ -43,6 +50,7 @@ const RunChatAssistantMessage: Component<RunChatAssistantMessageProps> = (
       data-streaming={props.streaming?.isStreaming ? "true" : "false"}
       data-stream-revision={props.streaming?.streamRevision}
       data-stream-token={props.streaming?.streamToken}
+      data-streaming-active={isStreamingActive() ? "true" : "false"}
       data-stream-animating={presentation.isAnimating() ? "true" : "false"}
       data-stream-catching-up={presentation.isCatchingUp() ? "true" : "false"}
     >
@@ -51,10 +59,12 @@ const RunChatAssistantMessage: Component<RunChatAssistantMessageProps> = (
           {props.reasoning}
         </div>
       </Show>
-      <RunChatMarkdown
-        content={presentation.displayedText()}
-        class="run-chat-assistant-message__content"
-      />
+      <div class="run-chat-assistant-message__content-shell">
+        <RunChatMarkdown
+          content={presentation.displayedText()}
+          class="run-chat-assistant-message__content"
+        />
+      </div>
       <Show when={props.toolRail}>
         <div class="run-chat-assistant-message__tools">{props.toolRail}</div>
       </Show>
