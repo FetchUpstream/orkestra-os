@@ -25,6 +25,10 @@ import type { RunState } from "../../../app/lib/runs";
 import ActionWarningModal from "../../tasks/components/ActionWarningModal";
 import NewRunChatWorkspace from "../components/NewRunChatWorkspace";
 import RunDiffDrawerPanel from "../components/RunDiffDrawerPanel";
+import {
+  classifyWorkflowSyncState,
+  formatWorkflowSyncCategoryLabel,
+} from "./gitStateLabels";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 
 const RunTerminal = lazy(() => import("../components/RunTerminal"));
@@ -162,18 +166,6 @@ const formatLogTimestamp = (ts: string | number | null): string => {
   return ts;
 };
 
-const formatSourceStatusLabel = (state: string): string => {
-  if (state === "clean") {
-    return "Source Clean";
-  }
-
-  if (state === "unknown") {
-    return "Source Unknown";
-  }
-
-  return "Source Dirty";
-};
-
 const formatCurrentStatusLabel = (isWorktreeClean?: boolean | null): string => {
   if (isWorktreeClean === true) {
     return "Current Clean";
@@ -278,6 +270,27 @@ const NewRunDetailScreen: Component = () => {
     overlaySize() === "maximized" ? "Restore panel" : "Maximize panel",
   );
   const gitStatus = createMemo(() => model.git.status());
+  const workflowSyncCategory = createMemo(() => {
+    const status = gitStatus();
+    if (!status) {
+      return "unknown";
+    }
+
+    const classifiedState = classifyWorkflowSyncState(status.state);
+    if (classifiedState !== "unknown") {
+      return classifiedState;
+    }
+
+    if (status.requiresRebase) {
+      return "rebase_required";
+    }
+
+    if (status.isMergeAllowed) {
+      return "ready_to_merge";
+    }
+
+    return "unknown";
+  });
   const isRunRebaseResolving = createMemo(
     () => model.run()?.runState === REBASING_RUN_STATE,
   );
@@ -286,7 +299,7 @@ const NewRunDetailScreen: Component = () => {
     const name = status?.sourceBranch.name?.trim();
     return name && name.length > 0 ? name : "main";
   });
-  const isWorkflowCompleted = createMemo(() => {
+  const isWorkflowFinalized = createMemo(() => {
     const status = gitStatus();
     if (!status) {
       return false;
@@ -296,12 +309,7 @@ const NewRunDetailScreen: Component = () => {
       return false;
     }
 
-    return (
-      status.state === "merged" ||
-      status.state === "completing" ||
-      status.state === "completed" ||
-      model.postMergeCompletionMessage().trim().length > 0
-    );
+    return workflowSyncCategory() === "merged";
   });
   const summaryCopy = createMemo(() => {
     const status = gitStatus();
@@ -320,10 +328,26 @@ const NewRunDetailScreen: Component = () => {
       };
     }
 
-    if (isWorkflowCompleted()) {
+    if (workflowSyncCategory() === "finalizing_merge") {
+      return {
+        headline: "Finalizing merge",
+        support: `Completing integration into ${baseBranchName()}.`,
+      };
+    }
+
+    if (isWorkflowFinalized()) {
       return {
         headline: "Integration complete",
         support: `Current branch has been integrated into ${baseBranchName()}.`,
+      };
+    }
+
+    if (workflowSyncCategory() === "conflicted") {
+      return {
+        headline: "Conflicts detected",
+        support:
+          status.conflictSummary ||
+          "Resolve rebase or merge conflicts before continuing.",
       };
     }
 
@@ -334,17 +358,35 @@ const NewRunDetailScreen: Component = () => {
       };
     }
 
-    if (status.requiresRebase) {
+    if (workflowSyncCategory() === "rebase_required") {
       return {
         headline: "Rebase required",
         support: `Rebase current branch onto ${baseBranchName()} before merge.`,
       };
     }
 
-    if (status.isMergeAllowed) {
+    if (workflowSyncCategory() === "ready_to_merge") {
       return {
         headline: "Ready to merge",
-        support: `Current branch is ready to merge into ${baseBranchName()}.`,
+        support:
+          status.isMergeAllowed === true
+            ? `Current branch is ready to merge into ${baseBranchName()}.`
+            : status.mergeDisabledReason ||
+              `Current branch is ready to merge into ${baseBranchName()} once merge is available.`,
+      };
+    }
+
+    if (workflowSyncCategory() === "up_to_date") {
+      return {
+        headline: "Up to date",
+        support: `Current branch is synced with ${baseBranchName()}.`,
+      };
+    }
+
+    if (workflowSyncCategory() === "unknown") {
+      return {
+        headline: "Status unknown",
+        support: "Workflow status is unavailable right now.",
       };
     }
 
@@ -398,13 +440,16 @@ const NewRunDetailScreen: Component = () => {
   });
   const mergeRequiresRebase = createMemo(() => {
     const status = gitStatus();
-    return status?.requiresRebase === true;
+    return (
+      status?.requiresRebase === true ||
+      workflowSyncCategory() === "rebase_required"
+    );
   });
   const primaryAction = createMemo<
     "commit" | "rebase" | "merge" | "rebasing" | null
   >(() => {
     const status = gitStatus();
-    if (!status || isWorkflowCompleted()) {
+    if (!status || isWorkflowFinalized()) {
       return null;
     }
 
@@ -416,20 +461,24 @@ const NewRunDetailScreen: Component = () => {
       return null;
     }
 
+    if (workflowSyncCategory() === "finalizing_merge") {
+      return null;
+    }
+
+    if (workflowSyncCategory() === "conflicted") {
+      return null;
+    }
+
     if (status.isWorktreeClean === false) {
       return "commit";
     }
 
-    if (status.requiresRebase) {
+    if (mergeRequiresRebase()) {
       return "rebase";
     }
 
-    if (status.isMergeAllowed) {
+    if (workflowSyncCategory() === "ready_to_merge") {
       return "merge";
-    }
-
-    if (status.isRebaseAllowed) {
-      return "rebase";
     }
 
     return null;
@@ -453,7 +502,7 @@ const NewRunDetailScreen: Component = () => {
     return (
       model.isRunCompleted() ||
       model.git.isMergePending() ||
-      status.requiresRebase ||
+      mergeRequiresRebase() ||
       !status.isMergeAllowed
     );
   });
@@ -1418,7 +1467,9 @@ const NewRunDetailScreen: Component = () => {
                                   Source
                                 </span>
                                 <span class="run-chat-git-drawer__state-value">
-                                  {formatSourceStatusLabel(status().state)}
+                                  {formatWorkflowSyncCategoryLabel(
+                                    workflowSyncCategory(),
+                                  )}
                                 </span>
                               </p>
                               <p class="run-chat-git-drawer__state-row">
@@ -1456,7 +1507,7 @@ const NewRunDetailScreen: Component = () => {
                                 </p>
                               </Show>
                               <div class="run-chat-git-drawer__footer">
-                                <Show when={isWorkflowCompleted()}>
+                                <Show when={isWorkflowFinalized()}>
                                   <p
                                     class="run-chat-git-drawer__button run-chat-git-drawer__button--success"
                                     aria-live="polite"

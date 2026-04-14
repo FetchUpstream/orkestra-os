@@ -1285,7 +1285,9 @@ const toRunGitMergeStatus = (response: unknown): RunGitMergeStatus => {
     isRebaseAllowed: pick(payload.can_rebase, payload.canRebase) === true,
     isMergeAllowed: pick(payload.can_merge, payload.canMerge) === true,
     requiresRebase:
-      pick(payload.requires_rebase, payload.requiresRebase) === true,
+      pick(payload.requires_rebase, payload.requiresRebase) === true ||
+      state === "needs_rebase" ||
+      state === "rebase_required",
     rebaseDisabledReason: toOptionalTrimmedString(
       pick(
         pick(payload.rebase_disabled_reason, payload.rebaseDisabledReason),

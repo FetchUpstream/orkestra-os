@@ -636,6 +636,22 @@ describe("runs contract", () => {
     expect(status.isRebaseAllowed).toBe(false);
     expect(status.isMergeAllowed).toBe(false);
     expect(status.isRebaseInProgress).toBe(false);
+    expect(status.requiresRebase).toBe(true);
+  });
+
+  it("derives requiresRebase from legacy rebase_required state", async () => {
+    invokeMock.mockResolvedValue({
+      status: {
+        state: "rebase_required",
+        can_rebase: true,
+        can_merge: false,
+      },
+    });
+
+    const status = await getRunGitMergeStatus("run-1");
+
+    expect(status.state).toBe("rebase_required");
+    expect(status.requiresRebase).toBe(true);
   });
 
   it("maps git2 ahead_count/behind_count into branch divergence and dirty flag", async () => {
