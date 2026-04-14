@@ -197,7 +197,7 @@ const sanitizeModelDisplayLabel = (
 };
 
 const boardIdentityForRun = (run: Run): string => {
-  const displayKey = sanitizeDisplayLabel(run.displayKey);
+  const displayKey = run.displayKey?.trim();
   if (displayKey) {
     return displayKey;
   }
@@ -206,12 +206,7 @@ const boardIdentityForRun = (run: Run): string => {
     return `Run #${run.runNumber}`;
   }
 
-  const match = run.id.match(/(?:^|[^0-9])(\d+)(?:[^0-9]|$)/);
-  if (match?.[1]) {
-    return `Run #${match[1]}`;
-  }
-
-  return "Current run";
+  return "Run";
 };
 
 const boardLabelForRunStatus = (status: RunStatus): string => {

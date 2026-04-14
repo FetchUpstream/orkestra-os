@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::app::db::repositories::runs::{RunsRepository, is_active_run_status};
+use crate::app::db::repositories::runs::{is_active_run_status, RunsRepository};
 use crate::app::db::repositories::tasks::TasksRepository;
 use crate::app::errors::AppError;
 use crate::app::runs::dto::RunStatusChangedEventDto;
@@ -66,10 +66,7 @@ impl RunTaskCompletionService {
 
         for sibling_run in &sibling_runs {
             self.runs_opencode_service
-                .stop_run_opencode(
-                    &sibling_run.id,
-                    Some(MERGE_REJECTION_SHUTDOWN_REASON),
-                )
+                .stop_run_opencode(&sibling_run.id, Some(MERGE_REJECTION_SHUTDOWN_REASON))
                 .await?;
         }
 
@@ -123,10 +120,7 @@ impl RunTaskCompletionService {
 
         for run in &active_runs {
             self.runs_opencode_service
-                .stop_run_opencode(
-                    &run.id,
-                    Some(MANUAL_DONE_CANCELLATION_SHUTDOWN_REASON),
-                )
+                .stop_run_opencode(&run.id, Some(MANUAL_DONE_CANCELLATION_SHUTDOWN_REASON))
                 .await?;
         }
 

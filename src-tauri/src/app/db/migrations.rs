@@ -36,8 +36,8 @@ const MIGRATION_0018: &str = include_str!("../../../migrations/0018_add_runs_run
 const MIGRATION_0019: &str =
     include_str!("../../../migrations/0019_drop_runs_single_active_index.sql");
 const MIGRATION_0020: &str = include_str!("../../../migrations/0020_add_project_env_vars.sql");
-const MIGRATION_0021: &str =
-    include_str!("../../../migrations/0021_allow_rejected_run_status.sql");
+const MIGRATION_0021: &str = include_str!("../../../migrations/0021_allow_rejected_run_status.sql");
+const MIGRATION_0022: &str = include_str!("../../../migrations/0022_add_run_identifiers.sql");
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(MIGRATION_0001).execute(pool).await?;
@@ -331,14 +331,160 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     )
     .fetch_optional(pool)
     .await?;
-    let needs_rejected_run_status_migration =
-        runs_table_sql.as_deref().is_some_and(|sql| !sql.contains("'rejected'"));
+    let needs_rejected_run_status_migration = runs_table_sql
+        .as_deref()
+        .is_some_and(|sql| !sql.contains("'rejected'"));
 
     if needs_rejected_run_status_migration {
         sqlx::query(MIGRATION_0021).execute(pool).await?;
     }
 
     sqlx::query(MIGRATION_0019).execute(pool).await?;
+
+    let run_identifier_columns = sqlx::query("PRAGMA table_info(runs)")
+        .fetch_all(pool)
+        .await?;
+    let has_run_number = run_identifier_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "run_number");
+    let has_run_display_key = run_identifier_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "display_key");
+
+    if !has_run_number || !has_run_display_key {
+        sqlx::query(MIGRATION_0022).execute(pool).await?;
+    } else {
+        let missing_identifier_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runs WHERE run_number IS NULL OR display_key IS NULL",
+        )
+        .fetch_one(pool)
+        .await?;
+        if missing_identifier_count > 0 {
+            sqlx::query(
+                "WITH ordered_runs AS (
+                    SELECT
+                      r.id AS run_id,
+                      ROW_NUMBER() OVER (
+                        PARTITION BY r.task_id
+                        ORDER BY r.created_at ASC, r.id ASC
+                      ) AS next_run_number,
+                      (
+                        SELECT p.key || '-' || t.task_number
+                        FROM tasks t
+                        JOIN projects p ON p.id = t.project_id
+                        WHERE t.id = r.task_id
+                      ) AS task_display_key
+                    FROM runs r
+                  )
+                  UPDATE runs
+                  SET
+                    run_number = (
+                      SELECT next_run_number
+                      FROM ordered_runs
+                      WHERE ordered_runs.run_id = runs.id
+                    ),
+                    display_key = (
+                      SELECT CASE
+                        WHEN task_display_key IS NOT NULL AND task_display_key != ''
+                          THEN task_display_key || '-R' || next_run_number
+                        ELSE 'R' || next_run_number
+                      END
+                      FROM ordered_runs
+                      WHERE ordered_runs.run_id = runs.id
+                    )
+                  WHERE run_number IS NULL OR display_key IS NULL",
+            )
+            .execute(pool)
+            .await?;
+        }
+
+        let has_task_run_number_index = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_task_id_run_number'",
+        )
+        .fetch_one(pool)
+        .await?
+            > 0;
+        if !has_task_run_number_index {
+            sqlx::query(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_task_id_run_number ON runs (task_id, run_number)",
+            )
+            .execute(pool)
+            .await?;
+        }
+
+        let has_display_key_index = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_display_key'",
+        )
+        .fetch_one(pool)
+        .await?
+            > 0;
+        if !has_display_key_index {
+            sqlx::query(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_display_key ON runs (display_key)",
+            )
+            .execute(pool)
+            .await?;
+        }
+
+        let has_identifier_trigger = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'runs_assign_identifiers_after_insert'",
+        )
+        .fetch_one(pool)
+        .await?
+            > 0;
+        if !has_identifier_trigger {
+            sqlx::query(
+                "CREATE TRIGGER IF NOT EXISTS runs_assign_identifiers_after_insert
+                AFTER INSERT ON runs
+                FOR EACH ROW
+                WHEN NEW.run_number IS NULL OR NEW.display_key IS NULL
+                BEGIN
+                  UPDATE runs
+                  SET
+                    run_number = COALESCE(
+                      NEW.run_number,
+                      (
+                        SELECT COALESCE(MAX(existing.run_number), 0) + 1
+                        FROM runs existing
+                        WHERE existing.task_id = NEW.task_id
+                          AND existing.id != NEW.id
+                      )
+                    ),
+                    display_key = COALESCE(
+                      NEW.display_key,
+                      (
+                        WITH next_identifier AS (
+                          SELECT COALESCE(
+                            NEW.run_number,
+                            (
+                              SELECT COALESCE(MAX(existing.run_number), 0) + 1
+                              FROM runs existing
+                              WHERE existing.task_id = NEW.task_id
+                                AND existing.id != NEW.id
+                            )
+                          ) AS run_number,
+                          (
+                            SELECT p.key || '-' || t.task_number
+                            FROM tasks t
+                            JOIN projects p ON p.id = t.project_id
+                            WHERE t.id = NEW.task_id
+                          ) AS task_display_key
+                        )
+                        SELECT CASE
+                          WHEN task_display_key IS NOT NULL AND task_display_key != ''
+                            THEN task_display_key || '-R' || run_number
+                          ELSE 'R' || run_number
+                        END
+                        FROM next_identifier
+                      )
+                    )
+                  WHERE id = NEW.id;
+                END",
+            )
+            .execute(pool)
+            .await?;
+        }
+    }
 
     Ok(())
 }
@@ -707,5 +853,64 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(fts_count, 1);
+    }
+
+    #[tokio::test]
+    async fn run_migrations_backfills_persisted_run_identifiers() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+        sqlx::query(MIGRATION_0001).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0002).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0003).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0004).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0006).execute(&pool).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES ('proj-1', 'Project 1', 'ORK', NULL, 'repo-1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+             VALUES ('repo-1', 'proj-1', 'Repo 1', '/tmp/repo-1', 1, '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+             VALUES ('task-1', 'proj-1', 'repo-1', 12, 'Run Details', 'Task details', 'todo', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
+             VALUES
+             ('run-1', 'task-1', 'proj-1', 'repo-1', 'queued', 'user', '2026-01-01T00:00:00Z'),
+             ('run-2', 'task-1', 'proj-1', 'repo-1', 'complete', 'user', '2026-01-02T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        run_migrations(&pool).await.unwrap();
+
+        let rows: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT run_number, display_key FROM runs WHERE task_id = 'task-1' ORDER BY run_number ASC",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            rows,
+            vec![(1, "ORK-12-R1".to_string()), (2, "ORK-12-R2".to_string())]
+        );
     }
 }

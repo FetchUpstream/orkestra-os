@@ -67,24 +67,42 @@ impl RunsRepository {
         task_id: &str,
     ) -> Result<Option<TaskRunContext>, AppError> {
         let row = sqlx::query(
-            "SELECT t.project_id, p.key AS project_key, t.repository_id, t.title AS branch_title, pr.repo_path AS repository_path
+            "SELECT t.project_id,
+                    p.key AS project_key,
+                    p.key || '-' || t.task_number AS task_display_key,
+                    t.repository_id,
+                    t.title AS branch_title,
+                    pr.repo_path AS repository_path
              FROM tasks t
              JOIN projects p ON p.id = t.project_id
              JOIN project_repositories pr ON pr.id = t.repository_id
              WHERE t.id = ?",
         )
-            .bind(task_id)
-            .fetch_optional(&self.pool)
-            .await
-            .runs_db("loading task run context")?;
+        .bind(task_id)
+        .fetch_optional(&self.pool)
+        .await
+        .runs_db("loading task run context")?;
 
         Ok(row.map(|row| TaskRunContext {
             project_id: row.get("project_id"),
             project_key: row.get("project_key"),
+            task_display_key: row.get("task_display_key"),
             repository_id: row.get("repository_id"),
             repository_path: row.get("repository_path"),
             branch_title: row.get("branch_title"),
         }))
+    }
+
+    pub async fn get_next_task_run_number(&self, task_id: &str) -> Result<i64, AppError> {
+        let next_run_number = sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(MAX(run_number), 0) + 1 FROM runs WHERE task_id = ?",
+        )
+        .bind(task_id)
+        .fetch_one(&self.pool)
+        .await
+        .runs_db("loading next task run number")?;
+
+        Ok(next_run_number)
     }
 
     pub async fn get_run_initial_prompt_context(
@@ -135,6 +153,8 @@ impl RunsRepository {
                 id,
                 task_id,
                 project_id,
+                run_number,
+                display_key,
                 target_repo_id,
                 status,
                 run_state,
@@ -145,11 +165,13 @@ impl RunsRepository {
                 provider_id,
                 model_id,
                 source_branch
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&input.id)
         .bind(&input.task_id)
         .bind(&input.project_id)
+        .bind(input.run_number)
+        .bind(&input.display_key)
         .bind(&input.target_repo_id)
         .bind(&input.status)
         .bind(&input.run_state)
@@ -178,6 +200,8 @@ impl RunsRepository {
                 id,
                 task_id,
                 project_id,
+                run_number,
+                display_key,
                 target_repo_id,
                 status,
                 run_state,
@@ -221,6 +245,8 @@ impl RunsRepository {
                 id,
                 task_id,
                 project_id,
+                run_number,
+                display_key,
                 target_repo_id,
                 status,
                 run_state,
@@ -263,6 +289,8 @@ impl RunsRepository {
                 id,
                 task_id,
                 project_id,
+                run_number,
+                display_key,
                 target_repo_id,
                 status,
                 run_state,
@@ -295,9 +323,9 @@ impl RunsRepository {
         );
 
         let rows = sqlx::query(&query)
-        .fetch_all(&self.pool)
-        .await
-        .runs_db("listing active runs")?;
+            .fetch_all(&self.pool)
+            .await
+            .runs_db("listing active runs")?;
 
         Ok(rows.into_iter().map(Self::map_row_to_run).collect())
     }
@@ -315,10 +343,10 @@ impl RunsRepository {
 
         let run_context: Option<(String, String)> =
             sqlx::query_as("SELECT task_id, project_id FROM runs WHERE id = ?")
-            .bind(run_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .runs_db("loading run context for run delete")?;
+                .bind(run_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .runs_db("loading run context for run delete")?;
 
         let Some((task_id, project_id)) = run_context else {
             tx.commit()
@@ -362,12 +390,12 @@ impl RunsRepository {
         );
 
         let task_update = sqlx::query(&task_update_query)
-        .bind(updated_at)
-        .bind(&task_id)
-        .bind(&task_id)
-        .execute(&mut *tx)
-        .await
-        .runs_db("reconciling task status after run delete")?;
+            .bind(updated_at)
+            .bind(&task_id)
+            .bind(&task_id)
+            .execute(&mut *tx)
+            .await
+            .runs_db("reconciling task status after run delete")?;
 
         let task_status_reconciled = if task_update.rows_affected() > 0 {
             Some(RunDeleteTaskStatusReconciliation {
@@ -404,11 +432,11 @@ impl RunsRepository {
         );
 
         let result = sqlx::query(&query)
-        .bind(finished_at)
-        .bind(run_id)
-        .execute(&self.pool)
-        .await
-        .runs_db("transitioning run to cancelled")?;
+            .bind(finished_at)
+            .bind(run_id)
+            .execute(&self.pool)
+            .await
+            .runs_db("transitioning run to cancelled")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -759,11 +787,11 @@ impl RunsRepository {
         );
 
         let run_update = sqlx::query(&run_update_query)
-        .bind(finished_at)
-        .bind(run_id)
-        .execute(&mut *tx)
-        .await
-        .runs_db("marking run complete")?;
+            .bind(finished_at)
+            .bind(run_id)
+            .execute(&mut *tx)
+            .await
+            .runs_db("marking run complete")?;
 
         if run_update.rows_affected() == 0 {
             tx.commit()
@@ -920,14 +948,14 @@ impl RunsRepository {
         );
 
         let result = sqlx::query(&query)
-        .bind(updated_at)
-        .bind(run_id)
-        .bind(opencode_session_id)
-        .bind(run_id)
-        .bind(run_id)
-        .execute(&self.pool)
-        .await
-        .runs_db("transitioning task to review on session idle")?;
+            .bind(updated_at)
+            .bind(run_id)
+            .bind(opencode_session_id)
+            .bind(run_id)
+            .bind(run_id)
+            .execute(&self.pool)
+            .await
+            .runs_db("transitioning task to review on session idle")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -937,6 +965,8 @@ impl RunsRepository {
             id: row.get("id"),
             task_id: row.get("task_id"),
             project_id: row.get("project_id"),
+            run_number: row.get("run_number"),
+            display_key: row.get("display_key"),
             target_repo_id: row.get("target_repo_id"),
             status: row.get("status"),
             run_state: row.get("run_state"),
@@ -1181,7 +1211,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transition_task_doing_to_review_on_session_idle_updates_when_no_active_siblings_exist() {
+    async fn transition_task_doing_to_review_on_session_idle_updates_when_no_active_siblings_exist()
+    {
         let repository = setup_repository().await;
         let pool = repository.pool.clone();
         seed_project_task_and_repository(&pool).await;

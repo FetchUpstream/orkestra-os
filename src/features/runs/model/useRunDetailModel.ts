@@ -1934,7 +1934,7 @@ export const useRunDetailModel = () => {
 
   const runLabel = createMemo(() => {
     const runValue = run();
-    if (!runValue) return "Current run";
+    if (!runValue) return "Run";
 
     const displayKey = runValue.displayKey?.trim();
     if (displayKey) return displayKey;
@@ -1946,12 +1946,7 @@ export const useRunDetailModel = () => {
       return `Run #${runValue.runNumber}`;
     }
 
-    const match = runValue.id.match(/(?:^|[^0-9])(\d+)(?:[^0-9]|$)/);
-    if (match?.[1]) {
-      return `Run #${match[1]}`;
-    }
-
-    return "Current run";
+    return "Run";
   });
 
   const repositorySummary = createMemo(() => {

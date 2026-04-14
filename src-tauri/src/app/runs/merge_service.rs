@@ -649,8 +649,7 @@ impl RunsMergeService {
 
         if has_dirty_changes {
             Ok(Some(
-                "Please clean the worktree before rebasing or merging this run."
-                    .to_string(),
+                "Please clean the worktree before rebasing or merging this run.".to_string(),
             ))
         } else {
             Ok(None)

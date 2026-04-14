@@ -128,7 +128,7 @@ impl RunStateService {
             transition_source,
             !Self::is_non_authoritative_source(transition_source),
         )
-            .await
+        .await
     }
 
     pub async fn handle_question_pending(
@@ -144,8 +144,13 @@ impl RunStateService {
         &self,
         run_id: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
-        self.transition_to_state(run_id, Some(PERMISSION_REQUESTED), "permission_requested", true)
-            .await
+        self.transition_to_state(
+            run_id,
+            Some(PERMISSION_REQUESTED),
+            "permission_requested",
+            true,
+        )
+        .await
     }
 
     pub async fn handle_commit_requested(
@@ -217,8 +222,13 @@ impl RunStateService {
             return Ok(None);
         };
 
-        self.transition_to_state_from_snapshot(latest_run, next_state, transition_source, authoritative)
-            .await
+        self.transition_to_state_from_snapshot(
+            latest_run,
+            next_state,
+            transition_source,
+            authoritative,
+        )
+        .await
     }
 
     async fn transition_to_state_from_snapshot(
@@ -628,14 +638,7 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
         seed_task(&pool, "task-1", &repo_path).await;
-        seed_run(
-            &pool,
-            "run-1",
-            "task-1",
-            "in_progress",
-            "question_pending",
-        )
-        .await;
+        seed_run(&pool, "run-1", "task-1", "in_progress", "question_pending").await;
 
         let event = service.handle_run_started("run-1").await.unwrap();
 
@@ -685,14 +688,7 @@ mod tests {
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
         seed_task(&pool, "task-1", &repo_path).await;
-        seed_run(
-            &pool,
-            "run-1",
-            "task-1",
-            "idle",
-            "committing_changes",
-        )
-        .await;
+        seed_run(&pool, "run-1", "task-1", "idle", "committing_changes").await;
 
         let event = service
             .handle_question_pending("run-1", "question_refresh")

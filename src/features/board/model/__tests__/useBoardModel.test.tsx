@@ -245,7 +245,7 @@ describe("useBoardModel run settings defaults", () => {
     });
 
   it("builds board run mini-cards with run identity, status, agent, and model labels", async () => {
-    listProjectTasksMock.mockResolvedValueOnce([
+    listProjectTasksMock.mockResolvedValue([
       {
         id: "task-1",
         title: "Task",
@@ -253,7 +253,7 @@ describe("useBoardModel run settings defaults", () => {
         projectId: "project-1",
       },
     ]);
-    listTaskRunsMock.mockResolvedValueOnce([
+    listTaskRunsMock.mockResolvedValue([
       {
         id: "run-1",
         taskId: "task-1",
@@ -351,7 +351,7 @@ describe("useBoardModel run settings defaults", () => {
   });
 
   it("removes deleted run mini-cards from active task surfaces", async () => {
-    listProjectTasksMock.mockResolvedValueOnce([
+    listProjectTasksMock.mockResolvedValue([
       {
         id: "task-1",
         title: "Task",
@@ -359,7 +359,7 @@ describe("useBoardModel run settings defaults", () => {
         projectId: "project-1",
       },
     ]);
-    listTaskRunsMock.mockResolvedValueOnce([
+    listTaskRunsMock.mockResolvedValue([
       {
         id: "run-1",
         taskId: "task-1",
@@ -406,7 +406,7 @@ describe("useBoardModel run settings defaults", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
     };
 
-    listProjectTasksMock.mockResolvedValueOnce([
+    listProjectTasksMock.mockResolvedValue([
       {
         id: "task-1",
         title: "Task",

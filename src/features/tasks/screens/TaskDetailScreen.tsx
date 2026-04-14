@@ -12,6 +12,7 @@
 
 import { For, Show, createEffect, onCleanup, type Component } from "solid-js";
 import { A } from "@solidjs/router";
+import { runDisplayLabel } from "../../../app/lib/runs";
 import type { TaskStatus } from "../../../app/lib/tasks";
 import { AppIcon } from "../../../components/ui/icons";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
@@ -103,12 +104,7 @@ const getRunSummaryFallback = (status: string) => {
 const getRunPrimaryLabel = (runItem: {
   runNumber?: number | null;
   displayKey?: string | null;
-}) => {
-  if (typeof runItem.runNumber === "number") return `Run #${runItem.runNumber}`;
-  const displayKey = runItem.displayKey?.trim();
-  if (displayKey) return displayKey;
-  return "Run";
-};
+}) => runDisplayLabel(runItem);
 
 const TaskDetailScreen: Component = () => {
   const {
