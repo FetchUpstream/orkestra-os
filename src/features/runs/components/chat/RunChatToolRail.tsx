@@ -13,6 +13,8 @@
 import { For, Show, type Component } from "solid-js";
 import RunInlineLoader from "../../../../components/ui/RunInlineLoader";
 import { AppIcon } from "../../../../components/ui/icons";
+import type { UiAssistantStreamingMetadata } from "../../model/agentTypes";
+import RunChatAssistantMessage from "./RunChatAssistantMessage";
 import RunChatMarkdown from "./RunChatMarkdown";
 
 const SUBAGENT_VISIBLE_MESSAGE_LIMIT = 3;
@@ -33,6 +35,7 @@ export type RunChatToolRailSubagentMessage = {
   role: "assistant" | "user" | "system" | "unknown";
   content?: string;
   reasoningContent?: string;
+  assistantStreaming?: UiAssistantStreamingMetadata;
   toolItems?: readonly {
     id: string;
     summary: string;
@@ -211,34 +214,18 @@ const RunChatToolRail: Component<RunChatToolRailProps> = (props) => {
                               </div>
                               <div class="run-chat-tool-rail__subagent-body">
                                 <For each={visibleMessages}>
-                                  {(message) => (
-                                    <article class="run-chat-tool-rail__subagent-message">
-                                      <Show
-                                        when={message.content?.trim().length}
-                                      >
-                                        <div class="run-chat-tool-rail__subagent-markdown">
-                                          <RunChatMarkdown
-                                            content={message.content ?? ""}
-                                          />
-                                        </div>
-                                      </Show>
-                                      <Show
-                                        when={
-                                          message.reasoningContent?.trim()
-                                            .length
-                                        }
-                                      >
+                                  {(message) => {
+                                    const reasoningNode =
+                                      message.reasoningContent?.trim()
+                                        .length ? (
                                         <div class="run-chat-tool-rail__subagent-reasoning">
                                           <RunChatMarkdown
                                             content={`*Thinking:* ${message.reasoningContent ?? ""}`}
                                           />
                                         </div>
-                                      </Show>
-                                      <Show
-                                        when={
-                                          (message.toolItems?.length ?? 0) > 0
-                                        }
-                                      >
+                                      ) : undefined;
+                                    const toolRailNode =
+                                      (message.toolItems?.length ?? 0) > 0 ? (
                                         <ul class="run-chat-tool-rail__subagent-tools">
                                           <For each={message.toolItems}>
                                             {(toolItem) => (
@@ -317,9 +304,47 @@ const RunChatToolRail: Component<RunChatToolRailProps> = (props) => {
                                             )}
                                           </For>
                                         </ul>
-                                      </Show>
-                                    </article>
-                                  )}
+                                      ) : undefined;
+
+                                    if (message.role === "assistant") {
+                                      return (
+                                        <article class="run-chat-tool-rail__subagent-message">
+                                          <RunChatAssistantMessage
+                                            content={
+                                              message.content?.length
+                                                ? message.content
+                                                : " "
+                                            }
+                                            streaming={
+                                              message.assistantStreaming
+                                            }
+                                            reasoning={reasoningNode}
+                                            toolRail={toolRailNode}
+                                          />
+                                        </article>
+                                      );
+                                    }
+
+                                    return (
+                                      <article class="run-chat-tool-rail__subagent-message">
+                                        <Show
+                                          when={message.content?.trim().length}
+                                        >
+                                          <div class="run-chat-tool-rail__subagent-markdown">
+                                            <RunChatMarkdown
+                                              content={message.content ?? ""}
+                                            />
+                                          </div>
+                                        </Show>
+                                        <Show when={reasoningNode}>
+                                          {reasoningNode}
+                                        </Show>
+                                        <Show when={toolRailNode}>
+                                          {toolRailNode}
+                                        </Show>
+                                      </article>
+                                    );
+                                  }}
                                 </For>
                                 <Show
                                   when={

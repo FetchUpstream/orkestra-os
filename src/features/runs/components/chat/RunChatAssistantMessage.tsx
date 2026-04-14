@@ -11,10 +11,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { Show, type Component, type JSX } from "solid-js";
+import type { UiAssistantStreamingMetadata } from "../../model/agentTypes";
 import RunChatMarkdown from "./RunChatMarkdown";
 
 type RunChatAssistantMessageProps = {
   content: string;
+  streaming?: UiAssistantStreamingMetadata;
   class?: string;
   reasoning?: JSX.Element;
   toolRail?: JSX.Element;
@@ -24,15 +26,24 @@ type RunChatAssistantMessageProps = {
 const RunChatAssistantMessage: Component<RunChatAssistantMessageProps> = (
   props,
 ) => {
+  const content = () => props.streaming?.targetText ?? props.content;
+
   return (
-    <div class={`run-chat-assistant-message ${props.class ?? ""}`.trim()}>
+    <div
+      class={`run-chat-assistant-message ${props.class ?? ""}`.trim()}
+      data-message-id={props.streaming?.messageId}
+      data-streaming-state={props.streaming?.lifecycle}
+      data-streaming={props.streaming?.isStreaming ? "true" : "false"}
+      data-stream-revision={props.streaming?.streamRevision}
+      data-stream-token={props.streaming?.streamToken}
+    >
       <Show when={props.reasoning}>
         <div class="run-chat-assistant-message__reasoning">
           {props.reasoning}
         </div>
       </Show>
       <RunChatMarkdown
-        content={props.content}
+        content={content()}
         class="run-chat-assistant-message__content"
       />
       <Show when={props.toolRail}>
