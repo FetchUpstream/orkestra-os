@@ -2403,30 +2403,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     () => pendingQuestionCards()[0] ?? null,
   );
 
-  createEffect(() => {
-    const pending = pendingPermissionCards();
-    console.info("[runs] pending permission count changed", {
-      runId: props.model.run()?.id ?? null,
-      pendingCount: pending.length,
-      requestIds: pending.map((card) => card.requestId),
-      queuedRequestIds: queuedPermissionRequests().map(
-        (item) => item.requestId,
-      ),
-    });
-  });
-
-  createEffect(() => {
-    const pending = pendingPermissionCards();
-    if (pending.length === 0) {
-      return;
-    }
-    console.debug("[runs] rendering permission transcript items", {
-      runId: props.model.run()?.id ?? null,
-      pendingCount: pending.length,
-      requestIds: pending.map((card) => card.requestId),
-      permissionTypes: pending.map((card) => card.kind),
-    });
-  });
   const setupState = createMemo(() => {
     const state = props.model.run()?.setupState?.trim().toLowerCase();
     if (state === "running" || state === "succeeded" || state === "failed") {
