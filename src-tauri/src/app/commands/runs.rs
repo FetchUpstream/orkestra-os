@@ -15,9 +15,9 @@ use crate::app::runs::dto::{
     RawAgentEvent, RejectRunOpenCodeQuestionResponse, ReplyRunOpenCodePermissionResponse,
     ReplyRunOpenCodeQuestionResponse, RunAgentsResponseDto, RunDiffFileDto, RunDiffFilePayloadDto,
     RunDto, RunMergeResponseDto, RunMergeStatusDto, RunOpenCodeQuestionRequestDto,
-    RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, RunProvidersResponseDto,
-    RunRebaseResponseDto, StartRunOpenCodeResponse, StopRunOpenCodeResponse,
-    SubmitRunOpenCodePromptResponse,
+    RunOpenCodeSessionMessageDto, RunOpenCodeSessionMessagesPageDto, RunOpenCodeSessionTodoDto,
+    RunProvidersResponseDto, RunRebaseResponseDto, StartRunOpenCodeResponse,
+    StopRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::state::AppState;
 use crate::app::{commands::context, commands::error_mapping::map_result};
@@ -402,6 +402,29 @@ pub async fn get_run_opencode_session_messages(
     map_result(
         service
             .get_run_opencode_session_messages(&run_id, session_id.as_deref())
+            .await,
+    )
+}
+
+/// Additive paged transcript API retained alongside the legacy full-history
+/// command so the current run-details UI can stay unchanged until Phase 2.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_run_opencode_session_messages_page(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+    session_id: Option<String>,
+    limit: Option<usize>,
+    before: Option<String>,
+) -> Result<RunOpenCodeSessionMessagesPageDto, String> {
+    let service = context::runs_opencode_service(&state);
+    map_result(
+        service
+            .get_run_opencode_session_messages_page(
+                &run_id,
+                session_id.as_deref(),
+                limit,
+                before.as_deref(),
+            )
             .await,
     )
 }

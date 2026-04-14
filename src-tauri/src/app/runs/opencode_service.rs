@@ -17,9 +17,9 @@ use crate::app::runs::dto::{
     RawAgentEvent, RejectRunOpenCodeQuestionResponse, ReplyRunOpenCodePermissionResponse,
     ReplyRunOpenCodeQuestionResponse, RunAgentDto, RunAgentsResponseDto, RunDto,
     RunModelSelectionDto, RunOpenCodeChatModeDto, RunOpenCodeQuestionRequestDto,
-    RunOpenCodeSessionMessageDto, RunOpenCodeSessionTodoDto, RunProviderDto,
-    RunProvidersResponseDto, RunSelectionCatalogResponseDto, StartRunOpenCodeResponse,
-    StopRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
+    RunOpenCodeSessionMessageDto, RunOpenCodeSessionMessagesPageDto, RunOpenCodeSessionTodoDto,
+    RunProviderDto, RunProvidersResponseDto, RunSelectionCatalogResponseDto,
+    StartRunOpenCodeResponse, StopRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
 };
 use crate::app::runs::run_state_service::RunStateService;
 use crate::app::runs::service::RunsService;
@@ -256,6 +256,33 @@ fn to_nonempty_trimmed_string(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+const DEFAULT_SESSION_MESSAGES_PAGE_LIMIT: usize = 100;
+const MAX_SESSION_MESSAGES_PAGE_LIMIT: usize = 200;
+
+fn build_empty_session_messages_page(
+    before_cursor: Option<String>,
+) -> RunOpenCodeSessionMessagesPageDto {
+    RunOpenCodeSessionMessagesPageDto {
+        messages: vec![],
+        has_more: false,
+        next_cursor: None,
+        before_cursor,
+    }
+}
+
+fn normalize_session_messages_page_limit(limit: Option<usize>) -> Result<usize, AppError> {
+    let limit = limit.unwrap_or(DEFAULT_SESSION_MESSAGES_PAGE_LIMIT);
+    if limit == 0 {
+        return Err(AppError::validation("limit must be greater than 0"));
+    }
+    if limit > MAX_SESSION_MESSAGES_PAGE_LIMIT {
+        return Err(AppError::validation(format!(
+            "limit must be less than or equal to {MAX_SESSION_MESSAGES_PAGE_LIMIT}"
+        )));
+    }
+    Ok(limit)
 }
 
 fn build_opencode_server_options(
@@ -2418,6 +2445,47 @@ impl RunsOpenCodeService {
             value_array_to_message_wrappers(messages_response.data),
             value_array_to_todo_wrappers(todos_response.data),
         ))
+    }
+
+    async fn fetch_session_message_page_with_client(
+        client: &OpencodeClient,
+        session_id: &str,
+        limit: usize,
+        before: Option<&str>,
+    ) -> Result<RunOpenCodeSessionMessagesPageDto, AppError> {
+        let before_cursor = to_nonempty_trimmed_string(before);
+        let mut request = RequestOptions::default()
+            .with_path("id", session_id.to_string())
+            .with_query("limit", serde_json::json!(limit));
+
+        if let Some(before_cursor) = before_cursor.as_ref() {
+            request = request.with_query("before", serde_json::json!(before_cursor));
+        }
+
+        let response = client
+            .session()
+            .messages(request)
+            .await
+            .map_err(|source| OpenCodeServiceError::SessionMessages {
+                session_id: session_id.to_string(),
+                source,
+            })
+            .with_context(|| {
+                format!("while fetching OpenCode paged message history for session '{session_id}'")
+            })
+            .map_err(app_error_from_anyhow)?;
+
+        let next_cursor = response
+            .headers
+            .get("x-next-cursor")
+            .and_then(|value| to_nonempty_trimmed_string(Some(value.as_str())));
+
+        Ok(RunOpenCodeSessionMessagesPageDto {
+            messages: value_array_to_message_wrappers(response.data),
+            has_more: next_cursor.is_some(),
+            next_cursor,
+            before_cursor,
+        })
     }
 
     fn normalize_initial_prompt_field(value: Option<&str>) -> String {
@@ -5444,6 +5512,80 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         Ok(value_array_to_message_wrappers(response.data))
     }
 
+    /// Additive paged transcript API retained alongside the legacy full-array
+    /// history fetch so the current run-details UI remains compatible until the
+    /// frontend model intentionally adopts paging in a later phase.
+    pub async fn get_run_opencode_session_messages_page(
+        &self,
+        run_id: &str,
+        session_id: Option<&str>,
+        limit: Option<usize>,
+        before: Option<&str>,
+    ) -> Result<RunOpenCodeSessionMessagesPageDto, AppError> {
+        let run = self.runs_service.get_run_model(run_id).await?;
+        let limit = normalize_session_messages_page_limit(limit)?;
+        let session_id = session_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or(run.opencode_session_id);
+        let before_cursor = to_nonempty_trimmed_string(before);
+        let Some(session_id) = session_id else {
+            return Ok(build_empty_session_messages_page(before_cursor));
+        };
+
+        if Self::should_use_completed_read_only_bootstrap(run.status.as_str()) {
+            let cwd = self.resolve_read_only_fetch_cwd(run.worktree_id.as_deref());
+            let persistent_handle_present = self.handles.read().await.contains_key(run_id);
+            info!(
+                target: "opencode.runtime",
+                marker = "completed_read_only_session_messages_page_ephemeral",
+                run_id = run_id,
+                session_id = session_id.as_str(),
+                run_status = run.status.as_str(),
+                persistent_handle_present = persistent_handle_present,
+                limit = limit,
+                has_before_cursor = before_cursor.is_some(),
+                "OpenCode completed/read-only paged session message fetch using ephemeral path"
+            );
+            let before_for_fetch = before_cursor.clone();
+            let result = self
+                .with_ephemeral_client(cwd, HashMap::new(), |client| {
+                    Box::pin(async move {
+                        Self::fetch_session_message_page_with_client(
+                            client,
+                            &session_id,
+                            limit,
+                            before_for_fetch.as_deref(),
+                        )
+                        .await
+                    })
+                })
+                .await;
+            self.shutdown_leftover_completed_handle_if_unused(run_id, "session_messages_page")
+                .await;
+            return result;
+        }
+
+        let (ensured, handle, _) = self.ensure_run_ready_for_operation(run_id).await?;
+        if ensured.state == "unsupported" {
+            return Ok(build_empty_session_messages_page(before_cursor));
+        }
+
+        let handle = handle.ok_or_else(|| AppError::not_found("OpenCode run handle not found"))?;
+        let _operation_guard =
+            handle.acquire_active_operation_guard("get_session_messages_page")?;
+        handle.touch_interaction("get_session_messages_page")?;
+
+        Self::fetch_session_message_page_with_client(
+            &handle.client,
+            &session_id,
+            limit,
+            before_cursor.as_deref(),
+        )
+        .await
+    }
+
     pub async fn get_run_opencode_session_todos(
         &self,
         run_id: &str,
@@ -6153,6 +6295,9 @@ mod tests {
     use std::sync::atomic::AtomicU64;
     use std::sync::{Arc, Mutex};
     use tauri::ipc::Channel;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
     use uuid::Uuid;
 
     #[test]
@@ -6175,6 +6320,63 @@ mod tests {
             payload: payload.to_string(),
             run_state: None,
         }
+    }
+
+    async fn spawn_single_response_server(response: String) -> (String, oneshot::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+
+        let (tx, rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+
+            let mut read_buf = Vec::new();
+            let mut temp = [0u8; 1024];
+
+            loop {
+                let n = socket.read(&mut temp).await.expect("read request");
+                if n == 0 {
+                    break;
+                }
+                read_buf.extend_from_slice(&temp[..n]);
+
+                if read_buf.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let headers_end = read_buf
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .expect("headers end")
+                        + 4;
+
+                    let head = String::from_utf8_lossy(&read_buf[..headers_end]);
+                    let content_length = head
+                        .lines()
+                        .find_map(|line| {
+                            let lower = line.to_ascii_lowercase();
+                            lower.strip_prefix("content-length:").map(|value| {
+                                value.trim().parse::<usize>().expect("content-length parse")
+                            })
+                        })
+                        .unwrap_or(0);
+
+                    let body_len = read_buf.len().saturating_sub(headers_end);
+                    if body_len >= content_length {
+                        break;
+                    }
+                }
+            }
+
+            let request_text = String::from_utf8_lossy(&read_buf).to_string();
+            let _ = tx.send(request_text);
+
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+            socket.shutdown().await.expect("shutdown");
+        });
+
+        (format!("http://{}", addr), rx)
     }
 
     #[test]
@@ -6976,6 +7178,158 @@ mod tests {
             .get_run_opencode_session_todos("run-1", None)
             .await;
         assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn paged_session_messages_fetches_latest_page_for_running_handle() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: application/json\r\n",
+            "X-Next-Cursor: cursor-older\r\n",
+            "Connection: close\r\n",
+            "\r\n",
+            "[",
+            r#"{"info":{"id":"msg-2","role":"assistant","sessionID":"session-1","time":{"created":2}},"parts":[]}"#,
+            ",",
+            r#"{"info":{"id":"msg-3","role":"assistant","sessionID":"session-1","time":{"created":3}},"parts":[]}"#,
+            "]"
+        );
+        let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+        insert_running_handle(
+            &opencode_service,
+            "run-1",
+            "task-1",
+            &repo_path,
+            Some(base_url),
+        )
+        .await;
+
+        let page = opencode_service
+            .get_run_opencode_session_messages_page("run-1", Some("session-1"), Some(2), None)
+            .await
+            .unwrap();
+
+        assert_eq!(page.messages.len(), 2);
+        assert!(page.has_more);
+        assert_eq!(page.next_cursor.as_deref(), Some("cursor-older"));
+        assert_eq!(page.before_cursor, None);
+        assert_eq!(page.messages[0].payload["info"]["id"], "msg-2");
+
+        let request = request_rx.await.expect("request capture");
+        assert!(request.contains("/session/session-1/message"));
+        assert!(request.contains("limit=2"));
+        assert!(!request.contains("before="));
+    }
+
+    #[tokio::test]
+    async fn paged_session_messages_fetches_older_page_before_cursor_for_running_handle() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: application/json\r\n",
+            "Connection: close\r\n",
+            "\r\n",
+            "[",
+            r#"{"info":{"id":"msg-1","role":"assistant","sessionID":"session-1","time":{"created":1}},"parts":[]}"#,
+            "]"
+        );
+        let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+        insert_running_handle(
+            &opencode_service,
+            "run-1",
+            "task-1",
+            &repo_path,
+            Some(base_url),
+        )
+        .await;
+
+        let page = opencode_service
+            .get_run_opencode_session_messages_page(
+                "run-1",
+                Some("session-1"),
+                Some(1),
+                Some("cursor-prev"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(page.messages.len(), 1);
+        assert!(!page.has_more);
+        assert_eq!(page.next_cursor, None);
+        assert_eq!(page.before_cursor.as_deref(), Some("cursor-prev"));
+        assert_eq!(page.messages[0].payload["info"]["id"], "msg-1");
+
+        let request = request_rx.await.expect("request capture");
+        assert!(request.contains("/session/session-1/message"));
+        assert!(request.contains("limit=1"));
+        assert!(request.contains("before=cursor-prev"));
+    }
+
+    #[tokio::test]
+    async fn paged_session_messages_rejects_invalid_limit_even_without_session_id() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+
+        let error = opencode_service
+            .get_run_opencode_session_messages_page("run-1", None, Some(0), None)
+            .await
+            .expect_err("invalid limit should fail");
+
+        assert!(error.to_string().contains("limit must be greater than 0"));
+    }
+
+    #[tokio::test]
+    async fn legacy_session_messages_fetch_omits_paging_query_parameters() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: application/json\r\n",
+            "Connection: close\r\n",
+            "\r\n",
+            "[",
+            r#"{"info":{"id":"msg-1","role":"assistant","sessionID":"session-1","time":{"created":1}},"parts":[]}"#,
+            "]"
+        );
+        let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+        insert_running_handle(
+            &opencode_service,
+            "run-1",
+            "task-1",
+            &repo_path,
+            Some(base_url),
+        )
+        .await;
+
+        let messages = opencode_service
+            .get_run_opencode_session_messages("run-1", Some("session-1"))
+            .await
+            .unwrap();
+
+        assert_eq!(messages.len(), 1);
+
+        let request = request_rx.await.expect("request capture");
+        assert!(request.contains("/session/session-1/message"));
+        assert!(!request.contains("limit="));
+        assert!(!request.contains("before="));
     }
 
     #[tokio::test]

@@ -277,9 +277,24 @@ export type RunOpenCodeSessionMessagesResult = {
   raw: unknown;
 };
 
+export type RunOpenCodeSessionMessagesPageResult = {
+  messages: unknown[];
+  hasMore: boolean;
+  nextCursor?: string;
+  beforeCursor?: string;
+  raw: unknown;
+};
+
 export type GetRunOpenCodeSessionMessagesParams = {
   runId: string;
   sessionId?: string;
+};
+
+export type GetRunOpenCodeSessionMessagesPageParams = {
+  runId: string;
+  sessionId?: string;
+  limit?: number;
+  before?: string;
 };
 
 export type RunOpenCodeSessionTodosResult = {
@@ -395,6 +410,7 @@ export type RunGitMergeResult = {
 };
 
 export const RUN_OPENCODE_EVENT_HISTORY_LIMIT = 500;
+export const RUN_OPENCODE_SESSION_MESSAGES_PAGE_MAX_LIMIT = 200;
 
 export const appendCappedHistory = <T>(
   current: T[],
@@ -526,6 +542,21 @@ type RunOpenCodeSnapshotResponse = {
   todos?: unknown;
   items?: unknown;
   data?: unknown;
+};
+
+type RunOpenCodeSessionMessagesPageResponse = {
+  messages?: unknown;
+  items?: unknown;
+  data?: unknown;
+  hasMore?: boolean;
+  has_more?: boolean;
+  nextCursor?: string | null;
+  next_cursor?: string | null;
+  beforeCursor?: string | null;
+  before_cursor?: string | null;
+  page?: unknown;
+  result?: unknown;
+  payload?: unknown;
 };
 
 type BootstrapRunOpenCodeResponse = {
@@ -949,6 +980,38 @@ const unwrapBootstrapRunOpenCodePayload = (
   return record;
 };
 
+const unwrapRunOpenCodeSessionMessagesPagePayload = (
+  response: unknown,
+): RunOpenCodeSessionMessagesPageResponse => {
+  if (!response || typeof response !== "object") {
+    return {};
+  }
+
+  const record = response as RunOpenCodeSessionMessagesPageResponse;
+  const wrapped = pick(
+    record.page,
+    pick(record.result, pick(record.data, record.payload)),
+  );
+
+  if (wrapped && typeof wrapped === "object" && !Array.isArray(wrapped)) {
+    const nested = wrapped as RunOpenCodeSessionMessagesPageResponse;
+    const nestedWrapped = pick(
+      nested.page,
+      pick(nested.result, pick(nested.data, nested.payload)),
+    );
+    if (
+      nestedWrapped &&
+      typeof nestedWrapped === "object" &&
+      !Array.isArray(nestedWrapped)
+    ) {
+      return nestedWrapped as RunOpenCodeSessionMessagesPageResponse;
+    }
+    return nested;
+  }
+
+  return record;
+};
+
 const toSafeCount = (value: unknown): number => {
   if (typeof value === "number" && Number.isFinite(value)) {
     return Math.max(0, Math.floor(value));
@@ -963,6 +1026,25 @@ const toOptionalTrimmedString = (value: unknown): string | undefined => {
 
   const normalized = value.trim();
   return normalized ? normalized : undefined;
+};
+
+const normalizeRunOpenCodeSessionMessagesPageLimit = (
+  value: number | undefined,
+): number | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(
+      "Run OpenCode session message page limit must be a positive integer.",
+    );
+  }
+  if (value > RUN_OPENCODE_SESSION_MESSAGES_PAGE_MAX_LIMIT) {
+    throw new Error(
+      `Run OpenCode session message page limit must be less than or equal to ${RUN_OPENCODE_SESSION_MESSAGES_PAGE_MAX_LIMIT}.`,
+    );
+  }
+  return value;
 };
 
 const toSelectionLabel = (
@@ -1437,6 +1519,25 @@ const toBootstrapRunOpenCodeResult = (
   };
 };
 
+const toRunOpenCodeSessionMessagesPageResult = (
+  response: unknown,
+): RunOpenCodeSessionMessagesPageResult => {
+  const record = unwrapRunOpenCodeSessionMessagesPagePayload(response);
+  const rawMessages = pick(record.messages, pick(record.items, record.data));
+
+  return {
+    messages: unwrapSnapshotItems(toUnknownArray(rawMessages)),
+    hasMore: pick(record.has_more, record.hasMore) ?? false,
+    nextCursor: toOptionalTrimmedString(
+      pick(record.next_cursor, record.nextCursor),
+    ),
+    beforeCursor: toOptionalTrimmedString(
+      pick(record.before_cursor, record.beforeCursor),
+    ),
+    raw: response,
+  };
+};
+
 export const createRun = async (
   taskId: string,
   defaults?: {
@@ -1695,6 +1796,8 @@ export const getBufferedRunOpenCodeEvents = async (
   return response.map((event) => toRunOpenCodeEvent(event, runId));
 };
 
+// Legacy full-session snapshot retained for the current run-details model during
+// the staged transcript paging rollout.
 export const getRunOpenCodeSessionMessages = async (
   params: string | GetRunOpenCodeSessionMessagesParams,
 ): Promise<RunOpenCodeSessionMessagesResult> => {
@@ -1730,6 +1833,24 @@ export const getRunOpenCodeSessionMessages = async (
     messages: unwrapSnapshotItems(toUnknownArray(response)),
     raw: response,
   };
+};
+
+// Additive paged transcript contract intended for later frontend adoption.
+export const getRunOpenCodeSessionMessagesPage = async (
+  params: GetRunOpenCodeSessionMessagesPageParams,
+): Promise<RunOpenCodeSessionMessagesPageResult> => {
+  const limit = normalizeRunOpenCodeSessionMessagesPageLimit(params.limit);
+  const response = await invoke<unknown>(
+    "get_run_opencode_session_messages_page",
+    {
+      runId: params.runId,
+      sessionId: params.sessionId,
+      limit,
+      before: params.before,
+    },
+  );
+
+  return toRunOpenCodeSessionMessagesPageResult(response);
 };
 
 export const getRunOpenCodeSessionTodos = async (

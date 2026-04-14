@@ -19,6 +19,7 @@ import {
   getRunSelectionOptions,
   getRunGitMergeStatus,
   getRunOpenCodeSessionMessages,
+  getRunOpenCodeSessionMessagesPage,
   getRunOpenCodeSessionTodos,
   listActiveRuns,
   listTaskRuns,
@@ -28,6 +29,7 @@ import {
   type BootstrapRunOpenCodeResult,
   type Run,
   type RunGitMergeStatus,
+  type RunOpenCodeSessionMessagesPageResult,
   type RunStatus,
 } from "./runs";
 
@@ -418,6 +420,71 @@ describe("runs contract", () => {
     );
   });
 
+  it("invokes paged session history command with limit and before cursor", async () => {
+    invokeMock.mockResolvedValue({
+      messages: [],
+      hasMore: false,
+    });
+
+    await getRunOpenCodeSessionMessagesPage({
+      runId: "run-1",
+      sessionId: "ses-2",
+      limit: 25,
+      before: "cursor-1",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      "get_run_opencode_session_messages_page",
+      {
+        runId: "run-1",
+        sessionId: "ses-2",
+        limit: 25,
+        before: "cursor-1",
+      },
+    );
+  });
+
+  it("normalizes paged session history payload", async () => {
+    invokeMock.mockResolvedValue({
+      result: {
+        messages: { items: [{ payload: { id: "msg-2" } }] },
+        has_more: true,
+        next_cursor: "cursor-older",
+        before_cursor: "cursor-current",
+      },
+    });
+
+    const result = await getRunOpenCodeSessionMessagesPage({
+      runId: "run-1",
+      limit: 50,
+    });
+
+    expect(result).toEqual({
+      messages: [{ id: "msg-2" }],
+      hasMore: true,
+      nextCursor: "cursor-older",
+      beforeCursor: "cursor-current",
+      raw: {
+        result: {
+          messages: { items: [{ payload: { id: "msg-2" } }] },
+          has_more: true,
+          next_cursor: "cursor-older",
+          before_cursor: "cursor-current",
+        },
+      },
+    } satisfies RunOpenCodeSessionMessagesPageResult);
+  });
+
+  it("rejects invalid paged session history limits before invoke", async () => {
+    await expect(
+      getRunOpenCodeSessionMessagesPage({ runId: "run-1", limit: 0 }),
+    ).rejects.toThrow(
+      "Run OpenCode session message page limit must be a positive integer.",
+    );
+
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("normalizes bootstrap snake_case wrapped payload", async () => {
     invokeMock.mockResolvedValue({
       result: {
@@ -451,6 +518,7 @@ describe("runs contract", () => {
           ts: "2026-01-01T00:00:00.000Z",
           event: "stdout",
           data: { line: "hello" },
+          runState: null,
         },
       ],
       messages: [{ role: "assistant" }],
@@ -488,6 +556,7 @@ describe("runs contract", () => {
           ts: 123,
           event: "status",
           data: { ok: true },
+          runState: null,
         },
       ],
       messages: [{ id: "msg-1" }],
