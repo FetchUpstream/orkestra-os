@@ -38,6 +38,12 @@ const RunChatAssistantMessage: Component<RunChatAssistantMessageProps> = (
     isStreaming: () => props.streaming?.text.isStreaming ?? false,
     streamRevision: () => props.streaming?.text.streamRevision ?? 0,
   });
+  const hasActiveStreamingIndicator = createMemo(
+    () =>
+      isStreamingActive() &&
+      (presentation.isStreamingActive() ||
+        props.streaming?.reasoning.isStreaming === true),
+  );
 
   return (
     <div
@@ -47,7 +53,7 @@ const RunChatAssistantMessage: Component<RunChatAssistantMessageProps> = (
       data-streaming={props.streaming?.isStreaming ? "true" : "false"}
       data-stream-revision={props.streaming?.streamRevision}
       data-stream-token={props.streaming?.streamToken}
-      data-streaming-active={isStreamingActive() ? "true" : "false"}
+      data-streaming-active={hasActiveStreamingIndicator() ? "true" : "false"}
       data-stream-animating={presentation.isAnimating() ? "true" : "false"}
       data-stream-catching-up={presentation.isCatchingUp() ? "true" : "false"}
     >

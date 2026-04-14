@@ -14,7 +14,6 @@ import {
   createEffect,
   createMemo,
   createSignal,
-  on,
   onCleanup,
   type Accessor,
 } from "solid-js";
@@ -30,12 +29,14 @@ type StreamingTextPresentationState = {
   displayedText: Accessor<string>;
   isAnimating: Accessor<boolean>;
   isCatchingUp: Accessor<boolean>;
+  isStreamingActive: Accessor<boolean>;
 };
 
 const BASE_UNITS_PER_SECOND = 54;
-const MAX_UNITS_PER_SECOND = 420;
+const MAX_UNITS_PER_SECOND = 960;
 const CATCH_UP_BACKLOG_UNITS = 72;
-const MAX_UNITS_PER_FRAME = 12;
+const HARD_SNAP_BACKLOG_UNITS = 320;
+const MAX_UNITS_PER_FRAME = 48;
 
 const getUnitsPerSecond = (backlog: number): number => {
   if (backlog <= 0) {
@@ -81,6 +82,10 @@ const useStreamingTextPresentation = (
   const [displayedText, setDisplayedText] = createSignal(options.targetText());
   const [isAnimating, setIsAnimating] = createSignal(false);
   const [isCatchingUp, setIsCatchingUp] = createSignal(false);
+  const [isStreamingActive, setIsStreamingActive] = createSignal(
+    options.isStreaming() && options.targetText().length === 0,
+  );
+  let previousMessageId = options.messageId();
 
   let frameId: number | undefined;
   let lastTimestamp = 0;
@@ -136,14 +141,23 @@ const useStreamingTextPresentation = (
       lastTimestamp = timestamp;
 
       const backlog = total - shown;
+      if (backlog >= HARD_SNAP_BACKLOG_UNITS) {
+        syncToTarget();
+        return;
+      }
+
       const unitsPerSecond = getUnitsPerSecond(backlog);
+      const estimatedFrameUnits = Math.max(
+        1,
+        Math.round((unitsPerSecond * deltaMs) / 1_000),
+      );
+      const acceleratedFrameUnits =
+        backlog >= CATCH_UP_BACKLOG_UNITS
+          ? Math.max(estimatedFrameUnits, Math.ceil(backlog / 8))
+          : estimatedFrameUnits;
       const nextCount = Math.min(
         total,
-        shown +
-          Math.min(
-            MAX_UNITS_PER_FRAME,
-            Math.max(1, Math.round((unitsPerSecond * deltaMs) / 1_000)),
-          ),
+        shown + Math.min(MAX_UNITS_PER_FRAME, acceleratedFrameUnits),
       );
       const remaining = total - nextCount;
 
@@ -162,32 +176,50 @@ const useStreamingTextPresentation = (
     });
   };
 
-  createEffect(
-    on(options.messageId, () => {
-      syncToTarget();
-    }),
-  );
+  createEffect(() => {
+    const messageId = options.messageId();
+    if (messageId === previousMessageId) {
+      return;
+    }
+
+    previousMessageId = messageId;
+    syncToTarget();
+    setIsStreamingActive(
+      options.isStreaming() && options.targetText().length === 0,
+    );
+  });
 
   createEffect(() => {
-    options.streamRevision();
-
     const targetText = options.targetText();
     const streaming = options.isStreaming();
     const total = targetUnitCount();
     const shown = Math.min(displayedUnitCount(), total);
+    options.streamRevision();
 
     if (!streaming) {
       if (displayedText() !== targetText) {
         syncToTarget();
-        return;
       }
 
+      setIsStreamingActive(false);
       stopAnimation();
       return;
     }
 
     if (!targetText.startsWith(displayedText())) {
       syncToTarget();
+      setIsStreamingActive(targetText.length === 0);
+      return;
+    }
+
+    const nextStreamingActive =
+      targetText.length === 0 || displayedText() !== targetText;
+    if (nextStreamingActive !== isStreamingActive()) {
+      setIsStreamingActive(nextStreamingActive);
+    }
+
+    if (!nextStreamingActive) {
+      stopAnimation();
       return;
     }
 
@@ -210,6 +242,7 @@ const useStreamingTextPresentation = (
     displayedText,
     isAnimating,
     isCatchingUp,
+    isStreamingActive,
   };
 };
 
