@@ -22,6 +22,7 @@ import {
   type UiStreamChunkNode,
   type UiTodo,
 } from "./agentTypes";
+import { normalizeAgentSessionStatus } from "./agentSessionStatus";
 import { appendCappedHistory } from "../../../app/lib/runs";
 
 type HydrateInput = {
@@ -1057,17 +1058,13 @@ export const reduceOpenCodeEvent = (
 
     case "session.status": {
       const sessionId = asString(properties.sessionID ?? properties.sessionId);
-      const status = asString(properties.status);
+      const status = normalizeAgentSessionStatus(properties.status);
       if (!sessionId || !status) {
         return nextState;
       }
 
       const sessionResult = matchOrAdoptSession(nextState, sessionId);
       if (!sessionResult.canApply) {
-        return nextState;
-      }
-
-      if (status !== "idle" && status !== "active" && status !== "error") {
         return nextState;
       }
 

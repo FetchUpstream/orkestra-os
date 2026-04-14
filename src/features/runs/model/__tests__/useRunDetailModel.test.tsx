@@ -1009,6 +1009,10 @@ describe("useRunDetailModel startup ownership", () => {
       data: { reason: "missed_events" },
     });
 
+    await waitFor(() => {
+      expect(modelRef!.agent.connectionStatus()).toBe("warming");
+    });
+
     await waitFor(
       () => {
         expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(2);
@@ -1022,7 +1026,70 @@ describe("useRunDetailModel startup ownership", () => {
     );
   });
 
-  it("tracks OpenCode connection status across disconnect and reconnect events", async () => {
+  it("starts warming, then seeds the indicator from bootstrap streamConnected", async () => {
+    const bootstrapDeferred = deferred<any>();
+    bootstrapRunOpenCodeMock.mockReturnValueOnce(bootstrapDeferred.promise);
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    expect(modelRef).toBeDefined();
+    expect(modelRef!.agent.connectionStatus()).toBe("warming");
+
+    bootstrapDeferred.resolve({
+      state: "running",
+      chatMode: "interactive",
+      bufferedEvents: [],
+      messages: [],
+      todos: [],
+      streamConnected: true,
+    });
+
+    await waitFor(() => {
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+      expect(modelRef!.agent.connectionStatus()).toBe("idle");
+    });
+  });
+
+  it("does not treat buffered message history as a live connection during bootstrap", async () => {
+    bootstrapRunOpenCodeMock.mockResolvedValueOnce({
+      state: "running",
+      chatMode: "interactive",
+      bufferedEvents: [
+        {
+          runId: "run-1",
+          ts: "2026-01-01T00:00:00.000Z",
+          event: "message.part.delta",
+          data: {
+            sessionID: "session-1",
+            messageID: "msg-1",
+            partID: "part-1",
+            field: "text",
+            delta: "Hello",
+          },
+        },
+      ],
+      messages: [],
+      todos: [],
+      streamConnected: false,
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+      expect(modelRef!.agent.connectionStatus()).toBe("disconnected");
+    });
+  });
+
+  it("tracks OpenCode connection status across idle, active, warming, and disconnected states", async () => {
     let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
     render(() => {
       modelRef = useRunDetailModel();
@@ -1032,7 +1099,7 @@ describe("useRunDetailModel startup ownership", () => {
     await waitFor(() => {
       expect(modelRef).toBeDefined();
       expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
-      expect(modelRef!.agent.connectionStatus()).toBe("warming");
+      expect(modelRef!.agent.connectionStatus()).toBe("idle");
     });
 
     const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
@@ -1049,23 +1116,51 @@ describe("useRunDetailModel startup ownership", () => {
     subscribeCall?.onOutputChannel?.({
       runId: "run-1",
       ts: "2026-01-01T00:00:00.000Z",
-      event: "message",
-      data: { type: "server.disconnected", reason: "socket_closed" },
+      event: "message.part.delta",
+      data: {
+        sessionID: "session-1",
+        messageID: "msg-1",
+        partID: "part-1",
+        field: "text",
+        delta: "Hello",
+      },
     });
 
     await waitFor(() => {
-      expect(modelRef!.agent.connectionStatus()).toBe("disconnected");
+      expect(modelRef!.agent.connectionStatus()).toBe("connected");
     });
 
     subscribeCall?.onOutputChannel?.({
       runId: "run-1",
       ts: "2026-01-01T00:00:01.000Z",
-      event: "message",
-      data: { type: "server.connected", reason: "socket_recovered" },
+      event: "session.idle",
+      data: { sessionID: "session-1" },
     });
 
     await waitFor(() => {
-      expect(modelRef!.agent.connectionStatus()).toBe("connected");
+      expect(modelRef!.agent.connectionStatus()).toBe("idle");
+    });
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:02.000Z",
+      event: "message",
+      data: { type: "stream.reconnecting", reason: "socket_retry" },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.connectionStatus()).toBe("warming");
+    });
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:03.000Z",
+      event: "message",
+      data: { type: "stream.terminated", reason: "socket_closed" },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.connectionStatus()).toBe("disconnected");
     });
   });
 

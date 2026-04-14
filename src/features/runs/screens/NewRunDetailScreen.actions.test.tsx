@@ -114,7 +114,7 @@ const createModelStub = (options?: {
   isSubmittingPrompt?: boolean;
   agent?: {
     chatMode?: "interactive" | "read_only" | "unavailable";
-    connectionStatus?: "warming" | "connected" | "disconnected";
+    connectionStatus?: "warming" | "connected" | "idle" | "disconnected";
     state?:
       | "idle"
       | "accepted"

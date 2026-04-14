@@ -63,6 +63,7 @@ import {
   hydrateAgentStore,
   reduceOpenCodeEvent,
 } from "./agentReducer";
+import { normalizeAgentSessionStatus } from "./agentSessionStatus";
 import type {
   AgentQuestionState,
   AgentPermissionState,
@@ -114,7 +115,17 @@ export type RunChatSessionHealth =
 export type RunOpenCodeConnectionStatus =
   | "warming"
   | "connected"
+  | "idle"
   | "disconnected";
+
+type RunOpenCodeTransportState = "warming" | "connected" | "disconnected";
+
+type RunOpenCodeActivityState = "active" | "idle" | "unknown";
+
+type RunOpenCodeIndicatorState = {
+  transportState: RunOpenCodeTransportState;
+  activityState: RunOpenCodeActivityState;
+};
 
 export type PendingRunPrompt = {
   id: string;
@@ -372,8 +383,20 @@ export const useRunDetailModel = () => {
     createSignal<PendingRunPrompt | null>(null);
   const [chatSessionHealth, setChatSessionHealth] =
     createSignal<RunChatSessionHealth>("idle");
-  const [agentConnectionStatus, setAgentConnectionStatus] =
-    createSignal<RunOpenCodeConnectionStatus>("warming");
+  const [agentTransportState, setAgentTransportState] =
+    createSignal<RunOpenCodeTransportState>("warming");
+  const [agentActivityState, setAgentActivityState] =
+    createSignal<RunOpenCodeActivityState>("unknown");
+  const agentConnectionStatus = createMemo<RunOpenCodeConnectionStatus>(() => {
+    const transportState = agentTransportState();
+    if (transportState === "warming") {
+      return "warming";
+    }
+    if (transportState === "disconnected") {
+      return "disconnected";
+    }
+    return agentActivityState() === "idle" ? "idle" : "connected";
+  });
   const [runAgentOptions, setRunAgentOptions] = createSignal<
     RunSelectionOption[]
   >([]);
@@ -1557,37 +1580,168 @@ export const useRunDetailModel = () => {
     };
   };
 
-  const resolveAgentConnectionStatus = (
-    eventType: string,
-  ): RunOpenCodeConnectionStatus | null => {
-    switch (eventType) {
-      case "server.connected":
-      case "stream.connected":
-      case "stream.reconnected":
-        return "connected";
-      case "server.disconnected":
-      case "stream.disconnected":
-      case "stream.reconnecting":
-      case "stream.terminated":
-        return "disconnected";
-      default:
-        return null;
+  const AGENT_ACTIVITY_EVIDENCE_EVENT_TYPES = new Set<string>([
+    "message.updated",
+    "message.removed",
+    "message.part.updated",
+    "message.part.delta",
+    "message.part.removed",
+    "permission.asked",
+    "permission.replied",
+    "permission.rejected",
+    "question.asked",
+    "question.replied",
+    "question.rejected",
+    "session.diff",
+    "session.updated",
+    "todo.updated",
+  ]);
+
+  const seedHydratedAgentStore = (
+    state: AgentStore,
+    streamConnected: boolean,
+  ): AgentStore => {
+    if (!streamConnected) {
+      return state;
     }
+
+    return {
+      ...state,
+      streamConnected: true,
+      lastSyncAt: state.lastSyncAt ?? Date.now(),
+    };
   };
 
-  const resolveLatestAgentConnectionStatus = (
-    events: RunOpenCodeEvent[],
-  ): RunOpenCodeConnectionStatus | null => {
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      const connectionStatus = resolveAgentConnectionStatus(
-        toOpenCodeBusEvent(events[index]!).type,
-      );
-      if (connectionStatus) {
-        return connectionStatus;
-      }
+  const resolveAgentTransportStateFromBootstrap = (
+    result: BootstrapRunOpenCodeResult,
+  ): RunOpenCodeTransportState => {
+    if (result.state === "error") {
+      return "disconnected";
     }
 
-    return null;
+    const readinessPhase = normalizeReadinessPhase(result);
+    if (
+      readinessPhase === "warming_backend" ||
+      readinessPhase === "creating_session" ||
+      readinessPhase === "reconnecting" ||
+      result.state === "starting" ||
+      result.state === "accepted"
+    ) {
+      return "warming";
+    }
+
+    if (result.streamConnected) {
+      return "connected";
+    }
+
+    return "disconnected";
+  };
+
+  const isAgentActivityEvidenceEvent = (eventType: string): boolean => {
+    return AGENT_ACTIVITY_EVIDENCE_EVENT_TYPES.has(eventType);
+  };
+
+  const isAgentTransportConnectedEvidenceEvent = (
+    eventType: string,
+  ): boolean => {
+    return (
+      eventType === "session.idle" ||
+      eventType === "session.status" ||
+      isAgentActivityEvidenceEvent(eventType)
+    );
+  };
+
+  const reduceAgentIndicatorState = (
+    current: RunOpenCodeIndicatorState,
+    event: OpenCodeBusEvent,
+    options: {
+      allowActivityTransportProof?: boolean;
+    } = {},
+  ): RunOpenCodeIndicatorState => {
+    const allowActivityTransportProof =
+      options.allowActivityTransportProof ?? true;
+    let transportState = current.transportState;
+    let activityState = current.activityState;
+    const sessionStatus =
+      event.type === "session.status" && isRecord(event.properties)
+        ? normalizeAgentSessionStatus(event.properties.status)
+        : null;
+
+    switch (event.type) {
+      case "server.disconnected":
+      case "stream.disconnected":
+      case "stream.terminated":
+      case "session.error":
+        transportState = "disconnected";
+        activityState = "unknown";
+        break;
+      case "stream.reconnecting":
+      case "stream.resync_needed":
+        transportState = "warming";
+        activityState = "unknown";
+        break;
+      default:
+        if (sessionStatus === "error") {
+          transportState = "disconnected";
+          activityState = "unknown";
+          break;
+        }
+
+        if (
+          event.type === "server.connected" ||
+          event.type === "stream.connected" ||
+          event.type === "stream.reconnected" ||
+          (allowActivityTransportProof &&
+            isAgentTransportConnectedEvidenceEvent(event.type))
+        ) {
+          transportState = "connected";
+        }
+
+        if (event.type === "session.idle" || sessionStatus === "idle") {
+          activityState = "idle";
+          break;
+        }
+
+        if (
+          sessionStatus === "active" ||
+          isAgentActivityEvidenceEvent(event.type)
+        ) {
+          activityState = "active";
+        }
+        break;
+    }
+
+    if (
+      transportState === current.transportState &&
+      activityState === current.activityState
+    ) {
+      return current;
+    }
+
+    return {
+      transportState,
+      activityState,
+    };
+  };
+
+  const resolveAgentIndicatorStateFromBootstrap = (
+    result: BootstrapRunOpenCodeResult,
+    events: RunOpenCodeEvent[],
+  ): RunOpenCodeIndicatorState => {
+    let indicatorState: RunOpenCodeIndicatorState = {
+      transportState: resolveAgentTransportStateFromBootstrap(result),
+      activityState: result.streamConnected ? "idle" : "unknown",
+    };
+
+    for (const event of events) {
+      indicatorState = reduceAgentIndicatorState(
+        indicatorState,
+        toOpenCodeBusEvent(event),
+        { allowActivityTransportProof: false },
+      );
+    }
+
+    return indicatorState;
   };
 
   const extractSessionIdFromMessages = (messages: unknown[]): string | null => {
@@ -1707,12 +1861,16 @@ export const useRunDetailModel = () => {
 
     if (chatMode === "unavailable") {
       setAgentState("unsupported");
+      setAgentTransportState("disconnected");
+      setAgentActivityState("unknown");
       setAgentError("");
       return;
     }
 
     if (bootstrap.state === "error") {
       setAgentState("error");
+      setAgentTransportState("disconnected");
+      setAgentActivityState("unknown");
       setAgentError(
         bootstrap.reason?.trim() || "Failed to initialize agent stream.",
       );
@@ -1724,6 +1882,10 @@ export const useRunDetailModel = () => {
     setAgentReadinessPhase(normalizeReadinessPhase(bootstrap));
     setAgentState(bootstrap.state);
     setAgentError("");
+    const indicatorState = resolveAgentIndicatorStateFromBootstrap(
+      bootstrap,
+      replaySource,
+    );
 
     const sessionId =
       bootstrap.sessionId?.trim() ||
@@ -1740,6 +1902,10 @@ export const useRunDetailModel = () => {
           pendingQuestions ?? Object.values(current.pendingQuestionsById),
         todos: bootstrap.todos,
       });
+      const seededHydrated = seedHydratedAgentStore(
+        hydrated,
+        bootstrap.streamConnected,
+      );
 
       const replayEvents: OpenCodeBusEvent[] =
         replaySource.length > 0
@@ -1748,14 +1914,10 @@ export const useRunDetailModel = () => {
 
       return replayEvents.reduce((nextState, item) => {
         return reduceOpenCodeEvent(nextState, item);
-      }, hydrated);
+      }, seededHydrated);
     });
-
-    const hydratedConnectionStatus =
-      resolveLatestAgentConnectionStatus(replaySource);
-    if (hydratedConnectionStatus) {
-      setAgentConnectionStatus(hydratedConnectionStatus);
-    }
+    setAgentTransportState(indicatorState.transportState);
+    setAgentActivityState(indicatorState.activityState);
   };
 
   const clearPendingAgentSnapshotHydrate = (): void => {
@@ -2563,6 +2725,8 @@ export const useRunDetailModel = () => {
     const normalizedRunId = runId.trim();
     if (!normalizedRunId) {
       setAgentState("error");
+      setAgentTransportState("disconnected");
+      setAgentActivityState("unknown");
       setAgentError("Missing run.");
       return;
     }
@@ -2570,6 +2734,8 @@ export const useRunDetailModel = () => {
     const requestVersion = activeAgentRequestVersion;
     setAgentState("starting");
     setAgentReadinessPhase("warming_backend");
+    setAgentTransportState("warming");
+    setAgentActivityState("unknown");
     setAgentError("");
 
     try {
@@ -2592,6 +2758,8 @@ export const useRunDetailModel = () => {
       setAgentReadinessPhase(normalizeReadinessPhase(result));
 
       if (nextState === "error") {
+        setAgentTransportState("disconnected");
+        setAgentActivityState("unknown");
         setAgentError(
           result.reason?.trim() || "Failed to initialize agent stream.",
         );
@@ -2601,6 +2769,8 @@ export const useRunDetailModel = () => {
       if (nextChatMode === "unavailable") {
         setAgentError("");
         setAgentState("unsupported");
+        setAgentTransportState("disconnected");
+        setAgentActivityState("unknown");
         return;
       }
 
@@ -2613,6 +2783,10 @@ export const useRunDetailModel = () => {
               .catch(() => result.bufferedEvents)
           : result.bufferedEvents;
       setAgentEvents((current) => appendCappedHistory(current, replaySource));
+      const indicatorState = resolveAgentIndicatorStateFromBootstrap(
+        result,
+        replaySource,
+      );
 
       const sessionId =
         result.sessionId?.trim() ||
@@ -2629,6 +2803,10 @@ export const useRunDetailModel = () => {
             pendingQuestions ?? Object.values(current.pendingQuestionsById),
           todos: result.todos,
         });
+        const seededHydrated = seedHydratedAgentStore(
+          hydrated,
+          result.streamConnected,
+        );
 
         const replayEvents: OpenCodeBusEvent[] =
           replaySource.length > 0
@@ -2637,8 +2815,10 @@ export const useRunDetailModel = () => {
 
         return replayEvents.reduce((nextStateValue, item) => {
           return reduceOpenCodeEvent(nextStateValue, item);
-        }, hydrated);
+        }, seededHydrated);
       });
+      setAgentTransportState(indicatorState.transportState);
+      setAgentActivityState(indicatorState.activityState);
 
       if (
         requestVersion !== activeAgentRequestVersion ||
@@ -2660,12 +2840,16 @@ export const useRunDetailModel = () => {
         setAgentChatMode("unavailable");
         setAgentState("unsupported");
         setAgentReadinessPhase(null);
+        setAgentTransportState("disconnected");
+        setAgentActivityState("unknown");
         setAgentError("");
         return;
       }
 
       setAgentState("error");
       setAgentReadinessPhase("warming_backend");
+      setAgentTransportState("disconnected");
+      setAgentActivityState("unknown");
       const backendError = getErrorMessage(ensureError);
       setAgentError(backendError || "Failed to initialize agent stream.");
     }
@@ -2713,21 +2897,24 @@ export const useRunDetailModel = () => {
     let shouldHydrateSnapshot = false;
     let shouldResubscribe = false;
     let shouldRefreshRunForSessionIdle = false;
-    let nextConnectionStatus: RunOpenCodeConnectionStatus | null = null;
+    let nextIndicatorState: RunOpenCodeIndicatorState = {
+      transportState: agentTransportState(),
+      activityState: agentActivityState(),
+    };
 
     setAgentEvents((current) => appendCappedHistory(current, batch));
     setAgentStore((current) => {
       return batch.reduce((nextState, event) => {
         const busEvent = toOpenCodeBusEvent(event);
+        nextIndicatorState = reduceAgentIndicatorState(
+          nextIndicatorState,
+          busEvent,
+        );
         if (
           busEvent.type === "server.connected" ||
           busEvent.type === "stream.resync_needed"
         ) {
           shouldHydrateSnapshot = true;
-        }
-        const connectionStatus = resolveAgentConnectionStatus(busEvent.type);
-        if (connectionStatus) {
-          nextConnectionStatus = connectionStatus;
         }
         if (busEvent.type === "stream.resync_needed") {
           shouldResubscribe = true;
@@ -2748,10 +2935,8 @@ export const useRunDetailModel = () => {
         return reduceOpenCodeEvent(nextState, busEvent);
       }, current);
     });
-
-    if (nextConnectionStatus) {
-      setAgentConnectionStatus(nextConnectionStatus);
-    }
+    setAgentTransportState(nextIndicatorState.transportState);
+    setAgentActivityState(nextIndicatorState.activityState);
 
     if (shouldRefreshRunForSessionIdle) {
       void refreshRunDetails(runId);
@@ -2948,6 +3133,8 @@ export const useRunDetailModel = () => {
       }
 
       setAgentState("error");
+      setAgentTransportState("disconnected");
+      setAgentActivityState("unknown");
       setAgentError("Failed to subscribe to agent events.");
     }
   };
@@ -2965,6 +3152,8 @@ export const useRunDetailModel = () => {
     setIsSubmittingPrompt(false);
     setSubmitError("");
     setChatSessionHealth("reconnecting");
+    setAgentTransportState("warming");
+    setAgentActivityState("unknown");
     unsubscribeAgentEvents(runId);
     isAgentUiSubscribed = true;
 
@@ -3612,7 +3801,8 @@ export const useRunDetailModel = () => {
     clearPendingAgentSnapshotHydrate();
     setAgentEvents([]);
     setAgentStore(createEmptyAgentStore(null));
-    setAgentConnectionStatus("warming");
+    setAgentTransportState("warming");
+    setAgentActivityState("unknown");
     setAgentError("");
     setAgentReadinessPhase(null);
     setAgentChatMode("unavailable");
