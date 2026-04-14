@@ -103,6 +103,7 @@ const installRafController = () => {
 };
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 

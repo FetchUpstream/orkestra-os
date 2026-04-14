@@ -610,6 +610,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejected_status_is_terminal_and_blocks_transitions() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "rejected", "busy_coding").await;
+
+        assert!(RunStateService::is_terminal_status("rejected"));
+
+        let event = service
+            .handle_waiting_for_input("run-1", "test_transition")
+            .await
+            .unwrap();
+
+        assert!(event.is_none());
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = ?")
+                .bind("run-1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), Some("busy_coding"));
+    }
+
+    #[tokio::test]
     async fn transition_to_state_updates_non_terminal_runs() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");

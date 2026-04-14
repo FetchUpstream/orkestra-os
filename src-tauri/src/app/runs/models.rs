@@ -49,8 +49,6 @@ pub struct NewRun {
     pub id: String,
     pub task_id: String,
     pub project_id: String,
-    pub run_number: i64,
-    pub display_key: String,
     pub target_repo_id: Option<String>,
     pub status: String,
     pub run_state: Option<String>,

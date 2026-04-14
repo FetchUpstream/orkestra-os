@@ -5362,7 +5362,25 @@ textarea::placeholder {
     .run-chat-assistant-message__content
     > :is(p, h1, h2, h3, h4, h5, h6, blockquote):last-child::after,
   .run-chat-assistant-message[data-streaming-active="true"]
+    .run-chat-assistant-message__reasoning
+    .run-chat-markdown
+    > :is(p, h1, h2, h3, h4, h5, h6, blockquote):last-child::after,
+  .run-chat-assistant-message[data-streaming-active="true"]
+    .run-chat-assistant-message__reasoning-inline
+    .run-chat-markdown
+    > :is(p, h1, h2, h3, h4, h5, h6, blockquote):last-child::after,
+  .run-chat-assistant-message[data-streaming-active="true"]
     .run-chat-assistant-message__content
+    > :is(ul, ol):last-child
+    > li:last-child::after,
+  .run-chat-assistant-message[data-streaming-active="true"]
+    .run-chat-assistant-message__reasoning
+    .run-chat-markdown
+    > :is(ul, ol):last-child
+    > li:last-child::after,
+  .run-chat-assistant-message[data-streaming-active="true"]
+    .run-chat-assistant-message__reasoning-inline
+    .run-chat-markdown
     > :is(ul, ol):last-child
     > li:last-child::after {
     animation: none;

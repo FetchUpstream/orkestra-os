@@ -403,6 +403,7 @@ export const useRunDetailModel = () => {
   const [isGitRebasePending, setIsGitRebasePending] = createSignal(false);
   const [isGitMergePending, setIsGitMergePending] = createSignal(false);
   const [isMergeWarningOpen, setIsMergeWarningOpen] = createSignal(false);
+  const [mergeWarningRunId, setMergeWarningRunId] = createSignal("");
   const [gitActionError, setGitActionError] = createSignal("");
   const [gitLastActionMessage, setGitLastActionMessage] = createSignal("");
   const [postMergeCompletionMessage, setPostMergeCompletionMessage] =
@@ -2287,13 +2288,28 @@ export const useRunDetailModel = () => {
   const requestMergeWorktreeIntoSource = async (): Promise<void> => {
     const runValue = run();
     if (runValue) {
-      const taskRuns = await listTaskRuns(runValue.taskId);
+      const capturedRunId = runValue.id;
+      let taskRuns;
+      try {
+        taskRuns = await listTaskRuns(runValue.taskId);
+      } catch (error) {
+        if (params.runId === capturedRunId) {
+          setGitActionError(
+            getErrorMessage(error) || "Failed to verify task runs.",
+          );
+        }
+        return;
+      }
+      if (params.runId !== capturedRunId) {
+        return;
+      }
       const hasActiveSiblings = taskRuns.some(
         (taskRun) =>
           taskRun.id !== runValue.id &&
           ACTIVE_SIBLING_RUN_STATUSES.has(taskRun.status),
       );
       if (hasActiveSiblings) {
+        setMergeWarningRunId(capturedRunId);
         setIsMergeWarningOpen(true);
         return;
       }
@@ -2305,12 +2321,24 @@ export const useRunDetailModel = () => {
   const cancelMergeWorktreeIntoSourceWarning = () => {
     if (isGitMergePending()) return;
     setIsMergeWarningOpen(false);
+    setMergeWarningRunId("");
   };
 
   const confirmMergeWorktreeIntoSourceWarning = async (): Promise<void> => {
+    const capturedRunId = mergeWarningRunId();
     setIsMergeWarningOpen(false);
+    setMergeWarningRunId("");
+    if (!capturedRunId || params.runId !== capturedRunId) {
+      return;
+    }
     await mergeWorktreeIntoSource();
   };
+
+  createEffect(() => {
+    params.runId;
+    setIsMergeWarningOpen(false);
+    setMergeWarningRunId("");
+  });
 
   createEffect(() => {
     const runId = params.runId?.trim() ?? "";

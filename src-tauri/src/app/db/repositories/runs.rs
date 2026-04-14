@@ -57,6 +57,14 @@ pub struct RunDeleteResult {
     pub task_status_reconciled: Option<RunDeleteTaskStatusReconciliation>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunStatusChangeTarget {
+    pub run_id: String,
+    pub task_id: String,
+    pub project_id: String,
+    pub previous_status: String,
+}
+
 impl RunsRepository {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -91,18 +99,6 @@ impl RunsRepository {
             repository_path: row.get("repository_path"),
             branch_title: row.get("branch_title"),
         }))
-    }
-
-    pub async fn get_next_task_run_number(&self, task_id: &str) -> Result<i64, AppError> {
-        let next_run_number = sqlx::query_scalar::<_, i64>(
-            "SELECT COALESCE(MAX(run_number), 0) + 1 FROM runs WHERE task_id = ?",
-        )
-        .bind(task_id)
-        .fetch_one(&self.pool)
-        .await
-        .runs_db("loading next task run number")?;
-
-        Ok(next_run_number)
     }
 
     pub async fn get_run_initial_prompt_context(
@@ -147,9 +143,18 @@ impl RunsRepository {
         Ok(row.map(|row| row.get("repository_path")))
     }
 
-    pub async fn create_run(&self, input: NewRun) -> Result<Run, AppError> {
+    pub async fn create_run_with_generated_identifiers(
+        &self,
+        input: &NewRun,
+        task_display_key: &str,
+    ) -> Result<Run, AppError> {
         sqlx::query(
-            "INSERT INTO runs (
+            "WITH next_identifier AS (
+                SELECT COALESCE(MAX(run_number), 0) + 1 AS run_number
+                FROM runs
+                WHERE task_id = ?
+             )
+             INSERT INTO runs (
                 id,
                 task_id,
                 project_id,
@@ -165,13 +170,35 @@ impl RunsRepository {
                 provider_id,
                 model_id,
                 source_branch
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             )
+             SELECT
+                ?,
+                ?,
+                ?,
+                next_identifier.run_number,
+                CASE
+                    WHEN TRIM(?) != '' THEN TRIM(?) || '-R' || next_identifier.run_number
+                    ELSE 'T' || ? || '-R' || next_identifier.run_number
+                END,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?
+             FROM next_identifier",
         )
+        .bind(&input.task_id)
         .bind(&input.id)
         .bind(&input.task_id)
         .bind(&input.project_id)
-        .bind(input.run_number)
-        .bind(&input.display_key)
+        .bind(task_display_key)
+        .bind(task_display_key)
+        .bind(&input.task_id)
         .bind(&input.target_repo_id)
         .bind(&input.status)
         .bind(&input.run_state)
@@ -184,7 +211,7 @@ impl RunsRepository {
         .bind(&input.source_branch)
         .execute(&self.pool)
         .await
-        .runs_db("creating run")?;
+        .runs_db("creating run with generated identifiers")?;
 
         self.get_run(&input.id).await?.ok_or_else(|| {
             RunsRepositoryError::RunMissingAfterCreate {
@@ -525,7 +552,7 @@ impl RunsRepository {
                    OR (run_state IS NOT NULL AND ? IS NULL)
                    OR run_state != ?
                  )
-                AND status NOT IN (?, ?, ?)",
+                AND status NOT IN (?, ?, ?, ?)",
         )
         .bind(run_state)
         .bind(run_id)
@@ -537,6 +564,7 @@ impl RunsRepository {
         .bind(TERMINAL_RUN_STATUSES[0])
         .bind(TERMINAL_RUN_STATUSES[1])
         .bind(TERMINAL_RUN_STATUSES[2])
+        .bind(TERMINAL_RUN_STATUSES[3])
         .execute(&self.pool)
         .await
         .runs_db("updating run state")?;
@@ -824,12 +852,63 @@ impl RunsRepository {
         &self,
         run_id: &str,
         finished_at: &str,
-    ) -> Result<bool, AppError> {
+    ) -> Result<Option<(RunStatusChangeTarget, Vec<RunStatusChangeTarget>)>, AppError> {
         let mut tx = self
             .pool
             .begin()
             .await
             .runs_db("starting merge completion transaction")?;
+
+        let merged_run_query = format!(
+            "SELECT id, task_id, project_id, status
+             FROM runs
+             WHERE id = ?
+               AND status IN ({})",
+            ACTIVE_RUN_STATUSES_SQL.as_str(),
+        );
+
+        let merged_run = sqlx::query(&merged_run_query)
+            .bind(run_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .runs_db("loading merged run transition target")?
+            .map(|row| RunStatusChangeTarget {
+                run_id: row.get("id"),
+                task_id: row.get("task_id"),
+                project_id: row.get("project_id"),
+                previous_status: row.get("status"),
+            });
+
+        let Some(merged_run) = merged_run else {
+            tx.commit()
+                .await
+                .runs_db("committing merge completion transaction")?;
+            return Ok(None);
+        };
+
+        let sibling_query = format!(
+            "SELECT id, task_id, project_id, status
+             FROM runs
+             WHERE task_id = ?
+               AND id != ?
+               AND status IN ({})",
+            ACTIVE_RUN_STATUSES_SQL.as_str(),
+        );
+
+        let rejected_siblings = sqlx::query(&sibling_query)
+            .bind(&merged_run.task_id)
+            .bind(run_id)
+            .fetch_all(&mut *tx)
+            .await
+            .runs_db("loading sibling run transition targets")?
+            .into_iter()
+            .map(|row| RunStatusChangeTarget {
+                run_id: row.get("id"),
+                task_id: row.get("task_id"),
+                project_id: row.get("project_id"),
+                previous_status: row.get("status"),
+            })
+            .collect::<Vec<_>>();
 
         let run_update_query = format!(
             "UPDATE runs
@@ -852,7 +931,7 @@ impl RunsRepository {
             tx.commit()
                 .await
                 .runs_db("committing merge completion transaction")?;
-            return Ok(false);
+            return Ok(None);
         }
 
         let sibling_update_query = format!(
@@ -891,14 +970,44 @@ impl RunsRepository {
             .await
             .runs_db("committing merge completion transaction")?;
 
-        Ok(run_update.rows_affected() > 0 || task_update.rows_affected() > 0)
+        let _ = task_update;
+
+        Ok(Some((merged_run, rejected_siblings)))
     }
 
     pub async fn cancel_task_active_runs(
         &self,
         task_id: &str,
         finished_at: &str,
-    ) -> Result<u64, AppError> {
+    ) -> Result<Vec<RunStatusChangeTarget>, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .runs_db("starting task cancel transaction")?;
+
+        let active_runs_query = format!(
+            "SELECT id, task_id, project_id, status
+             FROM runs
+             WHERE task_id = ?
+               AND status IN ({})",
+            ACTIVE_RUN_STATUSES_SQL.as_str(),
+        );
+
+        let active_runs = sqlx::query(&active_runs_query)
+            .bind(task_id)
+            .fetch_all(&mut *tx)
+            .await
+            .runs_db("loading task active runs")?
+            .into_iter()
+            .map(|row| RunStatusChangeTarget {
+                run_id: row.get("id"),
+                task_id: row.get("task_id"),
+                project_id: row.get("project_id"),
+                previous_status: row.get("status"),
+            })
+            .collect::<Vec<_>>();
+
         let query = format!(
             "UPDATE runs
              SET status = 'cancelled',
@@ -912,11 +1021,19 @@ impl RunsRepository {
         let result = sqlx::query(&query)
             .bind(finished_at)
             .bind(task_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .runs_db("cancelling task active runs")?;
 
-        Ok(result.rows_affected())
+        tx.commit()
+            .await
+            .runs_db("committing task cancel transaction")?;
+
+        if result.rows_affected() == 0 {
+            return Ok(Vec::new());
+        }
+
+        Ok(active_runs)
     }
 
     pub async fn transition_task_doing_to_review_on_session_idle(
@@ -1485,6 +1602,43 @@ mod tests {
         .bind("project-1")
         .bind("repo-1")
         .bind("complete")
+        .bind("busy_coding")
+        .bind("user")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let changed = repository
+            .update_run_state("run-1", Some("busy_coding"), Some("waiting_for_input"))
+            .await
+            .unwrap();
+
+        assert!(!changed);
+
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = 'run-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), Some("busy_coding"));
+    }
+
+    #[tokio::test]
+    async fn update_run_state_skips_when_run_status_is_rejected() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, run_state, triggered_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-1")
+        .bind("task-1")
+        .bind("project-1")
+        .bind("repo-1")
+        .bind("rejected")
         .bind("busy_coding")
         .bind("user")
         .bind("2024-01-01T00:00:00Z")

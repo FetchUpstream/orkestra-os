@@ -314,7 +314,7 @@ const buildStreamingTextPart = (
       text: incomingText,
       streaming: explicitStreaming,
       streamBaseText: explicitStreaming ? incomingText : undefined,
-      streamTail: explicitStreaming ? undefined : undefined,
+      streamTail: undefined,
       streamText: undefined,
       streamTextLength: incomingText.length,
       streamRevision: nextStreamRevision > 0 ? nextStreamRevision : undefined,

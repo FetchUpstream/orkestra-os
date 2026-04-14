@@ -77,6 +77,8 @@ const BoardTaskCard: Component<Props> = (props) => {
         return "board-task-run-status board-task-run-status--failed";
       case "cancelled":
         return "board-task-run-status board-task-run-status--cancelled";
+      case "rejected":
+        return "board-task-run-status board-task-run-status--rejected";
     }
   };
 

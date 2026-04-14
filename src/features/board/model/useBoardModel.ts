@@ -225,6 +225,8 @@ const boardLabelForRunStatus = (status: RunStatus): string => {
       return "Failed";
     case "cancelled":
       return "Cancelled";
+    case "rejected":
+      return "Rejected";
   }
 };
 
@@ -568,7 +570,8 @@ export const useBoardModel = () => {
       listTaskDependencies(taskId),
     ]);
     const unresolvedParents = getBlockingParentTasks(dependencies);
-    const isBlockedNow = freshTask.isBlocked ?? unresolvedParents.length > 0;
+    const isBlockedNow =
+      unresolvedParents.length > 0 || Boolean(freshTask.isBlocked);
     syncTaskSnapshot(taskId, freshTask);
     syncTaskBlockedState(taskId, isBlockedNow);
     return isBlockedNow ? unresolvedParents : [];
@@ -1279,6 +1282,7 @@ export const useBoardModel = () => {
           const miniCards = resolveTaskRunMiniCards(
             updatedTask,
             runs,
+            runOptionLookup(),
             deletedRunIds,
           );
           applyTaskRunMiniCards(taskId, miniCards);

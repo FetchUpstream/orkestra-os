@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { Show, type Accessor, type Component } from "solid-js";
+import { Show, createUniqueId, type Accessor, type Component } from "solid-js";
 
 type ActionWarningModalProps = {
   isOpen: Accessor<boolean>;
@@ -23,6 +23,9 @@ type ActionWarningModalProps = {
 };
 
 const ActionWarningModal: Component<ActionWarningModalProps> = (props) => {
+  const titleId = createUniqueId();
+  const bodyId = createUniqueId();
+
   return (
     <Show when={props.isOpen()}>
       <div
@@ -38,19 +41,16 @@ const ActionWarningModal: Component<ActionWarningModalProps> = (props) => {
           class="projects-modal border-base-content/15 bg-base-200 rounded-none border"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="action-warning-modal-title"
-          aria-describedby="action-warning-modal-copy"
+          aria-labelledby={titleId}
+          aria-describedby={bodyId}
           onClick={(event) => event.stopPropagation()}
         >
           <div class="border-base-content/10 border-b pb-3">
-            <h2 id="action-warning-modal-title" class="task-delete-modal-title">
+            <h2 id={titleId} class="task-delete-modal-title">
               {props.title}
             </h2>
           </div>
-          <p
-            id="action-warning-modal-copy"
-            class="project-placeholder-text mt-4"
-          >
+          <p id={bodyId} class="project-placeholder-text mt-4">
             {props.body}
           </p>
           <div class="task-delete-modal-actions mt-5">

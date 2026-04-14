@@ -22,8 +22,6 @@ use sqlx::Error as SqlxError;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-const MAX_RUN_IDENTIFIER_ATTEMPTS: usize = 8;
-
 #[derive(Clone, Debug)]
 pub struct RunsService {
     repository: RunsRepository,
@@ -586,29 +584,28 @@ impl RunsService {
         provider_id: Option<String>,
         model_id: Option<String>,
     ) -> Result<Run, AppError> {
-        for _ in 0..MAX_RUN_IDENTIFIER_ATTEMPTS {
-            let run_number = self.repository.get_next_task_run_number(task_id).await?;
-            let display_key = format_run_display_key(&task_context.task_display_key, run_number);
+        let new_run = NewRun {
+            id: run_id.to_string(),
+            task_id: task_id.to_string(),
+            project_id: task_context.project_id.clone(),
+            target_repo_id: Some(task_context.repository_id.clone()),
+            status: "queued".to_string(),
+            run_state: Some("warming_up".to_string()),
+            triggered_by: "user".to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            worktree_id: Some(worktree_id.to_string()),
+            agent_id: agent_id.clone(),
+            provider_id: provider_id.clone(),
+            model_id: model_id.clone(),
+            source_branch: source_branch.clone(),
+        };
 
-            let new_run = NewRun {
-                id: run_id.to_string(),
-                task_id: task_id.to_string(),
-                project_id: task_context.project_id.clone(),
-                run_number,
-                display_key,
-                target_repo_id: Some(task_context.repository_id.clone()),
-                status: "queued".to_string(),
-                run_state: Some("warming_up".to_string()),
-                triggered_by: "user".to_string(),
-                created_at: Utc::now().to_rfc3339(),
-                worktree_id: Some(worktree_id.to_string()),
-                agent_id: agent_id.clone(),
-                provider_id: provider_id.clone(),
-                model_id: model_id.clone(),
-                source_branch: source_branch.clone(),
-            };
-
-            match self.repository.create_run(new_run).await {
+        loop {
+            match self
+                .repository
+                .create_run_with_generated_identifiers(&new_run, &task_context.task_display_key)
+                .await
+            {
                 Ok(run) => return Ok(run),
                 Err(AppError::Database(source)) if is_run_identifier_conflict(&source) => {
                     warn!(
@@ -616,17 +613,12 @@ impl RunsService {
                         operation = "create_with_defaults",
                         task_id = task_id,
                         run_id = run_id,
-                        run_number,
                         "Run identifier collision detected; retrying"
                     );
                 }
                 Err(error) => return Err(error),
             }
         }
-
-        Err(AppError::validation(
-            "Unable to assign a unique run identifier.",
-        ))
     }
 }
 
@@ -637,21 +629,17 @@ fn normalize_optional_nonempty(value: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn format_run_display_key(task_display_key: &str, run_number: i64) -> String {
-    let task_display_key = task_display_key.trim();
-    if task_display_key.is_empty() {
-        return format!("R{run_number}");
-    }
-
-    format!("{task_display_key}-R{run_number}")
-}
-
 fn is_run_identifier_conflict(error: &SqlxError) -> bool {
     let Some(database_error) = error.as_database_error() else {
         return false;
     };
 
-    database_error.is_unique_violation()
+    if !database_error.is_unique_violation() {
+        return false;
+    }
+
+    let message = database_error.message();
+    message.contains("runs.task_id, runs.run_number") || message.contains("runs.display_key")
 }
 
 #[cfg(test)]
@@ -949,16 +937,16 @@ mod tests {
 
         let result = service
             .create_run_with_defaults("task-1", None, None, None, None)
-            .await;
-        assert!(result.is_err(), "expected uniqueness failure");
+            .await
+            .unwrap();
+        assert_eq!(result.run_number, 2);
 
-        let repo = Repository::open(&repo_path).unwrap();
-        let linked = repo.worktrees().unwrap();
-        assert_eq!(
-            linked.iter().count(),
-            0,
-            "expected worktree metadata cleanup"
-        );
+        let run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE task_id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(run_count, 2);
     }
 
     #[tokio::test]
