@@ -29,10 +29,7 @@ const RunChatAssistantMessage: Component<RunChatAssistantMessageProps> = (
   props,
 ) => {
   const isStreamingActive = createMemo(
-    () =>
-      props.isStreamingActive ??
-      (props.streaming?.isStreaming === true &&
-        props.streaming.lifecycle === "streaming"),
+    () => props.isStreamingActive ?? props.streaming?.isStreaming === true,
   );
   const targetText = () => props.streaming?.targetText ?? props.content;
   const presentation = useStreamingTextPresentation({

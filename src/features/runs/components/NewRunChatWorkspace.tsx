@@ -2774,9 +2774,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
               <RunChatAssistantMessage
                 content={row.content.length > 0 ? row.content : " "}
                 streaming={row.assistantStreaming}
-                isStreamingActive={
-                  row.assistantStreaming?.lifecycle === "streaming"
-                }
+                isStreamingActive={row.assistantStreaming?.isStreaming === true}
                 reasoning={reasoningNode}
                 toolRail={toolRailNode}
                 details={attributionNode}

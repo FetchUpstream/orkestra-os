@@ -320,7 +320,7 @@ const RunChatToolRail: Component<RunChatToolRailProps> = (props) => {
                                             }
                                             isStreamingActive={
                                               message.assistantStreaming
-                                                ?.lifecycle === "streaming"
+                                                ?.isStreaming === true
                                             }
                                             reasoning={reasoningNode}
                                             toolRail={toolRailNode}
