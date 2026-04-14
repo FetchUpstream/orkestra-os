@@ -1084,18 +1084,21 @@ mod tests {
 
         run_migrations(&pool).await.unwrap();
 
-        let rows: Vec<(String, Option<i64>, Option<String>)> = sqlx::query_as(
-            "SELECT id, run_number, display_key FROM runs ORDER BY created_at ASC",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+        let rows: Vec<(String, Option<i64>, Option<String>)> =
+            sqlx::query_as("SELECT id, run_number, display_key FROM runs ORDER BY created_at ASC")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
 
         assert_eq!(
             rows,
             vec![
                 ("run-1".to_string(), Some(7), Some("ORK-12-R7".to_string())),
-                ("run-2".to_string(), Some(8), Some("CUSTOM-RUN-KEY".to_string())),
+                (
+                    "run-2".to_string(),
+                    Some(8),
+                    Some("CUSTOM-RUN-KEY".to_string())
+                ),
             ]
         );
     }
@@ -1188,12 +1191,11 @@ mod tests {
         .unwrap();
         assert!(schema.contains("'rejected'"));
 
-        let identifiers: (i64, String) = sqlx::query_as(
-            "SELECT run_number, display_key FROM runs WHERE id = 'run-1'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let identifiers: (i64, String) =
+            sqlx::query_as("SELECT run_number, display_key FROM runs WHERE id = 'run-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(identifiers, (4, "ORK-1-R4".to_string()));
     }
 }
