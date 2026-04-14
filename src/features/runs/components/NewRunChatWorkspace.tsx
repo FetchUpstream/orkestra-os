@@ -46,6 +46,7 @@ import type {
   UiTextPart,
 } from "../model/agentTypes";
 import { hydrateAgentStore } from "../model/agentReducer";
+import { buildMergedSubagentMessageStore } from "../model/subagentMessageTimeline";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime } from "../../tasks/utils/taskDetail";
 import { AppIcon } from "../../../components/ui/icons";
@@ -528,17 +529,6 @@ const getSessionIdentifier = (value: unknown): string | null => {
   return sessionId?.trim() || null;
 };
 
-type SubagentMessageSnapshot = {
-  id: string;
-  role: "assistant" | "user" | "system" | "unknown";
-  attribution?: {
-    agent?: string;
-    model?: string;
-  };
-  partsById: Record<string, UiPart>;
-  partOrder: string[];
-};
-
 type SubagentSessionSnapshot = {
   sessionId: string;
   parentSessionId: string | null;
@@ -551,8 +541,7 @@ type SubagentSessionSnapshot = {
   title: string | null;
   agentType: string | null;
   model: string | null;
-  messageOrder: string[];
-  messagesById: Record<string, SubagentMessageSnapshot>;
+  liveEvents: OpenCodeBusEvent[];
 };
 
 type SubagentHistorySnapshot = {
@@ -738,17 +727,6 @@ const buildSubagentMessagesFromStore = (
     );
 };
 
-const normalizeSubagentRole = (
-  value: unknown,
-): SubagentMessageSnapshot["role"] => {
-  return value === "assistant" ||
-    value === "user" ||
-    value === "system" ||
-    value === "unknown"
-    ? value
-    : "unknown";
-};
-
 const buildSubagentPanels = (
   rawEvents: readonly OpenCodeBusEvent[],
   rootSessionId: string | null,
@@ -800,8 +778,7 @@ const buildSubagentPanels = (
       title: null,
       agentType: null,
       model: null,
-      messageOrder: [],
-      messagesById: {},
+      liveEvents: [],
     };
     sessions.set(sessionId, created);
     return syncSessionAssignment(created, sessionId);
@@ -843,6 +820,13 @@ const buildSubagentPanels = (
       continue;
     }
 
+    if (event.type === "session.status") {
+      const nextStatus = getStatusType(properties.status) || session.status;
+      session.status = nextStatus;
+      session.liveEvents.push(event);
+      continue;
+    }
+
     if (event.type === "message.updated") {
       const info = getNestedRecord(properties, "info") ?? properties;
       const attribution = readSubagentAttribution(info);
@@ -856,129 +840,17 @@ const buildSubagentPanels = (
       if (attribution.model && !session.model) {
         session.model = attribution.model;
       }
-    }
-
-    if (event.type === "session.status") {
-      const nextStatus = getStatusType(properties.status) || session.status;
-      session.status = nextStatus;
-      continue;
-    }
-
-    if (event.type === "message.updated") {
-      const info = getNestedRecord(properties, "info") ?? properties;
-      const attribution = readSubagentAttribution(info);
-      const messageId =
-        (typeof info.id === "string" ? info.id : null) ||
-        (typeof info.messageID === "string" ? info.messageID : null) ||
-        (typeof info.messageId === "string" ? info.messageId : null);
-      if (!messageId?.trim()) {
-        continue;
-      }
-      const normalizedId = messageId.trim();
-      const existing = session.messagesById[normalizedId];
-      session.messagesById[normalizedId] = {
-        id: normalizedId,
-        role: normalizeSubagentRole(info.role),
-        attribution:
-          attribution.agent || attribution.model
-            ? {
-                ...(attribution.agent ? { agent: attribution.agent } : {}),
-                ...(attribution.model ? { model: attribution.model } : {}),
-              }
-            : existing?.attribution,
-        partsById: existing?.partsById ?? {},
-        partOrder: existing?.partOrder ?? [],
-      };
-      if (!session.messageOrder.includes(normalizedId)) {
-        session.messageOrder.push(normalizedId);
-      }
+      session.liveEvents.push(event);
       continue;
     }
 
     if (
-      event.type !== "message.part.updated" &&
-      event.type !== "message.part.delta"
+      event.type === "message.removed" ||
+      event.type === "message.part.updated" ||
+      event.type === "message.part.delta" ||
+      event.type === "message.part.removed"
     ) {
-      continue;
-    }
-
-    const rawPart = getNestedRecord(properties, "part") ?? properties;
-    const messageId =
-      (typeof rawPart.messageID === "string" ? rawPart.messageID : null) ||
-      (typeof rawPart.messageId === "string" ? rawPart.messageId : null);
-    const partId =
-      (typeof rawPart.id === "string" ? rawPart.id : null) ||
-      (typeof rawPart.partID === "string" ? rawPart.partID : null) ||
-      (typeof rawPart.partId === "string" ? rawPart.partId : null);
-    const partType = typeof rawPart.type === "string" ? rawPart.type : "text";
-    if (!messageId?.trim() || !partId?.trim()) {
-      continue;
-    }
-
-    const normalizedMessageId = messageId.trim();
-    const normalizedPartId = partId.trim();
-    const existingMessage = session.messagesById[normalizedMessageId] ?? {
-      id: normalizedMessageId,
-      role: "unknown" as const,
-      partsById: {},
-      partOrder: [],
-    };
-    const existingPart = existingMessage.partsById[normalizedPartId];
-    const delta = typeof properties.delta === "string" ? properties.delta : "";
-
-    let nextPart: UiPart;
-    if (
-      partType === "reasoning" ||
-      (existingPart && existingPart.kind === "reasoning")
-    ) {
-      nextPart = buildStreamingTextPart(
-        normalizedPartId,
-        "reasoning",
-        rawPart,
-        existingPart,
-        delta,
-        event.type,
-      );
-    } else if (partType === "tool") {
-      const state = getNestedRecord(rawPart, "state") ?? {};
-      nextPart = {
-        kind: "tool",
-        id: normalizedPartId,
-        type: "tool",
-        toolName: typeof rawPart.tool === "string" ? rawPart.tool : "tool",
-        callId:
-          (typeof rawPart.callID === "string" ? rawPart.callID : undefined) ||
-          (typeof rawPart.callId === "string" ? rawPart.callId : undefined),
-        status: typeof state.status === "string" ? state.status : "pending",
-        title: typeof state.title === "string" ? state.title : undefined,
-        input: state.input,
-        output: state.output,
-        error: state.error,
-        raw: rawPart,
-      };
-    } else {
-      nextPart = buildStreamingTextPart(
-        normalizedPartId,
-        "text",
-        rawPart,
-        existingPart,
-        delta,
-        event.type,
-      );
-    }
-
-    session.messagesById[normalizedMessageId] = {
-      ...existingMessage,
-      partsById: {
-        ...existingMessage.partsById,
-        [normalizedPartId]: nextPart,
-      },
-      partOrder: existingMessage.partsById[normalizedPartId]
-        ? existingMessage.partOrder
-        : [...existingMessage.partOrder, normalizedPartId],
-    };
-    if (!session.messageOrder.includes(normalizedMessageId)) {
-      session.messageOrder.push(normalizedMessageId);
+      session.liveEvents.push(event);
     }
   }
 
@@ -994,47 +866,31 @@ const buildSubagentPanels = (
       return acc;
     }
 
-    const liveMessages = buildSubagentMessagesFromStore(
-      {
-        sessionId: session.sessionId,
-        status: "idle",
-        streamConnected: false,
-        lastSyncAt: null,
-        messagesById: Object.fromEntries(
-          session.messageOrder
-            .map((messageId) => [messageId, session.messagesById[messageId]])
-            .filter((entry) => Boolean(entry[1])),
-        ) as AgentStore["messagesById"],
-        messageOrder: session.messageOrder,
-        pendingQuestionsById: {},
-        pendingPermissionsById: {},
-        resolvedPermissionsById: {},
-        failedPermissionsById: {},
-        todos: [],
-        diffSummary: null,
-        rawEvents: [],
-      },
+    const fetchedSnapshot = fetchedSessionHistories[session.sessionId] ?? null;
+    const mergedStore = buildMergedSubagentMessageStore({
+      sessionId: session.sessionId,
+      fetchedStore: fetchedSnapshot?.store ?? null,
+      liveEvents: session.liveEvents,
+    });
+    const messages = buildSubagentMessagesFromStore(
+      mergedStore,
       displayContext,
     );
-    const fetchedSnapshot = fetchedSessionHistories[session.sessionId] ?? null;
-    const fetchedMessages =
-      fetchedSnapshot !== null
-        ? buildSubagentMessagesFromStore(fetchedSnapshot.store, displayContext)
-        : [];
-    const messages = liveMessages.length > 0 ? liveMessages : fetchedMessages;
-
-    const fetchedHistoryMessages = Object.values(
-      fetchedSnapshot?.store.messagesById ?? {},
+    const mergedHistoryMessages = mergedStore.messageOrder.flatMap(
+      (messageId) => {
+        const message = mergedStore.messagesById[messageId];
+        return message ? [message] : [];
+      },
     );
     const fallbackAgentType =
       session.agentType ||
-      fetchedHistoryMessages
+      mergedHistoryMessages
         .map((message) => message.attribution?.agent?.trim() || "")
         .find(Boolean) ||
       null;
     const fallbackModel =
       session.model ||
-      fetchedHistoryMessages
+      mergedHistoryMessages
         .map((message) => message.attribution?.model?.trim() || "")
         .find(Boolean) ||
       null;

@@ -1512,6 +1512,269 @@ describe("NewRunChatWorkspace", () => {
     });
   });
 
+  it("keeps fetched child history visible after live child updates begin", async () => {
+    getRunOpenCodeSessionMessagesMock.mockResolvedValue({
+      messages: [
+        {
+          info: {
+            id: "msg-child-1",
+            sessionID: "session-child",
+            role: "assistant",
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+          parts: [
+            {
+              id: "part-child-1",
+              type: "text",
+              text: "Fetched child one",
+              messageID: "msg-child-1",
+              sessionID: "session-child",
+            },
+          ],
+        },
+        {
+          info: {
+            id: "msg-child-2",
+            sessionID: "session-child",
+            role: "assistant",
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+          parts: [
+            {
+              id: "part-child-2",
+              type: "text",
+              text: "Fetched child two",
+              messageID: "msg-child-2",
+              sessionID: "session-child",
+            },
+          ],
+        },
+      ],
+      raw: [],
+    } as any);
+
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Inspect child session",
+              raw: {
+                sessionID: "session-child",
+              },
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child-3",
+              sessionID: "session-child",
+              role: "assistant",
+              createdAt: "2026-01-01T00:00:03.000Z",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child",
+            part: {
+              id: "part-child-3",
+              messageID: "msg-child-3",
+              sessionID: "session-child",
+              type: "text",
+              text: "Live child three",
+            },
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Fetched child one")).toBeTruthy();
+      expect(screen.getByText("Fetched child two")).toBeTruthy();
+      expect(screen.getByText("Live child three")).toBeTruthy();
+    });
+  });
+
+  it("renders the last three messages from the merged ordered child timeline", async () => {
+    getRunOpenCodeSessionMessagesMock.mockResolvedValue({
+      messages: [
+        {
+          info: {
+            id: "msg-child-1",
+            sessionID: "session-child",
+            role: "assistant",
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+          parts: [
+            {
+              id: "part-child-1",
+              type: "text",
+              text: "Merged first",
+              messageID: "msg-child-1",
+              sessionID: "session-child",
+            },
+          ],
+        },
+        {
+          info: {
+            id: "msg-child-2",
+            sessionID: "session-child",
+            role: "assistant",
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+          parts: [
+            {
+              id: "part-child-2",
+              type: "text",
+              text: "Merged second",
+              messageID: "msg-child-2",
+              sessionID: "session-child",
+            },
+          ],
+        },
+      ],
+      raw: [],
+    } as any);
+
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Inspect child session",
+              raw: {
+                sessionID: "session-child",
+              },
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child-4",
+              sessionID: "session-child",
+              role: "assistant",
+              createdAt: "2026-01-01T00:00:04.000Z",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child",
+            part: {
+              id: "part-child-4",
+              messageID: "msg-child-4",
+              sessionID: "session-child",
+              type: "text",
+              text: "Merged fourth",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child-3",
+              sessionID: "session-child",
+              role: "assistant",
+              createdAt: "2026-01-01T00:00:03.000Z",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child",
+            part: {
+              id: "part-child-3",
+              messageID: "msg-child-3",
+              sessionID: "session-child",
+              type: "text",
+              text: "Merged third",
+            },
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      expect(screen.queryByText("Merged first")).toBeNull();
+      expect(screen.getByText("Merged second")).toBeTruthy();
+      expect(screen.getByText("Merged third")).toBeTruthy();
+      expect(screen.getByText("Merged fourth")).toBeTruthy();
+    });
+
+    const visibleMessages = Array.from(
+      container.querySelectorAll(".run-chat-tool-rail__subagent-message"),
+    ).map((node) => node.textContent?.replace(/\s+/g, " ").trim() || "");
+
+    expect(visibleMessages).toHaveLength(3);
+    expect(visibleMessages[0]).toContain("Merged second");
+    expect(visibleMessages[1]).toContain("Merged third");
+    expect(visibleMessages[2]).toContain("Merged fourth");
+  });
+
   it("caches streamText across subagent text deltas", () => {
     const snapshotPart = buildStreamingTextPart(
       "part-child",

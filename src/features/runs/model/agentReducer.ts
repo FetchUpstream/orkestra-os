@@ -698,7 +698,18 @@ export const upsertMessage = (
   }
 
   const nextMessage: UiMessage = {
+    ...existing,
     ...baseMessage,
+    role:
+      baseMessage.role === "unknown" && existing?.role
+        ? existing.role
+        : baseMessage.role,
+    createdAt: baseMessage.createdAt ?? existing?.createdAt,
+    updatedAt: baseMessage.updatedAt ?? existing?.updatedAt,
+    rawInfo:
+      isRecord(existing?.rawInfo) && isRecord(baseMessage.rawInfo)
+        ? { ...existing.rawInfo, ...baseMessage.rawInfo }
+        : (baseMessage.rawInfo ?? existing?.rawInfo),
     partsById: existing?.partsById ?? baseMessage.partsById,
     partOrder: existing?.partOrder ?? baseMessage.partOrder,
   };
