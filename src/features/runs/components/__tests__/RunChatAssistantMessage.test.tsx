@@ -188,8 +188,6 @@ describe("RunChatAssistantMessage", () => {
       expect(message()?.getAttribute("data-streaming-active")).toBe("false");
       expect(message()?.getAttribute("data-stream-animating")).toBe("false");
     });
-
-    raf.restore();
   });
 
   it("does not restart animation during resync replay for an already-complete message", async () => {
@@ -228,8 +226,6 @@ describe("RunChatAssistantMessage", () => {
     expect(message()?.textContent).toContain("Stable final answer");
     expect(message()?.getAttribute("data-streaming-active")).toBe("false");
     expect(message()?.getAttribute("data-stream-animating")).toBe("false");
-
-    raf.restore();
   });
 
   it("resets presentation state when switching to a new streaming message", async () => {
@@ -273,8 +269,6 @@ describe("RunChatAssistantMessage", () => {
       expect(message()?.getAttribute("data-streaming-active")).toBe("true");
       expect(message()?.getAttribute("data-stream-animating")).toBe("false");
     });
-
-    raf.restore();
   });
 
   it("catches up aggressively for long streaming backlogs", async () => {
@@ -312,8 +306,6 @@ describe("RunChatAssistantMessage", () => {
       expect(message?.textContent).toContain("done");
       expect(message?.getAttribute("data-stream-catching-up")).toBe("false");
     });
-
-    raf.restore();
   });
 
   it("keeps markdown readable while streaming", async () => {
@@ -354,8 +346,6 @@ describe("RunChatAssistantMessage", () => {
           .length,
       ).toBeGreaterThan(0);
     });
-
-    raf.restore();
   });
 
   it("leaves non-assistant transcript rows unaffected in tool rails while subagent assistant messages use the same pipeline", async () => {
@@ -415,8 +405,6 @@ describe("RunChatAssistantMessage", () => {
         ".run-chat-tool-rail__subagent-message .run-chat-assistant-message",
       ),
     ).toBeTruthy();
-
-    raf.restore();
   });
 
   it("keeps the active indicator visible when only reasoning is still streaming", () => {

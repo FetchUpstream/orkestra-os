@@ -244,7 +244,35 @@ describe("useBoardModel run settings defaults", () => {
       children: [],
     });
 
-  it("builds board run mini-cards with run identity, status, agent, and model labels", async () => {
+    const ref: { current: ReturnType<typeof useBoardModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useBoardModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().todo.length).toBe(1);
+    });
+
+    ref.current?.onRequestMoveTaskToInProgress("task-1");
+
+    await waitFor(() => {
+      expect(ref.current?.isBlockedTaskModalOpen()).toBe(true);
+      expect(ref.current?.isRunSettingsModalOpen()).toBe(false);
+      expect(ref.current?.blockingStartTasks()).toMatchObject([
+        {
+          id: "task-2",
+          displayKey: "PRJ-2",
+          title: "Finalize schema",
+          status: "doing",
+        },
+      ]);
+    });
+  });
+
+  it("builds board run mini-cards with sanitized identity labels", async () => {
     listProjectTasksMock.mockResolvedValue([
       {
         id: "task-1",
@@ -267,6 +295,25 @@ describe("useBoardModel run settings defaults", () => {
         agentId: "agent-1",
         modelId: "model-1",
       },
+      {
+        id: "run-2",
+        taskId: "task-1",
+        projectId: "project-1",
+        runNumber: 43,
+        displayKey: "550e8400-e29b-41d4-a716-446655440000",
+        status: "queued",
+        triggeredBy: "user",
+        createdAt: "2026-01-01T00:01:00.000Z",
+      },
+      {
+        id: "run-3",
+        taskId: "task-1",
+        projectId: "project-1",
+        displayKey: "abcdefabcdefabcdefabcdef",
+        status: "queued",
+        triggeredBy: "user",
+        createdAt: "2026-01-01T00:02:00.000Z",
+      },
     ]);
 
     const ref: { current: ReturnType<typeof useBoardModel> | null } = {
@@ -278,15 +325,71 @@ describe("useBoardModel run settings defaults", () => {
     });
 
     await waitFor(() => {
-      expect(ref.current?.taskRunMiniCards()["task-1"]?.[0]).toMatchObject({
-        runId: "run-1",
-        identityLabel: "RUN-42",
-        label: "Waiting for Input",
-        status: "idle",
-        statusLabel: "Idle",
-        agentLabel: "Agent 1",
-        modelLabel: "Model 1",
-      });
+      expect(ref.current?.taskRunMiniCards()["task-1"]).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            runId: "run-1",
+            identityLabel: "RUN-42",
+            label: "Waiting for Input",
+            status: "idle",
+            statusLabel: "Idle",
+            agentLabel: "Agent 1",
+            modelLabel: "Model 1",
+          }),
+          expect.objectContaining({
+            runId: "run-2",
+            identityLabel: "Run #43",
+            label: "Warming Up",
+            status: "queued",
+            statusLabel: "Queued",
+            agentLabel: "Default agent",
+            modelLabel: "Default model",
+          }),
+          expect.objectContaining({
+            runId: "run-3",
+            identityLabel: "Run",
+            label: "Warming Up",
+            status: "queued",
+            statusLabel: "Queued",
+            agentLabel: "Default agent",
+            modelLabel: "Default model",
+          }),
+        ]),
+      );
+    });
+  });
+
+  it("keeps blocked tasks blocked when the fresh task still reports blocked", async () => {
+    getTaskMock.mockResolvedValue({
+      id: "task-1",
+      title: "Task",
+      status: "todo",
+      projectId: "project-1",
+      isBlocked: true,
+    });
+    listTaskDependenciesMock.mockResolvedValue({
+      parents: [],
+      children: [],
+    });
+
+    const ref: { current: ReturnType<typeof useBoardModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useBoardModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().todo.length).toBe(1);
+    });
+
+    ref.current?.onRequestMoveTaskToInProgress("task-1");
+
+    await waitFor(() => {
+      expect(ref.current?.isBlockedTaskModalOpen()).toBe(true);
+      expect(ref.current?.isRunSettingsModalOpen()).toBe(false);
+      expect(ref.current?.blockingStartTasks()).toEqual([]);
     });
   });
 

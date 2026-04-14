@@ -19,9 +19,12 @@ use crate::app::worktrees::dto::{CreateWorktreeRequest, LocalBranchDto, RemoveWo
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
 use sqlx::Error as SqlxError;
+use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+const CREATE_PERSISTED_RUN_MAX_ATTEMPTS: usize = 5;
+const CREATE_PERSISTED_RUN_RETRY_BACKOFF_MS: u64 = 25;
 #[derive(Clone, Debug)]
 pub struct RunsService {
     repository: RunsRepository,
@@ -600,7 +603,7 @@ impl RunsService {
             source_branch: source_branch.clone(),
         };
 
-        loop {
+        for attempt in 1..=CREATE_PERSISTED_RUN_MAX_ATTEMPTS {
             match self
                 .repository
                 .create_run_with_generated_identifiers(&new_run, &task_context.task_display_key)
@@ -608,17 +611,35 @@ impl RunsService {
             {
                 Ok(run) => return Ok(run),
                 Err(AppError::Database(source)) if is_run_identifier_conflict(&source) => {
+                    let Some(delay) = persisted_run_identifier_retry_backoff(attempt) else {
+                        return Err(AppError::validation(format!(
+                            "failed to create run for task {} (task_id={}, run_id={}): run identifier retries exhausted after {} attempts due to repeated conflicts",
+                            task_context.task_display_key,
+                            task_id,
+                            run_id,
+                            CREATE_PERSISTED_RUN_MAX_ATTEMPTS,
+                        )));
+                    };
+
                     warn!(
                         subsystem = "runs",
                         operation = "create_with_defaults",
                         task_id = task_id,
                         run_id = run_id,
+                        task_display_key = task_context.task_display_key.as_str(),
+                        attempt,
+                        max_attempts = CREATE_PERSISTED_RUN_MAX_ATTEMPTS,
+                        backoff_ms = delay.as_millis() as u64,
                         "Run identifier collision detected; retrying"
                     );
+
+                    sleep(delay).await;
                 }
                 Err(error) => return Err(error),
             }
         }
+
+        unreachable!("persisted run creation should return or error within bounded attempts");
     }
 }
 
@@ -627,6 +648,14 @@ fn normalize_optional_nonempty(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+fn persisted_run_identifier_retry_backoff(attempt: usize) -> Option<Duration> {
+    if attempt < CREATE_PERSISTED_RUN_MAX_ATTEMPTS {
+        Some(Duration::from_millis(CREATE_PERSISTED_RUN_RETRY_BACKOFF_MS))
+    } else {
+        None
+    }
 }
 
 fn is_run_identifier_conflict(error: &SqlxError) -> bool {
@@ -1495,6 +1524,21 @@ mod tests {
         }
 
         assert_eq!(successful_claims, 1);
+    }
+
+    #[test]
+    fn persisted_run_identifier_retry_backoff_stops_after_max_attempts() {
+        let expected = Some(Duration::from_millis(CREATE_PERSISTED_RUN_RETRY_BACKOFF_MS));
+
+        assert_eq!(persisted_run_identifier_retry_backoff(1), expected);
+        assert_eq!(
+            persisted_run_identifier_retry_backoff(CREATE_PERSISTED_RUN_MAX_ATTEMPTS - 1),
+            expected
+        );
+        assert_eq!(
+            persisted_run_identifier_retry_backoff(CREATE_PERSISTED_RUN_MAX_ATTEMPTS),
+            None
+        );
     }
 
     #[tokio::test]

@@ -13,7 +13,9 @@
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import NewRunChatWorkspace from "../NewRunChatWorkspace";
+import NewRunChatWorkspace, {
+  buildStreamingTextPart,
+} from "../NewRunChatWorkspace";
 
 const installResizeObserverStub = () => {
   class ResizeObserverStub {
@@ -42,6 +44,17 @@ vi.mock("../../../../app/lib/runs", async () => {
     getRunOpenCodeSessionTodos: getRunOpenCodeSessionTodosMock,
   };
 });
+
+const createDeferred = <T,>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+
+  return { promise, resolve, reject };
+};
 
 const createModelStub = (
   runStatus: "running" | "completed",
@@ -1256,6 +1269,126 @@ describe("NewRunChatWorkspace", () => {
         sessionId: "session-child",
       });
       expect(screen.getByText("Fetched child history output")).toBeTruthy();
+    });
+  });
+
+  it("caches streamText across subagent text deltas", () => {
+    const snapshotPart = buildStreamingTextPart(
+      "part-child",
+      "text",
+      { text: "Hello" },
+      undefined,
+      "",
+      "message.part.updated",
+    );
+    const firstDeltaPart = buildStreamingTextPart(
+      "part-child",
+      "text",
+      {},
+      snapshotPart,
+      " world",
+      "message.part.delta",
+    );
+    const secondDeltaPart = buildStreamingTextPart(
+      "part-child",
+      "text",
+      {},
+      firstDeltaPart,
+      "!",
+      "message.part.delta",
+    );
+
+    expect(firstDeltaPart.streamText).toBe("Hello world");
+    expect(firstDeltaPart.streamTextLength).toBe(11);
+    expect(secondDeltaPart.streamText).toBe("Hello world!");
+    expect(secondDeltaPart.streamTextLength).toBe(12);
+    expect(secondDeltaPart.streamRevision).toBe(3);
+  });
+
+  it("deduplicates subagent history fetches while pending and after failure", async () => {
+    const messagesDeferred = createDeferred<{
+      messages: never[];
+      raw: never[];
+    }>();
+    const todosDeferred = createDeferred<{ todos: never[]; raw: never[] }>();
+    getRunOpenCodeSessionMessagesMock.mockImplementation(
+      () => messagesDeferred.promise,
+    );
+    getRunOpenCodeSessionTodosMock.mockImplementation(
+      () => todosDeferred.promise,
+    );
+
+    const [store, setStore] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "List workspace files",
+              raw: {
+                sessionID: "session-child",
+              },
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledTimes(1);
+      expect(getRunOpenCodeSessionTodosMock).toHaveBeenCalledTimes(1);
+    });
+
+    setStore({
+      ...store(),
+      diffSummary: { filesChanged: 1 },
+    });
+
+    await waitFor(() => {
+      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledTimes(1);
+      expect(getRunOpenCodeSessionTodosMock).toHaveBeenCalledTimes(1);
+    });
+
+    messagesDeferred.reject(new Error("subagent history failed"));
+    todosDeferred.resolve({ todos: [], raw: [] });
+
+    await waitFor(() => {
+      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledTimes(1);
+      expect(getRunOpenCodeSessionTodosMock).toHaveBeenCalledTimes(1);
+    });
+
+    setStore({
+      ...store(),
+      lastSyncAt: store().lastSyncAt + 1,
+    });
+
+    await waitFor(() => {
+      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledTimes(1);
+      expect(getRunOpenCodeSessionTodosMock).toHaveBeenCalledTimes(1);
     });
   });
 

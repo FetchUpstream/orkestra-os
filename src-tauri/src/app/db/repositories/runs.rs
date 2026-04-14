@@ -986,54 +986,81 @@ impl RunsRepository {
             .await
             .runs_db("starting task cancel transaction")?;
 
-        let active_runs_query = format!(
-            "SELECT id, task_id, project_id, status
+        sqlx::query("DROP TABLE IF EXISTS temp.cancel_task_active_run_targets")
+            .execute(&mut *tx)
+            .await
+            .runs_db("resetting task cancel targets")?;
+
+        sqlx::query(
+            "CREATE TEMP TABLE temp.cancel_task_active_run_targets (
+                run_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                previous_status TEXT NOT NULL
+            )",
+        )
+        .execute(&mut *tx)
+        .await
+        .runs_db("creating task cancel targets")?;
+
+        let seed_targets_query = format!(
+            "INSERT INTO temp.cancel_task_active_run_targets (run_id, task_id, project_id, previous_status)
+             SELECT id, task_id, project_id, status
              FROM runs
              WHERE task_id = ?
                AND status IN ({})",
             ACTIVE_RUN_STATUSES_SQL.as_str(),
         );
-
-        let active_runs = sqlx::query(&active_runs_query)
+        sqlx::query(&seed_targets_query)
             .bind(task_id)
-            .fetch_all(&mut *tx)
+            .execute(&mut *tx)
             .await
-            .runs_db("loading task active runs")?
-            .into_iter()
-            .map(|row| RunStatusChangeTarget {
-                run_id: row.get("id"),
-                task_id: row.get("task_id"),
-                project_id: row.get("project_id"),
-                previous_status: row.get("status"),
-            })
-            .collect::<Vec<_>>();
+            .runs_db("loading task cancel targets")?;
 
-        let query = format!(
+        let update_query = format!(
             "UPDATE runs
              SET status = 'cancelled',
                  run_state = NULL,
                  finished_at = COALESCE(finished_at, ?)
              WHERE task_id = ?
-               AND status IN ({})",
+               AND status IN ({})
+             RETURNING
+                 id,
+                 task_id,
+                 project_id,
+                 (
+                     SELECT previous_status
+                     FROM temp.cancel_task_active_run_targets
+                     WHERE run_id = id
+                 ) AS previous_status",
             ACTIVE_RUN_STATUSES_SQL.as_str(),
         );
 
-        let result = sqlx::query(&query)
+        let cancelled_runs = sqlx::query(&update_query)
             .bind(finished_at)
             .bind(task_id)
+            .fetch_all(&mut *tx)
+            .await
+            .runs_db("cancelling task active runs")?
+            .into_iter()
+            .map(|row| RunStatusChangeTarget {
+                run_id: row.get("id"),
+                task_id: row.get("task_id"),
+                project_id: row.get("project_id"),
+                previous_status: row.get("previous_status"),
+            })
+            .collect::<Vec<_>>();
+
+        sqlx::query("DROP TABLE temp.cancel_task_active_run_targets")
             .execute(&mut *tx)
             .await
-            .runs_db("cancelling task active runs")?;
+            .runs_db("dropping task cancel targets")?;
 
         tx.commit()
             .await
             .runs_db("committing task cancel transaction")?;
 
-        if result.rows_affected() == 0 {
-            return Ok(Vec::new());
-        }
-
-        Ok(active_runs)
+        Ok(cancelled_runs)
     }
 
     pub async fn transition_task_doing_to_review_on_session_idle(
@@ -1511,6 +1538,92 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(run_state, None);
+    }
+
+    #[tokio::test]
+    async fn cancel_task_active_runs_returns_only_rows_updated_by_cancellation_query() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+             VALUES ('task-2', 'project-1', 'repo-1', 2, 'Task 2', NULL, 'todo', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, run_state, triggered_by, created_at)
+             VALUES
+             ('run-queued', 'task-1', 'project-1', 'repo-1', 'queued', 'queued_state', 'user', '2024-01-01T00:00:00Z'),
+             ('run-idle', 'task-1', 'project-1', 'repo-1', 'idle', 'idle_state', 'user', '2024-01-01T00:01:00Z'),
+             ('run-complete', 'task-1', 'project-1', 'repo-1', 'complete', 'done_state', 'user', '2024-01-01T00:02:00Z'),
+             ('run-already-cancelled', 'task-1', 'project-1', 'repo-1', 'cancelled', 'cancelled_state', 'user', '2024-01-01T00:03:00Z'),
+             ('run-other-task', 'task-2', 'project-1', 'repo-1', 'preparing', 'other_state', 'user', '2024-01-01T00:04:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut cancelled = repository
+            .cancel_task_active_runs("task-1", "2024-01-01T00:10:00Z")
+            .await
+            .unwrap();
+        cancelled.sort_by(|left, right| left.run_id.cmp(&right.run_id));
+
+        assert_eq!(
+            cancelled,
+            vec![
+                RunStatusChangeTarget {
+                    run_id: "run-idle".to_string(),
+                    task_id: "task-1".to_string(),
+                    project_id: "project-1".to_string(),
+                    previous_status: "idle".to_string(),
+                },
+                RunStatusChangeTarget {
+                    run_id: "run-queued".to_string(),
+                    task_id: "task-1".to_string(),
+                    project_id: "project-1".to_string(),
+                    previous_status: "queued".to_string(),
+                },
+            ]
+        );
+
+        let task_1_rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, status, run_state FROM runs WHERE task_id = 'task-1' ORDER BY created_at ASC",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            task_1_rows,
+            vec![
+                ("run-queued".to_string(), "cancelled".to_string(), None),
+                ("run-idle".to_string(), "cancelled".to_string(), None),
+                (
+                    "run-complete".to_string(),
+                    "complete".to_string(),
+                    Some("done_state".to_string()),
+                ),
+                (
+                    "run-already-cancelled".to_string(),
+                    "cancelled".to_string(),
+                    Some("cancelled_state".to_string()),
+                ),
+            ]
+        );
+
+        let other_task_row: (String, Option<String>) =
+            sqlx::query_as("SELECT status, run_state FROM runs WHERE id = 'run-other-task'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            other_task_row,
+            ("preparing".to_string(), Some("other_state".to_string()))
+        );
     }
 
     #[tokio::test]

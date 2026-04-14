@@ -115,5 +115,10 @@ export const formatAppVersionForDisplay = (version?: string | null) => {
     return "unknown";
   }
 
-  return `v${normalized.replace(/^v/i, "")}`;
+  const stripped = normalized.replace(/^v/i, "");
+  if (!stripped) {
+    return "unknown";
+  }
+
+  return `v${stripped}`;
 };

@@ -323,6 +323,8 @@ const buildStreamingTextPart = (
   }
 
   if (delta.length > 0) {
+    const nextStreamText =
+      (existingTypedPart?.streamText ?? existingStreamBaseText) + delta;
     const nextStreamTextLength =
       typeof existingTypedPart?.streamTextLength === "number"
         ? existingTypedPart.streamTextLength + delta.length
@@ -341,7 +343,7 @@ const buildStreamingTextPart = (
         delta,
         prev: existingStreamTail,
       },
-      streamText: undefined,
+      streamText: nextStreamText,
       streamTextLength: nextStreamTextLength,
       streamRevision: nextStreamRevision,
       raw: rawPart,
@@ -562,6 +564,8 @@ type SubagentHistorySnapshot = {
   sessionId: string;
   store: AgentStore;
 };
+
+type FetchedSubagentHistorySnapshot = SubagentHistorySnapshot | null;
 
 const getParentMessageIdentifier = (value: unknown): string | null => {
   if (!isRecord(value)) {
@@ -850,7 +854,7 @@ const buildSubagentPanels = (
   >,
   displayContext: ToolPathDisplayContext,
   taskPartSessionIdsByPartId: Record<string, string[]>,
-  fetchedSessionHistories: Record<string, SubagentHistorySnapshot>,
+  fetchedSessionHistories: Record<string, FetchedSubagentHistorySnapshot>,
 ): Record<string, RunChatToolRailSubagentItem[]> => {
   const sessions = new Map<string, SubagentSessionSnapshot>();
   let activeTaskPartId: string | null = null;
@@ -1158,17 +1162,15 @@ const buildSubagentPanels = (
       },
       displayContext,
     );
+    const fetchedSnapshot = fetchedSessionHistories[session.sessionId] ?? null;
     const fetchedMessages =
-      fetchedSessionHistories[session.sessionId]?.store !== undefined
-        ? buildSubagentMessagesFromStore(
-            fetchedSessionHistories[session.sessionId].store,
-            displayContext,
-          )
+      fetchedSnapshot !== null
+        ? buildSubagentMessagesFromStore(fetchedSnapshot.store, displayContext)
         : [];
     const messages = liveMessages.length > 0 ? liveMessages : fetchedMessages;
 
     const fetchedHistoryMessages = Object.values(
-      fetchedSessionHistories[session.sessionId]?.store.messagesById ?? {},
+      fetchedSnapshot?.store.messagesById ?? {},
     );
     const fallbackAgentType =
       session.agentType ||
@@ -2037,8 +2039,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const [overrideProviderId, setOverrideProviderId] = createSignal("");
   const [overrideModelId, setOverrideModelId] = createSignal("");
   const [fetchedSubagentHistories, setFetchedSubagentHistories] = createSignal<
-    Record<string, SubagentHistorySnapshot>
+    Record<string, FetchedSubagentHistorySnapshot>
   >({});
+  const pendingSubagentHistorySessionIds = new Set<string>();
   const [
     composerSelectionValidationError,
     setComposerSelectionValidationError,
@@ -2554,10 +2557,14 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     );
 
     for (const sessionId of sessionIds) {
-      if (histories[sessionId]) {
+      if (histories[sessionId] !== undefined) {
+        continue;
+      }
+      if (pendingSubagentHistorySessionIds.has(sessionId)) {
         continue;
       }
 
+      pendingSubagentHistorySessionIds.add(sessionId);
       void Promise.all([
         getRunOpenCodeSessionMessages({ runId, sessionId }),
         getRunOpenCodeSessionTodos({ runId, sessionId }),
@@ -2573,7 +2580,15 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             [sessionId]: { sessionId, store: hydrated },
           }));
         })
-        .catch(() => undefined);
+        .catch(() => {
+          setFetchedSubagentHistories((current) => ({
+            ...current,
+            [sessionId]: null,
+          }));
+        })
+        .finally(() => {
+          pendingSubagentHistorySessionIds.delete(sessionId);
+        });
     }
   });
 
@@ -3749,4 +3764,5 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   );
 };
 
+export { buildStreamingTextPart };
 export default NewRunChatWorkspace;

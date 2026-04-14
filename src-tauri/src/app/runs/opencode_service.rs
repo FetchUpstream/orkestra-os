@@ -8537,6 +8537,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cleanup_pass_stops_rejected_runs_when_unused() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+        set_run_status(&pool, "run-1", "rejected").await;
+
+        opencode_service.run_cleanup_pass().await.unwrap();
+
+        assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
     async fn cleanup_pass_is_idempotent_after_reclaiming_terminal_run() {
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");

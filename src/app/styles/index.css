@@ -1386,6 +1386,12 @@ textarea::placeholder {
   border-color: rgba(255, 107, 107, 0.3);
 }
 
+.board-task-run-status--rejected {
+  background: rgba(255, 107, 107, 0.14);
+  color: #ff9c9c;
+  border-color: rgba(255, 107, 107, 0.24);
+}
+
 .board-task-run-status--cancelled {
   background: rgba(148, 163, 184, 0.16);
   color: #94a3b8;
@@ -1710,7 +1716,6 @@ textarea::placeholder {
   flex: 0 0 auto;
   color: var(--accent);
 }
-
 .run-inline-loader__dot,
 .run-inline-loader__pulse {
   border-radius: 999px;
@@ -1721,7 +1726,7 @@ textarea::placeholder {
   z-index: 1;
   width: var(--run-inline-loader-dot-size);
   height: var(--run-inline-loader-dot-size);
-  background: currentColor;
+  background: currentcolor;
   opacity: 0.92;
   animation: run-inline-loader-dot-pulse 1.6s ease-in-out infinite;
 }
@@ -1732,7 +1737,7 @@ textarea::placeholder {
   margin: auto;
   width: 100%;
   height: 100%;
-  background: color-mix(in srgb, currentColor 18%, transparent);
+  background: color-mix(in srgb, currentcolor 18%, transparent);
   opacity: 0;
   transform: scale(0.52);
   animation: run-inline-loader-ring-pulse 1.6s ease-out infinite;

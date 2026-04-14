@@ -52,12 +52,6 @@ impl RunTaskCompletionService {
             return Err(AppError::validation("run_id is required"));
         }
 
-        let _merged_run = self
-            .runs_repository
-            .get_run(run_id)
-            .await?
-            .ok_or_else(|| AppError::not_found("run not found"))?;
-
         let finished_at = Utc::now().to_rfc3339();
         let Some((completed_run, rejected_siblings)) = self
             .runs_repository

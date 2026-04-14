@@ -197,7 +197,7 @@ const sanitizeModelDisplayLabel = (
 };
 
 const boardIdentityForRun = (run: Run): string => {
-  const displayKey = run.displayKey?.trim();
+  const displayKey = sanitizeDisplayLabel(run.displayKey);
   if (displayKey) {
     return displayKey;
   }
@@ -564,7 +564,7 @@ export const useBoardModel = () => {
 
   const revalidateBlockingParentTasks = async (
     taskId: string,
-  ): Promise<TaskDependencyTask[]> => {
+  ): Promise<{ isBlockedNow: boolean; blockers: TaskDependencyTask[] }> => {
     const [freshTask, dependencies] = await Promise.all([
       getTask(taskId),
       listTaskDependencies(taskId),
@@ -574,7 +574,10 @@ export const useBoardModel = () => {
       unresolvedParents.length > 0 || Boolean(freshTask.isBlocked);
     syncTaskSnapshot(taskId, freshTask);
     syncTaskBlockedState(taskId, isBlockedNow);
-    return isBlockedNow ? unresolvedParents : [];
+    return {
+      isBlockedNow,
+      blockers: unresolvedParents,
+    };
   };
 
   const showBlockedTaskModal = (
@@ -1354,8 +1357,9 @@ export const useBoardModel = () => {
 
     const verifyTaskCanStart = async () => {
       try {
-        const blockers = await revalidateBlockingParentTasks(taskId);
-        if (blockers.length > 0) {
+        const { isBlockedNow, blockers } =
+          await revalidateBlockingParentTasks(taskId);
+        if (isBlockedNow) {
           showBlockedTaskModal(taskId, blockers);
           return false;
         }
@@ -1412,8 +1416,9 @@ export const useBoardModel = () => {
     const taskId = pendingInProgressTaskId();
     if (!taskId || isTaskStatusUpdating(taskId)) return;
     try {
-      const blockers = await revalidateBlockingParentTasks(taskId);
-      if (blockers.length > 0) {
+      const { isBlockedNow, blockers } =
+        await revalidateBlockingParentTasks(taskId);
+      if (isBlockedNow) {
         showBlockedTaskModal(taskId, blockers);
         return;
       }

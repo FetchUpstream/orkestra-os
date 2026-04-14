@@ -334,10 +334,10 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     let run_identifier_columns = sqlx::query("PRAGMA table_info(runs)")
         .fetch_all(pool)
         .await?;
-    let has_run_number = run_identifier_columns
+    let mut has_run_number = run_identifier_columns
         .iter()
         .any(|row| row.get::<String, _>("name") == "run_number");
-    let has_run_display_key = run_identifier_columns
+    let mut has_run_display_key = run_identifier_columns
         .iter()
         .any(|row| row.get::<String, _>("name") == "display_key");
 
@@ -346,230 +346,424 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
         .is_some_and(|sql| !sql.contains("'rejected'"));
 
     if needs_rejected_run_status_migration {
-        if !has_run_number || !has_run_display_key {
-            sqlx::query(MIGRATION_0021).execute(pool).await?;
-        } else {
-            sqlx::query(
-                "DROP INDEX IF EXISTS idx_runs_status;
-                 DROP INDEX IF EXISTS idx_runs_project_id_created_at;
-                 DROP INDEX IF EXISTS idx_runs_task_id_created_at;
-
-                 CREATE TABLE runs__new (
-                   id TEXT PRIMARY KEY,
-                   task_id TEXT NOT NULL,
-                   project_id TEXT NOT NULL,
-                   run_number INTEGER,
-                   display_key TEXT,
-                   target_repo_id TEXT NULL,
-                   status TEXT NOT NULL CHECK (status IN ('queued', 'preparing', 'in_progress', 'idle', 'complete', 'failed', 'cancelled', 'rejected')),
-                   triggered_by TEXT NOT NULL,
-                   created_at TEXT NOT NULL,
-                   started_at TEXT NULL,
-                   finished_at TEXT NULL,
-                   summary TEXT NULL,
-                   error_message TEXT NULL,
-                   worktree_id TEXT NULL,
-                   agent_id TEXT NULL,
-                   source_branch TEXT NULL,
-                   opencode_session_id TEXT NULL,
-                   initial_prompt_sent_at TEXT NULL,
-                   initial_prompt_client_request_id TEXT NULL,
-                   initial_prompt_claimed_at TEXT NULL,
-                   initial_prompt_claim_request_id TEXT NULL,
-                   setup_state TEXT NOT NULL DEFAULT 'pending',
-                   setup_started_at TEXT NULL,
-                   setup_finished_at TEXT NULL,
-                   setup_error_message TEXT NULL,
-                   cleanup_state TEXT NOT NULL DEFAULT 'pending',
-                   cleanup_started_at TEXT NULL,
-                   cleanup_finished_at TEXT NULL,
-                   cleanup_error_message TEXT NULL,
-                   provider_id TEXT NULL,
-                   model_id TEXT NULL,
-                   run_state TEXT NULL,
-                   FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
-                   FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
-                   FOREIGN KEY (target_repo_id) REFERENCES project_repositories (id) ON DELETE SET NULL
-                 );
-
-                 INSERT INTO runs__new (
-                   id, task_id, project_id, run_number, display_key, target_repo_id, status, triggered_by, created_at,
-                   started_at, finished_at, summary, error_message, worktree_id, agent_id,
-                   source_branch, opencode_session_id, initial_prompt_sent_at,
-                   initial_prompt_client_request_id, initial_prompt_claimed_at,
-                   initial_prompt_claim_request_id, setup_state, setup_started_at,
-                   setup_finished_at, setup_error_message, cleanup_state, cleanup_started_at,
-                   cleanup_finished_at, cleanup_error_message, provider_id, model_id, run_state
-                 )
-                 SELECT
-                   id, task_id, project_id, run_number, display_key, target_repo_id, status, triggered_by, created_at,
-                   started_at, finished_at, summary, error_message, worktree_id, agent_id,
-                   source_branch, opencode_session_id, initial_prompt_sent_at,
-                   initial_prompt_client_request_id, initial_prompt_claimed_at,
-                   initial_prompt_claim_request_id, setup_state, setup_started_at,
-                   setup_finished_at, setup_error_message, cleanup_state, cleanup_started_at,
-                   cleanup_finished_at, cleanup_error_message, provider_id, model_id, run_state
-                 FROM runs;
-
-                 DROP TABLE runs;
-                 ALTER TABLE runs__new RENAME TO runs;
-
-                 CREATE INDEX IF NOT EXISTS idx_runs_task_id_created_at ON runs (task_id, created_at DESC);
-                 CREATE INDEX IF NOT EXISTS idx_runs_project_id_created_at ON runs (project_id, created_at DESC);
-                 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs (status);",
-            )
-            .execute(pool)
-            .await?;
+        match (has_run_number, has_run_display_key) {
+            (false, false) => {
+                sqlx::query(MIGRATION_0021).execute(pool).await?;
+            }
+            (true, false) => {
+                add_run_display_key_column(pool).await?;
+                has_run_display_key = true;
+                rebuild_legacy_runs_table_with_identifiers(pool).await?;
+            }
+            (false, true) => {
+                add_run_number_column(pool).await?;
+                has_run_number = true;
+                rebuild_legacy_runs_table_with_identifiers(pool).await?;
+            }
+            (true, true) => {
+                rebuild_runs_table_for_rejected_status(pool).await?;
+            }
         }
     }
 
     sqlx::query(MIGRATION_0019).execute(pool).await?;
 
-    if !has_run_number || !has_run_display_key {
-        sqlx::query(MIGRATION_0022).execute(pool).await?;
-    } else {
-        let missing_identifier_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM runs WHERE run_number IS NULL OR display_key IS NULL",
-        )
-        .fetch_one(pool)
+    match (has_run_number, has_run_display_key) {
+        (false, false) => {
+            sqlx::query(MIGRATION_0022).execute(pool).await?;
+        }
+        (true, false) => {
+            add_run_display_key_column(pool).await?;
+            backfill_missing_run_display_keys(pool).await?;
+            ensure_run_identifier_indexes_and_trigger(pool).await?;
+        }
+        (false, true) => {
+            add_run_number_column(pool).await?;
+            backfill_missing_run_numbers(pool).await?;
+            ensure_run_identifier_indexes_and_trigger(pool).await?;
+        }
+        (true, true) => {
+            backfill_missing_run_identifiers(pool).await?;
+            ensure_run_identifier_indexes_and_trigger(pool).await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn add_run_number_column(pool: &SqlitePool) -> Result<(), AppError> {
+    sqlx::query("ALTER TABLE runs ADD COLUMN run_number INTEGER")
+        .execute(pool)
         .await?;
-        if missing_identifier_count > 0 {
-            sqlx::query(
-                "WITH existing_run_numbers AS (
-                    SELECT task_id, COALESCE(MAX(run_number), 0) AS max_run_number
-                    FROM runs
-                    WHERE run_number IS NOT NULL
-                    GROUP BY task_id
-                  ),
-                  ordered_runs AS (
-                    SELECT
-                      r.id AS run_id,
-                      r.task_id AS task_id,
-                      COALESCE(
-                        r.run_number,
-                        COALESCE(existing_run_numbers.max_run_number, 0) + ROW_NUMBER() OVER (
-                          PARTITION BY r.task_id, CASE WHEN r.run_number IS NULL THEN 1 ELSE 0 END
-                          ORDER BY r.created_at ASC, r.id ASC
+    Ok(())
+}
+
+async fn add_run_display_key_column(pool: &SqlitePool) -> Result<(), AppError> {
+    sqlx::query("ALTER TABLE runs ADD COLUMN display_key TEXT")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn rebuild_legacy_runs_table_with_identifiers(pool: &SqlitePool) -> Result<(), AppError> {
+    sqlx::query(
+        "DROP INDEX IF EXISTS idx_runs_status;
+         DROP INDEX IF EXISTS idx_runs_project_id_created_at;
+         DROP INDEX IF EXISTS idx_runs_task_id_created_at;
+
+         CREATE TABLE runs__new (
+           id TEXT PRIMARY KEY,
+           task_id TEXT NOT NULL,
+           project_id TEXT NOT NULL,
+           run_number INTEGER,
+           display_key TEXT,
+           target_repo_id TEXT NULL,
+           status TEXT NOT NULL CHECK (status IN ('queued', 'preparing', 'in_progress', 'idle', 'complete', 'failed', 'cancelled', 'rejected')),
+           triggered_by TEXT NOT NULL,
+           created_at TEXT NOT NULL,
+           started_at TEXT NULL,
+           finished_at TEXT NULL,
+           summary TEXT NULL,
+           error_message TEXT NULL,
+           worktree_id TEXT NULL,
+           agent_id TEXT NULL,
+           source_branch TEXT NULL,
+           opencode_session_id TEXT NULL,
+           initial_prompt_sent_at TEXT NULL,
+           initial_prompt_client_request_id TEXT NULL,
+           initial_prompt_claimed_at TEXT NULL,
+           initial_prompt_claim_request_id TEXT NULL,
+           setup_state TEXT NOT NULL DEFAULT 'pending',
+           setup_started_at TEXT NULL,
+           setup_finished_at TEXT NULL,
+           setup_error_message TEXT NULL,
+           cleanup_state TEXT NOT NULL DEFAULT 'pending',
+           cleanup_started_at TEXT NULL,
+           cleanup_finished_at TEXT NULL,
+           cleanup_error_message TEXT NULL,
+           provider_id TEXT NULL,
+           model_id TEXT NULL,
+           run_state TEXT NULL,
+           FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
+           FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+           FOREIGN KEY (target_repo_id) REFERENCES project_repositories (id) ON DELETE SET NULL
+         );
+
+         INSERT INTO runs__new (
+           id, task_id, project_id, run_number, display_key, target_repo_id, status, triggered_by, created_at,
+           started_at, finished_at, summary, error_message, worktree_id, agent_id,
+           source_branch, opencode_session_id, initial_prompt_sent_at,
+           initial_prompt_client_request_id, initial_prompt_claimed_at,
+           initial_prompt_claim_request_id, setup_state, setup_started_at,
+           setup_finished_at, setup_error_message, cleanup_state, cleanup_started_at,
+           cleanup_finished_at, cleanup_error_message, provider_id, model_id, run_state
+         )
+         SELECT
+           id, task_id, project_id, run_number, display_key, target_repo_id,
+           CASE
+             WHEN status = 'running' THEN 'in_progress'
+             WHEN status = 'completed' THEN 'complete'
+             WHEN status IN ('queued', 'preparing') THEN 'idle'
+             ELSE status
+           END,
+           triggered_by, created_at, started_at, finished_at, summary, error_message, worktree_id, agent_id,
+           source_branch, opencode_session_id, initial_prompt_sent_at,
+           initial_prompt_client_request_id, initial_prompt_claimed_at,
+           initial_prompt_claim_request_id, setup_state, setup_started_at,
+           setup_finished_at, setup_error_message, cleanup_state, cleanup_started_at,
+           cleanup_finished_at, cleanup_error_message, provider_id, model_id, run_state
+         FROM runs;
+
+         DROP TABLE runs;
+         ALTER TABLE runs__new RENAME TO runs;
+
+         CREATE INDEX IF NOT EXISTS idx_runs_task_id_created_at ON runs (task_id, created_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_runs_project_id_created_at ON runs (project_id, created_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_runs_status ON runs (status);",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn rebuild_runs_table_for_rejected_status(pool: &SqlitePool) -> Result<(), AppError> {
+    sqlx::query(
+        "DROP INDEX IF EXISTS idx_runs_status;
+         DROP INDEX IF EXISTS idx_runs_project_id_created_at;
+         DROP INDEX IF EXISTS idx_runs_task_id_created_at;
+
+         CREATE TABLE runs__new (
+           id TEXT PRIMARY KEY,
+           task_id TEXT NOT NULL,
+           project_id TEXT NOT NULL,
+           run_number INTEGER,
+           display_key TEXT,
+           target_repo_id TEXT NULL,
+           status TEXT NOT NULL CHECK (status IN ('queued', 'preparing', 'in_progress', 'idle', 'complete', 'failed', 'cancelled', 'rejected')),
+           triggered_by TEXT NOT NULL,
+           created_at TEXT NOT NULL,
+           started_at TEXT NULL,
+           finished_at TEXT NULL,
+           summary TEXT NULL,
+           error_message TEXT NULL,
+           worktree_id TEXT NULL,
+           agent_id TEXT NULL,
+           source_branch TEXT NULL,
+           opencode_session_id TEXT NULL,
+           initial_prompt_sent_at TEXT NULL,
+           initial_prompt_client_request_id TEXT NULL,
+           initial_prompt_claimed_at TEXT NULL,
+           initial_prompt_claim_request_id TEXT NULL,
+           setup_state TEXT NOT NULL DEFAULT 'pending',
+           setup_started_at TEXT NULL,
+           setup_finished_at TEXT NULL,
+           setup_error_message TEXT NULL,
+           cleanup_state TEXT NOT NULL DEFAULT 'pending',
+           cleanup_started_at TEXT NULL,
+           cleanup_finished_at TEXT NULL,
+           cleanup_error_message TEXT NULL,
+           provider_id TEXT NULL,
+           model_id TEXT NULL,
+           run_state TEXT NULL,
+           FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
+           FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+           FOREIGN KEY (target_repo_id) REFERENCES project_repositories (id) ON DELETE SET NULL
+         );
+
+         INSERT INTO runs__new (
+           id, task_id, project_id, run_number, display_key, target_repo_id, status, triggered_by, created_at,
+           started_at, finished_at, summary, error_message, worktree_id, agent_id,
+           source_branch, opencode_session_id, initial_prompt_sent_at,
+           initial_prompt_client_request_id, initial_prompt_claimed_at,
+           initial_prompt_claim_request_id, setup_state, setup_started_at,
+           setup_finished_at, setup_error_message, cleanup_state, cleanup_started_at,
+           cleanup_finished_at, cleanup_error_message, provider_id, model_id, run_state
+         )
+         SELECT
+           id, task_id, project_id, run_number, display_key, target_repo_id, status, triggered_by, created_at,
+           started_at, finished_at, summary, error_message, worktree_id, agent_id,
+           source_branch, opencode_session_id, initial_prompt_sent_at,
+           initial_prompt_client_request_id, initial_prompt_claimed_at,
+           initial_prompt_claim_request_id, setup_state, setup_started_at,
+           setup_finished_at, setup_error_message, cleanup_state, cleanup_started_at,
+           cleanup_finished_at, cleanup_error_message, provider_id, model_id, run_state
+         FROM runs;
+
+         DROP TABLE runs;
+         ALTER TABLE runs__new RENAME TO runs;
+
+         CREATE INDEX IF NOT EXISTS idx_runs_task_id_created_at ON runs (task_id, created_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_runs_project_id_created_at ON runs (project_id, created_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_runs_status ON runs (status);",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn backfill_missing_run_numbers(pool: &SqlitePool) -> Result<(), AppError> {
+    sqlx::query(
+        "WITH ordered_runs AS (
+            SELECT
+              r.id AS run_id,
+              ROW_NUMBER() OVER (
+                PARTITION BY r.task_id
+                ORDER BY r.created_at ASC, r.id ASC
+              ) AS next_run_number
+            FROM runs r
+            WHERE r.run_number IS NULL
+          )
+          UPDATE runs
+          SET run_number = (
+            SELECT next_run_number
+            FROM ordered_runs
+            WHERE ordered_runs.run_id = runs.id
+          )
+          WHERE run_number IS NULL",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn backfill_missing_run_display_keys(pool: &SqlitePool) -> Result<(), AppError> {
+    sqlx::query(
+        "WITH run_display_keys AS (
+            SELECT
+              r.id AS run_id,
+              CASE
+                WHEN p.key IS NOT NULL AND p.key != ''
+                  THEN p.key || '-' || t.task_number || '-R' || r.run_number
+                ELSE 'T' || r.task_id || '-R' || r.run_number
+              END AS next_display_key
+            FROM runs r
+            LEFT JOIN tasks t ON t.id = r.task_id
+            LEFT JOIN projects p ON p.id = t.project_id
+            WHERE r.display_key IS NULL
+          )
+          UPDATE runs
+          SET display_key = (
+            SELECT next_display_key
+            FROM run_display_keys
+            WHERE run_display_keys.run_id = runs.id
+          )
+          WHERE display_key IS NULL",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn backfill_missing_run_identifiers(pool: &SqlitePool) -> Result<(), AppError> {
+    let missing_identifier_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM runs WHERE run_number IS NULL OR display_key IS NULL",
+    )
+    .fetch_one(pool)
+    .await?;
+    if missing_identifier_count == 0 {
+        return Ok(());
+    }
+
+    sqlx::query(
+        "WITH existing_run_numbers AS (
+            SELECT task_id, COALESCE(MAX(run_number), 0) AS max_run_number
+            FROM runs
+            WHERE run_number IS NOT NULL
+            GROUP BY task_id
+          ),
+          ordered_runs AS (
+            SELECT
+              r.id AS run_id,
+              r.task_id AS task_id,
+              COALESCE(
+                r.run_number,
+                COALESCE(existing_run_numbers.max_run_number, 0) + ROW_NUMBER() OVER (
+                  PARTITION BY r.task_id, CASE WHEN r.run_number IS NULL THEN 1 ELSE 0 END
+                  ORDER BY r.created_at ASC, r.id ASC
+                )
+              ) AS next_run_number,
+              (
+                SELECT p.key || '-' || t.task_number
+                FROM tasks t
+                JOIN projects p ON p.id = t.project_id
+                WHERE t.id = r.task_id
+              ) AS task_display_key
+            FROM runs r
+            LEFT JOIN existing_run_numbers ON existing_run_numbers.task_id = r.task_id
+            WHERE r.run_number IS NULL OR r.display_key IS NULL
+          )
+          UPDATE runs
+          SET
+            run_number = COALESCE(runs.run_number, (
+              SELECT next_run_number
+              FROM ordered_runs
+              WHERE ordered_runs.run_id = runs.id
+            )),
+            display_key = COALESCE(runs.display_key, (
+              SELECT CASE
+                WHEN task_display_key IS NOT NULL AND task_display_key != ''
+                  THEN task_display_key || '-R' || COALESCE(runs.run_number, next_run_number)
+                ELSE 'T' || task_id || '-R' || COALESCE(runs.run_number, next_run_number)
+              END
+              FROM ordered_runs
+              WHERE ordered_runs.run_id = runs.id
+            ))
+          WHERE run_number IS NULL OR display_key IS NULL",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn ensure_run_identifier_indexes_and_trigger(pool: &SqlitePool) -> Result<(), AppError> {
+    let has_task_run_number_index = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_task_id_run_number'",
+    )
+    .fetch_one(pool)
+    .await?
+        > 0;
+    if !has_task_run_number_index {
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_task_id_run_number ON runs (task_id, run_number)",
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    let has_display_key_index = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_display_key'",
+    )
+    .fetch_one(pool)
+    .await?
+        > 0;
+    if !has_display_key_index {
+        sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_display_key ON runs (display_key)")
+            .execute(pool)
+            .await?;
+    }
+
+    let has_identifier_trigger = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'runs_assign_identifiers_after_insert'",
+    )
+    .fetch_one(pool)
+    .await?
+        > 0;
+    if !has_identifier_trigger {
+        sqlx::query(
+            "CREATE TRIGGER IF NOT EXISTS runs_assign_identifiers_after_insert
+            AFTER INSERT ON runs
+            FOR EACH ROW
+            WHEN NEW.run_number IS NULL OR NEW.display_key IS NULL
+            BEGIN
+              UPDATE runs
+              SET
+                run_number = COALESCE(
+                  NEW.run_number,
+                  (
+                    SELECT COALESCE(MAX(existing.run_number), 0) + 1
+                    FROM runs existing
+                    WHERE existing.task_id = NEW.task_id
+                      AND existing.id != NEW.id
+                  )
+                ),
+                display_key = COALESCE(
+                  NEW.display_key,
+                  (
+                    WITH next_identifier AS (
+                      SELECT COALESCE(
+                        NEW.run_number,
+                        (
+                          SELECT COALESCE(MAX(existing.run_number), 0) + 1
+                          FROM runs existing
+                          WHERE existing.task_id = NEW.task_id
+                            AND existing.id != NEW.id
                         )
-                      ) AS next_run_number,
+                      ) AS run_number,
                       (
                         SELECT p.key || '-' || t.task_number
                         FROM tasks t
                         JOIN projects p ON p.id = t.project_id
-                        WHERE t.id = r.task_id
+                        WHERE t.id = NEW.task_id
                       ) AS task_display_key
-                    FROM runs r
-                    LEFT JOIN existing_run_numbers ON existing_run_numbers.task_id = r.task_id
-                    WHERE r.run_number IS NULL OR r.display_key IS NULL
-                  )
-                  UPDATE runs
-                  SET
-                    run_number = COALESCE(runs.run_number, (
-                      SELECT next_run_number
-                      FROM ordered_runs
-                      WHERE ordered_runs.run_id = runs.id
-                    )),
-                    display_key = COALESCE(runs.display_key, (
-                      SELECT CASE
-                        WHEN task_display_key IS NOT NULL AND task_display_key != ''
-                          THEN task_display_key || '-R' || COALESCE(runs.run_number, next_run_number)
-                        ELSE 'T' || task_id || '-R' || COALESCE(runs.run_number, next_run_number)
-                      END
-                      FROM ordered_runs
-                      WHERE ordered_runs.run_id = runs.id
-                    ))
-                  WHERE run_number IS NULL OR display_key IS NULL",
-            )
-            .execute(pool)
-            .await?;
-        }
-
-        let has_task_run_number_index = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_task_id_run_number'",
-        )
-        .fetch_one(pool)
-        .await?
-            > 0;
-        if !has_task_run_number_index {
-            sqlx::query(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_task_id_run_number ON runs (task_id, run_number)",
-            )
-            .execute(pool)
-            .await?;
-        }
-
-        let has_display_key_index = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_display_key'",
-        )
-        .fetch_one(pool)
-        .await?
-            > 0;
-        if !has_display_key_index {
-            sqlx::query(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_display_key ON runs (display_key)",
-            )
-            .execute(pool)
-            .await?;
-        }
-
-        let has_identifier_trigger = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'runs_assign_identifiers_after_insert'",
-        )
-        .fetch_one(pool)
-        .await?
-            > 0;
-        if !has_identifier_trigger {
-            sqlx::query(
-                "CREATE TRIGGER IF NOT EXISTS runs_assign_identifiers_after_insert
-                AFTER INSERT ON runs
-                FOR EACH ROW
-                WHEN NEW.run_number IS NULL OR NEW.display_key IS NULL
-                BEGIN
-                  UPDATE runs
-                  SET
-                    run_number = COALESCE(
-                      NEW.run_number,
-                      (
-                        SELECT COALESCE(MAX(existing.run_number), 0) + 1
-                        FROM runs existing
-                        WHERE existing.task_id = NEW.task_id
-                          AND existing.id != NEW.id
-                      )
-                    ),
-                    display_key = COALESCE(
-                      NEW.display_key,
-                      (
-                        WITH next_identifier AS (
-                          SELECT COALESCE(
-                            NEW.run_number,
-                            (
-                              SELECT COALESCE(MAX(existing.run_number), 0) + 1
-                              FROM runs existing
-                              WHERE existing.task_id = NEW.task_id
-                                AND existing.id != NEW.id
-                            )
-                          ) AS run_number,
-                          (
-                            SELECT p.key || '-' || t.task_number
-                            FROM tasks t
-                            JOIN projects p ON p.id = t.project_id
-                            WHERE t.id = NEW.task_id
-                          ) AS task_display_key
-                        )
-                        SELECT CASE
-                          WHEN task_display_key IS NOT NULL AND task_display_key != ''
-                            THEN task_display_key || '-R' || run_number
-                          ELSE 'T' || NEW.task_id || '-R' || run_number
-                        END
-                        FROM next_identifier
-                      )
                     )
-                  WHERE id = NEW.id;
-                END",
-            )
-            .execute(pool)
-            .await?;
-        }
+                    SELECT CASE
+                      WHEN task_display_key IS NOT NULL AND task_display_key != ''
+                        THEN task_display_key || '-R' || run_number
+                      ELSE 'T' || NEW.task_id || '-R' || run_number
+                    END
+                    FROM next_identifier
+                  )
+                )
+              WHERE id = NEW.id;
+            END",
+        )
+        .execute(pool)
+        .await?;
     }
 
     Ok(())
@@ -1101,6 +1295,201 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn run_migrations_adds_missing_display_key_without_rebuilding_partial_identifier_schema()
+    {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+        sqlx::query(MIGRATION_0001).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0002).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0003).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0004).execute(&pool).await.unwrap();
+
+        sqlx::query(
+            "CREATE TABLE runs (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                run_number INTEGER,
+                target_repo_id TEXT NULL,
+                status TEXT NOT NULL CHECK (status IN ('queued', 'preparing', 'in_progress', 'idle', 'complete', 'failed', 'cancelled')),
+                run_state TEXT NULL,
+                triggered_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                started_at TEXT NULL,
+                finished_at TEXT NULL,
+                summary TEXT NULL,
+                error_message TEXT NULL,
+                worktree_id TEXT NULL,
+                agent_id TEXT NULL,
+                source_branch TEXT NULL,
+                opencode_session_id TEXT NULL,
+                initial_prompt_sent_at TEXT NULL,
+                initial_prompt_client_request_id TEXT NULL,
+                initial_prompt_claimed_at TEXT NULL,
+                initial_prompt_claim_request_id TEXT NULL,
+                provider_id TEXT NULL,
+                model_id TEXT NULL,
+                setup_state TEXT NOT NULL DEFAULT 'pending',
+                setup_started_at TEXT NULL,
+                setup_finished_at TEXT NULL,
+                setup_error_message TEXT NULL,
+                cleanup_state TEXT NOT NULL DEFAULT 'pending',
+                cleanup_started_at TEXT NULL,
+                cleanup_finished_at TEXT NULL,
+                cleanup_error_message TEXT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES ('proj-1', 'Project 1', 'ORK', NULL, 'repo-1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+             VALUES ('repo-1', 'proj-1', 'Repo 1', '/tmp/repo-1', 1, '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+             VALUES ('task-1', 'proj-1', 'repo-1', 1, 'Task', NULL, 'todo', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, run_number, target_repo_id, status, triggered_by, created_at)
+             VALUES ('run-1', 'task-1', 'proj-1', 4, 'repo-1', 'queued', 'user', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        run_migrations(&pool).await.unwrap();
+
+        let schema: String = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runs' LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(schema.contains("'rejected'"));
+        assert!(schema.contains("run_number INTEGER"));
+        assert!(schema.contains("display_key TEXT"));
+
+        let identifiers: (i64, String) =
+            sqlx::query_as("SELECT run_number, display_key FROM runs WHERE id = 'run-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(identifiers, (4, "ORK-1-R4".to_string()));
+    }
+
+    #[tokio::test]
+    async fn run_migrations_adds_missing_run_number_without_rebuilding_partial_identifier_schema() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+        sqlx::query(MIGRATION_0001).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0002).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0003).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_0004).execute(&pool).await.unwrap();
+
+        sqlx::query(
+            "CREATE TABLE runs (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                display_key TEXT,
+                target_repo_id TEXT NULL,
+                status TEXT NOT NULL CHECK (status IN ('queued', 'preparing', 'in_progress', 'idle', 'complete', 'failed', 'cancelled')),
+                run_state TEXT NULL,
+                triggered_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                started_at TEXT NULL,
+                finished_at TEXT NULL,
+                summary TEXT NULL,
+                error_message TEXT NULL,
+                worktree_id TEXT NULL,
+                agent_id TEXT NULL,
+                source_branch TEXT NULL,
+                opencode_session_id TEXT NULL,
+                initial_prompt_sent_at TEXT NULL,
+                initial_prompt_client_request_id TEXT NULL,
+                initial_prompt_claimed_at TEXT NULL,
+                initial_prompt_claim_request_id TEXT NULL,
+                provider_id TEXT NULL,
+                model_id TEXT NULL,
+                setup_state TEXT NOT NULL DEFAULT 'pending',
+                setup_started_at TEXT NULL,
+                setup_finished_at TEXT NULL,
+                setup_error_message TEXT NULL,
+                cleanup_state TEXT NOT NULL DEFAULT 'pending',
+                cleanup_started_at TEXT NULL,
+                cleanup_finished_at TEXT NULL,
+                cleanup_error_message TEXT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO projects (id, name, key, description, default_repo_id, created_at, updated_at)
+             VALUES ('proj-1', 'Project 1', 'ORK', NULL, 'repo-1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO project_repositories (id, project_id, name, repo_path, is_default, created_at)
+             VALUES ('repo-1', 'proj-1', 'Repo 1', '/tmp/repo-1', 1, '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
+             VALUES ('task-1', 'proj-1', 'repo-1', 1, 'Task', NULL, 'todo', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO runs (id, task_id, project_id, display_key, target_repo_id, status, triggered_by, created_at)
+             VALUES ('run-1', 'task-1', 'proj-1', 'CUSTOM-RUN-KEY', 'repo-1', 'queued', 'user', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        run_migrations(&pool).await.unwrap();
+
+        let schema: String = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runs' LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(schema.contains("'rejected'"));
+        assert!(schema.contains("run_number INTEGER"));
+        assert!(schema.contains("display_key TEXT"));
+
+        let identifiers: (i64, String) =
+            sqlx::query_as("SELECT run_number, display_key FROM runs WHERE id = 'run-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(identifiers, (1, "CUSTOM-RUN-KEY".to_string()));
     }
 
     #[tokio::test]
