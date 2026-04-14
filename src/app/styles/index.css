@@ -3997,6 +3997,8 @@ textarea::placeholder {
 .run-chat-workspace {
   --run-chat-rail-max: 820px;
   --run-chat-prose-max: 72ch;
+  --run-chat-surface-max: 680px;
+  --run-chat-user-bubble-max: min(76%, 600px);
   --run-chat-composer-gap: 148px;
   --run-chat-composer-offset: var(--run-chat-composer-gap, 148px);
   display: grid;
@@ -5000,7 +5002,7 @@ textarea::placeholder {
 .run-chat-user-message__bubble {
   width: fit-content;
   min-width: min(100%, var(--run-chat-bubble-min-width));
-  max-width: min(76%, 600px);
+  max-width: var(--run-chat-user-bubble-max);
   display: inline-block;
   background: color-mix(in srgb, var(--surface-alt) 88%, var(--accent) 12%);
   border: 1px solid color-mix(in srgb, var(--border) 72%, var(--accent) 28%);
@@ -5322,10 +5324,19 @@ textarea::placeholder {
 .run-chat-details,
 .run-chat-tool-rail {
   margin-top: 2px;
-  width: min(100%, 680px);
+  width: min(100%, var(--run-chat-surface-max));
   border: 1px solid var(--border-subtle);
   border-radius: 0;
   background: rgba(255, 255, 255, 0.015);
+}
+
+@media (min-width: 1440px) {
+  .run-chat-workspace {
+    --run-chat-rail-max: clamp(900px, 60vw, 980px);
+    --run-chat-prose-max: 84ch;
+    --run-chat-surface-max: 760px;
+    --run-chat-user-bubble-max: min(78%, 680px);
+  }
 }
 
 .run-chat-reasoning summary,
