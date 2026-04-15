@@ -294,6 +294,138 @@ describe("NewRunChatWorkspace", () => {
     });
   });
 
+  it("preserves the visible transcript anchor when older history is prepended", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-1",
+      status: "idle",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-1", "msg-2"],
+      messagesById: {
+        "msg-1": {
+          id: "msg-1",
+          sessionId: "session-1",
+          role: "assistant",
+          partsById: {
+            "part-1": {
+              id: "part-1",
+              kind: "text",
+              type: "text",
+              text: "Earlier message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-1"],
+        },
+        "msg-2": {
+          id: "msg-2",
+          sessionId: "session-1",
+          role: "assistant",
+          partsById: {
+            "part-2": {
+              id: "part-2",
+              kind: "text",
+              type: "text",
+              text: "Latest message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-2"],
+        },
+      },
+      pendingQuestionsById: {},
+      resolvedQuestionsById: {},
+      failedQuestionsById: {},
+      pendingPermissionsById: {},
+      resolvedPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    let scrollTopValue = 0;
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+
+    const loadOlder = vi.fn(async () => {
+      setStore((current) => ({
+        ...current,
+        messageOrder: ["msg-older", ...current.messageOrder],
+        messagesById: {
+          ...current.messagesById,
+          "msg-older": {
+            id: "msg-older",
+            sessionId: "session-1",
+            role: "assistant",
+            partsById: {
+              "part-older": {
+                id: "part-older",
+                kind: "text",
+                type: "text",
+                text: "Older message",
+                streaming: false,
+              },
+            },
+            partOrder: ["part-older"],
+          },
+        },
+      }));
+      return true;
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+    model.agent.history = {
+      canLoadOlder: () => true,
+      isLoadingOlder: () => false,
+      error: () => "",
+      loadOlder,
+    } as unknown as typeof model.agent.history;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    const transcript = screen.getByLabelText(
+      "Conversation transcript",
+    ) as HTMLDivElement;
+    Object.defineProperty(transcript, "scrollHeight", {
+      value: 400,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "clientHeight", {
+      value: 320,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (next: number) => {
+        scrollTopValue = next;
+      },
+    });
+    Object.defineProperty(transcript, "scrollTo", {
+      configurable: true,
+      value: ({ top }: { top: number }) => {
+        scrollTopValue = top;
+      },
+    });
+
+    fireEvent.scroll(transcript);
+    fireEvent.click(screen.getByRole("button", { name: "Load older history" }));
+
+    await waitFor(() => {
+      expect(loadOlder).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Older message")).toBeTruthy();
+      expect(scrollTopValue).toBeGreaterThan(0);
+    });
+
+    rafSpy.mockRestore();
+  });
+
   it("renders actionable permission item in transcript and disables composer", () => {
     const { model } = createModelStub("running", true);
     render(() => <NewRunChatWorkspace model={model} />);

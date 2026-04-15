@@ -38,6 +38,11 @@ import RunChatUserMessage from "./RunChatUserMessage";
 const DEFAULT_OVERSCAN_PX = 320;
 const TRANSCRIPT_ROW_GAP_PX = 18;
 const DEFAULT_VIEWPORT_HEIGHT_PX = 720;
+const TRANSCRIPT_BOTTOM_TOLERANCE_PX = 1;
+const TRANSCRIPT_ANCHOR_TOLERANCE_PX = 2;
+const DEFAULT_BOTTOM_SCROLL_MAX_ATTEMPTS = 6;
+const DEFAULT_ANCHOR_RESTORE_MAX_ATTEMPTS = 12;
+const MAX_ANCHOR_FORCE_RENDER_ROWS = 160;
 
 type RunChatTranscriptPermissionDecision = "deny" | "once" | "always";
 
@@ -142,6 +147,31 @@ type RunChatTranscriptProps = {
   scrollElement?: Accessor<HTMLElement | undefined>;
   overscanPx?: number;
   layoutToken?: string;
+  apiRef?: (handle: RunChatTranscriptHandle | null) => void;
+};
+
+export type RunChatTranscriptAnchor = {
+  rowKey: string;
+  rowOffset: number;
+};
+
+export type RunChatTranscriptHandle = {
+  captureAnchor: () => RunChatTranscriptAnchor | null;
+  restoreAnchor: (
+    anchor: RunChatTranscriptAnchor,
+    options?: {
+      maxAttempts?: number;
+      onComplete?: (restored: boolean) => void;
+    },
+  ) => void;
+  scrollToBottom: (options?: {
+    behavior?: ScrollBehavior;
+    maxAttempts?: number;
+    onComplete?: (atBottom: boolean) => void;
+  }) => void;
+  cancelPendingViewportWork: () => void;
+  getDistanceFromBottom: () => number;
+  isNearBottom: (threshold?: number) => boolean;
 };
 
 type TranscriptRowLayout = {
@@ -157,6 +187,33 @@ type TranscriptViewportMetrics = {
   scrollTop: number;
   clientHeight: number;
   listContentTop: number;
+};
+
+type TranscriptForcedRenderRange = {
+  startIndex: number;
+  endIndex: number;
+};
+
+const getOffsetWithinAncestor = (
+  element: HTMLElement,
+  ancestor: HTMLElement,
+): number | null => {
+  let total = 0;
+  let current: HTMLElement | null = element;
+
+  while (current && current !== ancestor) {
+    total += current.offsetTop;
+
+    const offsetParent: Element | null = current.offsetParent;
+    if (offsetParent instanceof HTMLElement) {
+      current = offsetParent;
+      continue;
+    }
+
+    current = current.parentElement;
+  }
+
+  return current === ancestor ? total : null;
 };
 
 const estimateTranscriptRowHeight = (row: RunChatTranscriptRow): number => {
@@ -1013,6 +1070,11 @@ const RunChatTranscript: Component<RunChatTranscriptProps> = (props) => {
   let transcriptSectionRef: HTMLElement | undefined;
   let transcriptListRef: HTMLOListElement | undefined;
   let syncViewportFrame: number | undefined;
+  let viewportWorkFrame: number | undefined;
+  let viewportVerifyFrame: number | undefined;
+  let activeViewportWorkId = 0;
+  let hasPendingViewportWork = false;
+  let activeViewportWorkCompletion: ((completed: boolean) => void) | undefined;
 
   const [rowHeights, setRowHeights] = createSignal(new Map<string, number>());
   const [viewportMetrics, setViewportMetrics] =
@@ -1021,12 +1083,48 @@ const RunChatTranscript: Component<RunChatTranscriptProps> = (props) => {
       clientHeight: 0,
       listContentTop: 0,
     });
+  const [forcedRenderRange, setForcedRenderRange] =
+    createSignal<TranscriptForcedRenderRange | null>(null);
 
-  const syncViewportMetrics = () => {
+  const cancelViewportFrames = () => {
+    if (
+      viewportWorkFrame !== undefined &&
+      typeof cancelAnimationFrame === "function"
+    ) {
+      cancelAnimationFrame(viewportWorkFrame);
+      viewportWorkFrame = undefined;
+    }
+
+    if (
+      viewportVerifyFrame !== undefined &&
+      typeof cancelAnimationFrame === "function"
+    ) {
+      cancelAnimationFrame(viewportVerifyFrame);
+      viewportVerifyFrame = undefined;
+    }
+  };
+
+  const clearPendingViewportWork = (
+    completed: boolean,
+    notify = false,
+  ): void => {
+    hasPendingViewportWork = false;
+    activeViewportWorkId += 1;
+    cancelViewportFrames();
+    setForcedRenderRange(null);
+
+    const onComplete = activeViewportWorkCompletion;
+    activeViewportWorkCompletion = undefined;
+    if (notify) {
+      onComplete?.(completed);
+    }
+  };
+
+  const resolveViewportMetrics = (): TranscriptViewportMetrics | null => {
     const scrollElement = props.scrollElement?.();
     const listElement = transcriptListRef;
     if (!scrollElement || !listElement) {
-      return;
+      return null;
     }
 
     const scrollRect = scrollElement.getBoundingClientRect();
@@ -1034,7 +1132,9 @@ const RunChatTranscript: Component<RunChatTranscriptProps> = (props) => {
     const nextMetrics = {
       scrollTop: scrollElement.scrollTop,
       clientHeight: scrollElement.clientHeight,
-      listContentTop: scrollElement.scrollTop + listRect.top - scrollRect.top,
+      listContentTop:
+        getOffsetWithinAncestor(listElement, scrollElement) ??
+        scrollElement.scrollTop + listRect.top - scrollRect.top,
     };
 
     setViewportMetrics((current) => {
@@ -1047,6 +1147,282 @@ const RunChatTranscript: Component<RunChatTranscriptProps> = (props) => {
       }
       return nextMetrics;
     });
+
+    return nextMetrics;
+  };
+
+  const getBottomScrollTop = (): number => {
+    const scrollElement = props.scrollElement?.();
+    if (!scrollElement) {
+      return 0;
+    }
+
+    const metrics = resolveViewportMetrics();
+    const inferredContentHeight = metrics
+      ? Math.max(
+          scrollElement.scrollHeight,
+          Math.ceil(metrics.listContentTop + rowLayouts().totalHeight),
+        )
+      : scrollElement.scrollHeight;
+
+    return Math.max(0, inferredContentHeight - scrollElement.clientHeight);
+  };
+
+  const getDistanceFromBottom = (): number => {
+    const scrollElement = props.scrollElement?.();
+    if (!scrollElement) {
+      return 0;
+    }
+
+    return Math.max(0, getBottomScrollTop() - scrollElement.scrollTop);
+  };
+
+  const scrollElementToTop = (
+    scrollElement: HTMLElement,
+    top: number,
+    behavior: ScrollBehavior,
+  ): void => {
+    const targetTop = Math.max(0, top);
+    if (typeof scrollElement.scrollTo === "function") {
+      scrollElement.scrollTo({ top: targetTop, behavior });
+      scheduleViewportSync();
+      return;
+    }
+
+    scrollElement.scrollTop = targetTop;
+    scheduleViewportSync();
+  };
+
+  const captureAnchor = (): RunChatTranscriptAnchor | null => {
+    const metrics = resolveViewportMetrics();
+    const layouts = rowLayouts().rows;
+    if (!metrics || layouts.length === 0) {
+      return null;
+    }
+
+    const viewportTop = Math.max(0, metrics.scrollTop - metrics.listContentTop);
+    const anchorIndex = Math.min(
+      findFirstVisibleRowIndex(layouts, viewportTop),
+      layouts.length - 1,
+    );
+    const anchorLayout = layouts[anchorIndex];
+    if (!anchorLayout) {
+      return null;
+    }
+
+    return {
+      rowKey: anchorLayout.key,
+      rowOffset: Math.max(0, viewportTop - anchorLayout.start),
+    };
+  };
+
+  const getAnchorTargetTop = (
+    anchor: RunChatTranscriptAnchor,
+  ): number | null => {
+    const metrics = resolveViewportMetrics();
+    const layout = rowLayoutsByKey().get(anchor.rowKey);
+    if (!metrics || !layout) {
+      return null;
+    }
+
+    return Math.max(
+      0,
+      metrics.listContentTop +
+        layout.start +
+        Math.min(anchor.rowOffset, Math.max(0, layout.size - 1)),
+    );
+  };
+
+  const isAnchorAligned = (anchor: RunChatTranscriptAnchor): boolean => {
+    const scrollElement = props.scrollElement?.();
+    const targetTop = getAnchorTargetTop(anchor);
+    if (!scrollElement || targetTop === null) {
+      return false;
+    }
+
+    return (
+      Math.abs(scrollElement.scrollTop - targetTop) <=
+      TRANSCRIPT_ANCHOR_TOLERANCE_PX
+    );
+  };
+
+  const resolveAnchorForceRenderRange = (
+    anchor: RunChatTranscriptAnchor,
+  ): TranscriptForcedRenderRange | null => {
+    const endIndex = props.rows.findIndex((row) => row.key === anchor.rowKey);
+    if (endIndex < 0) {
+      return null;
+    }
+
+    if (endIndex + 1 > MAX_ANCHOR_FORCE_RENDER_ROWS) {
+      return null;
+    }
+
+    return {
+      startIndex: 0,
+      endIndex,
+    };
+  };
+
+  const isForceRenderRangeMeasured = (
+    range: TranscriptForcedRenderRange,
+  ): boolean => {
+    const heights = rowHeights();
+    for (let index = range.startIndex; index <= range.endIndex; index += 1) {
+      const rowKey = props.rows[index]?.key;
+      if (!rowKey || !heights.has(rowKey)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const runAnchorRestore = (
+    anchor: RunChatTranscriptAnchor,
+    requestId: number,
+    attempt: number,
+    maxAttempts: number,
+  ) => {
+    const range = resolveAnchorForceRenderRange(anchor);
+    if (!range) {
+      clearPendingViewportWork(false, true);
+      return;
+    }
+
+    setForcedRenderRange(range);
+    viewportWorkFrame = requestAnimationFrame(() => {
+      viewportWorkFrame = undefined;
+      if (requestId !== activeViewportWorkId) {
+        return;
+      }
+
+      const scrollElement = props.scrollElement?.();
+      const targetTop = getAnchorTargetTop(anchor);
+      if (!scrollElement || targetTop === null) {
+        clearPendingViewportWork(false, true);
+        return;
+      }
+
+      scrollElementToTop(scrollElement, targetTop, "auto");
+
+      viewportVerifyFrame = requestAnimationFrame(() => {
+        viewportVerifyFrame = undefined;
+        if (requestId !== activeViewportWorkId) {
+          return;
+        }
+
+        const aligned = isAnchorAligned(anchor);
+        const measured = isForceRenderRangeMeasured(range);
+        if (aligned && measured) {
+          clearPendingViewportWork(true, true);
+          return;
+        }
+
+        if (attempt + 1 >= maxAttempts) {
+          clearPendingViewportWork(aligned, true);
+          return;
+        }
+
+        runAnchorRestore(anchor, requestId, attempt + 1, maxAttempts);
+      });
+    });
+  };
+
+  const runBottomScroll = (
+    requestId: number,
+    behavior: ScrollBehavior,
+    attempt: number,
+    maxAttempts: number,
+  ) => {
+    viewportWorkFrame = requestAnimationFrame(() => {
+      viewportWorkFrame = undefined;
+      if (requestId !== activeViewportWorkId) {
+        return;
+      }
+
+      const scrollElement = props.scrollElement?.();
+      if (!scrollElement) {
+        clearPendingViewportWork(false, true);
+        return;
+      }
+
+      const targetTop = getBottomScrollTop();
+      scrollElementToTop(
+        scrollElement,
+        targetTop,
+        attempt === 0 ? behavior : "auto",
+      );
+
+      viewportVerifyFrame = requestAnimationFrame(() => {
+        viewportVerifyFrame = undefined;
+        if (requestId !== activeViewportWorkId) {
+          return;
+        }
+
+        const distanceFromBottom = getDistanceFromBottom();
+        const bottomStable =
+          Math.abs(getBottomScrollTop() - targetTop) <=
+          TRANSCRIPT_BOTTOM_TOLERANCE_PX;
+
+        if (
+          distanceFromBottom <= TRANSCRIPT_BOTTOM_TOLERANCE_PX &&
+          bottomStable
+        ) {
+          clearPendingViewportWork(true, true);
+          return;
+        }
+
+        if (attempt + 1 >= maxAttempts) {
+          clearPendingViewportWork(
+            distanceFromBottom <= TRANSCRIPT_BOTTOM_TOLERANCE_PX,
+            true,
+          );
+          return;
+        }
+
+        runBottomScroll(requestId, behavior, attempt + 1, maxAttempts);
+      });
+    });
+  };
+
+  const transcriptHandle: RunChatTranscriptHandle = {
+    captureAnchor,
+    restoreAnchor: (anchor, options) => {
+      clearPendingViewportWork(false);
+      hasPendingViewportWork = true;
+      activeViewportWorkCompletion = options?.onComplete;
+      const requestId = activeViewportWorkId;
+      runAnchorRestore(
+        anchor,
+        requestId,
+        0,
+        Math.max(
+          1,
+          options?.maxAttempts ?? DEFAULT_ANCHOR_RESTORE_MAX_ATTEMPTS,
+        ),
+      );
+    },
+    scrollToBottom: (options) => {
+      clearPendingViewportWork(false);
+      hasPendingViewportWork = true;
+      activeViewportWorkCompletion = options?.onComplete;
+      const requestId = activeViewportWorkId;
+      runBottomScroll(
+        requestId,
+        options?.behavior ?? "auto",
+        0,
+        Math.max(1, options?.maxAttempts ?? DEFAULT_BOTTOM_SCROLL_MAX_ATTEMPTS),
+      );
+    },
+    cancelPendingViewportWork: () => {
+      clearPendingViewportWork(false);
+    },
+    getDistanceFromBottom,
+    isNearBottom: (threshold = 0) => getDistanceFromBottom() <= threshold,
+  };
+
+  const syncViewportMetrics = () => {
+    resolveViewportMetrics();
   };
 
   const scheduleViewportSync = () => {
@@ -1117,22 +1493,25 @@ const RunChatTranscript: Component<RunChatTranscriptProps> = (props) => {
       viewport.clientHeight > 0
         ? viewport.clientHeight
         : DEFAULT_VIEWPORT_HEIGHT_PX;
-    const visibleTop = viewport.scrollTop - viewport.listContentTop - overscan;
-    const visibleBottom =
+    const totalHeight = rowLayouts().totalHeight;
+    const unclampedVisibleTop =
+      viewport.scrollTop - viewport.listContentTop - overscan;
+    const unclampedVisibleBottom =
       viewport.scrollTop - viewport.listContentTop + viewportHeight + overscan;
-
-    if (visibleBottom < 0 || visibleTop > rowLayouts().totalHeight) {
-      return [] as TranscriptRowLayout[];
-    }
-
-    const startIndex = findFirstVisibleRowIndex(
-      layouts,
-      Math.max(0, visibleTop),
+    const visibleTop = Math.max(
+      0,
+      Math.min(
+        unclampedVisibleTop,
+        Math.max(0, totalHeight - viewportHeight - overscan),
+      ),
     );
-    const endIndex = findLastVisibleRowIndex(
-      layouts,
-      Math.min(rowLayouts().totalHeight, visibleBottom),
+    const visibleBottom = Math.max(
+      visibleTop,
+      Math.min(totalHeight, Math.max(0, unclampedVisibleBottom)),
     );
+
+    const startIndex = findFirstVisibleRowIndex(layouts, visibleTop);
+    const endIndex = findLastVisibleRowIndex(layouts, visibleBottom);
 
     if (startIndex >= layouts.length || endIndex < startIndex) {
       return [] as TranscriptRowLayout[];
@@ -1141,8 +1520,35 @@ const RunChatTranscript: Component<RunChatTranscriptProps> = (props) => {
     return layouts.slice(startIndex, endIndex + 1);
   });
 
-  const visibleRowKeys = createMemo(() => {
-    return visibleRowLayouts().map((layout) => layout.key);
+  const renderedRowLayouts = createMemo(() => {
+    const visibleLayouts = visibleRowLayouts();
+    const range = forcedRenderRange();
+    if (!range) {
+      return visibleLayouts;
+    }
+
+    const layouts = rowLayouts().rows;
+    const startIndex = Math.max(0, range.startIndex);
+    const endIndex = Math.min(layouts.length - 1, range.endIndex);
+    if (endIndex < startIndex) {
+      return visibleLayouts;
+    }
+
+    const merged = new Map<string, TranscriptRowLayout>();
+    layouts.slice(startIndex, endIndex + 1).forEach((layout) => {
+      merged.set(layout.key, layout);
+    });
+    visibleLayouts.forEach((layout) => {
+      merged.set(layout.key, layout);
+    });
+
+    return Array.from(merged.values()).sort((left, right) => {
+      return left.index - right.index;
+    });
+  });
+
+  const renderedRowKeys = createMemo(() => {
+    return renderedRowLayouts().map((layout) => layout.key);
   });
 
   const measureRow = (key: string, height: number) => {
@@ -1187,6 +1593,23 @@ const RunChatTranscript: Component<RunChatTranscriptProps> = (props) => {
   });
 
   createEffect(() => {
+    forcedRenderRange();
+    scheduleViewportSync();
+  });
+
+  createEffect(() => {
+    const apiRef = props.apiRef;
+    if (!apiRef) {
+      return;
+    }
+
+    apiRef(transcriptHandle);
+    onCleanup(() => {
+      apiRef(null);
+    });
+  });
+
+  createEffect(() => {
     const scrollElement = props.scrollElement?.();
     const listElement = transcriptListRef;
     const sectionElement = transcriptSectionRef;
@@ -1198,7 +1621,27 @@ const RunChatTranscript: Component<RunChatTranscriptProps> = (props) => {
       scheduleViewportSync();
     };
 
+    const cancelPendingUserCompetingWork = () => {
+      if (hasPendingViewportWork) {
+        clearPendingViewportWork(false, true);
+      }
+    };
+
     scrollElement.addEventListener("scroll", handleScroll, { passive: true });
+    scrollElement.addEventListener("wheel", cancelPendingUserCompetingWork, {
+      passive: true,
+    });
+    scrollElement.addEventListener(
+      "touchstart",
+      cancelPendingUserCompetingWork,
+      {
+        passive: true,
+      },
+    );
+    scrollElement.addEventListener(
+      "pointerdown",
+      cancelPendingUserCompetingWork,
+    );
     window.addEventListener("resize", scheduleViewportSync);
 
     let observer: ResizeObserver | undefined;
@@ -1215,6 +1658,18 @@ const RunChatTranscript: Component<RunChatTranscriptProps> = (props) => {
 
     onCleanup(() => {
       scrollElement.removeEventListener("scroll", handleScroll);
+      scrollElement.removeEventListener(
+        "wheel",
+        cancelPendingUserCompetingWork,
+      );
+      scrollElement.removeEventListener(
+        "touchstart",
+        cancelPendingUserCompetingWork,
+      );
+      scrollElement.removeEventListener(
+        "pointerdown",
+        cancelPendingUserCompetingWork,
+      );
       window.removeEventListener("resize", scheduleViewportSync);
       observer?.disconnect();
     });
@@ -1227,6 +1682,8 @@ const RunChatTranscript: Component<RunChatTranscriptProps> = (props) => {
     ) {
       cancelAnimationFrame(syncViewportFrame);
     }
+
+    clearPendingViewportWork(false);
   });
 
   return (
@@ -1257,7 +1714,7 @@ const RunChatTranscript: Component<RunChatTranscriptProps> = (props) => {
         role="list"
         style={{ height: `${rowLayouts().totalHeight}px` }}
       >
-        <For each={visibleRowKeys()}>
+        <For each={renderedRowKeys()}>
           {(rowKey) => (
             <VirtualizedTranscriptRow
               rowKey={rowKey}

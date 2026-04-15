@@ -23,6 +23,7 @@ import {
 import {
   RunChatComposer,
   RunChatTranscript,
+  type RunChatTranscriptHandle,
   type RunChatTranscriptRow,
   RunChatMarkdown,
   RunChatMessage,
@@ -495,6 +496,7 @@ const buildStreamingTextPart = (
 
 const TRANSCRIPT_NEAR_BOTTOM_THRESHOLD = 96;
 const INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS = 6;
+const OLDER_TRANSCRIPT_RESTORE_MAX_ATTEMPTS = 12;
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 const INTERNAL_ID_DETECTION_PATTERN =
@@ -1823,9 +1825,15 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const [composerValue, setComposerValue] = createSignal("");
   const [hasVisibleSubmitFailed, setHasVisibleSubmitFailed] =
     createSignal(false);
+  const [transcriptHandle, setTranscriptHandle] =
+    createSignal<RunChatTranscriptHandle | null>(null);
   const [
     isInitialTranscriptAnchorCompleted,
     setIsInitialTranscriptAnchorCompleted,
+  ] = createSignal(false);
+  const [
+    isRestoringOlderTranscriptAnchor,
+    setIsRestoringOlderTranscriptAnchor,
   ] = createSignal(false);
   const [runChatComposerOffsetPx, setRunChatComposerOffsetPx] =
     createSignal("0px");
@@ -1848,9 +1856,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   let transcriptScrollRef: HTMLDivElement | undefined;
   let runChatComposerRef: HTMLDivElement | undefined;
   let transcriptContentRef: HTMLDivElement | undefined;
-  let initialTranscriptAnchorRaf: number | null = null;
-  let initialTranscriptAnchorVerificationRaf: number | null = null;
-  let transcriptBottomSentinelRef: HTMLDivElement | undefined;
 
   const agentReadinessPhase = createMemo<AgentReadinessPhase>(() =>
     props.model.agent.readinessPhase(),
@@ -2687,19 +2692,16 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     ];
   });
 
-  const cancelInitialTranscriptAnchorFrames = () => {
-    if (initialTranscriptAnchorRaf !== null) {
-      cancelAnimationFrame(initialTranscriptAnchorRaf);
-      initialTranscriptAnchorRaf = null;
-    }
-
-    if (initialTranscriptAnchorVerificationRaf !== null) {
-      cancelAnimationFrame(initialTranscriptAnchorVerificationRaf);
-      initialTranscriptAnchorVerificationRaf = null;
-    }
+  const cancelTranscriptViewportWork = () => {
+    transcriptHandle()?.cancelPendingViewportWork();
   };
 
   const getTranscriptDistanceFromBottom = (): number => {
+    const handle = transcriptHandle();
+    if (handle) {
+      return handle.getDistanceFromBottom();
+    }
+
     const container = transcriptScrollRef;
     if (!container) {
       return 0;
@@ -2712,6 +2714,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   };
 
   const isNearTranscriptBottom = (): boolean => {
+    const handle = transcriptHandle();
+    if (handle) {
+      return handle.isNearBottom(TRANSCRIPT_NEAR_BOTTOM_THRESHOLD);
+    }
+
     return (
       getTranscriptDistanceFromBottom() <= TRANSCRIPT_NEAR_BOTTOM_THRESHOLD
     );
@@ -2721,9 +2728,20 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     setIsTranscriptNearBottom(isNearTranscriptBottom());
   };
 
-  const scrollTranscriptToBottom = (behavior: ScrollBehavior = "auto") => {
+  const scrollTranscriptToBottom = (options?: {
+    behavior?: ScrollBehavior;
+    maxAttempts?: number;
+    onComplete?: (atBottom: boolean) => void;
+  }) => {
+    const handle = transcriptHandle();
+    if (handle) {
+      handle.scrollToBottom(options);
+      return;
+    }
+
     const container = transcriptScrollRef;
     if (!container) {
+      options?.onComplete?.(false);
       return;
     }
 
@@ -2732,20 +2750,26 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       container.scrollHeight - container.clientHeight,
     );
     if (typeof container.scrollTo === "function") {
-      container.scrollTo({ top: targetTop, behavior });
+      container.scrollTo({
+        top: targetTop,
+        behavior: options?.behavior ?? "auto",
+      });
+      options?.onComplete?.(true);
       return;
     }
 
     container.scrollTop = targetTop;
+    options?.onComplete?.(true);
   };
 
   createEffect(
     on(
       () => props.model.run()?.id,
       () => {
-        cancelInitialTranscriptAnchorFrames();
+        cancelTranscriptViewportWork();
         setIsTranscriptNearBottom(true);
         setIsInitialTranscriptAnchorCompleted(false);
+        setIsRestoringOlderTranscriptAnchor(false);
       },
     ),
   );
@@ -2779,8 +2803,8 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       return;
     }
 
-    const container = transcriptScrollRef;
-    if (!container || !hasLoadedInitialTranscriptHistory()) {
+    const handle = transcriptHandle();
+    if (!handle || !hasLoadedInitialTranscriptHistory()) {
       return;
     }
 
@@ -2788,6 +2812,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     const transcriptItemCount = transcriptRows.length;
     runChatComposerOffsetPx();
     transcriptLayoutRevision();
+    if (isRestoringOlderTranscriptAnchor()) {
+      return;
+    }
 
     if (transcriptItemCount === 0) {
       setIsInitialTranscriptAnchorCompleted(true);
@@ -2795,48 +2822,16 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       return;
     }
 
-    if (!transcriptBottomSentinelRef) {
-      return;
-    }
-
-    cancelInitialTranscriptAnchorFrames();
-
-    const attemptAnchor = (attempt: number) => {
-      initialTranscriptAnchorRaf = requestAnimationFrame(() => {
-        initialTranscriptAnchorRaf = null;
-        if (!transcriptScrollRef || !transcriptBottomSentinelRef) {
-          return;
-        }
-
-        scrollTranscriptToBottom("auto");
+    scrollTranscriptToBottom({
+      behavior: "auto",
+      maxAttempts: INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS,
+      onComplete: (anchored) => {
         syncTranscriptNearBottom();
-
-        initialTranscriptAnchorVerificationRaf = requestAnimationFrame(() => {
-          initialTranscriptAnchorVerificationRaf = null;
-          if (!transcriptScrollRef) {
-            return;
-          }
-
-          if (isNearTranscriptBottom()) {
-            setIsTranscriptNearBottom(true);
-            setIsInitialTranscriptAnchorCompleted(true);
-            return;
-          }
-
-          if (attempt + 1 >= INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS) {
-            scrollTranscriptToBottom("auto");
-            const nearBottom = isNearTranscriptBottom();
-            setIsTranscriptNearBottom(nearBottom);
-            setIsInitialTranscriptAnchorCompleted(nearBottom);
-            return;
-          }
-
-          attemptAnchor(attempt + 1);
-        });
-      });
-    };
-
-    attemptAnchor(0);
+        if (anchored) {
+          setIsInitialTranscriptAnchorCompleted(true);
+        }
+      },
+    });
   });
 
   createEffect(() => {
@@ -2844,11 +2839,18 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     runChatComposerOffsetPx();
     transcriptLayoutRevision();
 
+    if (
+      !isInitialTranscriptAnchorCompleted() ||
+      isRestoringOlderTranscriptAnchor()
+    ) {
+      return;
+    }
+
     const wasNearBottomBeforeUpdate = isTranscriptNearBottom();
 
     requestAnimationFrame(() => {
-      if (wasNearBottomBeforeUpdate) {
-        scrollTranscriptToBottom("auto");
+      if (wasNearBottomBeforeUpdate && isTranscriptNearBottom()) {
+        scrollTranscriptToBottom({ behavior: "auto", maxAttempts: 2 });
       }
       syncTranscriptNearBottom();
     });
@@ -2881,9 +2883,14 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   };
 
   const jumpToLatestTranscript = () => {
-    scrollTranscriptToBottom("smooth");
-    requestAnimationFrame(() => {
-      syncTranscriptNearBottom();
+    setIsRestoringOlderTranscriptAnchor(false);
+    cancelTranscriptViewportWork();
+    scrollTranscriptToBottom({
+      behavior: "smooth",
+      maxAttempts: 2,
+      onComplete: () => {
+        syncTranscriptNearBottom();
+      },
     });
   };
 
@@ -2892,21 +2899,57 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       return;
     }
 
-    const container = transcriptScrollRef;
-    const previousScrollHeight = container?.scrollHeight ?? null;
+    const handle = transcriptHandle();
+    const anchor = handle?.captureAnchor() ?? null;
+    const previousScrollTop = transcriptScrollRef?.scrollTop ?? null;
+    const previousScrollHeight = transcriptScrollRef?.scrollHeight ?? null;
+    if (anchor) {
+      setIsRestoringOlderTranscriptAnchor(true);
+    }
     const didLoad = (await props.model.agent.history?.loadOlder?.()) ?? false;
-    if (!didLoad || !container || previousScrollHeight === null) {
+    if (!didLoad) {
+      setIsRestoringOlderTranscriptAnchor(false);
+      syncTranscriptNearBottom();
       return;
     }
 
-    requestAnimationFrame(() => {
+    await Promise.resolve();
+
+    const preserveScrollHeightDeltaFallback = () => {
+      const container = transcriptScrollRef;
+      if (
+        !container ||
+        previousScrollTop === null ||
+        previousScrollHeight === null
+      ) {
+        return;
+      }
+
       const nextScrollHeight = container.scrollHeight;
       const offset = nextScrollHeight - previousScrollHeight;
       if (offset > 0) {
-        container.scrollTop += offset;
+        container.scrollTop = Math.max(0, previousScrollTop + offset);
       }
-      syncTranscriptNearBottom();
-    });
+    };
+
+    if (handle && anchor) {
+      setIsTranscriptNearBottom(false);
+      handle.restoreAnchor(anchor, {
+        maxAttempts: OLDER_TRANSCRIPT_RESTORE_MAX_ATTEMPTS,
+        onComplete: (restored) => {
+          if (!restored) {
+            preserveScrollHeightDeltaFallback();
+          }
+          setIsRestoringOlderTranscriptAnchor(false);
+          syncTranscriptNearBottom();
+        },
+      });
+      return;
+    }
+
+    preserveScrollHeightDeltaFallback();
+    setIsRestoringOlderTranscriptAnchor(false);
+    syncTranscriptNearBottom();
   };
 
   createEffect(() => {
@@ -2933,7 +2976,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
 
   onCleanup(() => {
-    cancelInitialTranscriptAnchorFrames();
+    cancelTranscriptViewportWork();
   });
 
   const shouldShowJumpToBottom = createMemo(() => {
@@ -3018,6 +3061,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             <div ref={transcriptContentRef}>
               <RunChatTranscript
                 class="run-chat-transcript"
+                apiRef={setTranscriptHandle}
                 rows={chatTranscriptRows()}
                 canLoadOlder={canLoadOlderTranscript()}
                 loadingOlder={isLoadingOlderTranscript()}
@@ -3029,7 +3073,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
                 scrollElement={() => transcriptScrollRef}
               />
               <div
-                ref={transcriptBottomSentinelRef}
                 class="run-chat-transcript__bottom-sentinel"
                 aria-hidden="true"
               />
