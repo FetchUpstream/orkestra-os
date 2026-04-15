@@ -367,14 +367,21 @@ describe("useRunDetailModel startup ownership", () => {
     getRunOpenCodeSessionMessagesPageMock.mockResolvedValueOnce({
       messages: [
         {
-          payload: {
-            info: {
-              id: "msg-1",
-              role: "assistant",
+          info: {
+            id: "msg-1",
+            role: "assistant",
+            sessionID: "session-1",
+          },
+          parts: [
+            {
+              id: "part-1",
+              type: "text",
+              text: "Read-only transcript message",
+              messageID: "msg-1",
               sessionID: "session-1",
             },
-          },
-        },
+          ],
+        }
       ],
       hasMore: false,
       nextCursor: undefined,
@@ -392,6 +399,13 @@ describe("useRunDetailModel startup ownership", () => {
       expect(modelRef).toBeDefined();
       expect(modelRef!.agent.chatMode()).toBe("read_only");
       expect(modelRef!.agent.events().length).toBe(1);
+      expect(modelRef!.agent.store().messageOrder).toEqual(["msg-1"]);
+      expect(
+        modelRef!.agent.store().messagesById["msg-1"]?.partsById["part-1"],
+      ).toMatchObject({
+        kind: "text",
+        text: "Read-only transcript message",
+      });
     });
 
     expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledWith({
