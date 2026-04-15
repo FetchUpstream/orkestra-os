@@ -722,7 +722,7 @@ impl RunsMergeService {
         };
 
         let prompt = format!(
-            "A rebase is already in progress for this worktree. Continue the existing rebase safely.\n\nConflicting files:\n{conflicted_files}\nRules:\n\n- This is a rebase-continuation task, not a normal commit task.\n- Do not create a standalone/manual commit unless `git rebase --continue` explicitly requires one.\n- Do not run `git status --short --branch` while the rebase is still in progress. Use full `git status` during the rebase.\n- First run `git status` and confirm:\n  - a rebase is in progress\n  - the current unmerged paths\n- Resolve only the conflict markers in the listed files.\n- Preserve both:\n  - the upstream/rebased branch’s intended changes\n  - this branch’s valid changes\n- Resolve only the listed conflict markers and preserve both `{source_branch}`-intended changes and this run's valid changes.\n- Do not change unrelated files.\n- Do not edit or repair anything inside `.git`, `rebase-merge`, `rebase-apply`, or `git-rebase-todo`.\n- Do not abort, skip, or restart the rebase unless explicitly requested.\n\nRequired flow:\n1. Run `git status`.\n2. Inspect and resolve only the listed conflicted files.\n3. Before staging, run:\n   `git diff --name-only --diff-filter=U`\n4. If any unmerged paths remain outside the listed files, stop and report them.\n5. Stage only the resolved conflicted files with `git add <files>`.\n6. Run:\n   `GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true git rebase --continue`\n7. Inspect the real stdout/stderr and exit result of `git rebase --continue`.\n8. If the rebase stops on new conflicts, do not improvise:\n   - run full `git status`\n   - report the new unmerged paths\n   - stop unless explicitly asked to continue through subsequent conflicts too\n9. If the rebase completes, then run:\n   `git status`\n   and report the final state.\n\nImportant failure handling:\n- If `git rebase --continue` fails because rebase metadata is missing/corrupt, stop and report that exactly.\n- Do not try to repair Git internals manually.\n- Do not assume success just because the command executed.\n\nOutput format:\n- Rebase status from initial `git status`\n- Files you resolved\n- Result of `git diff --name-only --diff-filter=U`\n- Exact result of `git rebase --continue`\n- Final full `git status`"
+            "A rebase is already in progress for this worktree. Continue the existing rebase safely.\n\nConflicting files:\n{conflicted_files}\nRules:\n- This is a rebase-continuation task, not a normal commit task.\n- Do not create a standalone/manual commit unless `git rebase --continue` itself requires it.\n- Do not run `git status --short --branch` while the rebase is in progress. Use full `git status`.\n- First run `git status` and confirm:\n  - a rebase is in progress\n  - the current unmerged paths\n- Resolve only the conflict markers in the listed files.\n- Preserve both:\n  - the upstream/rebased branch’s intended changes\n  - this branch’s valid changes\n- Resolve only the listed conflict markers and preserve both `{source_branch}`-intended changes and this run's valid changes.\n- Do not change unrelated files.\n- Do not edit or repair anything inside `.git`, `rebase-merge`, `rebase-apply`, or `git-rebase-todo`.\n- Do not abort, skip, restart, or “repair” the rebase unless explicitly asked.\n- Never set `GIT_SEQUENCE_EDITOR` during normal conflict continuation.\n- Use plain `git rebase --continue`.\n- If a non-interactive shell requires suppressing the commit-message editor, use `GIT_EDITOR=true git rebase --continue`.\n- `GIT_SEQUENCE_EDITOR` is only for interactive todo editing (for example `git rebase --edit-todo`), not normal rebase continuation.\n\nRequired flow:\n1. Run `git status`.\n2. Inspect and resolve only the listed conflicted files.\n3. Before staging, run:\n   `git diff --name-only --diff-filter=U`\n4. If any unmerged paths remain outside the listed files, stop and report them.\n5. Stage only the resolved conflicted files with `git add <files>`.\n6. Continue with:\n   `git rebase --continue`\n   If that would block only because an editor cannot open in this environment, use:\n   `GIT_EDITOR=true git rebase --continue`\n7. Inspect the real stdout/stderr and exit result of `git rebase --continue`.\n8. If the rebase stops on new conflicts:\n   - run full `git status`\n   - report the new unmerged paths\n   - stop unless explicitly asked to continue through the next conflict set too\n9. If the rebase completes, then run:\n   `git status`\n   and report the final state.\n\nImportant failure handling:\n- If `git rebase --continue` fails with missing/corrupt rebase metadata (for example missing `rebase-merge/git-rebase-todo`), stop and report that exact error.\n- Do not try to recreate or hand-edit Git’s rebase metadata.\n- Do not assume success just because the command executed.\n\nOutput format:\n- Rebase status from initial `git status`\n- Files you resolved\n- Result of `git diff --name-only --diff-filter=U`\n- Exact result of `git rebase --continue`\n- Final full `git status`"
         );
 
         Ok(RunMergeConflictDto {
@@ -1028,7 +1028,7 @@ mod tests {
             .contains("A rebase is already in progress for this worktree. Continue the existing rebase safely."));
         assert!(conflict.chat_prompt.contains("`git status`"));
         assert!(conflict.chat_prompt.contains(
-            "Do not run `git status --short --branch` while the rebase is still in progress."
+            "Do not run `git status --short --branch` while the rebase is in progress. Use full `git status`."
         ));
         assert!(conflict.chat_prompt.contains(&format!(
             "`{}`-intended changes",
@@ -1039,23 +1039,32 @@ mod tests {
             .contains("`git diff --name-only --diff-filter=U`"));
         assert!(conflict
             .chat_prompt
-            .contains("Stage only the resolved conflicted files."));
+            .contains("Stage only the resolved conflicted files with `git add <files>`."));
         assert!(conflict
             .chat_prompt
-            .contains("`GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true git rebase --continue`"));
+            .contains("Never set `GIT_SEQUENCE_EDITOR` during normal conflict continuation."));
         assert!(conflict
             .chat_prompt
-            .contains("Inspect the real exit status and stderr/stdout"));
+            .contains("`git rebase --continue`"));
         assert!(conflict
             .chat_prompt
-            .contains("Do not create a standalone/manual commit unless `git rebase --continue` explicitly requires one."));
+            .contains("`GIT_EDITOR=true git rebase --continue`"));
+        assert!(conflict.chat_prompt.contains(
+            "`GIT_SEQUENCE_EDITOR` is only for interactive todo editing"
+        ));
+        assert!(conflict.chat_prompt.contains(
+            "Inspect the real stdout/stderr and exit result of `git rebase --continue`."
+        ));
+        assert!(conflict
+            .chat_prompt
+            .contains("Do not create a standalone/manual commit unless `git rebase --continue` itself requires it."));
         assert!(conflict.chat_prompt.contains("Do not edit or repair anything inside `.git`, `rebase-merge`, `rebase-apply`, or `git-rebase-todo`."));
         assert!(conflict
             .chat_prompt
-            .contains("Do not try to repair Git internals manually."));
+            .contains("Do not try to recreate or hand-edit Git’s rebase metadata."));
         assert!(conflict
             .chat_prompt
-            .contains("fails because rebase metadata is missing/corrupt"));
+            .contains("fails with missing/corrupt rebase metadata"));
         assert!(conflict.chat_prompt.contains("Final full `git status`"));
 
         let repo = Repository::open(&worktree_path).unwrap();
