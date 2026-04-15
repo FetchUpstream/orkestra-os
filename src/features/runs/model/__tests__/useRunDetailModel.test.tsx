@@ -12,6 +12,7 @@
 
 import { render, waitFor } from "@solidjs/testing-library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { BootstrapRunOpenCodeResult } from "../../../../app/lib/runs";
 import { useRunDetailModel } from "../useRunDetailModel";
 
 const deferred = function <T>() {
@@ -1122,7 +1123,7 @@ describe("useRunDetailModel startup ownership", () => {
   });
 
   it("starts warming, then seeds the indicator from bootstrap streamConnected", async () => {
-    const bootstrapDeferred = deferred<any>();
+    const bootstrapDeferred = deferred<BootstrapRunOpenCodeResult>();
     bootstrapRunOpenCodeMock.mockReturnValueOnce(bootstrapDeferred.promise);
 
     let modelRef: ReturnType<typeof useRunDetailModel> | undefined;

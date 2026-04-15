@@ -44,6 +44,8 @@ export const normalizeAgentSessionStatus = (
       return "active";
     case "idle":
       return "idle";
+    case "connecting":
+      return "connecting";
     case "error":
       return "error";
     default:

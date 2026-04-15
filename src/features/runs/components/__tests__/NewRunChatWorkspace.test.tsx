@@ -1643,6 +1643,206 @@ describe("NewRunChatWorkspace", () => {
     });
   });
 
+  it("stops subagent pagination when the next cursor repeats and keeps partial history", async () => {
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
+    getRunOpenCodeSessionMessagesPageMock.mockImplementation(
+      async ({ before }: { before?: string }) => {
+        if (!before) {
+          return {
+            messages: [
+              {
+                info: {
+                  id: "msg-child-newer",
+                  sessionID: "session-child",
+                  role: "assistant",
+                },
+                parts: [
+                  {
+                    id: "part-child-newer",
+                    type: "text",
+                    text: "Fetched child newer output",
+                    messageID: "msg-child-newer",
+                    sessionID: "session-child",
+                  },
+                ],
+              },
+            ],
+            hasMore: true,
+            nextCursor: "cursor-1",
+            beforeCursor: undefined,
+            raw: [],
+          } as any;
+        }
+
+        return {
+          messages: [
+            {
+              info: {
+                id: "msg-child-older",
+                sessionID: "session-child",
+                role: "assistant",
+              },
+              parts: [
+                {
+                  id: "part-child-older",
+                  type: "text",
+                  text: "Fetched child older output",
+                  messageID: "msg-child-older",
+                  sessionID: "session-child",
+                },
+              ],
+            },
+          ],
+          hasMore: true,
+          nextCursor: "cursor-1",
+          beforeCursor: before,
+          raw: [],
+        } as any;
+      },
+    );
+
+    try {
+      const [store] = createSignal({
+        sessionId: "session-root",
+        status: "active",
+        streamConnected: true,
+        lastSyncAt: Date.now(),
+        messageOrder: ["msg-root"],
+        messagesById: {
+          "msg-root": {
+            id: "msg-root",
+            sessionId: "session-root",
+            role: "assistant",
+            partsById: {
+              "part-task": {
+                id: "part-task",
+                kind: "tool",
+                type: "tool",
+                toolName: "task",
+                status: "running",
+                title: "List workspace files",
+                raw: {
+                  sessionID: "session-child",
+                },
+              },
+            },
+            partOrder: ["part-task"],
+          },
+        },
+        pendingQuestionsById: {},
+        pendingPermissionsById: {},
+        failedPermissionsById: {},
+        todos: [],
+        diffSummary: null,
+        rawEvents: [],
+      });
+
+      const { model } = createModelStub("running", false, { id: "run-1" });
+      model.agent.store = store as unknown as typeof model.agent.store;
+
+      render(() => <NewRunChatWorkspace model={model} />);
+
+      await waitFor(() => {
+        expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(2);
+        expect(screen.getByText("Fetched child older output")).toBeTruthy();
+        expect(screen.getByText("Fetched child newer output")).toBeTruthy();
+      });
+
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        "[runs] subagent history pagination stopped: repeated next cursor",
+        expect.objectContaining({
+          runId: "run-1",
+          sessionId: "session-child",
+          pageCount: 2,
+          nextCursor: "cursor-1",
+        }),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  it("stops subagent pagination at the configured page limit", async () => {
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
+    getRunOpenCodeSessionMessagesPageMock.mockImplementation(
+      async ({ before }: { before?: string }) => {
+        const pageIndex = before
+          ? Number.parseInt(before.replace("cursor-", ""), 10)
+          : 0;
+        return {
+          messages: [],
+          hasMore: true,
+          nextCursor: `cursor-${pageIndex + 1}`,
+          beforeCursor: before,
+          raw: [],
+        } as any;
+      },
+    );
+
+    try {
+      const [store] = createSignal({
+        sessionId: "session-root",
+        status: "active",
+        streamConnected: true,
+        lastSyncAt: Date.now(),
+        messageOrder: ["msg-root"],
+        messagesById: {
+          "msg-root": {
+            id: "msg-root",
+            sessionId: "session-root",
+            role: "assistant",
+            partsById: {
+              "part-task": {
+                id: "part-task",
+                kind: "tool",
+                type: "tool",
+                toolName: "task",
+                status: "running",
+                title: "List workspace files",
+                raw: {
+                  sessionID: "session-child",
+                },
+              },
+            },
+            partOrder: ["part-task"],
+          },
+        },
+        pendingQuestionsById: {},
+        pendingPermissionsById: {},
+        failedPermissionsById: {},
+        todos: [],
+        diffSummary: null,
+        rawEvents: [],
+      });
+
+      const { model } = createModelStub("running", false, { id: "run-1" });
+      model.agent.store = store as unknown as typeof model.agent.store;
+
+      render(() => <NewRunChatWorkspace model={model} />);
+
+      await waitFor(() => {
+        expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(
+          100,
+        );
+      });
+
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        "[runs] subagent history pagination stopped: page limit reached",
+        expect.objectContaining({
+          runId: "run-1",
+          sessionId: "session-child",
+          pageCount: 100,
+        }),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
   it("hydrates lineage-routed child sessions from fetched history", async () => {
     getRunOpenCodeSessionMessagesPageMock.mockImplementation(
       async ({ sessionId }: { sessionId: string }) => {

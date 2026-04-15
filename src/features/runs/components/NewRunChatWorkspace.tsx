@@ -497,6 +497,7 @@ const buildStreamingTextPart = (
 const TRANSCRIPT_NEAR_BOTTOM_THRESHOLD = 96;
 const INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS = 6;
 const OLDER_TRANSCRIPT_RESTORE_MAX_ATTEMPTS = 12;
+const MAX_SUBAGENT_HISTORY_PAGES = 100;
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 const INTERNAL_ID_DETECTION_PATTERN =
@@ -2373,9 +2374,12 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       pendingSubagentHistorySessionIds.add(sessionId);
       const loadSubagentMessages = async (): Promise<unknown[]> => {
         const pages: unknown[][] = [];
+        const seenCursors = new Set<string>();
         let before: string | undefined;
+        let pageCount = 0;
 
-        while (true) {
+        while (pageCount < MAX_SUBAGENT_HISTORY_PAGES) {
+          pageCount += 1;
           const page = await getRunOpenCodeSessionMessagesPage({
             runId,
             sessionId,
@@ -2383,11 +2387,38 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           });
           pages.unshift(page.messages);
 
-          if (!page.hasMore || !page.nextCursor) {
+          if (!page.hasMore) {
             break;
           }
 
-          before = page.nextCursor;
+          const nextCursor =
+            typeof page.nextCursor === "string" ? page.nextCursor.trim() : "";
+          if (!nextCursor) {
+            console.warn(
+              "[runs] subagent history pagination stopped: missing next cursor",
+              { runId, sessionId, pageCount },
+            );
+            break;
+          }
+
+          if (nextCursor === before || seenCursors.has(nextCursor)) {
+            console.warn(
+              "[runs] subagent history pagination stopped: repeated next cursor",
+              { runId, sessionId, pageCount, nextCursor },
+            );
+            break;
+          }
+
+          if (pageCount >= MAX_SUBAGENT_HISTORY_PAGES) {
+            console.warn(
+              "[runs] subagent history pagination stopped: page limit reached",
+              { runId, sessionId, pageCount: MAX_SUBAGENT_HISTORY_PAGES },
+            );
+            break;
+          }
+
+          seenCursors.add(nextCursor);
+          before = nextCursor;
         }
 
         return pages.flat();

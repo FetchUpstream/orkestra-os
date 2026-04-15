@@ -459,7 +459,17 @@ describe("agentReducer text/reasoning lifecycle", () => {
     expect(active.sessionId).toBe("session-1");
     expect(active.status).toBe("active");
 
-    const idle = reduceOpenCodeEvent(active, {
+    const connecting = reduceOpenCodeEvent(active, {
+      type: "session.status",
+      properties: {
+        sessionID: "session-1",
+        status: { type: "connecting" },
+      },
+    });
+
+    expect(connecting.status).toBe("connecting");
+
+    const idle = reduceOpenCodeEvent(connecting, {
       type: "session.status",
       properties: {
         sessionID: "session-1",
@@ -468,5 +478,6 @@ describe("agentReducer text/reasoning lifecycle", () => {
     });
 
     expect(idle.status).toBe("idle");
-  });
+});
+
 });

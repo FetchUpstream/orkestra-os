@@ -258,6 +258,29 @@ fn to_nonempty_trimmed_string(value: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn resolve_requested_session_id(
+    requested_session_id: Option<&str>,
+    canonical_session_id: Option<&str>,
+) -> Result<Option<String>, AppError> {
+    let requested_session_id = to_nonempty_trimmed_string(requested_session_id);
+    let canonical_session_id = to_nonempty_trimmed_string(canonical_session_id);
+
+    match canonical_session_id {
+        Some(canonical_session_id) => {
+            if let Some(requested_session_id) = requested_session_id {
+                if requested_session_id != canonical_session_id {
+                    return Err(AppError::validation(
+                        "session_id does not match the run's canonical OpenCode session",
+                    ));
+                }
+            }
+
+            Ok(Some(canonical_session_id))
+        }
+        None => Ok(requested_session_id),
+    }
+}
+
 const DEFAULT_SESSION_MESSAGES_PAGE_LIMIT: usize = 100;
 const MAX_SESSION_MESSAGES_PAGE_LIMIT: usize = 200;
 
@@ -5421,11 +5444,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
     ) -> Result<RunOpenCodeSessionMessagesPageDto, AppError> {
         let run = self.runs_service.get_run_model(run_id).await?;
         let limit = normalize_session_messages_page_limit(limit)?;
-        let session_id = session_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-            .or(run.opencode_session_id);
+        let session_id =
+            resolve_requested_session_id(session_id, run.opencode_session_id.as_deref())?;
         let before_cursor = to_nonempty_trimmed_string(before);
         let Some(session_id) = session_id else {
             return Ok(build_empty_session_messages_page(before_cursor));
@@ -5489,11 +5509,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         session_id: Option<&str>,
     ) -> Result<Vec<RunOpenCodeSessionTodoDto>, AppError> {
         let run = self.runs_service.get_run_model(run_id).await?;
-        let session_id = session_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-            .or(run.opencode_session_id);
+        let session_id =
+            resolve_requested_session_id(session_id, run.opencode_session_id.as_deref())?;
         let Some(session_id) = session_id else {
             return Ok(vec![]);
         };
@@ -5512,7 +5529,9 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             );
             let result = self
                 .with_ephemeral_client(cwd, HashMap::new(), |client| {
-                    Box::pin(async move { Self::fetch_session_todos_with_client(client, &session_id).await })
+                    Box::pin(async move {
+                        Self::fetch_session_todos_with_client(client, &session_id).await
+                    })
                 })
                 .await;
             self.shutdown_leftover_completed_handle_if_unused(run_id, "session_todos")
@@ -6096,7 +6115,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 #[cfg(test)]
 mod tests {
     use super::{
-        build_opencode_server_options, RawAgentEvent, RunsOpenCodeService, SubscriberTaskEntry,
+        build_opencode_server_options, resolve_requested_session_id, RawAgentEvent,
+        RunsOpenCodeService, SubscriberTaskEntry,
     };
     use crate::app::db::migrations::run_migrations;
     use crate::app::db::repositories::projects::ProjectsRepository;
@@ -6136,6 +6156,40 @@ mod tests {
         assert_eq!(options.port, 0);
         assert_eq!(options.env, env);
         assert_eq!(options.config, Some(serde_json::json!({})));
+    }
+
+    #[test]
+    fn resolve_requested_session_id_prefers_canonical_value() {
+        let session_id = resolve_requested_session_id(None, Some("  canonical-session  "))
+            .expect("canonical session should win");
+
+        assert_eq!(session_id.as_deref(), Some("canonical-session"));
+    }
+
+    #[test]
+    fn resolve_requested_session_id_rejects_mismatched_requested_value() {
+        let error = resolve_requested_session_id(Some("stale-session"), Some("canonical-session"))
+            .expect_err("mismatched session should be rejected");
+
+        assert!(error
+            .to_string()
+            .contains("session_id does not match the run's canonical OpenCode session"));
+    }
+
+    #[test]
+    fn resolve_requested_session_id_accepts_trimmed_requested_value_without_canonical() {
+        let session_id = resolve_requested_session_id(Some("  session-1  "), None)
+            .expect("requested session should be accepted when no canonical session exists");
+
+        assert_eq!(session_id.as_deref(), Some("session-1"));
+    }
+
+    #[test]
+    fn resolve_requested_session_id_returns_none_when_no_session_exists() {
+        let session_id = resolve_requested_session_id(Some("   \t"), Some("   "))
+            .expect("empty values should clear");
+
+        assert_eq!(session_id, None);
     }
 
     fn raw_agent_event(event_name: &str, payload: serde_json::Value) -> RawAgentEvent {
@@ -7003,6 +7057,44 @@ mod tests {
             .get_run_opencode_session_todos("run-1", None)
             .await;
         assert!(!opencode_service.handles.read().await.contains_key("run-1"));
+    }
+
+    #[tokio::test]
+    async fn paged_session_messages_reject_stale_requested_session_id() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "completed").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+
+        let error = opencode_service
+            .get_run_opencode_session_messages_page("run-1", Some("stale-session"), Some(25), None)
+            .await
+            .expect_err("stale session should be rejected");
+
+        assert!(error
+            .to_string()
+            .contains("session_id does not match the run's canonical OpenCode session"));
+    }
+
+    #[tokio::test]
+    async fn session_todos_reject_stale_requested_session_id() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "completed").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+
+        let error = opencode_service
+            .get_run_opencode_session_todos("run-1", Some("stale-session"))
+            .await
+            .expect_err("stale session should be rejected");
+
+        assert!(error
+            .to_string()
+            .contains("session_id does not match the run's canonical OpenCode session"));
     }
 
     #[tokio::test]
