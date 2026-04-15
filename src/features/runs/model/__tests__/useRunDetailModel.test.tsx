@@ -1081,8 +1081,7 @@ describe("useRunDetailModel startup ownership", () => {
     await waitFor(
       () => {
         const refreshCalls = getRunMock.mock.calls.length - baselineGetRunCalls;
-        expect(refreshCalls).toBeGreaterThanOrEqual(3);
-        expect(refreshCalls).toBeLessThanOrEqual(3);
+        expect(refreshCalls).toBe(3);
       },
       { timeout: 3000 },
     );
