@@ -24,6 +24,11 @@ import {
   RunChatComposer,
   RunChatTranscript,
   type RunChatTranscriptRow,
+  RunChatMarkdown,
+  RunChatMessage,
+  RunChatSystemMessage,
+  RunChatToolRail,
+  RunChatUserMessage,
   type RunChatToolRailItem,
   type RunChatToolRailSubagentItem,
 } from "./chat";
@@ -105,6 +110,99 @@ type ChatRow = {
   timestamp: string;
   attributionLabel: string;
   hasRenderableContent: boolean;
+};
+
+type ChatTranscriptMessageItemProps = {
+  row: () => ChatRow | undefined;
+};
+
+const ChatTranscriptMessageItem: Component<ChatTranscriptMessageItemProps> = (
+  props,
+) => {
+  const row = createMemo(() => props.row());
+  const waitingRow = (
+    <RunInlineLoader
+      as="p"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    />
+  );
+
+  return (
+    <Show when={row()}>
+      <div
+        data-run-chat-message-id={row()?.key}
+        data-run-chat-message-kind="parent"
+      >
+        <Show
+          when={row()?.role === "assistant"}
+          fallback={
+            <Show
+              when={row()?.role === "user"}
+              fallback={
+                <RunChatMessage role="system" class="run-chat-message-item">
+                  <RunChatSystemMessage>
+                    <RunChatMarkdown
+                      content={
+                        row()?.content.length
+                          ? (row()?.content ?? "")
+                          : (row()?.timestamp ?? "")
+                      }
+                    />
+                  </RunChatSystemMessage>
+                </RunChatMessage>
+              }
+            >
+              <RunChatMessage role="user" class="run-chat-message-item">
+                <RunChatUserMessage>
+                  <RunChatMarkdown
+                    content={
+                      row()?.content.length ? (row()?.content ?? "") : "(empty)"
+                    }
+                  />
+                </RunChatUserMessage>
+              </RunChatMessage>
+            </Show>
+          }
+        >
+          <RunChatMessage role="assistant" class="run-chat-message-item">
+            <RunChatAssistantMessage
+              content={row()?.content.length ? (row()?.content ?? " ") : " "}
+              streaming={row()?.assistantStreaming}
+              isStreamingActive={
+                row()?.assistantStreaming?.isStreaming === true
+              }
+              reasoning={
+                row()?.reasoningContent.length ? (
+                  <div class="run-chat-assistant-message__reasoning-inline">
+                    <RunChatMarkdown
+                      content={`*Thinking:* ${row()?.reasoningContent ?? ""}`}
+                    />
+                  </div>
+                ) : undefined
+              }
+              toolRail={
+                row()?.toolItems.length ? (
+                  <RunChatToolRail items={row()?.toolItems ?? []} />
+                ) : undefined
+              }
+              details={
+                row()?.attributionLabel.length ? (
+                  <p class="run-chat-assistant-message__attribution">
+                    {row()?.attributionLabel ?? ""}
+                  </p>
+                ) : undefined
+              }
+            />
+            <Show when={row() && !row()!.hasRenderableContent}>
+              {waitingRow}
+            </Show>
+          </RunChatMessage>
+        </Show>
+      </div>
+    </Show>
+  );
 };
 
 const resolveTranscriptPartText = (

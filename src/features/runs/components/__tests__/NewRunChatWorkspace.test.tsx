@@ -2260,6 +2260,222 @@ describe("NewRunChatWorkspace", () => {
     expect(taskRails[1]?.textContent).toContain("Second child output");
   });
 
+  it("keeps the parent task row and sibling child cards stable during overlapping updates", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Coordinate concurrent subagents",
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-root",
+            part: {
+              id: "part-task",
+              messageID: "msg-root",
+              sessionID: "session-root",
+              type: "tool",
+              tool: "task",
+              state: {
+                status: "running",
+                title: "Coordinate concurrent subagents",
+              },
+            },
+          },
+        },
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child-a",
+            info: {
+              id: "session-child-a",
+              parentID: "msg-root",
+              title: "Planner",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child-a",
+            info: {
+              id: "msg-child-a",
+              sessionID: "session-child-a",
+              parentID: "msg-root",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-a",
+            messageID: "msg-child-a",
+            partID: "part-child-a",
+            field: "text",
+            delta: "Planner draft",
+          },
+        },
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child-b",
+            info: {
+              id: "session-child-b",
+              parentID: "msg-root",
+              title: "Researcher",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child-b",
+            info: {
+              id: "msg-child-b",
+              sessionID: "session-child-b",
+              parentID: "msg-root",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-b",
+            messageID: "msg-child-b",
+            partID: "part-child-b",
+            field: "text",
+            delta: "Research notes",
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    const parentRow = () =>
+      container.querySelector('[data-run-chat-message-id="msg-root"]');
+    const plannerPanel = () =>
+      container.querySelector('[aria-label="Planner output"]');
+    const researcherPanel = () =>
+      container.querySelector('[aria-label="Researcher output"]');
+    const plannerMessage = () =>
+      container.querySelector('[data-message-id="msg-child-a"]');
+    const researcherMessage = () =>
+      container.querySelector('[data-message-id="msg-child-b"]');
+
+    const initialParentRow = parentRow();
+    const initialPlannerPanel = plannerPanel();
+    const initialResearcherPanel = researcherPanel();
+    const initialPlannerMessage = plannerMessage();
+    const initialResearcherMessage = researcherMessage();
+
+    expect(initialParentRow).toBeTruthy();
+    expect(initialPlannerPanel?.textContent).toContain("Planner draft");
+    expect(initialResearcherPanel?.textContent).toContain("Research notes");
+    expect(initialPlannerMessage).toBeTruthy();
+    expect(initialResearcherMessage).toBeTruthy();
+
+    setStore((current) => ({
+      ...current,
+      rawEvents: [
+        ...current.rawEvents,
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-a",
+            messageID: "msg-child-a",
+            partID: "part-child-a",
+            field: "text",
+            delta: " expanded",
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child-b",
+            part: {
+              id: "part-child-b",
+              messageID: "msg-child-b",
+              sessionID: "session-child-b",
+              type: "text",
+              text: "Research settled",
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "session-child-b",
+            status: { type: "completed" },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-a",
+            messageID: "msg-child-a",
+            partID: "part-child-a",
+            field: "text",
+            delta: " ongoing",
+          },
+        },
+      ],
+    }));
+
+    await waitFor(() => {
+      expect(parentRow()).toBe(initialParentRow);
+      expect(plannerPanel()).toBe(initialPlannerPanel);
+      expect(researcherPanel()).toBe(initialResearcherPanel);
+      expect(plannerMessage()).toBe(initialPlannerMessage);
+      expect(researcherMessage()).toBe(initialResearcherMessage);
+      expect(plannerPanel()?.textContent).toContain(
+        "Planner draft expanded ongoing",
+      );
+      expect(researcherPanel()?.textContent).toContain("Research settled");
+      expect(researcherPanel()?.textContent).not.toContain("ongoing");
+      expect(
+        researcherPanel()?.querySelector(
+          ".run-chat-tool-rail__subagent-status-row",
+        ),
+      ).toBeTruthy();
+      expect(
+        plannerPanel()?.querySelector(
+          ".run-chat-tool-rail__subagent-status-row",
+        ),
+      ).toBeNull();
+    });
+  });
+
   it("anchors once to the true transcript bottom after initial history arrives", async () => {
     const [store, setStore] = createSignal({
       sessionId: "session-root",
