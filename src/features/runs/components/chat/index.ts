@@ -21,6 +21,10 @@ export { default as RunChatUserMessage } from "./RunChatUserMessage";
 
 export type { RunChatRole } from "./RunChatMessage";
 export type {
+  RunChatTranscriptRow,
+  RunChatTranscriptMetadataEntry,
+} from "./RunChatTranscript";
+export type {
   RunChatToolRailItem,
   RunChatToolRailSubagentItem,
 } from "./RunChatToolRail";

@@ -1615,7 +1615,7 @@ describe("NewRunChatWorkspace", () => {
   });
 
   it("keeps fetched child history visible after live child updates begin", async () => {
-    getRunOpenCodeSessionMessagesMock.mockResolvedValue({
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
       messages: [
         {
           info: {
@@ -1729,7 +1729,7 @@ describe("NewRunChatWorkspace", () => {
   });
 
   it("renders the last three messages from the merged ordered child timeline", async () => {
-    getRunOpenCodeSessionMessagesMock.mockResolvedValue({
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
       messages: [
         {
           info: {
@@ -2729,6 +2729,247 @@ describe("NewRunChatWorkspace", () => {
         }),
       ).toBeNull();
     });
+
+    rafSpy.mockRestore();
+  });
+
+  it("virtualizes flattened transcript rows so long chats do not mount everything", async () => {
+    const messageOrder = Array.from({ length: 80 }, (_value, index) => {
+      return `assistant-${index}`;
+    });
+    const messagesById = Object.fromEntries(
+      messageOrder.map((messageId, index) => [
+        messageId,
+        {
+          id: messageId,
+          sessionId: "session-1",
+          role: "assistant",
+          partsById: {
+            [`part-${index}`]: {
+              id: `part-${index}`,
+              kind: "text",
+              type: "text",
+              text: `Message ${index}`,
+              streaming: false,
+            },
+          },
+          partOrder: [`part-${index}`],
+        },
+      ]),
+    );
+
+    const [store] = createSignal({
+      sessionId: "session-1",
+      status: "idle",
+      streamConnected: true,
+      lastSyncAt: null as number | null,
+      messageOrder,
+      messagesById,
+      pendingQuestionsById: {},
+      resolvedQuestionsById: {},
+      failedQuestionsById: {},
+      pendingPermissionsById: {},
+      resolvedPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    const transcript = screen.getByLabelText(
+      "Conversation transcript",
+    ) as HTMLDivElement;
+    let scrollTopValue = 0;
+    Object.defineProperty(transcript, "scrollHeight", {
+      value: 9_600,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "clientHeight", {
+      value: 320,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (next: number) => {
+        scrollTopValue = next;
+      },
+    });
+    Object.defineProperty(transcript, "scrollTo", {
+      configurable: true,
+      value: ({ top }: { top: number }) => {
+        scrollTopValue = top;
+      },
+    });
+
+    fireEvent.scroll(transcript);
+
+    await waitFor(() => {
+      const mountedRows = container.querySelectorAll(
+        "[data-run-chat-transcript-row-key]",
+      );
+      expect(mountedRows.length).toBeGreaterThan(0);
+      expect(mountedRows.length).toBeLessThan(messageOrder.length);
+    });
+
+    expect(screen.getByText("Message 0")).toBeTruthy();
+    expect(screen.queryByText("Message 79")).toBeNull();
+
+    rafSpy.mockRestore();
+  });
+
+  it("keeps the visible streaming tail row mounted while content streams", async () => {
+    const olderMessageOrder = Array.from({ length: 24 }, (_value, index) => {
+      return `assistant-${index}`;
+    });
+    const olderMessagesById = Object.fromEntries(
+      olderMessageOrder.map((messageId, index) => [
+        messageId,
+        {
+          id: messageId,
+          sessionId: "session-1",
+          role: "assistant",
+          partsById: {
+            [`part-${index}`]: {
+              id: `part-${index}`,
+              kind: "text",
+              type: "text",
+              text: `Older message ${index}`,
+              streaming: false,
+            },
+          },
+          partOrder: [`part-${index}`],
+        },
+      ]),
+    );
+    const [store, setStore] = createSignal({
+      sessionId: "session-1",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: null as number | null,
+      messageOrder: [...olderMessageOrder, "assistant-live"],
+      messagesById: {
+        ...olderMessagesById,
+        "assistant-live": {
+          id: "assistant-live",
+          sessionId: "session-1",
+          role: "assistant",
+          partsById: {
+            "part-live": {
+              id: "part-live",
+              kind: "text",
+              type: "text",
+              text: "Tail",
+              streamText: "Tail",
+              streamTextLength: 4,
+              streamRevision: 1,
+              streaming: true,
+            },
+          },
+          partOrder: ["part-live"],
+        },
+      },
+      pendingQuestionsById: {},
+      resolvedQuestionsById: {},
+      failedQuestionsById: {},
+      pendingPermissionsById: {},
+      resolvedPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(16);
+        return 1;
+      });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    const transcript = screen.getByLabelText(
+      "Conversation transcript",
+    ) as HTMLDivElement;
+    let scrollTopValue = 3_200;
+    Object.defineProperty(transcript, "scrollHeight", {
+      value: 4_200,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "clientHeight", {
+      value: 320,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (next: number) => {
+        scrollTopValue = next;
+      },
+    });
+    Object.defineProperty(transcript, "scrollTo", {
+      configurable: true,
+      value: ({ top }: { top: number }) => {
+        scrollTopValue = top;
+      },
+    });
+
+    fireEvent.scroll(transcript);
+
+    await waitFor(() => {
+      expect(screen.getByText("Tail")).toBeTruthy();
+    });
+
+    const liveNodeBefore = container.querySelector(
+      '.run-chat-assistant-message[data-message-id="assistant-live"]',
+    );
+    expect(liveNodeBefore).toBeTruthy();
+
+    setStore((current) => ({
+      ...current,
+      messagesById: {
+        ...current.messagesById,
+        "assistant-live": {
+          ...current.messagesById["assistant-live"],
+          partsById: {
+            ...current.messagesById["assistant-live"].partsById,
+            "part-live": {
+              ...current.messagesById["assistant-live"].partsById["part-live"],
+              text: "Tail updated",
+              streamText: "Tail updated",
+              streamTextLength: 12,
+              streamRevision: 2,
+              streaming: true,
+            },
+          },
+        },
+      },
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Tail updated")).toBeTruthy();
+    });
+
+    const liveNodeAfter = container.querySelector(
+      '.run-chat-assistant-message[data-message-id="assistant-live"]',
+    );
+    expect(liveNodeAfter).toBe(liveNodeBefore);
 
     rafSpy.mockRestore();
   });

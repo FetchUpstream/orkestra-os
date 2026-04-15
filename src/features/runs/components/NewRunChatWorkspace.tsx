@@ -19,17 +19,11 @@ import {
   on,
   onCleanup,
   type Component,
-  type JSX,
 } from "solid-js";
 import {
-  RunChatAssistantMessage,
   RunChatComposer,
-  RunChatMarkdown,
-  RunChatMessage,
-  RunChatSystemMessage,
-  RunChatToolRail,
   RunChatTranscript,
-  RunChatUserMessage,
+  type RunChatTranscriptRow,
   type RunChatToolRailItem,
   type RunChatToolRailSubagentItem,
 } from "./chat";
@@ -2164,6 +2158,16 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const transcriptHistoryError = createMemo(
     () => props.model.agent.history?.error?.() ?? "",
   );
+  const transcriptVirtualizerLayoutToken = createMemo(() => {
+    return [
+      props.model.agent.error(),
+      transcriptHistoryError(),
+      setupState(),
+      setupMessage(),
+      cleanupState(),
+      cleanupMessage(),
+    ].join("|");
+  });
 
   const formatAgentPayload = (payload: unknown): string => {
     if (payload === undefined) {
@@ -2459,410 +2463,129 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       .filter((row): row is ChatRow => row !== null);
   });
 
-  const chatTranscriptItems = createMemo<JSX.Element[]>(() => {
-    const waitingRow = (
-      <RunInlineLoader
-        as="p"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      />
-    );
-
-    const messageItems = buildChatRows().map((row) => {
-      const reasoningNode =
-        row.reasoningContent.length > 0 ? (
-          <div class="run-chat-assistant-message__reasoning-inline">
-            <RunChatMarkdown content={`*Thinking:* ${row.reasoningContent}`} />
-          </div>
-        ) : undefined;
-
-      const toolRailNode =
-        row.toolItems.length > 0 ? (
-          <RunChatToolRail items={row.toolItems} />
-        ) : undefined;
-      const attributionNode =
-        row.attributionLabel.length > 0 ? (
-          <p class="run-chat-assistant-message__attribution">
-            {row.attributionLabel}
-          </p>
-        ) : undefined;
-
+  const chatTranscriptRows = createMemo<RunChatTranscriptRow[]>(() => {
+    const messageRows = buildChatRows().map<RunChatTranscriptRow>((row) => {
       if (row.role === "assistant") {
-        return (
-          <div
-            data-run-chat-message-id={row.key}
-            data-run-chat-message-kind="parent"
-          >
-            <RunChatMessage role="assistant" class="run-chat-message-item">
-              <RunChatAssistantMessage
-                content={row.content.length > 0 ? row.content : " "}
-                streaming={row.assistantStreaming}
-                isStreamingActive={row.assistantStreaming?.isStreaming === true}
-                reasoning={reasoningNode}
-                toolRail={toolRailNode}
-                details={attributionNode}
-              />
-              <Show when={!row.hasRenderableContent}>{waitingRow}</Show>
-            </RunChatMessage>
-          </div>
-        );
+        return {
+          key: `message:${row.key}`,
+          kind: "assistant-message",
+          messageId: row.key,
+          messageKind: "parent",
+          content: row.content,
+          reasoningContent: row.reasoningContent,
+          assistantStreaming: row.assistantStreaming,
+          toolItems: row.toolItems,
+          attributionLabel: row.attributionLabel,
+          hasRenderableContent: row.hasRenderableContent,
+        };
       }
 
       if (row.role === "user") {
-        return (
-          <div
-            data-run-chat-message-id={row.key}
-            data-run-chat-message-kind="parent"
-          >
-            <RunChatMessage role="user" class="run-chat-message-item">
-              <RunChatUserMessage>
-                <RunChatMarkdown
-                  content={row.content.length > 0 ? row.content : "(empty)"}
-                />
-              </RunChatUserMessage>
-            </RunChatMessage>
-          </div>
-        );
+        return {
+          key: `message:${row.key}`,
+          kind: "user-message",
+          messageId: row.key,
+          messageKind: "parent",
+          content: row.content,
+        };
       }
 
-      return (
-        <div
-          data-run-chat-message-id={row.key}
-          data-run-chat-message-kind="parent"
-        >
-          <RunChatMessage role="system" class="run-chat-message-item">
-            <RunChatSystemMessage>
-              <RunChatMarkdown
-                content={row.content.length > 0 ? row.content : row.timestamp}
-              />
-            </RunChatSystemMessage>
-          </RunChatMessage>
-        </div>
-      );
+      return {
+        key: `message:${row.key}`,
+        kind: "system-message",
+        messageId: row.key,
+        messageKind: "parent",
+        content: row.content.length > 0 ? row.content : row.timestamp,
+      };
     });
 
-    const failedQuestionItems = failedQuestionCards().map((card) => {
-      return (
-        <RunChatMessage role="assistant">
-          <section
-            class="run-chat-tool-rail"
-            aria-label="Question request failed tool item"
-          >
-            <ul class="run-chat-tool-rail__list">
-              <li class="run-chat-tool-rail__item run-chat-tool-rail__item--failed">
-                <div class="run-chat-tool-rail__row">
-                  <span class="run-chat-tool-rail__line">Question pending</span>
-                  <span class="run-chat-tool-rail__status">
-                    <span
-                      class="run-chat-tool-rail__status-slot"
-                      aria-label="failed"
-                    >
-                      <AppIcon
-                        name="status.error"
-                        class="run-chat-tool-rail__status-icon run-chat-tool-rail__status-icon--error"
-                        aria-hidden="true"
-                        size={14}
-                      />
-                      <span class="sr-only">failed</span>
-                    </span>
-                  </span>
-                </div>
-                <p class="run-chat-tool-rail__details">
-                  <strong>Source:</strong> {card.sourceLabel}
-                </p>
-                <p class="run-chat-tool-rail__details">{card.failureMessage}</p>
-              </li>
-            </ul>
-          </section>
-        </RunChatMessage>
-      );
-    });
+    const failedQuestionRows = failedQuestionCards().map<RunChatTranscriptRow>(
+      (card) => ({
+        key: `failed-question:${card.requestId}`,
+        kind: "failed-question",
+        sourceLabel: card.sourceLabel,
+        failureMessage: card.failureMessage,
+      }),
+    );
 
-    const pendingPermissionItems = pendingPermissionCards().map((card) => {
-      return (
-        <RunChatMessage
-          role="assistant"
-          class="run-chat-message-item"
-          ariaLabel="Permission request"
-        >
-          <RunChatAssistantMessage
-            content=" "
-            toolRail={
-              <section
-                class="run-chat-tool-rail"
-                aria-label="Permission request tool item"
-              >
-                <ul class="run-chat-tool-rail__list">
-                  <li class="run-chat-tool-rail__item run-chat-tool-rail__item--running">
-                    <div class="run-chat-tool-rail__row">
-                      <span class="run-chat-tool-rail__line">
-                        Permission required: {card.kind}
-                      </span>
-                    </div>
-                    <p class="run-chat-tool-rail__details">
-                      <strong>Source:</strong> {card.sourceLabel}
-                    </p>
-                    <Show
-                      when={card.pathPatterns.length > 0}
-                      fallback={
-                        <p class="run-chat-tool-rail__details">
-                          <strong>Paths:</strong> Any path
-                        </p>
-                      }
-                    >
-                      <div class="run-chat-tool-rail__details">
-                        <strong>Paths:</strong>
-                        <ul class="list-disc pl-5">
-                          <For each={card.pathPatterns}>
-                            {(pattern) => <li>{pattern}</li>}
-                          </For>
-                        </ul>
-                      </div>
-                    </Show>
-                    <Show when={card.metadata.length > 0}>
-                      <div class="run-chat-tool-rail__details">
-                        <strong>Details:</strong>
-                        <ul class="list-disc pl-5">
-                          <For each={card.metadata}>
-                            {(entry) => (
-                              <li>
-                                {entry.key}: {entry.value}
-                              </li>
-                            )}
-                          </For>
-                        </ul>
-                      </div>
-                    </Show>
-                    <Show when={queuedPermissionRequests().length > 0}>
-                      <p class="run-chat-tool-rail__details">
-                        {queuedPermissionRequests().length} more permission
-                        request
-                        {queuedPermissionRequests().length === 1
-                          ? ""
-                          : "s"}{" "}
-                        queued. They will appear after this one is resolved.
-                      </p>
-                    </Show>
-                    <Show
-                      when={props.model.agent.permissionReplyError().length > 0}
-                    >
-                      <p class="projects-error">
-                        {props.model.agent.permissionReplyError()}
-                      </p>
-                    </Show>
-                    <div class="mt-2 flex justify-end gap-2">
-                      <button
-                        type="button"
-                        class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
-                        disabled={props.model.agent.isReplyingPermission()}
-                        onClick={() => {
-                          console.info("[runs] permission decision clicked", {
-                            runId: props.model.run()?.id ?? null,
-                            requestId: card.requestId,
-                            decision: "deny",
-                            pendingCount: pendingPermissionCards().length,
-                          });
-                          void props.model.agent.replyPermission(
-                            card.requestId,
-                            "deny",
-                          );
-                        }}
-                      >
-                        {props.model.agent.isReplyingPermission()
-                          ? "Sending..."
-                          : "Deny"}
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
-                        disabled={props.model.agent.isReplyingPermission()}
-                        onClick={() => {
-                          console.info("[runs] permission decision clicked", {
-                            runId: props.model.run()?.id ?? null,
-                            requestId: card.requestId,
-                            decision: "once",
-                            pendingCount: pendingPermissionCards().length,
-                          });
-                          void props.model.agent.replyPermission(
-                            card.requestId,
-                            "once",
-                          );
-                        }}
-                      >
-                        {props.model.agent.isReplyingPermission()
-                          ? "Sending..."
-                          : "Allow once"}
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
-                        disabled={props.model.agent.isReplyingPermission()}
-                        onClick={() => {
-                          console.info("[runs] permission decision clicked", {
-                            runId: props.model.run()?.id ?? null,
-                            requestId: card.requestId,
-                            decision: "always",
-                            pendingCount: pendingPermissionCards().length,
-                          });
-                          void props.model.agent.replyPermission(
-                            card.requestId,
-                            "always",
-                          );
-                        }}
-                      >
-                        {props.model.agent.isReplyingPermission()
-                          ? "Sending..."
-                          : "Allow"}
-                      </button>
-                    </div>
-                  </li>
-                </ul>
-              </section>
-            }
-          />
-        </RunChatMessage>
-      );
-    });
+    const pendingPermissionRows =
+      pendingPermissionCards().map<RunChatTranscriptRow>((card) => ({
+        key: `pending-permission:${card.requestId}`,
+        kind: "pending-permission",
+        requestId: card.requestId,
+        permissionKind: card.kind,
+        sourceLabel: card.sourceLabel,
+        pathPatterns: card.pathPatterns,
+        metadata: card.metadata,
+        queuedCount: queuedPermissionRequests().length,
+        isReplying: props.model.agent.isReplyingPermission(),
+        replyError: props.model.agent.permissionReplyError(),
+        onDecision: (decision) => {
+          console.info("[runs] permission decision clicked", {
+            runId: props.model.run()?.id ?? null,
+            requestId: card.requestId,
+            decision,
+            pendingCount: pendingPermissionCards().length,
+          });
+          void props.model.agent.replyPermission(card.requestId, decision);
+        },
+      }));
 
-    const failedPermissionItems = failedPermissionCards().map((card) => {
-      return (
-        <RunChatMessage role="assistant">
-          <section
-            class="run-chat-tool-rail"
-            aria-label="Permission request failed tool item"
-          >
-            <ul class="run-chat-tool-rail__list">
-              <li class="run-chat-tool-rail__item run-chat-tool-rail__item--failed">
-                <div class="run-chat-tool-rail__row">
-                  <span class="run-chat-tool-rail__line">
-                    Permission required: {card.kind}
-                  </span>
-                  <span class="run-chat-tool-rail__status">
-                    <span
-                      class="run-chat-tool-rail__status-slot"
-                      aria-label="failed"
-                    >
-                      <AppIcon
-                        name="status.error"
-                        class="run-chat-tool-rail__status-icon run-chat-tool-rail__status-icon--error"
-                        aria-hidden="true"
-                        size={14}
-                      />
-                      <span class="sr-only">failed</span>
-                    </span>
-                  </span>
-                </div>
-                <p class="run-chat-tool-rail__details">
-                  <strong>Source:</strong> {card.sourceLabel}
-                </p>
-                <p class="run-chat-tool-rail__details">{card.failureMessage}</p>
-                <Show
-                  when={card.pathPatterns.length > 0}
-                  fallback={
-                    <p class="run-chat-tool-rail__details">
-                      <strong>Paths:</strong> Any path
-                    </p>
-                  }
-                >
-                  <div class="run-chat-tool-rail__details">
-                    <strong>Paths:</strong>
-                    <ul class="list-disc pl-5">
-                      <For each={card.pathPatterns}>
-                        {(pattern) => <li>{pattern}</li>}
-                      </For>
-                    </ul>
-                  </div>
-                </Show>
-              </li>
-            </ul>
-          </section>
-        </RunChatMessage>
-      );
-    });
+    const failedPermissionRows =
+      failedPermissionCards().map<RunChatTranscriptRow>((card) => ({
+        key: `failed-permission:${card.requestId}`,
+        kind: "failed-permission",
+        permissionKind: card.kind,
+        sourceLabel: card.sourceLabel,
+        pathPatterns: card.pathPatterns,
+        failureMessage: card.failureMessage,
+      }));
 
     const pendingPromptItem = pendingPrompt();
-    const optimisticPromptItem = pendingPromptItem ? (
-      <RunChatMessage
-        role="user"
-        class="run-chat-message-item"
-        ariaLabel="Pending message"
-      >
-        <RunChatUserMessage>
-          <div class="space-y-2">
-            <RunChatMarkdown content={pendingPromptItem.text} />
-            <p class="run-chat-user-message__status">
-              {pendingPromptItem.status === "failed"
-                ? "Send failed"
+    const optimisticPromptRows = pendingPromptItem
+      ? [
+          {
+            key: "pending-prompt",
+            kind: "pending-prompt",
+            text: pendingPromptItem.text,
+            status:
+              pendingPromptItem.status === "failed"
+                ? "failed"
                 : chatSessionHealth() === "reconnecting"
-                  ? "Reconnecting…"
-                  : "Sending…"}
-            </p>
-            <Show when={pendingPromptItem.status === "failed"}>
-              <div class="run-chat-user-message__actions">
-                <button
-                  type="button"
-                  class="run-chat-user-message__action"
-                  onClick={() => {
-                    void props.model.agent.retryPendingPrompt?.();
-                  }}
-                >
-                  Retry send
-                </button>
-                <button
-                  type="button"
-                  class="run-chat-user-message__action"
-                  onClick={() => {
-                    void props.model.agent.reconnectSession?.();
-                  }}
-                >
-                  Reconnect
-                </button>
-              </div>
-            </Show>
-          </div>
-        </RunChatUserMessage>
-      </RunChatMessage>
-    ) : null;
+                  ? "reconnecting"
+                  : "sending",
+            onRetry: () => {
+              void props.model.agent.retryPendingPrompt?.();
+            },
+            onReconnect: () => {
+              void props.model.agent.reconnectSession?.();
+            },
+          } satisfies RunChatTranscriptRow,
+        ]
+      : [];
 
-    const sessionStatusItem =
-      chatSessionHealth() === "reconnecting" ||
-      chatSessionHealth() === "unresponsive" ? (
-        <RunChatMessage
-          role="system"
-          class="run-chat-message-item"
-          ariaLabel="Chat connection status"
-        >
-          <RunChatSystemMessage>
-            <div class="flex w-full flex-wrap items-center justify-between gap-3">
-              <span>
-                {chatSessionHealth() === "reconnecting"
-                  ? "Chat session became unresponsive. Reconnecting…"
-                  : "Chat session is unresponsive. Reconnect to recover without restarting the app."}
-              </span>
-              <Show when={chatSessionHealth() === "unresponsive"}>
-                <button
-                  type="button"
-                  class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
-                  onClick={() => {
-                    void props.model.agent.reconnectSession?.();
-                  }}
-                >
-                  Reconnect chat
-                </button>
-              </Show>
-            </div>
-          </RunChatSystemMessage>
-        </RunChatMessage>
-      ) : null;
+    const sessionHealth = chatSessionHealth();
+    const sessionStatusRows =
+      sessionHealth === "reconnecting" || sessionHealth === "unresponsive"
+        ? [
+            {
+              key: "session-status",
+              kind: "session-status",
+              status: sessionHealth,
+              onReconnect: () => {
+                void props.model.agent.reconnectSession?.();
+              },
+            } satisfies RunChatTranscriptRow,
+          ]
+        : [];
 
     return [
-      ...messageItems,
-      ...(optimisticPromptItem ? [optimisticPromptItem] : []),
-      ...failedQuestionItems,
-      ...pendingPermissionItems,
-      ...failedPermissionItems,
-      ...(sessionStatusItem ? [sessionStatusItem] : []),
+      ...messageRows,
+      ...optimisticPromptRows,
+      ...failedQuestionRows,
+      ...pendingPermissionRows,
+      ...failedPermissionRows,
+      ...sessionStatusRows,
     ];
   });
 
@@ -2963,8 +2686,8 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       return;
     }
 
-    const transcriptItems = chatTranscriptItems();
-    const transcriptItemCount = transcriptItems.length;
+    const transcriptRows = chatTranscriptRows();
+    const transcriptItemCount = transcriptRows.length;
     runChatComposerOffsetPx();
     transcriptLayoutRevision();
 
@@ -3019,7 +2742,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
 
   createEffect(() => {
-    chatTranscriptItems();
+    chatTranscriptRows();
     runChatComposerOffsetPx();
     transcriptLayoutRevision();
 
@@ -3034,7 +2757,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
 
   createEffect(() => {
-    const hasTranscriptItems = chatTranscriptItems().length > 0;
+    const hasTranscriptItems = chatTranscriptRows().length > 0;
     const transcriptContent = transcriptContentRef;
     if (
       !hasTranscriptItems ||
@@ -3116,7 +2839,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
 
   const shouldShowJumpToBottom = createMemo(() => {
-    return chatTranscriptItems().length > 0 && !isTranscriptNearBottom();
+    return chatTranscriptRows().length > 0 && !isTranscriptNearBottom();
   });
 
   return (
@@ -3168,7 +2891,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             </section>
           </Show>
           <Show
-            when={chatTranscriptItems().length > 0}
+            when={chatTranscriptRows().length > 0}
             fallback={
               <section
                 class="run-chat-transcript run-chat-transcript--empty-state"
@@ -3197,13 +2920,15 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             <div ref={transcriptContentRef}>
               <RunChatTranscript
                 class="run-chat-transcript"
-                items={chatTranscriptItems()}
+                rows={chatTranscriptRows()}
                 canLoadOlder={canLoadOlderTranscript()}
                 loadingOlder={isLoadingOlderTranscript()}
                 onLoadOlder={() => {
                   void loadOlderTranscript();
                 }}
                 loadOlderLabel="Load older history"
+                layoutToken={transcriptVirtualizerLayoutToken()}
+                scrollElement={() => transcriptScrollRef}
               />
               <div
                 ref={transcriptBottomSentinelRef}
