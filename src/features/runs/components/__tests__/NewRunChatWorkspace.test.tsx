@@ -1652,6 +1652,9 @@ describe("NewRunChatWorkspace", () => {
           ],
         },
       ],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
       raw: [],
     } as any);
 
@@ -1766,6 +1769,9 @@ describe("NewRunChatWorkspace", () => {
           ],
         },
       ],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
       raw: [],
     } as any);
 
