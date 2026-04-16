@@ -493,7 +493,12 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   const shellTitle = () => {
     if (location.pathname.endsWith("/tasks/new")) return "Create task";
     if (location.pathname === BOARD_ROUTE_PATH) {
-      const activeBoardProjectName = boardProjectContext().projectName;
+      const activeBoardProjectId = resolveExistingBoardProjectId(
+        boardProjectContext().projectId,
+      );
+      const activeBoardProjectName = activeBoardProjectId
+        ? boardProjectContext().projectName
+        : "";
       if (activeBoardProjectName) {
         return activeBoardProjectName;
       }
@@ -594,7 +599,9 @@ const AppShellContent: Component<AppShellProps> = (props) => {
 
   const boardProjectId = () => {
     if (location.pathname !== BOARD_ROUTE_PATH) return "";
-    const activeBoardProjectId = boardProjectContext().projectId.trim();
+    const activeBoardProjectId = resolveExistingBoardProjectId(
+      boardProjectContext().projectId,
+    );
     if (activeBoardProjectId) return activeBoardProjectId;
     const queryProjectId = resolveExistingBoardProjectId(
       getBoardProjectIdFromSearch(location.search),

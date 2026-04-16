@@ -1464,6 +1464,63 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("ignores stale board project context ids emitted after load", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          { id: "p-1", name: "Alpha", key: "ALP" },
+          { id: "p-2", name: "Beta", key: "BET" },
+        ]);
+      }
+      if (command === "get_project") {
+        const projectId = (args as { id?: string } | undefined)?.id || "p-1";
+        return Promise.resolve({
+          id: projectId,
+          name: projectId === "p-2" ? "Beta" : "Alpha",
+          key: projectId === "p-2" ? "BET" : "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board?projectId=p-1");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("link", { name: "Project settings" }).getAttribute(
+          "href",
+        ),
+      ).toBe("/projects/p-1");
+      expect(
+        (screen.getByRole("button", { name: "New task" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+    });
+
+    window.dispatchEvent(
+      new CustomEvent("board:project-context", {
+        detail: { projectId: "p-stale", projectName: "Ghost" },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Ghost")).toBeNull();
+      expect(
+        screen.getByRole("link", { name: "Project settings" }).getAttribute(
+          "href",
+        ),
+      ).toBe("/projects/p-1");
+      expect(
+        (screen.getByRole("button", { name: "New task" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+    });
+  });
+
   it("shows blocked badge on board cards", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") {
@@ -5789,7 +5846,7 @@ describe("app routing and shell", () => {
     );
   });
 
-  it("keeps board actions in sync when shell project preload fails but board data loads", async () => {
+  it("keeps board shell actions conservative when shell project preload fails", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     let listProjectsCallCount = 0;
 
@@ -5828,17 +5885,15 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+      expect(screen.getByText("Board")).toBeTruthy();
       expect(screen.getByRole("button", { name: "New task" })).toBeTruthy();
-      expect(
-        screen.getByRole("link", { name: "Project settings" }),
-      ).toBeTruthy();
-      expect(screen.getByText("Alpha")).toBeTruthy();
     });
 
     expect(
       (screen.getByRole("button", { name: "New task" }) as HTMLButtonElement)
         .disabled,
-    ).toBe(false);
+    ).toBe(true);
+    expect(screen.queryByRole("link", { name: "Project settings" })).toBeNull();
 
     warnSpy.mockRestore();
   });

@@ -1659,7 +1659,7 @@ describe("NewRunChatWorkspace", () => {
       nextCursor: undefined,
       beforeCursor: undefined,
       raw: [],
-    } as any);
+    } satisfies RunOpenCodeSessionMessagesPageResult);
 
     const [store] = createSignal({
       sessionId: "session-root",
@@ -1742,7 +1742,7 @@ describe("NewRunChatWorkspace", () => {
             nextCursor: "cursor-1",
             beforeCursor: undefined,
             raw: [],
-          } as any;
+          } satisfies RunOpenCodeSessionMessagesPageResult;
         }
 
         return {
@@ -1768,7 +1768,7 @@ describe("NewRunChatWorkspace", () => {
           nextCursor: "cursor-1",
           beforeCursor: before,
           raw: [],
-        } as any;
+        } satisfies RunOpenCodeSessionMessagesPageResult;
       },
     );
 
@@ -1849,7 +1849,7 @@ describe("NewRunChatWorkspace", () => {
           nextCursor: `cursor-${pageIndex + 1}`,
           beforeCursor: before,
           raw: [],
-        } as any;
+        } satisfies RunOpenCodeSessionMessagesPageResult;
       },
     );
 
@@ -1940,7 +1940,7 @@ describe("NewRunChatWorkspace", () => {
             nextCursor: undefined,
             beforeCursor: undefined,
             raw: [],
-          } as any;
+          } satisfies RunOpenCodeSessionMessagesPageResult;
         }
 
         return {
@@ -1949,7 +1949,7 @@ describe("NewRunChatWorkspace", () => {
           nextCursor: undefined,
           beforeCursor: undefined,
           raw: [],
-        } as any;
+        } satisfies RunOpenCodeSessionMessagesPageResult;
       },
     );
 
@@ -2042,9 +2042,11 @@ describe("NewRunChatWorkspace", () => {
       nextCursor: undefined,
       beforeCursor: undefined,
       raw: [],
-    } as any);
+    } satisfies RunOpenCodeSessionMessagesPageResult);
 
-    const createRootStore = (rawEvents: unknown[]) => ({
+    const createRootStore = (
+      rawEvents: AgentStore["rawEvents"],
+    ): AgentStore => ({
       sessionId: "session-root",
       status: "active",
       streamConnected: true,
@@ -2073,7 +2075,7 @@ describe("NewRunChatWorkspace", () => {
       failedPermissionsById: {},
       todos: [],
       diffSummary: null,
-      rawEvents: rawEvents as any,
+      rawEvents,
     });
 
     const [initialStore] = createSignal(
@@ -2198,7 +2200,7 @@ describe("NewRunChatWorkspace", () => {
       nextCursor: undefined,
       beforeCursor: undefined,
       raw: [],
-    } as any);
+    } satisfies RunOpenCodeSessionMessagesPageResult);
 
     const [store] = createSignal({
       sessionId: "session-root",
@@ -2315,7 +2317,7 @@ describe("NewRunChatWorkspace", () => {
       nextCursor: undefined,
       beforeCursor: undefined,
       raw: [],
-    } as any);
+    } satisfies RunOpenCodeSessionMessagesPageResult);
 
     const [store] = createSignal({
       sessionId: "session-root",
@@ -2467,7 +2469,7 @@ describe("NewRunChatWorkspace", () => {
       nextCursor: undefined,
       beforeCursor: undefined,
       raw: [],
-    } as any);
+    } satisfies RunOpenCodeSessionMessagesPageResult);
 
     const [store] = createSignal({
       sessionId: "session-root",
@@ -3282,7 +3284,7 @@ describe("NewRunChatWorkspace", () => {
             delta: "Research ongoing",
           },
         },
-      ] as any,
+      ] satisfies AgentStore["rawEvents"],
     });
 
     const { model } = createModelStub("running");
@@ -3354,7 +3356,7 @@ describe("NewRunChatWorkspace", () => {
             delta: " continuing",
           },
         },
-      ] as any,
+      ] satisfies AgentStore["rawEvents"],
     }));
 
     await waitFor(() => {
