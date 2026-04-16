@@ -27,20 +27,25 @@ const installResizeObserverStub = () => {
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 };
 
-const { getRunOpenCodeSessionMessagesMock, getRunOpenCodeSessionTodosMock } =
-  vi.hoisted(() => ({
-    getRunOpenCodeSessionMessagesMock: vi.fn(async () => ({
-      messages: [],
-      raw: [],
-    })),
-    getRunOpenCodeSessionTodosMock: vi.fn(async () => ({ todos: [], raw: [] })),
-  }));
+const {
+  getRunOpenCodeSessionMessagesPageMock,
+  getRunOpenCodeSessionTodosMock,
+} = vi.hoisted(() => ({
+  getRunOpenCodeSessionMessagesPageMock: vi.fn(async () => ({
+    messages: [],
+    hasMore: false,
+    nextCursor: undefined,
+    beforeCursor: undefined,
+    raw: [],
+  })),
+  getRunOpenCodeSessionTodosMock: vi.fn(async () => ({ todos: [], raw: [] })),
+}));
 
 vi.mock("../../../../app/lib/runs", async () => {
   const actual = await vi.importActual<object>("../../../../app/lib/runs");
   return {
     ...actual,
-    getRunOpenCodeSessionMessages: getRunOpenCodeSessionMessagesMock,
+    getRunOpenCodeSessionMessagesPage: getRunOpenCodeSessionMessagesPageMock,
     getRunOpenCodeSessionTodos: getRunOpenCodeSessionTodosMock,
   };
 });
@@ -112,6 +117,12 @@ const createModelStub = (
         diffSummary: null,
         rawEvents: [],
       }),
+      history: {
+        canLoadOlder: () => false,
+        isLoadingOlder: () => false,
+        error: () => "",
+        loadOlder: vi.fn(async () => false),
+      },
       isSubmittingPrompt: () => false,
       isReplyingQuestion: () => agentOverrides.isReplyingQuestion ?? false,
       isReplyingPermission: () => agentOverrides.isReplyingPermission ?? false,
@@ -175,10 +186,13 @@ const createModelStub = (
 describe("NewRunChatWorkspace", () => {
   beforeEach(() => {
     installResizeObserverStub();
-    getRunOpenCodeSessionMessagesMock.mockClear();
+    getRunOpenCodeSessionMessagesPageMock.mockClear();
     getRunOpenCodeSessionTodosMock.mockClear();
-    getRunOpenCodeSessionMessagesMock.mockResolvedValue({
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
       messages: [],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
       raw: [],
     });
     getRunOpenCodeSessionTodosMock.mockResolvedValue({ todos: [], raw: [] });
@@ -199,6 +213,217 @@ describe("NewRunChatWorkspace", () => {
     expect(
       screen.getByText("No chat history is available for this completed run."),
     ).toBeTruthy();
+  });
+
+  it("loads older transcript history through the model paging API", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-1",
+      status: "idle",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-newer"],
+      messagesById: {
+        "msg-newer": {
+          id: "msg-newer",
+          sessionId: "session-1",
+          role: "assistant",
+          partsById: {
+            "part-newer": {
+              id: "part-newer",
+              kind: "text",
+              type: "text",
+              text: "Newer message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-newer"],
+        },
+      },
+      pendingQuestionsById: {},
+      resolvedQuestionsById: {},
+      failedQuestionsById: {},
+      pendingPermissionsById: {},
+      resolvedPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+    const loadOlder = vi.fn(async () => {
+      setStore((current) => ({
+        ...current,
+        messageOrder: ["msg-older", ...current.messageOrder],
+        messagesById: {
+          ...current.messagesById,
+          "msg-older": {
+            id: "msg-older",
+            sessionId: "session-1",
+            role: "assistant",
+            partsById: {
+              "part-older": {
+                id: "part-older",
+                kind: "text",
+                type: "text",
+                text: "Older message",
+                streaming: false,
+              },
+            },
+            partOrder: ["part-older"],
+          },
+        },
+      }));
+      return true;
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+    model.agent.history = {
+      canLoadOlder: () => true,
+      isLoadingOlder: () => false,
+      error: () => "",
+      loadOlder,
+    } as unknown as typeof model.agent.history;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Load older history" }));
+
+    await waitFor(() => {
+      expect(loadOlder).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Older message")).toBeTruthy();
+    });
+  });
+
+  it("preserves the visible transcript anchor when older history is prepended", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-1",
+      status: "idle",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-1", "msg-2"],
+      messagesById: {
+        "msg-1": {
+          id: "msg-1",
+          sessionId: "session-1",
+          role: "assistant",
+          partsById: {
+            "part-1": {
+              id: "part-1",
+              kind: "text",
+              type: "text",
+              text: "Earlier message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-1"],
+        },
+        "msg-2": {
+          id: "msg-2",
+          sessionId: "session-1",
+          role: "assistant",
+          partsById: {
+            "part-2": {
+              id: "part-2",
+              kind: "text",
+              type: "text",
+              text: "Latest message",
+              streaming: false,
+            },
+          },
+          partOrder: ["part-2"],
+        },
+      },
+      pendingQuestionsById: {},
+      resolvedQuestionsById: {},
+      failedQuestionsById: {},
+      pendingPermissionsById: {},
+      resolvedPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    let scrollTopValue = 0;
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+
+    const loadOlder = vi.fn(async () => {
+      setStore((current) => ({
+        ...current,
+        messageOrder: ["msg-older", ...current.messageOrder],
+        messagesById: {
+          ...current.messagesById,
+          "msg-older": {
+            id: "msg-older",
+            sessionId: "session-1",
+            role: "assistant",
+            partsById: {
+              "part-older": {
+                id: "part-older",
+                kind: "text",
+                type: "text",
+                text: "Older message",
+                streaming: false,
+              },
+            },
+            partOrder: ["part-older"],
+          },
+        },
+      }));
+      return true;
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+    model.agent.history = {
+      canLoadOlder: () => true,
+      isLoadingOlder: () => false,
+      error: () => "",
+      loadOlder,
+    } as unknown as typeof model.agent.history;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    const transcript = screen.getByLabelText(
+      "Conversation transcript",
+    ) as HTMLDivElement;
+    Object.defineProperty(transcript, "scrollHeight", {
+      value: 400,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "clientHeight", {
+      value: 320,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (next: number) => {
+        scrollTopValue = next;
+      },
+    });
+    Object.defineProperty(transcript, "scrollTo", {
+      configurable: true,
+      value: ({ top }: { top: number }) => {
+        scrollTopValue = top;
+      },
+    });
+
+    fireEvent.scroll(transcript);
+    fireEvent.click(screen.getByRole("button", { name: "Load older history" }));
+
+    await waitFor(() => {
+      expect(loadOlder).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Older message")).toBeTruthy();
+      expect(scrollTopValue).toBeGreaterThan(0);
+    });
+
+    rafSpy.mockRestore();
   });
 
   it("renders actionable permission item in transcript and disables composer", () => {
@@ -1200,8 +1425,151 @@ describe("NewRunChatWorkspace", () => {
     expect(screen.getByText("README.md")).toBeTruthy();
   });
 
+  it("rebinds child output to the authoritative task box when explicit mapping arrives later", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root-1", "msg-root-2"],
+      messagesById: {
+        "msg-root-1": {
+          id: "msg-root-1",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task-1": {
+              id: "part-task-1",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "First task",
+            },
+          },
+          partOrder: ["part-task-1"],
+        },
+        "msg-root-2": {
+          id: "msg-root-2",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task-2": {
+              id: "part-task-2",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Second task",
+            },
+          },
+          partOrder: ["part-task-2"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-root",
+            part: {
+              id: "part-task-1",
+              messageID: "msg-root-1",
+              sessionID: "session-root",
+              type: "tool",
+              tool: "task",
+              state: { status: "running", title: "First task" },
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-root",
+            part: {
+              id: "part-task-2",
+              messageID: "msg-root-2",
+              sessionID: "session-root",
+              type: "tool",
+              tool: "task",
+              state: { status: "running", title: "Second task" },
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child",
+              sessionID: "session-child",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child",
+            messageID: "msg-child",
+            partID: "part-child",
+            field: "text",
+            delta: "Child output",
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    const getTaskRails = () =>
+      Array.from(container.querySelectorAll(".run-chat-tool-rail")).filter(
+        (node) =>
+          node.textContent?.includes("First task") ||
+          node.textContent?.includes("Second task"),
+      );
+
+    expect(getTaskRails()).toHaveLength(2);
+    expect(getTaskRails()[0]?.textContent).not.toContain("Child output");
+    expect(getTaskRails()[1]?.textContent).toContain("Child output");
+
+    setStore((current) => ({
+      ...current,
+      messagesById: {
+        ...current.messagesById,
+        "msg-root-1": {
+          ...current.messagesById["msg-root-1"],
+          partsById: {
+            ...current.messagesById["msg-root-1"].partsById,
+            "part-task-1": {
+              ...current.messagesById["msg-root-1"].partsById["part-task-1"],
+              raw: {
+                child: {
+                  sessionID: "session-child",
+                },
+              },
+            },
+          },
+        },
+      },
+      lastSyncAt: current.lastSyncAt + 1,
+    }));
+
+    await waitFor(() => {
+      expect(getTaskRails()[0]?.textContent).toContain("Child output");
+      expect(getTaskRails()[1]?.textContent).not.toContain("Child output");
+    });
+  });
+
   it("hydrates task subagent output from fetched child session history", async () => {
-    getRunOpenCodeSessionMessagesMock.mockResolvedValue({
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
       messages: [
         {
           info: {
@@ -1220,6 +1588,9 @@ describe("NewRunChatWorkspace", () => {
           ],
         },
       ],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
       raw: [],
     } as any);
 
@@ -1264,12 +1635,584 @@ describe("NewRunChatWorkspace", () => {
     render(() => <NewRunChatWorkspace model={model} />);
 
     await waitFor(() => {
-      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledWith({
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledWith({
         runId: "run-1",
         sessionId: "session-child",
       });
       expect(screen.getByText("Fetched child history output")).toBeTruthy();
     });
+  });
+
+  it("stops subagent pagination when the next cursor repeats and keeps partial history", async () => {
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
+    getRunOpenCodeSessionMessagesPageMock.mockImplementation(
+      async ({ before }: { before?: string }) => {
+        if (!before) {
+          return {
+            messages: [
+              {
+                info: {
+                  id: "msg-child-newer",
+                  sessionID: "session-child",
+                  role: "assistant",
+                },
+                parts: [
+                  {
+                    id: "part-child-newer",
+                    type: "text",
+                    text: "Fetched child newer output",
+                    messageID: "msg-child-newer",
+                    sessionID: "session-child",
+                  },
+                ],
+              },
+            ],
+            hasMore: true,
+            nextCursor: "cursor-1",
+            beforeCursor: undefined,
+            raw: [],
+          } as any;
+        }
+
+        return {
+          messages: [
+            {
+              info: {
+                id: "msg-child-older",
+                sessionID: "session-child",
+                role: "assistant",
+              },
+              parts: [
+                {
+                  id: "part-child-older",
+                  type: "text",
+                  text: "Fetched child older output",
+                  messageID: "msg-child-older",
+                  sessionID: "session-child",
+                },
+              ],
+            },
+          ],
+          hasMore: true,
+          nextCursor: "cursor-1",
+          beforeCursor: before,
+          raw: [],
+        } as any;
+      },
+    );
+
+    try {
+      const [store] = createSignal({
+        sessionId: "session-root",
+        status: "active",
+        streamConnected: true,
+        lastSyncAt: Date.now(),
+        messageOrder: ["msg-root"],
+        messagesById: {
+          "msg-root": {
+            id: "msg-root",
+            sessionId: "session-root",
+            role: "assistant",
+            partsById: {
+              "part-task": {
+                id: "part-task",
+                kind: "tool",
+                type: "tool",
+                toolName: "task",
+                status: "running",
+                title: "List workspace files",
+                raw: {
+                  sessionID: "session-child",
+                },
+              },
+            },
+            partOrder: ["part-task"],
+          },
+        },
+        pendingQuestionsById: {},
+        pendingPermissionsById: {},
+        failedPermissionsById: {},
+        todos: [],
+        diffSummary: null,
+        rawEvents: [],
+      });
+
+      const { model } = createModelStub("running", false, { id: "run-1" });
+      model.agent.store = store as unknown as typeof model.agent.store;
+
+      render(() => <NewRunChatWorkspace model={model} />);
+
+      await waitFor(() => {
+        expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(2);
+        expect(screen.getByText("Fetched child older output")).toBeTruthy();
+        expect(screen.getByText("Fetched child newer output")).toBeTruthy();
+      });
+
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        "[runs] subagent history pagination stopped: repeated next cursor",
+        expect.objectContaining({
+          runId: "run-1",
+          sessionId: "session-child",
+          pageCount: 2,
+          nextCursor: "cursor-1",
+        }),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  it("stops subagent pagination at the configured page limit", async () => {
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
+    getRunOpenCodeSessionMessagesPageMock.mockImplementation(
+      async ({ before }: { before?: string }) => {
+        const pageIndex = before
+          ? Number.parseInt(before.replace("cursor-", ""), 10)
+          : 0;
+        return {
+          messages: [],
+          hasMore: true,
+          nextCursor: `cursor-${pageIndex + 1}`,
+          beforeCursor: before,
+          raw: [],
+        } as any;
+      },
+    );
+
+    try {
+      const [store] = createSignal({
+        sessionId: "session-root",
+        status: "active",
+        streamConnected: true,
+        lastSyncAt: Date.now(),
+        messageOrder: ["msg-root"],
+        messagesById: {
+          "msg-root": {
+            id: "msg-root",
+            sessionId: "session-root",
+            role: "assistant",
+            partsById: {
+              "part-task": {
+                id: "part-task",
+                kind: "tool",
+                type: "tool",
+                toolName: "task",
+                status: "running",
+                title: "List workspace files",
+                raw: {
+                  sessionID: "session-child",
+                },
+              },
+            },
+            partOrder: ["part-task"],
+          },
+        },
+        pendingQuestionsById: {},
+        pendingPermissionsById: {},
+        failedPermissionsById: {},
+        todos: [],
+        diffSummary: null,
+        rawEvents: [],
+      });
+
+      const { model } = createModelStub("running", false, { id: "run-1" });
+      model.agent.store = store as unknown as typeof model.agent.store;
+
+      render(() => <NewRunChatWorkspace model={model} />);
+
+      await waitFor(() => {
+        expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(
+          100,
+        );
+      });
+
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        "[runs] subagent history pagination stopped: page limit reached",
+        expect.objectContaining({
+          runId: "run-1",
+          sessionId: "session-child",
+          pageCount: 100,
+        }),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  it("hydrates lineage-routed child sessions from fetched history", async () => {
+    getRunOpenCodeSessionMessagesPageMock.mockImplementation(
+      async ({ sessionId }: { sessionId: string }) => {
+        if (sessionId === "session-grandchild") {
+          return {
+            messages: [
+              {
+                info: {
+                  id: "msg-grandchild",
+                  sessionID: "session-grandchild",
+                  role: "assistant",
+                },
+                parts: [
+                  {
+                    id: "part-grandchild",
+                    type: "text",
+                    text: "Fetched lineage output",
+                    messageID: "msg-grandchild",
+                    sessionID: "session-grandchild",
+                  },
+                ],
+              },
+            ],
+            hasMore: false,
+            nextCursor: undefined,
+            beforeCursor: undefined,
+            raw: [],
+          } as any;
+        }
+
+        return {
+          messages: [],
+          hasMore: false,
+          nextCursor: undefined,
+          beforeCursor: undefined,
+          raw: [],
+        } as any;
+      },
+    );
+
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Map workspace",
+              raw: {
+                child: {
+                  sessionID: "session-parent",
+                },
+              },
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-grandchild",
+            info: {
+              id: "session-grandchild",
+              parentID: "session-parent",
+              title: "Nested explorer",
+            },
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledWith({
+        runId: "run-1",
+        sessionId: "session-grandchild",
+      });
+      expect(screen.getByText("Fetched lineage output")).toBeTruthy();
+    });
+  });
+
+  it("keeps fetched child history visible after live child updates begin", async () => {
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
+      messages: [
+        {
+          info: {
+            id: "msg-child-1",
+            sessionID: "session-child",
+            role: "assistant",
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+          parts: [
+            {
+              id: "part-child-1",
+              type: "text",
+              text: "Fetched child one",
+              messageID: "msg-child-1",
+              sessionID: "session-child",
+            },
+          ],
+        },
+        {
+          info: {
+            id: "msg-child-2",
+            sessionID: "session-child",
+            role: "assistant",
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+          parts: [
+            {
+              id: "part-child-2",
+              type: "text",
+              text: "Fetched child two",
+              messageID: "msg-child-2",
+              sessionID: "session-child",
+            },
+          ],
+        },
+      ],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
+      raw: [],
+    } as any);
+
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Inspect child session",
+              raw: {
+                sessionID: "session-child",
+              },
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child-3",
+              sessionID: "session-child",
+              role: "assistant",
+              createdAt: "2026-01-01T00:00:03.000Z",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child",
+            part: {
+              id: "part-child-3",
+              messageID: "msg-child-3",
+              sessionID: "session-child",
+              type: "text",
+              text: "Live child three",
+            },
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Fetched child one")).toBeTruthy();
+      expect(screen.getByText("Fetched child two")).toBeTruthy();
+      expect(screen.getByText("Live child three")).toBeTruthy();
+    });
+  });
+
+  it("renders the last three messages from the merged ordered child timeline", async () => {
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
+      messages: [
+        {
+          info: {
+            id: "msg-child-1",
+            sessionID: "session-child",
+            role: "assistant",
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+          parts: [
+            {
+              id: "part-child-1",
+              type: "text",
+              text: "Merged first",
+              messageID: "msg-child-1",
+              sessionID: "session-child",
+            },
+          ],
+        },
+        {
+          info: {
+            id: "msg-child-2",
+            sessionID: "session-child",
+            role: "assistant",
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+          parts: [
+            {
+              id: "part-child-2",
+              type: "text",
+              text: "Merged second",
+              messageID: "msg-child-2",
+              sessionID: "session-child",
+            },
+          ],
+        },
+      ],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
+      raw: [],
+    } as any);
+
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Inspect child session",
+              raw: {
+                sessionID: "session-child",
+              },
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child-4",
+              sessionID: "session-child",
+              role: "assistant",
+              createdAt: "2026-01-01T00:00:04.000Z",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child",
+            part: {
+              id: "part-child-4",
+              messageID: "msg-child-4",
+              sessionID: "session-child",
+              type: "text",
+              text: "Merged fourth",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child-3",
+              sessionID: "session-child",
+              role: "assistant",
+              createdAt: "2026-01-01T00:00:03.000Z",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child",
+            part: {
+              id: "part-child-3",
+              messageID: "msg-child-3",
+              sessionID: "session-child",
+              type: "text",
+              text: "Merged third",
+            },
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      expect(screen.queryByText("Merged first")).toBeNull();
+      expect(screen.getByText("Merged second")).toBeTruthy();
+      expect(screen.getByText("Merged third")).toBeTruthy();
+      expect(screen.getByText("Merged fourth")).toBeTruthy();
+    });
+
+    const visibleMessages = Array.from(
+      container.querySelectorAll(".run-chat-tool-rail__subagent-message"),
+    ).map((node) => node.textContent?.replace(/\s+/g, " ").trim() || "");
+
+    expect(visibleMessages).toHaveLength(3);
+    expect(visibleMessages[0]).toContain("Merged second");
+    expect(visibleMessages[1]).toContain("Merged third");
+    expect(visibleMessages[2]).toContain("Merged fourth");
   });
 
   it("caches streamText across subagent text deltas", () => {
@@ -1308,10 +2251,13 @@ describe("NewRunChatWorkspace", () => {
   it("deduplicates subagent history fetches while pending and after failure", async () => {
     const messagesDeferred = createDeferred<{
       messages: never[];
+      hasMore: false;
+      nextCursor: undefined;
+      beforeCursor: undefined;
       raw: never[];
     }>();
     const todosDeferred = createDeferred<{ todos: never[]; raw: never[] }>();
-    getRunOpenCodeSessionMessagesMock.mockImplementation(
+    getRunOpenCodeSessionMessagesPageMock.mockImplementation(
       () => messagesDeferred.promise,
     );
     getRunOpenCodeSessionTodosMock.mockImplementation(
@@ -1359,7 +2305,7 @@ describe("NewRunChatWorkspace", () => {
     render(() => <NewRunChatWorkspace model={model} />);
 
     await waitFor(() => {
-      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledTimes(1);
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(1);
       expect(getRunOpenCodeSessionTodosMock).toHaveBeenCalledTimes(1);
     });
 
@@ -1369,7 +2315,7 @@ describe("NewRunChatWorkspace", () => {
     });
 
     await waitFor(() => {
-      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledTimes(1);
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(1);
       expect(getRunOpenCodeSessionTodosMock).toHaveBeenCalledTimes(1);
     });
 
@@ -1377,7 +2323,7 @@ describe("NewRunChatWorkspace", () => {
     todosDeferred.resolve({ todos: [], raw: [] });
 
     await waitFor(() => {
-      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledTimes(1);
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(1);
       expect(getRunOpenCodeSessionTodosMock).toHaveBeenCalledTimes(1);
     });
 
@@ -1387,7 +2333,7 @@ describe("NewRunChatWorkspace", () => {
     });
 
     await waitFor(() => {
-      expect(getRunOpenCodeSessionMessagesMock).toHaveBeenCalledTimes(1);
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(1);
       expect(getRunOpenCodeSessionTodosMock).toHaveBeenCalledTimes(1);
     });
   });
@@ -1650,6 +2596,222 @@ describe("NewRunChatWorkspace", () => {
     expect(taskRails[0]?.textContent).toContain("First child output");
     expect(taskRails[0]?.textContent).not.toContain("Second child output");
     expect(taskRails[1]?.textContent).toContain("Second child output");
+  });
+
+  it("keeps the parent task row and sibling child cards stable during overlapping updates", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Coordinate concurrent subagents",
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-root",
+            part: {
+              id: "part-task",
+              messageID: "msg-root",
+              sessionID: "session-root",
+              type: "tool",
+              tool: "task",
+              state: {
+                status: "running",
+                title: "Coordinate concurrent subagents",
+              },
+            },
+          },
+        },
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child-a",
+            info: {
+              id: "session-child-a",
+              parentID: "msg-root",
+              title: "Planner",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child-a",
+            info: {
+              id: "msg-child-a",
+              sessionID: "session-child-a",
+              parentID: "msg-root",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-a",
+            messageID: "msg-child-a",
+            partID: "part-child-a",
+            field: "text",
+            delta: "Planner draft",
+          },
+        },
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child-b",
+            info: {
+              id: "session-child-b",
+              parentID: "msg-root",
+              title: "Researcher",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child-b",
+            info: {
+              id: "msg-child-b",
+              sessionID: "session-child-b",
+              parentID: "msg-root",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-b",
+            messageID: "msg-child-b",
+            partID: "part-child-b",
+            field: "text",
+            delta: "Research notes",
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    const parentRow = () =>
+      container.querySelector('[data-run-chat-message-id="msg-root"]');
+    const plannerPanel = () =>
+      container.querySelector('[aria-label="Planner output"]');
+    const researcherPanel = () =>
+      container.querySelector('[aria-label="Researcher output"]');
+    const plannerMessage = () =>
+      container.querySelector('[data-message-id="msg-child-a"]');
+    const researcherMessage = () =>
+      container.querySelector('[data-message-id="msg-child-b"]');
+
+    const initialParentRow = parentRow();
+    const initialPlannerPanel = plannerPanel();
+    const initialResearcherPanel = researcherPanel();
+    const initialPlannerMessage = plannerMessage();
+    const initialResearcherMessage = researcherMessage();
+
+    expect(initialParentRow).toBeTruthy();
+    expect(initialPlannerPanel?.textContent).toContain("Planner draft");
+    expect(initialResearcherPanel?.textContent).toContain("Research notes");
+    expect(initialPlannerMessage).toBeTruthy();
+    expect(initialResearcherMessage).toBeTruthy();
+
+    setStore((current) => ({
+      ...current,
+      rawEvents: [
+        ...current.rawEvents,
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-a",
+            messageID: "msg-child-a",
+            partID: "part-child-a",
+            field: "text",
+            delta: " expanded",
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child-b",
+            part: {
+              id: "part-child-b",
+              messageID: "msg-child-b",
+              sessionID: "session-child-b",
+              type: "text",
+              text: "Research settled",
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "session-child-b",
+            status: { type: "completed" },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-a",
+            messageID: "msg-child-a",
+            partID: "part-child-a",
+            field: "text",
+            delta: " ongoing",
+          },
+        },
+      ],
+    }));
+
+    await waitFor(() => {
+      expect(parentRow()).toBe(initialParentRow);
+      expect(plannerPanel()).toBe(initialPlannerPanel);
+      expect(researcherPanel()).toBe(initialResearcherPanel);
+      expect(plannerMessage()).toBe(initialPlannerMessage);
+      expect(researcherMessage()).toBe(initialResearcherMessage);
+      expect(plannerPanel()?.textContent).toContain(
+        "Planner draft expanded ongoing",
+      );
+      expect(researcherPanel()?.textContent).toContain("Research settled");
+      expect(researcherPanel()?.textContent).not.toContain("ongoing");
+      expect(
+        researcherPanel()?.querySelector(
+          ".run-chat-tool-rail__subagent-status-row",
+        ),
+      ).toBeTruthy();
+      expect(
+        plannerPanel()?.querySelector(
+          ".run-chat-tool-rail__subagent-status-row",
+        ),
+      ).toBeNull();
+    });
   });
 
   it("anchors once to the true transcript bottom after initial history arrives", async () => {
@@ -2121,6 +3283,247 @@ describe("NewRunChatWorkspace", () => {
         }),
       ).toBeNull();
     });
+
+    rafSpy.mockRestore();
+  });
+
+  it("virtualizes flattened transcript rows so long chats do not mount everything", async () => {
+    const messageOrder = Array.from({ length: 80 }, (_value, index) => {
+      return `assistant-${index}`;
+    });
+    const messagesById = Object.fromEntries(
+      messageOrder.map((messageId, index) => [
+        messageId,
+        {
+          id: messageId,
+          sessionId: "session-1",
+          role: "assistant",
+          partsById: {
+            [`part-${index}`]: {
+              id: `part-${index}`,
+              kind: "text",
+              type: "text",
+              text: `Message ${index}`,
+              streaming: false,
+            },
+          },
+          partOrder: [`part-${index}`],
+        },
+      ]),
+    );
+
+    const [store] = createSignal({
+      sessionId: "session-1",
+      status: "idle",
+      streamConnected: true,
+      lastSyncAt: null as number | null,
+      messageOrder,
+      messagesById,
+      pendingQuestionsById: {},
+      resolvedQuestionsById: {},
+      failedQuestionsById: {},
+      pendingPermissionsById: {},
+      resolvedPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    const transcript = screen.getByLabelText(
+      "Conversation transcript",
+    ) as HTMLDivElement;
+    let scrollTopValue = 0;
+    Object.defineProperty(transcript, "scrollHeight", {
+      value: 9_600,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "clientHeight", {
+      value: 320,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (next: number) => {
+        scrollTopValue = next;
+      },
+    });
+    Object.defineProperty(transcript, "scrollTo", {
+      configurable: true,
+      value: ({ top }: { top: number }) => {
+        scrollTopValue = top;
+      },
+    });
+
+    fireEvent.scroll(transcript);
+
+    await waitFor(() => {
+      const mountedRows = container.querySelectorAll(
+        "[data-run-chat-transcript-row-key]",
+      );
+      expect(mountedRows.length).toBeGreaterThan(0);
+      expect(mountedRows.length).toBeLessThan(messageOrder.length);
+    });
+
+    expect(screen.getByText("Message 0")).toBeTruthy();
+    expect(screen.queryByText("Message 79")).toBeNull();
+
+    rafSpy.mockRestore();
+  });
+
+  it("keeps the visible streaming tail row mounted while content streams", async () => {
+    const olderMessageOrder = Array.from({ length: 24 }, (_value, index) => {
+      return `assistant-${index}`;
+    });
+    const olderMessagesById = Object.fromEntries(
+      olderMessageOrder.map((messageId, index) => [
+        messageId,
+        {
+          id: messageId,
+          sessionId: "session-1",
+          role: "assistant",
+          partsById: {
+            [`part-${index}`]: {
+              id: `part-${index}`,
+              kind: "text",
+              type: "text",
+              text: `Older message ${index}`,
+              streaming: false,
+            },
+          },
+          partOrder: [`part-${index}`],
+        },
+      ]),
+    );
+    const [store, setStore] = createSignal({
+      sessionId: "session-1",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: null as number | null,
+      messageOrder: [...olderMessageOrder, "assistant-live"],
+      messagesById: {
+        ...olderMessagesById,
+        "assistant-live": {
+          id: "assistant-live",
+          sessionId: "session-1",
+          role: "assistant",
+          partsById: {
+            "part-live": {
+              id: "part-live",
+              kind: "text",
+              type: "text",
+              text: "Tail",
+              streamText: "Tail",
+              streamTextLength: 4,
+              streamRevision: 1,
+              streaming: true,
+            },
+          },
+          partOrder: ["part-live"],
+        },
+      },
+      pendingQuestionsById: {},
+      resolvedQuestionsById: {},
+      failedQuestionsById: {},
+      pendingPermissionsById: {},
+      resolvedPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [],
+    });
+
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(16);
+        return 1;
+      });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    const transcript = screen.getByLabelText(
+      "Conversation transcript",
+    ) as HTMLDivElement;
+    let scrollTopValue = 3_200;
+    Object.defineProperty(transcript, "scrollHeight", {
+      value: 4_200,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "clientHeight", {
+      value: 320,
+      configurable: true,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (next: number) => {
+        scrollTopValue = next;
+      },
+    });
+    Object.defineProperty(transcript, "scrollTo", {
+      configurable: true,
+      value: ({ top }: { top: number }) => {
+        scrollTopValue = top;
+      },
+    });
+
+    fireEvent.scroll(transcript);
+
+    await waitFor(() => {
+      expect(screen.getByText("Tail")).toBeTruthy();
+    });
+
+    const liveNodeBefore = container.querySelector(
+      '.run-chat-assistant-message[data-message-id="assistant-live"]',
+    );
+    expect(liveNodeBefore).toBeTruthy();
+
+    setStore((current) => ({
+      ...current,
+      messagesById: {
+        ...current.messagesById,
+        "assistant-live": {
+          ...current.messagesById["assistant-live"],
+          partsById: {
+            ...current.messagesById["assistant-live"].partsById,
+            "part-live": {
+              ...current.messagesById["assistant-live"].partsById["part-live"],
+              text: "Tail updated",
+              streamText: "Tail updated",
+              streamTextLength: 12,
+              streamRevision: 2,
+              streaming: true,
+            },
+          },
+        },
+      },
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Tail updated")).toBeTruthy();
+    });
+
+    const liveNodeAfter = container.querySelector(
+      '.run-chat-assistant-message[data-message-id="assistant-live"]',
+    );
+    expect(liveNodeAfter).toBe(liveNodeBefore);
 
     rafSpy.mockRestore();
   });

@@ -446,4 +446,38 @@ describe("agentReducer text/reasoning lifecycle", () => {
 
     expect(reconnected.streamConnected).toBe(true);
   });
+
+  it("normalizes object-shaped session.status payloads", () => {
+    const active = reduceOpenCodeEvent(createEmptyAgentStore(null), {
+      type: "session.status",
+      properties: {
+        sessionID: "session-1",
+        status: { type: "busy" },
+      },
+    });
+
+    expect(active.sessionId).toBe("session-1");
+    expect(active.status).toBe("active");
+
+    const connecting = reduceOpenCodeEvent(active, {
+      type: "session.status",
+      properties: {
+        sessionID: "session-1",
+        status: { type: "connecting" },
+      },
+    });
+
+    expect(connecting.status).toBe("connecting");
+
+    const idle = reduceOpenCodeEvent(connecting, {
+      type: "session.status",
+      properties: {
+        sessionID: "session-1",
+        status: { type: "idle" },
+      },
+    });
+
+    expect(idle.status).toBe("idle");
+});
+
 });

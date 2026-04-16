@@ -4642,13 +4642,18 @@ textarea::placeholder {
 }
 
 .run-detail-topbar__status-dot[data-status="warming"] {
-  background: #ffbf69;
-  color: #ffbf69;
+  background: var(--warning);
+  color: var(--warning);
 }
 
 .run-detail-topbar__status-dot[data-status="connected"] {
   background: #7ce0bb;
   color: #7ce0bb;
+}
+
+.run-detail-topbar__status-dot[data-status="idle"] {
+  background: #ffbf69;
+  color: #ffbf69;
 }
 
 .run-detail-topbar__status-dot[data-status="disconnected"] {
@@ -4966,8 +4971,12 @@ textarea::placeholder {
   margin: 0;
   padding: 0;
   list-style: none;
-  display: grid;
-  gap: 18px;
+}
+
+.run-chat-transcript__list--virtualized {
+  position: relative;
+  display: block;
+  min-height: 0;
 }
 
 .run-chat-transcript__item {
@@ -4978,6 +4987,12 @@ textarea::placeholder {
   background: transparent;
   box-shadow: none;
   border-radius: 0;
+}
+
+.run-chat-transcript__item--virtualized {
+  position: absolute;
+  left: 0;
+  right: 0;
 }
 
 .run-chat-transcript__empty,

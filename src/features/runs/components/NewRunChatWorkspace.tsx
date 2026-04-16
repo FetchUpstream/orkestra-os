@@ -19,16 +19,16 @@ import {
   on,
   onCleanup,
   type Component,
-  type JSX,
 } from "solid-js";
 import {
-  RunChatAssistantMessage,
   RunChatComposer,
+  RunChatTranscript,
+  type RunChatTranscriptHandle,
+  type RunChatTranscriptRow,
   RunChatMarkdown,
   RunChatMessage,
   RunChatSystemMessage,
   RunChatToolRail,
-  RunChatTranscript,
   RunChatUserMessage,
   type RunChatToolRailItem,
   type RunChatToolRailSubagentItem,
@@ -46,12 +46,13 @@ import type {
   UiTextPart,
 } from "../model/agentTypes";
 import { hydrateAgentStore } from "../model/agentReducer";
+import { buildMergedSubagentMessageStore } from "../model/subagentMessageTimeline";
 import { useRunDetailModel } from "../model/useRunDetailModel";
 import { formatDateTime } from "../../tasks/utils/taskDetail";
 import { AppIcon } from "../../../components/ui/icons";
 import RunInlineLoader from "../../../components/ui/RunInlineLoader";
 import {
-  getRunOpenCodeSessionMessages,
+  getRunOpenCodeSessionMessagesPage,
   getRunOpenCodeSessionTodos,
 } from "../../../app/lib/runs";
 import {
@@ -72,6 +73,13 @@ import {
   normalizeToolPathForDisplay,
   type ToolPathDisplayContext,
 } from "../lib/normalizeToolPathForDisplay";
+import {
+  buildSubagentSessionAssignments,
+  buildTaskPartSessionIdsByPartId,
+  isTaskToolName,
+  type SubagentSessionAssignmentSnapshot,
+  type SubagentTaskAssignmentSource,
+} from "./subagentTaskAssignment";
 
 type AgentReadinessPhase =
   | "warming_backend"
@@ -103,6 +111,99 @@ type ChatRow = {
   timestamp: string;
   attributionLabel: string;
   hasRenderableContent: boolean;
+};
+
+type ChatTranscriptMessageItemProps = {
+  row: () => ChatRow | undefined;
+};
+
+const ChatTranscriptMessageItem: Component<ChatTranscriptMessageItemProps> = (
+  props,
+) => {
+  const row = createMemo(() => props.row());
+  const waitingRow = (
+    <RunInlineLoader
+      as="p"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    />
+  );
+
+  return (
+    <Show when={row()}>
+      <div
+        data-run-chat-message-id={row()?.key}
+        data-run-chat-message-kind="parent"
+      >
+        <Show
+          when={row()?.role === "assistant"}
+          fallback={
+            <Show
+              when={row()?.role === "user"}
+              fallback={
+                <RunChatMessage role="system" class="run-chat-message-item">
+                  <RunChatSystemMessage>
+                    <RunChatMarkdown
+                      content={
+                        row()?.content.length
+                          ? (row()?.content ?? "")
+                          : (row()?.timestamp ?? "")
+                      }
+                    />
+                  </RunChatSystemMessage>
+                </RunChatMessage>
+              }
+            >
+              <RunChatMessage role="user" class="run-chat-message-item">
+                <RunChatUserMessage>
+                  <RunChatMarkdown
+                    content={
+                      row()?.content.length ? (row()?.content ?? "") : "(empty)"
+                    }
+                  />
+                </RunChatUserMessage>
+              </RunChatMessage>
+            </Show>
+          }
+        >
+          <RunChatMessage role="assistant" class="run-chat-message-item">
+            <RunChatAssistantMessage
+              content={row()?.content.length ? (row()?.content ?? " ") : " "}
+              streaming={row()?.assistantStreaming}
+              isStreamingActive={
+                row()?.assistantStreaming?.isStreaming === true
+              }
+              reasoning={
+                row()?.reasoningContent.length ? (
+                  <div class="run-chat-assistant-message__reasoning-inline">
+                    <RunChatMarkdown
+                      content={`*Thinking:* ${row()?.reasoningContent ?? ""}`}
+                    />
+                  </div>
+                ) : undefined
+              }
+              toolRail={
+                row()?.toolItems.length ? (
+                  <RunChatToolRail items={row()?.toolItems ?? []} />
+                ) : undefined
+              }
+              details={
+                row()?.attributionLabel.length ? (
+                  <p class="run-chat-assistant-message__attribution">
+                    {row()?.attributionLabel ?? ""}
+                  </p>
+                ) : undefined
+              }
+            />
+            <Show when={row() && !row()!.hasRenderableContent}>
+              {waitingRow}
+            </Show>
+          </RunChatMessage>
+        </Show>
+      </div>
+    </Show>
+  );
 };
 
 const resolveTranscriptPartText = (
@@ -393,9 +494,10 @@ const buildStreamingTextPart = (
   };
 };
 
-const TRANSCRIPT_WINDOW_CHUNK = 60;
 const TRANSCRIPT_NEAR_BOTTOM_THRESHOLD = 96;
 const INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS = 6;
+const OLDER_TRANSCRIPT_RESTORE_MAX_ATTEMPTS = 12;
+const MAX_SUBAGENT_HISTORY_PAGES = 100;
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 const INTERNAL_ID_DETECTION_PATTERN =
@@ -521,43 +623,19 @@ const getSessionIdentifier = (value: unknown): string | null => {
   return sessionId?.trim() || null;
 };
 
-const getParentSessionIdentifier = (value: unknown): string | null => {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const nested = getNestedRecord(value, "part", "info", "properties");
-  const parentId =
-    (typeof value.parentID === "string" ? value.parentID : null) ||
-    (typeof value.parentId === "string" ? value.parentId : null) ||
-    (nested && typeof nested.parentID === "string" ? nested.parentID : null) ||
-    (nested && typeof nested.parentId === "string" ? nested.parentId : null);
-
-  return parentId?.trim() || null;
-};
-
-type SubagentMessageSnapshot = {
-  id: string;
-  role: "assistant" | "user" | "system" | "unknown";
-  attribution?: {
-    agent?: string;
-    model?: string;
-  };
-  partsById: Record<string, UiPart>;
-  partOrder: string[];
-};
-
 type SubagentSessionSnapshot = {
   sessionId: string;
   parentSessionId: string | null;
   parentMessageId: string | null;
   assignedTaskPartId: string | null;
+  assignmentSource: SubagentTaskAssignmentSource | null;
+  assignmentConfidence: number;
+  assignmentProvisional: boolean;
   status: string;
   title: string | null;
   agentType: string | null;
   model: string | null;
-  messageOrder: string[];
-  messagesById: Record<string, SubagentMessageSnapshot>;
+  liveEvents: OpenCodeBusEvent[];
 };
 
 type SubagentHistorySnapshot = {
@@ -566,21 +644,6 @@ type SubagentHistorySnapshot = {
 };
 
 type FetchedSubagentHistorySnapshot = SubagentHistorySnapshot | null;
-
-const getParentMessageIdentifier = (value: unknown): string | null => {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const nested = getNestedRecord(value, "info", "part", "properties");
-  const parentId =
-    (typeof value.parentID === "string" ? value.parentID : null) ||
-    (typeof value.parentId === "string" ? value.parentId : null) ||
-    (nested && typeof nested.parentID === "string" ? nested.parentID : null) ||
-    (nested && typeof nested.parentId === "string" ? nested.parentId : null);
-
-  return parentId?.trim() || null;
-};
 
 const getStatusType = (value: unknown): string | null => {
   if (typeof value === "string") {
@@ -682,54 +745,6 @@ const formatSubagentLabel = (
   return "Subagent";
 };
 
-const collectSessionIdsFromValue = (
-  value: unknown,
-  sessionIds: Set<string>,
-  seen: Set<unknown>,
-): void => {
-  if (!value || typeof value !== "object" || seen.has(value)) {
-    return;
-  }
-  seen.add(value);
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectSessionIdsFromValue(item, sessionIds, seen);
-    }
-    return;
-  }
-
-  for (const [key, nestedValue] of Object.entries(
-    value as Record<string, unknown>,
-  )) {
-    if (
-      (key === "sessionID" || key === "sessionId") &&
-      typeof nestedValue === "string"
-    ) {
-      const normalized = nestedValue.trim();
-      if (normalized.length > 0) {
-        sessionIds.add(normalized);
-      }
-      continue;
-    }
-    collectSessionIdsFromValue(nestedValue, sessionIds, seen);
-  }
-};
-
-const extractTaskSubagentSessionIds = (
-  part: UiPart,
-  rootSessionId: string | null,
-): string[] => {
-  if (part.kind !== "tool" || !isTaskToolName(part.toolName)) {
-    return [];
-  }
-  const sessionIds = new Set<string>();
-  collectSessionIdsFromValue(part.raw, sessionIds, new Set<unknown>());
-  return Array.from(sessionIds).filter(
-    (sessionId) => sessionId !== rootSessionId,
-  );
-};
-
 const buildSubagentMessagesFromStore = (
   store: AgentStore,
   displayContext: ToolPathDisplayContext,
@@ -806,119 +821,66 @@ const buildSubagentMessagesFromStore = (
     );
 };
 
-const resolveTaskPartIdForParentMessage = (
-  parentMessageId: string | null,
-  rootMessagesById: Record<
-    string,
-    { partOrder: string[]; partsById: Record<string, UiPart> }
-  >,
-): string | null => {
-  if (!parentMessageId) {
-    return null;
-  }
-  const parentMessage = rootMessagesById[parentMessageId];
-  if (!parentMessage) {
-    return null;
-  }
-  const taskPartIds = parentMessage.partOrder.filter((partId) => {
-    const part = parentMessage.partsById[partId];
-    return part?.kind === "tool" && isTaskToolName(part.toolName);
-  });
-  if (taskPartIds.length === 0) {
-    return null;
-  }
-  return taskPartIds[taskPartIds.length - 1] ?? null;
-};
-
-const normalizeSubagentRole = (
-  value: unknown,
-): SubagentMessageSnapshot["role"] => {
-  return value === "assistant" ||
-    value === "user" ||
-    value === "system" ||
-    value === "unknown"
-    ? value
-    : "unknown";
-};
-
-const isTaskToolName = (value: unknown): boolean => {
-  return typeof value === "string" && value.trim().toLowerCase() === "task";
-};
-
 const buildSubagentPanels = (
   rawEvents: readonly OpenCodeBusEvent[],
   rootSessionId: string | null,
-  rootMessagesById: Record<
-    string,
-    { partOrder: string[]; partsById: Record<string, UiPart> }
-  >,
   displayContext: ToolPathDisplayContext,
-  taskPartSessionIdsByPartId: Record<string, string[]>,
+  subagentAssignmentsBySessionId: Record<
+    string,
+    SubagentSessionAssignmentSnapshot
+  >,
   fetchedSessionHistories: Record<string, FetchedSubagentHistorySnapshot>,
 ): Record<string, RunChatToolRailSubagentItem[]> => {
   const sessions = new Map<string, SubagentSessionSnapshot>();
-  let activeTaskPartId: string | null = null;
-  const allRootTaskPartIds = Object.values(rootMessagesById).flatMap(
-    (message) =>
-      message.partOrder.filter((partId) => {
-        const part = message.partsById[partId];
-        return part?.kind === "tool" && isTaskToolName(part.toolName);
-      }),
-  );
 
-  const ensureSession = (
+  const syncSessionAssignment = (
+    session: SubagentSessionSnapshot,
     sessionId: string,
-    parentSessionId: string | null,
   ): SubagentSessionSnapshot => {
+    const assignment = subagentAssignmentsBySessionId[sessionId];
+    if (!assignment) {
+      return session;
+    }
+
+    session.parentSessionId =
+      assignment.parentSessionId ?? session.parentSessionId;
+    session.parentMessageId =
+      assignment.parentMessageId ?? session.parentMessageId;
+    session.assignedTaskPartId = assignment.assignedTaskPartId;
+    session.assignmentSource = assignment.assignmentSource;
+    session.assignmentConfidence = assignment.assignmentConfidence;
+    session.assignmentProvisional = assignment.assignmentProvisional;
+    return session;
+  };
+
+  const ensureSession = (sessionId: string): SubagentSessionSnapshot => {
     const existing = sessions.get(sessionId);
     if (existing) {
-      if (!existing.parentSessionId && parentSessionId) {
-        existing.parentSessionId = parentSessionId;
-      }
-      return existing;
+      return syncSessionAssignment(existing, sessionId);
     }
+
+    const assignment = subagentAssignmentsBySessionId[sessionId];
     const created: SubagentSessionSnapshot = {
       sessionId,
-      parentSessionId,
-      parentMessageId: null,
-      assignedTaskPartId: null,
+      parentSessionId: assignment?.parentSessionId ?? null,
+      parentMessageId: assignment?.parentMessageId ?? null,
+      assignedTaskPartId: assignment?.assignedTaskPartId ?? null,
+      assignmentSource: assignment?.assignmentSource ?? null,
+      assignmentConfidence: assignment?.assignmentConfidence ?? 0,
+      assignmentProvisional: assignment?.assignmentProvisional ?? true,
       status: "running",
       title: null,
       agentType: null,
       model: null,
-      messageOrder: [],
-      messagesById: {},
+      liveEvents: [],
     };
     sessions.set(sessionId, created);
-    return created;
+    return syncSessionAssignment(created, sessionId);
   };
 
   for (const event of rawEvents) {
     const properties = getEventRecord(event.properties);
     const sessionId = getSessionIdentifier(properties);
-    const parentSessionId = getParentSessionIdentifier(properties);
-    const rootPart = getNestedRecord(properties, "part");
-
-    if (
-      sessionId &&
-      rootSessionId &&
-      sessionId === rootSessionId &&
-      rootPart &&
-      ((event.type === "message.part.updated" &&
-        typeof rootPart.type === "string" &&
-        rootPart.type === "tool" &&
-        isTaskToolName(rootPart.tool)) ||
-        (event.type === "message.updated" &&
-          typeof rootPart.type === "string" &&
-          rootPart.type === "tool" &&
-          isTaskToolName(rootPart.tool)))
-    ) {
-      activeTaskPartId =
-        (typeof rootPart.id === "string" ? rootPart.id.trim() : "") ||
-        (typeof rootPart.partID === "string" ? rootPart.partID.trim() : "") ||
-        (typeof rootPart.partId === "string" ? rootPart.partId.trim() : "") ||
-        activeTaskPartId;
-    }
 
     if (!sessionId) {
       continue;
@@ -928,17 +890,10 @@ const buildSubagentPanels = (
       continue;
     }
 
-    const session = ensureSession(sessionId, parentSessionId);
-    if (!session.assignedTaskPartId && activeTaskPartId) {
-      session.assignedTaskPartId = activeTaskPartId;
-    }
+    const session = ensureSession(sessionId);
 
     if (event.type === "session.updated") {
       const info = getNestedRecord(properties, "info") ?? properties;
-      const parentMessageId = getParentMessageIdentifier(info);
-      if (parentMessageId && !session.parentMessageId) {
-        session.parentMessageId = parentMessageId;
-      }
       const title =
         (typeof info.title === "string" ? info.title.trim() : "") ||
         (typeof info.slug === "string" ? info.slug.trim() : "");
@@ -959,12 +914,15 @@ const buildSubagentPanels = (
       continue;
     }
 
+    if (event.type === "session.status") {
+      const nextStatus = getStatusType(properties.status) || session.status;
+      session.status = nextStatus;
+      session.liveEvents.push(event);
+      continue;
+    }
+
     if (event.type === "message.updated") {
       const info = getNestedRecord(properties, "info") ?? properties;
-      const parentMessageId = getParentMessageIdentifier(info);
-      if (parentMessageId && !session.parentMessageId) {
-        session.parentMessageId = parentMessageId;
-      }
       const attribution = readSubagentAttribution(info);
       const agentType =
         attribution.agent ||
@@ -976,160 +934,22 @@ const buildSubagentPanels = (
       if (attribution.model && !session.model) {
         session.model = attribution.model;
       }
-      const taskPartId = resolveTaskPartIdForParentMessage(
-        session.parentMessageId,
-        rootMessagesById,
-      );
-      if (taskPartId && !session.assignedTaskPartId) {
-        session.assignedTaskPartId = taskPartId;
-      }
-    }
-
-    if (event.type === "session.status") {
-      const nextStatus = getStatusType(properties.status) || session.status;
-      session.status = nextStatus;
-      continue;
-    }
-
-    if (event.type === "message.updated") {
-      const info = getNestedRecord(properties, "info") ?? properties;
-      const attribution = readSubagentAttribution(info);
-      const messageId =
-        (typeof info.id === "string" ? info.id : null) ||
-        (typeof info.messageID === "string" ? info.messageID : null) ||
-        (typeof info.messageId === "string" ? info.messageId : null);
-      if (!messageId?.trim()) {
-        continue;
-      }
-      const normalizedId = messageId.trim();
-      const existing = session.messagesById[normalizedId];
-      session.messagesById[normalizedId] = {
-        id: normalizedId,
-        role: normalizeSubagentRole(info.role),
-        attribution:
-          attribution.agent || attribution.model
-            ? {
-                ...(attribution.agent ? { agent: attribution.agent } : {}),
-                ...(attribution.model ? { model: attribution.model } : {}),
-              }
-            : existing?.attribution,
-        partsById: existing?.partsById ?? {},
-        partOrder: existing?.partOrder ?? [],
-      };
-      if (!session.messageOrder.includes(normalizedId)) {
-        session.messageOrder.push(normalizedId);
-      }
+      session.liveEvents.push(event);
       continue;
     }
 
     if (
-      event.type !== "message.part.updated" &&
-      event.type !== "message.part.delta"
+      event.type === "message.removed" ||
+      event.type === "message.part.updated" ||
+      event.type === "message.part.delta" ||
+      event.type === "message.part.removed"
     ) {
-      continue;
-    }
-
-    const rawPart = getNestedRecord(properties, "part") ?? properties;
-    const messageId =
-      (typeof rawPart.messageID === "string" ? rawPart.messageID : null) ||
-      (typeof rawPart.messageId === "string" ? rawPart.messageId : null);
-    const partId =
-      (typeof rawPart.id === "string" ? rawPart.id : null) ||
-      (typeof rawPart.partID === "string" ? rawPart.partID : null) ||
-      (typeof rawPart.partId === "string" ? rawPart.partId : null);
-    const partType = typeof rawPart.type === "string" ? rawPart.type : "text";
-    if (!messageId?.trim() || !partId?.trim()) {
-      continue;
-    }
-
-    const normalizedMessageId = messageId.trim();
-    const normalizedPartId = partId.trim();
-    const existingMessage = session.messagesById[normalizedMessageId] ?? {
-      id: normalizedMessageId,
-      role: "unknown" as const,
-      partsById: {},
-      partOrder: [],
-    };
-    const existingPart = existingMessage.partsById[normalizedPartId];
-    const delta = typeof properties.delta === "string" ? properties.delta : "";
-
-    let nextPart: UiPart;
-    if (
-      partType === "reasoning" ||
-      (existingPart && existingPart.kind === "reasoning")
-    ) {
-      nextPart = buildStreamingTextPart(
-        normalizedPartId,
-        "reasoning",
-        rawPart,
-        existingPart,
-        delta,
-        event.type,
-      );
-    } else if (partType === "tool") {
-      const state = getNestedRecord(rawPart, "state") ?? {};
-      nextPart = {
-        kind: "tool",
-        id: normalizedPartId,
-        type: "tool",
-        toolName: typeof rawPart.tool === "string" ? rawPart.tool : "tool",
-        callId:
-          (typeof rawPart.callID === "string" ? rawPart.callID : undefined) ||
-          (typeof rawPart.callId === "string" ? rawPart.callId : undefined),
-        status: typeof state.status === "string" ? state.status : "pending",
-        title: typeof state.title === "string" ? state.title : undefined,
-        input: state.input,
-        output: state.output,
-        error: state.error,
-        raw: rawPart,
-      };
-    } else {
-      nextPart = buildStreamingTextPart(
-        normalizedPartId,
-        "text",
-        rawPart,
-        existingPart,
-        delta,
-        event.type,
-      );
-    }
-
-    session.messagesById[normalizedMessageId] = {
-      ...existingMessage,
-      partsById: {
-        ...existingMessage.partsById,
-        [normalizedPartId]: nextPart,
-      },
-      partOrder: existingMessage.partsById[normalizedPartId]
-        ? existingMessage.partOrder
-        : [...existingMessage.partOrder, normalizedPartId],
-    };
-    if (!session.messageOrder.includes(normalizedMessageId)) {
-      session.messageOrder.push(normalizedMessageId);
+      session.liveEvents.push(event);
     }
   }
 
-  for (const session of sessions.values()) {
-    if (!session.assignedTaskPartId && session.parentMessageId) {
-      session.assignedTaskPartId = resolveTaskPartIdForParentMessage(
-        session.parentMessageId,
-        rootMessagesById,
-      );
-    }
-    if (!session.assignedTaskPartId && allRootTaskPartIds.length === 1) {
-      session.assignedTaskPartId = allRootTaskPartIds[0] ?? null;
-    }
-  }
-
-  for (const [taskPartId, sessionIds] of Object.entries(
-    taskPartSessionIdsByPartId,
-  )) {
-    for (const sessionId of sessionIds) {
-      const session = ensureSession(sessionId, null);
-      if (!session.assignedTaskPartId) {
-        session.assignedTaskPartId = taskPartId;
-      }
-    }
+  for (const sessionId of Object.keys(subagentAssignmentsBySessionId)) {
+    ensureSession(sessionId);
   }
 
   return Array.from(sessions.values()).reduce<
@@ -1140,47 +960,31 @@ const buildSubagentPanels = (
       return acc;
     }
 
-    const liveMessages = buildSubagentMessagesFromStore(
-      {
-        sessionId: session.sessionId,
-        status: "idle",
-        streamConnected: false,
-        lastSyncAt: null,
-        messagesById: Object.fromEntries(
-          session.messageOrder
-            .map((messageId) => [messageId, session.messagesById[messageId]])
-            .filter((entry) => Boolean(entry[1])),
-        ) as AgentStore["messagesById"],
-        messageOrder: session.messageOrder,
-        pendingQuestionsById: {},
-        pendingPermissionsById: {},
-        resolvedPermissionsById: {},
-        failedPermissionsById: {},
-        todos: [],
-        diffSummary: null,
-        rawEvents: [],
-      },
+    const fetchedSnapshot = fetchedSessionHistories[session.sessionId] ?? null;
+    const mergedStore = buildMergedSubagentMessageStore({
+      sessionId: session.sessionId,
+      fetchedStore: fetchedSnapshot?.store ?? null,
+      liveEvents: session.liveEvents,
+    });
+    const messages = buildSubagentMessagesFromStore(
+      mergedStore,
       displayContext,
     );
-    const fetchedSnapshot = fetchedSessionHistories[session.sessionId] ?? null;
-    const fetchedMessages =
-      fetchedSnapshot !== null
-        ? buildSubagentMessagesFromStore(fetchedSnapshot.store, displayContext)
-        : [];
-    const messages = liveMessages.length > 0 ? liveMessages : fetchedMessages;
-
-    const fetchedHistoryMessages = Object.values(
-      fetchedSnapshot?.store.messagesById ?? {},
+    const mergedHistoryMessages = mergedStore.messageOrder.flatMap(
+      (messageId) => {
+        const message = mergedStore.messagesById[messageId];
+        return message ? [message] : [];
+      },
     );
     const fallbackAgentType =
       session.agentType ||
-      fetchedHistoryMessages
+      mergedHistoryMessages
         .map((message) => message.attribution?.agent?.trim() || "")
         .find(Boolean) ||
       null;
     const fallbackModel =
       session.model ||
-      fetchedHistoryMessages
+      mergedHistoryMessages
         .map((message) => message.attribution?.model?.trim() || "")
         .find(Boolean) ||
       null;
@@ -2022,13 +1826,16 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const [composerValue, setComposerValue] = createSignal("");
   const [hasVisibleSubmitFailed, setHasVisibleSubmitFailed] =
     createSignal(false);
+  const [transcriptHandle, setTranscriptHandle] =
+    createSignal<RunChatTranscriptHandle | null>(null);
   const [
     isInitialTranscriptAnchorCompleted,
     setIsInitialTranscriptAnchorCompleted,
   ] = createSignal(false);
-  const [transcriptVisibleCount, setTranscriptVisibleCount] = createSignal(
-    TRANSCRIPT_WINDOW_CHUNK,
-  );
+  const [
+    isRestoringOlderTranscriptAnchor,
+    setIsRestoringOlderTranscriptAnchor,
+  ] = createSignal(false);
   const [runChatComposerOffsetPx, setRunChatComposerOffsetPx] =
     createSignal("0px");
   const [isTranscriptNearBottom, setIsTranscriptNearBottom] =
@@ -2050,9 +1857,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   let transcriptScrollRef: HTMLDivElement | undefined;
   let runChatComposerRef: HTMLDivElement | undefined;
   let transcriptContentRef: HTMLDivElement | undefined;
-  let initialTranscriptAnchorRaf: number | null = null;
-  let initialTranscriptAnchorVerificationRaf: number | null = null;
-  let transcriptBottomSentinelRef: HTMLDivElement | undefined;
 
   const agentReadinessPhase = createMemo<AgentReadinessPhase>(() =>
     props.model.agent.readinessPhase(),
@@ -2441,19 +2245,6 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   const transcriptMessageOrder = createMemo(
     () => props.model.agent.store().messageOrder,
   );
-
-  const transcriptHiddenMessageCount = createMemo(() => {
-    return Math.max(
-      0,
-      transcriptMessageOrder().length - transcriptVisibleCount(),
-    );
-  });
-
-  const visibleTranscriptMessageIds = createMemo(() => {
-    const order = transcriptMessageOrder();
-    const startIndex = Math.max(0, order.length - transcriptVisibleCount());
-    return order.slice(startIndex);
-  });
   const hasLoadedInitialTranscriptHistory = createMemo(() => {
     const store = props.model.agent.store();
     return (
@@ -2461,6 +2252,25 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       props.model.agent.state() === "unsupported" ||
       props.model.agent.state() === "error"
     );
+  });
+  const canLoadOlderTranscript = createMemo(
+    () => props.model.agent.history?.canLoadOlder?.() ?? false,
+  );
+  const isLoadingOlderTranscript = createMemo(
+    () => props.model.agent.history?.isLoadingOlder?.() ?? false,
+  );
+  const transcriptHistoryError = createMemo(
+    () => props.model.agent.history?.error?.() ?? "",
+  );
+  const transcriptVirtualizerLayoutToken = createMemo(() => {
+    return [
+      props.model.agent.error(),
+      transcriptHistoryError(),
+      setupState(),
+      setupMessage(),
+      cleanupState(),
+      cleanupMessage(),
+    ].join("|");
   });
 
   const formatAgentPayload = (payload: unknown): string => {
@@ -2526,23 +2336,20 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   }));
 
   const taskPartSessionIdsByPartId = createMemo(() => {
-    const mapping: Record<string, string[]> = {};
-    const rootSessionId = props.model.agent.store().sessionId;
-    for (const message of Object.values(
+    return buildTaskPartSessionIdsByPartId(
       props.model.agent.store().messagesById,
-    )) {
-      for (const partId of message.partOrder) {
-        const part = message.partsById[partId];
-        if (!part) {
-          continue;
-        }
-        const sessionIds = extractTaskSubagentSessionIds(part, rootSessionId);
-        if (sessionIds.length > 0) {
-          mapping[part.id] = sessionIds;
-        }
-      }
-    }
-    return mapping;
+      props.model.agent.store().rawEvents ?? [],
+      props.model.agent.store().sessionId,
+    );
+  });
+
+  const subagentSessionAssignments = createMemo(() => {
+    return buildSubagentSessionAssignments(
+      props.model.agent.store().rawEvents ?? [],
+      props.model.agent.store().sessionId,
+      props.model.agent.store().messagesById,
+      taskPartSessionIdsByPartId(),
+    );
   });
 
   createEffect(() => {
@@ -2552,9 +2359,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     }
 
     const histories = fetchedSubagentHistories();
-    const sessionIds = Array.from(
-      new Set(Object.values(taskPartSessionIdsByPartId()).flat()),
-    );
+    const sessionIds = Object.values(subagentSessionAssignments())
+      .filter((assignment) => assignment.assignedTaskPartId)
+      .map((assignment) => assignment.sessionId);
 
     for (const sessionId of sessionIds) {
       if (histories[sessionId] !== undefined) {
@@ -2565,14 +2372,66 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       }
 
       pendingSubagentHistorySessionIds.add(sessionId);
+      const loadSubagentMessages = async (): Promise<unknown[]> => {
+        const pages: unknown[][] = [];
+        const seenCursors = new Set<string>();
+        let before: string | undefined;
+        let pageCount = 0;
+
+        while (pageCount < MAX_SUBAGENT_HISTORY_PAGES) {
+          pageCount += 1;
+          const page = await getRunOpenCodeSessionMessagesPage({
+            runId,
+            sessionId,
+            ...(before ? { before } : {}),
+          });
+          pages.unshift(page.messages);
+
+          if (!page.hasMore) {
+            break;
+          }
+
+          const nextCursor =
+            typeof page.nextCursor === "string" ? page.nextCursor.trim() : "";
+          if (!nextCursor) {
+            console.warn(
+              "[runs] subagent history pagination stopped: missing next cursor",
+              { runId, sessionId, pageCount },
+            );
+            break;
+          }
+
+          if (nextCursor === before || seenCursors.has(nextCursor)) {
+            console.warn(
+              "[runs] subagent history pagination stopped: repeated next cursor",
+              { runId, sessionId, pageCount, nextCursor },
+            );
+            break;
+          }
+
+          if (pageCount >= MAX_SUBAGENT_HISTORY_PAGES) {
+            console.warn(
+              "[runs] subagent history pagination stopped: page limit reached",
+              { runId, sessionId, pageCount: MAX_SUBAGENT_HISTORY_PAGES },
+            );
+            break;
+          }
+
+          seenCursors.add(nextCursor);
+          before = nextCursor;
+        }
+
+        return pages.flat();
+      };
+
       void Promise.all([
-        getRunOpenCodeSessionMessages({ runId, sessionId }),
+        loadSubagentMessages(),
         getRunOpenCodeSessionTodos({ runId, sessionId }),
       ])
-        .then(([messagesResult, todosResult]) => {
+        .then(([messages, todosResult]) => {
           const hydrated = hydrateAgentStore({
             sessionId,
-            messages: messagesResult.messages,
+            messages,
             todos: todosResult.todos,
           });
           setFetchedSubagentHistories((current) => ({
@@ -2596,9 +2455,8 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     return buildSubagentPanels(
       props.model.agent.store().rawEvents ?? [],
       props.model.agent.store().sessionId,
-      props.model.agent.store().messagesById,
       toolPathDisplayContext(),
-      taskPartSessionIdsByPartId(),
+      subagentSessionAssignments(),
       fetchedSubagentHistories(),
     );
   });
@@ -2630,7 +2488,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   };
 
   const buildChatRows = createMemo<ChatRow[]>(() => {
-    return visibleTranscriptMessageIds()
+    return transcriptMessageOrder()
       .map((messageId) => {
         const message = props.model.agent.store().messagesById[messageId];
         if (!message) {
@@ -2739,432 +2597,142 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       .filter((row): row is ChatRow => row !== null);
   });
 
-  const chatTranscriptItems = createMemo<JSX.Element[]>(() => {
-    const waitingRow = (
-      <RunInlineLoader
-        as="p"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      />
-    );
-
-    const messageItems = buildChatRows().map((row) => {
-      const reasoningNode =
-        row.reasoningContent.length > 0 ? (
-          <div class="run-chat-assistant-message__reasoning-inline">
-            <RunChatMarkdown content={`*Thinking:* ${row.reasoningContent}`} />
-          </div>
-        ) : undefined;
-
-      const toolRailNode =
-        row.toolItems.length > 0 ? (
-          <RunChatToolRail items={row.toolItems} />
-        ) : undefined;
-      const attributionNode =
-        row.attributionLabel.length > 0 ? (
-          <p class="run-chat-assistant-message__attribution">
-            {row.attributionLabel}
-          </p>
-        ) : undefined;
-
+  const chatTranscriptRows = createMemo<RunChatTranscriptRow[]>(() => {
+    const messageRows = buildChatRows().map<RunChatTranscriptRow>((row) => {
       if (row.role === "assistant") {
-        return (
-          <div
-            data-run-chat-message-id={row.key}
-            data-run-chat-message-kind="parent"
-          >
-            <RunChatMessage role="assistant" class="run-chat-message-item">
-              <RunChatAssistantMessage
-                content={row.content.length > 0 ? row.content : " "}
-                streaming={row.assistantStreaming}
-                isStreamingActive={row.assistantStreaming?.isStreaming === true}
-                reasoning={reasoningNode}
-                toolRail={toolRailNode}
-                details={attributionNode}
-              />
-              <Show when={!row.hasRenderableContent}>{waitingRow}</Show>
-            </RunChatMessage>
-          </div>
-        );
+        return {
+          key: `message:${row.key}`,
+          kind: "assistant-message",
+          messageId: row.key,
+          messageKind: "parent",
+          content: row.content,
+          reasoningContent: row.reasoningContent,
+          assistantStreaming: row.assistantStreaming,
+          toolItems: row.toolItems,
+          attributionLabel: row.attributionLabel,
+          hasRenderableContent: row.hasRenderableContent,
+        };
       }
 
       if (row.role === "user") {
-        return (
-          <div
-            data-run-chat-message-id={row.key}
-            data-run-chat-message-kind="parent"
-          >
-            <RunChatMessage role="user" class="run-chat-message-item">
-              <RunChatUserMessage>
-                <RunChatMarkdown
-                  content={row.content.length > 0 ? row.content : "(empty)"}
-                />
-              </RunChatUserMessage>
-            </RunChatMessage>
-          </div>
-        );
+        return {
+          key: `message:${row.key}`,
+          kind: "user-message",
+          messageId: row.key,
+          messageKind: "parent",
+          content: row.content,
+        };
       }
 
-      return (
-        <div
-          data-run-chat-message-id={row.key}
-          data-run-chat-message-kind="parent"
-        >
-          <RunChatMessage role="system" class="run-chat-message-item">
-            <RunChatSystemMessage>
-              <RunChatMarkdown
-                content={row.content.length > 0 ? row.content : row.timestamp}
-              />
-            </RunChatSystemMessage>
-          </RunChatMessage>
-        </div>
-      );
+      return {
+        key: `message:${row.key}`,
+        kind: "system-message",
+        messageId: row.key,
+        messageKind: "parent",
+        content: row.content.length > 0 ? row.content : row.timestamp,
+      };
     });
 
-    const failedQuestionItems = failedQuestionCards().map((card) => {
-      return (
-        <RunChatMessage role="assistant">
-          <section
-            class="run-chat-tool-rail"
-            aria-label="Question request failed tool item"
-          >
-            <ul class="run-chat-tool-rail__list">
-              <li class="run-chat-tool-rail__item run-chat-tool-rail__item--failed">
-                <div class="run-chat-tool-rail__row">
-                  <span class="run-chat-tool-rail__line">Question pending</span>
-                  <span class="run-chat-tool-rail__status">
-                    <span
-                      class="run-chat-tool-rail__status-slot"
-                      aria-label="failed"
-                    >
-                      <AppIcon
-                        name="status.error"
-                        class="run-chat-tool-rail__status-icon run-chat-tool-rail__status-icon--error"
-                        aria-hidden="true"
-                        size={14}
-                      />
-                      <span class="sr-only">failed</span>
-                    </span>
-                  </span>
-                </div>
-                <p class="run-chat-tool-rail__details">
-                  <strong>Source:</strong> {card.sourceLabel}
-                </p>
-                <p class="run-chat-tool-rail__details">{card.failureMessage}</p>
-              </li>
-            </ul>
-          </section>
-        </RunChatMessage>
-      );
-    });
+    const failedQuestionRows = failedQuestionCards().map<RunChatTranscriptRow>(
+      (card) => ({
+        key: `failed-question:${card.requestId}`,
+        kind: "failed-question",
+        sourceLabel: card.sourceLabel,
+        failureMessage: card.failureMessage,
+      }),
+    );
 
-    const pendingPermissionItems = pendingPermissionCards().map((card) => {
-      return (
-        <RunChatMessage
-          role="assistant"
-          class="run-chat-message-item"
-          ariaLabel="Permission request"
-        >
-          <RunChatAssistantMessage
-            content=" "
-            toolRail={
-              <section
-                class="run-chat-tool-rail"
-                aria-label="Permission request tool item"
-              >
-                <ul class="run-chat-tool-rail__list">
-                  <li class="run-chat-tool-rail__item run-chat-tool-rail__item--running">
-                    <div class="run-chat-tool-rail__row">
-                      <span class="run-chat-tool-rail__line">
-                        Permission required: {card.kind}
-                      </span>
-                    </div>
-                    <p class="run-chat-tool-rail__details">
-                      <strong>Source:</strong> {card.sourceLabel}
-                    </p>
-                    <Show
-                      when={card.pathPatterns.length > 0}
-                      fallback={
-                        <p class="run-chat-tool-rail__details">
-                          <strong>Paths:</strong> Any path
-                        </p>
-                      }
-                    >
-                      <div class="run-chat-tool-rail__details">
-                        <strong>Paths:</strong>
-                        <ul class="list-disc pl-5">
-                          <For each={card.pathPatterns}>
-                            {(pattern) => <li>{pattern}</li>}
-                          </For>
-                        </ul>
-                      </div>
-                    </Show>
-                    <Show when={card.metadata.length > 0}>
-                      <div class="run-chat-tool-rail__details">
-                        <strong>Details:</strong>
-                        <ul class="list-disc pl-5">
-                          <For each={card.metadata}>
-                            {(entry) => (
-                              <li>
-                                {entry.key}: {entry.value}
-                              </li>
-                            )}
-                          </For>
-                        </ul>
-                      </div>
-                    </Show>
-                    <Show when={queuedPermissionRequests().length > 0}>
-                      <p class="run-chat-tool-rail__details">
-                        {queuedPermissionRequests().length} more permission
-                        request
-                        {queuedPermissionRequests().length === 1
-                          ? ""
-                          : "s"}{" "}
-                        queued. They will appear after this one is resolved.
-                      </p>
-                    </Show>
-                    <Show
-                      when={props.model.agent.permissionReplyError().length > 0}
-                    >
-                      <p class="projects-error">
-                        {props.model.agent.permissionReplyError()}
-                      </p>
-                    </Show>
-                    <div class="mt-2 flex justify-end gap-2">
-                      <button
-                        type="button"
-                        class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
-                        disabled={props.model.agent.isReplyingPermission()}
-                        onClick={() => {
-                          console.info("[runs] permission decision clicked", {
-                            runId: props.model.run()?.id ?? null,
-                            requestId: card.requestId,
-                            decision: "deny",
-                            pendingCount: pendingPermissionCards().length,
-                          });
-                          void props.model.agent.replyPermission(
-                            card.requestId,
-                            "deny",
-                          );
-                        }}
-                      >
-                        {props.model.agent.isReplyingPermission()
-                          ? "Sending..."
-                          : "Deny"}
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-sm border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-4 text-xs font-medium"
-                        disabled={props.model.agent.isReplyingPermission()}
-                        onClick={() => {
-                          console.info("[runs] permission decision clicked", {
-                            runId: props.model.run()?.id ?? null,
-                            requestId: card.requestId,
-                            decision: "once",
-                            pendingCount: pendingPermissionCards().length,
-                          });
-                          void props.model.agent.replyPermission(
-                            card.requestId,
-                            "once",
-                          );
-                        }}
-                      >
-                        {props.model.agent.isReplyingPermission()
-                          ? "Sending..."
-                          : "Allow once"}
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
-                        disabled={props.model.agent.isReplyingPermission()}
-                        onClick={() => {
-                          console.info("[runs] permission decision clicked", {
-                            runId: props.model.run()?.id ?? null,
-                            requestId: card.requestId,
-                            decision: "always",
-                            pendingCount: pendingPermissionCards().length,
-                          });
-                          void props.model.agent.replyPermission(
-                            card.requestId,
-                            "always",
-                          );
-                        }}
-                      >
-                        {props.model.agent.isReplyingPermission()
-                          ? "Sending..."
-                          : "Allow"}
-                      </button>
-                    </div>
-                  </li>
-                </ul>
-              </section>
-            }
-          />
-        </RunChatMessage>
-      );
-    });
+    const pendingPermissionRows =
+      pendingPermissionCards().map<RunChatTranscriptRow>((card) => ({
+        key: `pending-permission:${card.requestId}`,
+        kind: "pending-permission",
+        requestId: card.requestId,
+        permissionKind: card.kind,
+        sourceLabel: card.sourceLabel,
+        pathPatterns: card.pathPatterns,
+        metadata: card.metadata,
+        queuedCount: queuedPermissionRequests().length,
+        isReplying: props.model.agent.isReplyingPermission(),
+        replyError: props.model.agent.permissionReplyError(),
+        onDecision: (decision) => {
+          console.info("[runs] permission decision clicked", {
+            runId: props.model.run()?.id ?? null,
+            requestId: card.requestId,
+            decision,
+            pendingCount: pendingPermissionCards().length,
+          });
+          void props.model.agent.replyPermission(card.requestId, decision);
+        },
+      }));
 
-    const failedPermissionItems = failedPermissionCards().map((card) => {
-      return (
-        <RunChatMessage role="assistant">
-          <section
-            class="run-chat-tool-rail"
-            aria-label="Permission request failed tool item"
-          >
-            <ul class="run-chat-tool-rail__list">
-              <li class="run-chat-tool-rail__item run-chat-tool-rail__item--failed">
-                <div class="run-chat-tool-rail__row">
-                  <span class="run-chat-tool-rail__line">
-                    Permission required: {card.kind}
-                  </span>
-                  <span class="run-chat-tool-rail__status">
-                    <span
-                      class="run-chat-tool-rail__status-slot"
-                      aria-label="failed"
-                    >
-                      <AppIcon
-                        name="status.error"
-                        class="run-chat-tool-rail__status-icon run-chat-tool-rail__status-icon--error"
-                        aria-hidden="true"
-                        size={14}
-                      />
-                      <span class="sr-only">failed</span>
-                    </span>
-                  </span>
-                </div>
-                <p class="run-chat-tool-rail__details">
-                  <strong>Source:</strong> {card.sourceLabel}
-                </p>
-                <p class="run-chat-tool-rail__details">{card.failureMessage}</p>
-                <Show
-                  when={card.pathPatterns.length > 0}
-                  fallback={
-                    <p class="run-chat-tool-rail__details">
-                      <strong>Paths:</strong> Any path
-                    </p>
-                  }
-                >
-                  <div class="run-chat-tool-rail__details">
-                    <strong>Paths:</strong>
-                    <ul class="list-disc pl-5">
-                      <For each={card.pathPatterns}>
-                        {(pattern) => <li>{pattern}</li>}
-                      </For>
-                    </ul>
-                  </div>
-                </Show>
-              </li>
-            </ul>
-          </section>
-        </RunChatMessage>
-      );
-    });
+    const failedPermissionRows =
+      failedPermissionCards().map<RunChatTranscriptRow>((card) => ({
+        key: `failed-permission:${card.requestId}`,
+        kind: "failed-permission",
+        permissionKind: card.kind,
+        sourceLabel: card.sourceLabel,
+        pathPatterns: card.pathPatterns,
+        failureMessage: card.failureMessage,
+      }));
 
     const pendingPromptItem = pendingPrompt();
-    const optimisticPromptItem = pendingPromptItem ? (
-      <RunChatMessage
-        role="user"
-        class="run-chat-message-item"
-        ariaLabel="Pending message"
-      >
-        <RunChatUserMessage>
-          <div class="space-y-2">
-            <RunChatMarkdown content={pendingPromptItem.text} />
-            <p class="run-chat-user-message__status">
-              {pendingPromptItem.status === "failed"
-                ? "Send failed"
+    const optimisticPromptRows = pendingPromptItem
+      ? [
+          {
+            key: "pending-prompt",
+            kind: "pending-prompt",
+            text: pendingPromptItem.text,
+            status:
+              pendingPromptItem.status === "failed"
+                ? "failed"
                 : chatSessionHealth() === "reconnecting"
-                  ? "Reconnecting…"
-                  : "Sending…"}
-            </p>
-            <Show when={pendingPromptItem.status === "failed"}>
-              <div class="run-chat-user-message__actions">
-                <button
-                  type="button"
-                  class="run-chat-user-message__action"
-                  onClick={() => {
-                    void props.model.agent.retryPendingPrompt?.();
-                  }}
-                >
-                  Retry send
-                </button>
-                <button
-                  type="button"
-                  class="run-chat-user-message__action"
-                  onClick={() => {
-                    void props.model.agent.reconnectSession?.();
-                  }}
-                >
-                  Reconnect
-                </button>
-              </div>
-            </Show>
-          </div>
-        </RunChatUserMessage>
-      </RunChatMessage>
-    ) : null;
+                  ? "reconnecting"
+                  : "sending",
+            onRetry: () => {
+              void props.model.agent.retryPendingPrompt?.();
+            },
+            onReconnect: () => {
+              void props.model.agent.reconnectSession?.();
+            },
+          } satisfies RunChatTranscriptRow,
+        ]
+      : [];
 
-    const sessionStatusItem =
-      chatSessionHealth() === "reconnecting" ||
-      chatSessionHealth() === "unresponsive" ? (
-        <RunChatMessage
-          role="system"
-          class="run-chat-message-item"
-          ariaLabel="Chat connection status"
-        >
-          <RunChatSystemMessage>
-            <div class="flex w-full flex-wrap items-center justify-between gap-3">
-              <span>
-                {chatSessionHealth() === "reconnecting"
-                  ? "Chat session became unresponsive. Reconnecting…"
-                  : "Chat session is unresponsive. Reconnect to recover without restarting the app."}
-              </span>
-              <Show when={chatSessionHealth() === "unresponsive"}>
-                <button
-                  type="button"
-                  class="btn btn-xs border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border px-3 text-[11px] font-medium"
-                  onClick={() => {
-                    void props.model.agent.reconnectSession?.();
-                  }}
-                >
-                  Reconnect chat
-                </button>
-              </Show>
-            </div>
-          </RunChatSystemMessage>
-        </RunChatMessage>
-      ) : null;
+    const sessionHealth = chatSessionHealth();
+    const sessionStatusRows =
+      sessionHealth === "reconnecting" || sessionHealth === "unresponsive"
+        ? [
+            {
+              key: "session-status",
+              kind: "session-status",
+              status: sessionHealth,
+              onReconnect: () => {
+                void props.model.agent.reconnectSession?.();
+              },
+            } satisfies RunChatTranscriptRow,
+          ]
+        : [];
 
     return [
-      ...messageItems,
-      ...(optimisticPromptItem ? [optimisticPromptItem] : []),
-      ...failedQuestionItems,
-      ...pendingPermissionItems,
-      ...failedPermissionItems,
-      ...(sessionStatusItem ? [sessionStatusItem] : []),
+      ...messageRows,
+      ...optimisticPromptRows,
+      ...failedQuestionRows,
+      ...pendingPermissionRows,
+      ...failedPermissionRows,
+      ...sessionStatusRows,
     ];
   });
 
-  createEffect(() => {
-    if (transcriptMessageOrder().length === 0) {
-      setTranscriptVisibleCount(TRANSCRIPT_WINDOW_CHUNK);
-    }
-  });
-
-  const cancelInitialTranscriptAnchorFrames = () => {
-    if (initialTranscriptAnchorRaf !== null) {
-      cancelAnimationFrame(initialTranscriptAnchorRaf);
-      initialTranscriptAnchorRaf = null;
-    }
-
-    if (initialTranscriptAnchorVerificationRaf !== null) {
-      cancelAnimationFrame(initialTranscriptAnchorVerificationRaf);
-      initialTranscriptAnchorVerificationRaf = null;
-    }
+  const cancelTranscriptViewportWork = () => {
+    transcriptHandle()?.cancelPendingViewportWork();
   };
 
   const getTranscriptDistanceFromBottom = (): number => {
+    const handle = transcriptHandle();
+    if (handle) {
+      return handle.getDistanceFromBottom();
+    }
+
     const container = transcriptScrollRef;
     if (!container) {
       return 0;
@@ -3177,6 +2745,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   };
 
   const isNearTranscriptBottom = (): boolean => {
+    const handle = transcriptHandle();
+    if (handle) {
+      return handle.isNearBottom(TRANSCRIPT_NEAR_BOTTOM_THRESHOLD);
+    }
+
     return (
       getTranscriptDistanceFromBottom() <= TRANSCRIPT_NEAR_BOTTOM_THRESHOLD
     );
@@ -3186,9 +2759,20 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     setIsTranscriptNearBottom(isNearTranscriptBottom());
   };
 
-  const scrollTranscriptToBottom = (behavior: ScrollBehavior = "auto") => {
+  const scrollTranscriptToBottom = (options?: {
+    behavior?: ScrollBehavior;
+    maxAttempts?: number;
+    onComplete?: (atBottom: boolean) => void;
+  }) => {
+    const handle = transcriptHandle();
+    if (handle) {
+      handle.scrollToBottom(options);
+      return;
+    }
+
     const container = transcriptScrollRef;
     if (!container) {
+      options?.onComplete?.(false);
       return;
     }
 
@@ -3197,21 +2781,26 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       container.scrollHeight - container.clientHeight,
     );
     if (typeof container.scrollTo === "function") {
-      container.scrollTo({ top: targetTop, behavior });
+      container.scrollTo({
+        top: targetTop,
+        behavior: options?.behavior ?? "auto",
+      });
+      options?.onComplete?.(true);
       return;
     }
 
     container.scrollTop = targetTop;
+    options?.onComplete?.(true);
   };
 
   createEffect(
     on(
       () => props.model.run()?.id,
       () => {
-        cancelInitialTranscriptAnchorFrames();
-        setTranscriptVisibleCount(TRANSCRIPT_WINDOW_CHUNK);
+        cancelTranscriptViewportWork();
         setIsTranscriptNearBottom(true);
         setIsInitialTranscriptAnchorCompleted(false);
+        setIsRestoringOlderTranscriptAnchor(false);
       },
     ),
   );
@@ -3245,16 +2834,18 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       return;
     }
 
-    const container = transcriptScrollRef;
-    if (!container || !hasLoadedInitialTranscriptHistory()) {
+    const handle = transcriptHandle();
+    if (!handle || !hasLoadedInitialTranscriptHistory()) {
       return;
     }
 
-    const transcriptItems = chatTranscriptItems();
-    const transcriptItemCount = transcriptItems.length;
-    transcriptVisibleCount();
+    const transcriptRows = chatTranscriptRows();
+    const transcriptItemCount = transcriptRows.length;
     runChatComposerOffsetPx();
     transcriptLayoutRevision();
+    if (isRestoringOlderTranscriptAnchor()) {
+      return;
+    }
 
     if (transcriptItemCount === 0) {
       setIsInitialTranscriptAnchorCompleted(true);
@@ -3262,68 +2853,42 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       return;
     }
 
-    if (!transcriptBottomSentinelRef) {
-      return;
-    }
-
-    cancelInitialTranscriptAnchorFrames();
-
-    const attemptAnchor = (attempt: number) => {
-      initialTranscriptAnchorRaf = requestAnimationFrame(() => {
-        initialTranscriptAnchorRaf = null;
-        if (!transcriptScrollRef || !transcriptBottomSentinelRef) {
-          return;
-        }
-
-        scrollTranscriptToBottom("auto");
+    scrollTranscriptToBottom({
+      behavior: "auto",
+      maxAttempts: INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS,
+      onComplete: (anchored) => {
         syncTranscriptNearBottom();
-
-        initialTranscriptAnchorVerificationRaf = requestAnimationFrame(() => {
-          initialTranscriptAnchorVerificationRaf = null;
-          if (!transcriptScrollRef) {
-            return;
-          }
-
-          if (isNearTranscriptBottom()) {
-            setIsTranscriptNearBottom(true);
-            setIsInitialTranscriptAnchorCompleted(true);
-            return;
-          }
-
-          if (attempt + 1 >= INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS) {
-            scrollTranscriptToBottom("auto");
-            const nearBottom = isNearTranscriptBottom();
-            setIsTranscriptNearBottom(nearBottom);
-            setIsInitialTranscriptAnchorCompleted(nearBottom);
-            return;
-          }
-
-          attemptAnchor(attempt + 1);
-        });
-      });
-    };
-
-    attemptAnchor(0);
+        if (anchored) {
+          setIsInitialTranscriptAnchorCompleted(true);
+        }
+      },
+    });
   });
 
   createEffect(() => {
-    chatTranscriptItems();
-    transcriptVisibleCount();
+    chatTranscriptRows();
     runChatComposerOffsetPx();
     transcriptLayoutRevision();
+
+    if (
+      !isInitialTranscriptAnchorCompleted() ||
+      isRestoringOlderTranscriptAnchor()
+    ) {
+      return;
+    }
 
     const wasNearBottomBeforeUpdate = isTranscriptNearBottom();
 
     requestAnimationFrame(() => {
-      if (wasNearBottomBeforeUpdate) {
-        scrollTranscriptToBottom("auto");
+      if (wasNearBottomBeforeUpdate && isTranscriptNearBottom()) {
+        scrollTranscriptToBottom({ behavior: "auto", maxAttempts: 2 });
       }
       syncTranscriptNearBottom();
     });
   });
 
   createEffect(() => {
-    const hasTranscriptItems = chatTranscriptItems().length > 0;
+    const hasTranscriptItems = chatTranscriptRows().length > 0;
     const transcriptContent = transcriptContentRef;
     if (
       !hasTranscriptItems ||
@@ -3349,10 +2914,73 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   };
 
   const jumpToLatestTranscript = () => {
-    scrollTranscriptToBottom("smooth");
-    requestAnimationFrame(() => {
-      syncTranscriptNearBottom();
+    setIsRestoringOlderTranscriptAnchor(false);
+    cancelTranscriptViewportWork();
+    scrollTranscriptToBottom({
+      behavior: "smooth",
+      maxAttempts: 2,
+      onComplete: () => {
+        syncTranscriptNearBottom();
+      },
     });
+  };
+
+  const loadOlderTranscript = async (): Promise<void> => {
+    if (!canLoadOlderTranscript()) {
+      return;
+    }
+
+    const handle = transcriptHandle();
+    const anchor = handle?.captureAnchor() ?? null;
+    const previousScrollTop = transcriptScrollRef?.scrollTop ?? null;
+    const previousScrollHeight = transcriptScrollRef?.scrollHeight ?? null;
+    if (anchor) {
+      setIsRestoringOlderTranscriptAnchor(true);
+    }
+    const didLoad = (await props.model.agent.history?.loadOlder?.()) ?? false;
+    if (!didLoad) {
+      setIsRestoringOlderTranscriptAnchor(false);
+      syncTranscriptNearBottom();
+      return;
+    }
+
+    await Promise.resolve();
+
+    const preserveScrollHeightDeltaFallback = () => {
+      const container = transcriptScrollRef;
+      if (
+        !container ||
+        previousScrollTop === null ||
+        previousScrollHeight === null
+      ) {
+        return;
+      }
+
+      const nextScrollHeight = container.scrollHeight;
+      const offset = nextScrollHeight - previousScrollHeight;
+      if (offset > 0) {
+        container.scrollTop = Math.max(0, previousScrollTop + offset);
+      }
+    };
+
+    if (handle && anchor) {
+      setIsTranscriptNearBottom(false);
+      handle.restoreAnchor(anchor, {
+        maxAttempts: OLDER_TRANSCRIPT_RESTORE_MAX_ATTEMPTS,
+        onComplete: (restored) => {
+          if (!restored) {
+            preserveScrollHeightDeltaFallback();
+          }
+          setIsRestoringOlderTranscriptAnchor(false);
+          syncTranscriptNearBottom();
+        },
+      });
+      return;
+    }
+
+    preserveScrollHeightDeltaFallback();
+    setIsRestoringOlderTranscriptAnchor(false);
+    syncTranscriptNearBottom();
   };
 
   createEffect(() => {
@@ -3379,11 +3007,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   });
 
   onCleanup(() => {
-    cancelInitialTranscriptAnchorFrames();
+    cancelTranscriptViewportWork();
   });
 
   const shouldShowJumpToBottom = createMemo(() => {
-    return chatTranscriptItems().length > 0 && !isTranscriptNearBottom();
+    return chatTranscriptRows().length > 0 && !isTranscriptNearBottom();
   });
 
   return (
@@ -3413,6 +3041,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
           <Show when={props.model.agent.error().length > 0}>
             <p class="projects-error">{props.model.agent.error()}</p>
           </Show>
+          <Show when={transcriptHistoryError().length > 0}>
+            <p class="projects-error">{transcriptHistoryError()}</p>
+          </Show>
           <section
             class="run-setup-status-box"
             data-state={setupState()}
@@ -3432,7 +3063,7 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             </section>
           </Show>
           <Show
-            when={chatTranscriptItems().length > 0}
+            when={chatTranscriptRows().length > 0}
             fallback={
               <section
                 class="run-chat-transcript run-chat-transcript--empty-state"
@@ -3461,40 +3092,18 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
             <div ref={transcriptContentRef}>
               <RunChatTranscript
                 class="run-chat-transcript"
-                items={chatTranscriptItems()}
-                olderAffordance={
-                  <Show when={transcriptHiddenMessageCount() > 0}>
-                    <button
-                      type="button"
-                      class="run-detail-load-older-button run-chat-load-older"
-                      onClick={() => {
-                        const container = transcriptScrollRef;
-                        const previousScrollHeight =
-                          container?.scrollHeight ?? null;
-                        setTranscriptVisibleCount(
-                          (current) => current + TRANSCRIPT_WINDOW_CHUNK,
-                        );
-                        if (!container || previousScrollHeight === null) {
-                          return;
-                        }
-
-                        requestAnimationFrame(() => {
-                          const nextScrollHeight = container.scrollHeight;
-                          const offset =
-                            nextScrollHeight - previousScrollHeight;
-                          if (offset > 0) {
-                            container.scrollTop += offset;
-                          }
-                        });
-                      }}
-                    >
-                      {`Load older (${transcriptHiddenMessageCount()} hidden)`}
-                    </button>
-                  </Show>
-                }
+                apiRef={setTranscriptHandle}
+                rows={chatTranscriptRows()}
+                canLoadOlder={canLoadOlderTranscript()}
+                loadingOlder={isLoadingOlderTranscript()}
+                onLoadOlder={() => {
+                  void loadOlderTranscript();
+                }}
+                loadOlderLabel="Load older history"
+                layoutToken={transcriptVirtualizerLayoutToken()}
+                scrollElement={() => transcriptScrollRef}
               />
               <div
-                ref={transcriptBottomSentinelRef}
                 class="run-chat-transcript__bottom-sentinel"
                 aria-hidden="true"
               />

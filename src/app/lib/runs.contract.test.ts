@@ -18,7 +18,7 @@ import {
   listTaskRunSourceBranches,
   getRunSelectionOptions,
   getRunGitMergeStatus,
-  getRunOpenCodeSessionMessages,
+  getRunOpenCodeSessionMessagesPage,
   getRunOpenCodeSessionTodos,
   listActiveRuns,
   listTaskRuns,
@@ -28,6 +28,7 @@ import {
   type BootstrapRunOpenCodeResult,
   type Run,
   type RunGitMergeStatus,
+  type RunOpenCodeSessionMessagesPageResult,
   type RunStatus,
 } from "./runs";
 
@@ -388,8 +389,6 @@ describe("runs contract", () => {
     invokeMock.mockResolvedValue({
       state: "running",
       bufferedEvents: [],
-      messages: [],
-      todos: [],
       streamConnected: true,
     });
 
@@ -400,43 +399,93 @@ describe("runs contract", () => {
     });
   });
 
-  it("invokes child session history commands with optional sessionId", async () => {
+  it("invokes child session todo history command with optional sessionId", async () => {
     invokeMock.mockResolvedValue([]);
 
-    await getRunOpenCodeSessionMessages({ runId: "run-1", sessionId: "ses-2" });
     await getRunOpenCodeSessionTodos({ runId: "run-1", sessionId: "ses-2" });
 
-    expect(invokeMock).toHaveBeenNthCalledWith(
-      1,
-      "get_run_opencode_session_messages",
-      { runId: "run-1", sessionId: "ses-2" },
-    );
-    expect(invokeMock).toHaveBeenNthCalledWith(
-      2,
-      "get_run_opencode_session_todos",
-      { runId: "run-1", sessionId: "ses-2" },
+    expect(invokeMock).toHaveBeenCalledWith("get_run_opencode_session_todos", {
+      runId: "run-1",
+      sessionId: "ses-2",
+    });
+  });
+
+  it("invokes paged session history command with limit and before cursor", async () => {
+    invokeMock.mockResolvedValue({
+      messages: [],
+      hasMore: false,
+    });
+
+    await getRunOpenCodeSessionMessagesPage({
+      runId: "run-1",
+      sessionId: "ses-2",
+      limit: 25,
+      before: "cursor-1",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      "get_run_opencode_session_messages_page",
+      {
+        runId: "run-1",
+        sessionId: "ses-2",
+        limit: 25,
+        before: "cursor-1",
+      },
     );
   });
 
-  it("normalizes bootstrap snake_case wrapped payload", async () => {
+  it("normalizes paged session history payload", async () => {
     invokeMock.mockResolvedValue({
-      result: {
-        state: "starting",
-        reason: "warming",
-        buffered_events: [
-          {
-            run_id: "run-server",
-            timestamp: "2026-01-01T00:00:00.000Z",
-            event: "stdout",
-            payload: { line: "hello" },
-          },
-        ],
-        messages: { items: [{ payload: { role: "assistant" } }] },
-        todos: { data: [{ payload: { text: "Do thing" } }] },
-        session_id: "session-1",
-        stream_connected: true,
-        ready_phase: "hydrated",
+      messages: [{ payload: { id: "msg-2" } }],
+      hasMore: true,
+      nextCursor: "cursor-older",
+      beforeCursor: "cursor-current",
+    });
+
+    const result = await getRunOpenCodeSessionMessagesPage({
+      runId: "run-1",
+      limit: 50,
+    });
+
+    expect(result).toEqual({
+      messages: [{ id: "msg-2" }],
+      hasMore: true,
+      nextCursor: "cursor-older",
+      beforeCursor: "cursor-current",
+      raw: {
+        messages: [{ payload: { id: "msg-2" } }],
+        hasMore: true,
+        nextCursor: "cursor-older",
+        beforeCursor: "cursor-current",
       },
+    } satisfies RunOpenCodeSessionMessagesPageResult);
+  });
+
+  it("rejects invalid paged session history limits before invoke", async () => {
+    await expect(
+      getRunOpenCodeSessionMessagesPage({ runId: "run-1", limit: 0 }),
+    ).rejects.toThrow(
+      "Run OpenCode session message page limit must be a positive integer.",
+    );
+
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("normalizes bootstrap payload", async () => {
+    invokeMock.mockResolvedValue({
+      state: "starting",
+      reason: "warming",
+      bufferedEvents: [
+        {
+          runId: "run-server",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          event: "stdout",
+          payload: { line: "hello" },
+        },
+      ],
+      sessionId: "session-1",
+      streamConnected: true,
+      readyPhase: "hydrated",
     });
 
     const result = await bootstrapRunOpenCode("run-1");
@@ -451,10 +500,9 @@ describe("runs contract", () => {
           ts: "2026-01-01T00:00:00.000Z",
           event: "stdout",
           data: { line: "hello" },
+          runState: null,
         },
       ],
-      messages: [{ role: "assistant" }],
-      todos: [{ text: "Do thing" }],
       sessionId: "session-1",
       streamConnected: true,
       readyPhase: "hydrated",
@@ -471,8 +519,6 @@ describe("runs contract", () => {
           data: { ok: true },
         },
       ],
-      messages: [{ payload: { id: "msg-1" } }],
-      todos: [{ payload: { id: "todo-1" } }],
       streamConnected: false,
     });
 
@@ -488,10 +534,9 @@ describe("runs contract", () => {
           ts: 123,
           event: "status",
           data: { ok: true },
+          runState: null,
         },
       ],
-      messages: [{ id: "msg-1" }],
-      todos: [{ id: "todo-1" }],
       sessionId: undefined,
       streamConnected: false,
       readyPhase: undefined,
@@ -501,11 +546,9 @@ describe("runs contract", () => {
   it("normalizes completed read-only bootstrap ready state", async () => {
     invokeMock.mockResolvedValue({
       state: "ready",
-      chat_mode: "read_only",
-      messages: [{ payload: { id: "msg-1" } }],
-      todos: [],
-      stream_connected: false,
-      ready_phase: "completed_history",
+      chatMode: "read_only",
+      streamConnected: false,
+      readyPhase: "completed_history",
     });
 
     const result = await bootstrapRunOpenCode("run-complete");
@@ -515,8 +558,6 @@ describe("runs contract", () => {
       chatMode: "read_only",
       reason: undefined,
       bufferedEvents: [],
-      messages: [{ id: "msg-1" }],
-      todos: [],
       sessionId: undefined,
       streamConnected: false,
       readyPhase: "completed_history",
@@ -636,6 +677,22 @@ describe("runs contract", () => {
     expect(status.isRebaseAllowed).toBe(false);
     expect(status.isMergeAllowed).toBe(false);
     expect(status.isRebaseInProgress).toBe(false);
+    expect(status.requiresRebase).toBe(true);
+  });
+
+  it("derives requiresRebase from legacy rebase_required state", async () => {
+    invokeMock.mockResolvedValue({
+      status: {
+        state: "rebase_required",
+        can_rebase: true,
+        can_merge: false,
+      },
+    });
+
+    const status = await getRunGitMergeStatus("run-1");
+
+    expect(status.state).toBe("rebase_required");
+    expect(status.requiresRebase).toBe(true);
   });
 
   it("maps git2 ahead_count/behind_count into branch divergence and dirty flag", async () => {

@@ -226,6 +226,17 @@ pub struct RunOpenCodeSessionMessageDto {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RunOpenCodeSessionMessagesPageDto {
+    pub messages: Vec<RunOpenCodeSessionMessageDto>,
+    pub has_more: bool,
+    /// Cursor to send back as `before` when loading the next older page.
+    pub next_cursor: Option<String>,
+    /// Echo of the caller's current `before` cursor, if any.
+    pub before_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunOpenCodeSessionTodoDto {
     pub payload: Value,
 }
@@ -290,8 +301,6 @@ pub struct BootstrapRunOpenCodeResponse {
     pub reason: Option<String>,
     pub chat_mode: RunOpenCodeChatModeDto,
     pub buffered_events: Vec<RawAgentEvent>,
-    pub messages: Vec<RunOpenCodeSessionMessageDto>,
-    pub todos: Vec<RunOpenCodeSessionTodoDto>,
     pub session_id: Option<String>,
     pub stream_connected: bool,
     pub ready_phase: Option<String>,

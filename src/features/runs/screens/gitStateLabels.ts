@@ -10,51 +10,76 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-export const formatGitStateLabel = (
+export type WorkflowSyncStateCategory =
+  | "up_to_date"
+  | "rebase_required"
+  | "rebase_in_progress"
+  | "ready_to_merge"
+  | "conflicted"
+  | "merged"
+  | "finalizing_merge"
+  | "unknown";
+
+export const classifyWorkflowSyncState = (
   state: string,
-  rawState?: string,
-): string => {
+): WorkflowSyncStateCategory => {
   switch (state) {
     case "clean":
-      return "Clean";
+      return "up_to_date";
     case "needs_rebase":
-      return "Needs rebase";
-    case "rebase_in_progress":
-      return "Rebase in progress";
-    case "mergeable":
-      return "Mergeable";
-    case "conflicted":
-      return "Conflicted";
-    case "ready":
-      return "Ready";
     case "rebase_required":
-      return "Rebase required";
+      return "rebase_required";
+    case "rebase_in_progress":
     case "rebasing":
-      return "Rebasing";
-    case "rebase_conflict":
-      return "Rebase conflict";
-    case "rebase_failed":
-      return "Rebase failed";
-    case "rebase_succeeded":
-      return "Rebase succeeded";
+      return "rebase_in_progress";
+    case "mergeable":
     case "merge_ready":
-      return "Merge ready";
-    case "merging":
-      return "Merging";
+    case "rebase_succeeded":
+      return "ready_to_merge";
+    case "conflicted":
     case "merge_conflict":
-      return "Merge conflict";
-    case "merge_failed":
-      return "Merge failed";
+    case "rebase_conflict":
+      return "conflicted";
     case "merged":
-      return "Merged";
-    case "completing":
-      return "Completing run";
     case "complete":
     case "completed":
-      return "Completed";
-    case "unsupported":
-      return "Unsupported";
+      return "merged";
+    case "completing":
+    case "merging":
+      return "finalizing_merge";
     default:
-      return rawState ? `Unrecognized (${rawState})` : "Unrecognized";
+      return "unknown";
   }
 };
+
+export const formatWorkflowSyncCategoryLabel = (
+  category: WorkflowSyncStateCategory,
+): string => {
+  switch (category) {
+    case "up_to_date":
+      return "Up to Date";
+    case "rebase_required":
+      return "Rebase Required";
+    case "rebase_in_progress":
+      return "Rebase In Progress";
+    case "ready_to_merge":
+      return "Ready to Merge";
+    case "conflicted":
+      return "Conflicts Detected";
+    case "merged":
+      return "Merged";
+    case "finalizing_merge":
+      return "Finalizing Merge";
+    default:
+      return "Status Unknown";
+  }
+};
+
+export const formatWorkflowSyncStatusLabel = (
+  state: string,
+  _rawState?: string,
+): string => {
+  return formatWorkflowSyncCategoryLabel(classifyWorkflowSyncState(state));
+};
+
+export const formatGitStateLabel = formatWorkflowSyncStatusLabel;

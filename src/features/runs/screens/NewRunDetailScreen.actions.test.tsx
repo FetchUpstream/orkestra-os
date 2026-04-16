@@ -51,6 +51,10 @@ vi.mock("../../../components/ui/BackIconLink", () => ({
   default: () => <a href="/">Back</a>,
 }));
 
+vi.mock("../../tasks/components/ActionWarningModal", () => ({
+  default: () => null,
+}));
+
 vi.mock("../components/NewRunChatWorkspace", () => ({
   default: () => <div>workspace</div>,
 }));
@@ -97,6 +101,7 @@ const createModelStub = (options?: {
     rawState?: string;
     repositoryState?: string;
     isRebaseInProgress?: boolean;
+    conflictSummary?: string;
     sourceBranch?: { name: string; ahead: number; behind: number };
     worktreeBranch?: { name: string; ahead: number; behind: number };
     isRebaseAllowed?: boolean;
@@ -109,7 +114,7 @@ const createModelStub = (options?: {
   isSubmittingPrompt?: boolean;
   agent?: {
     chatMode?: "interactive" | "read_only" | "unavailable";
-    connectionStatus?: "warming" | "connected" | "disconnected";
+    connectionStatus?: "warming" | "connected" | "idle" | "disconnected";
     state?:
       | "idle"
       | "accepted"
@@ -205,6 +210,7 @@ const createModelStub = (options?: {
         rawState: options?.gitStatus?.rawState ?? "clean",
         repositoryState: options?.gitStatus?.repositoryState,
         isRebaseInProgress: options?.gitStatus?.isRebaseInProgress ?? false,
+        conflictSummary: options?.gitStatus?.conflictSummary,
         sourceBranch: options?.gitStatus?.sourceBranch ?? {
           name: "main",
           ahead: 0,
@@ -362,8 +368,13 @@ describe("NewRunDetailScreen git actions", () => {
       ).toBeTruthy();
       expect(screen.getAllByText("Source")).toHaveLength(2);
       expect(screen.getAllByText("Current")).toHaveLength(2);
-      expect(screen.getByText("Source Dirty")).toBeTruthy();
+      expect(screen.getByText("Ready to Merge")).toBeTruthy();
+      expect(screen.getByText("Ready to merge")).toBeTruthy();
       expect(screen.getByText("Current Clean")).toBeTruthy();
+      const mergeButton = screen.getByRole("button", {
+        name: "Merge into main",
+      });
+      expect(mergeButton.hasAttribute("disabled")).toBe(true);
       expect(screen.getByText("+0")).toBeTruthy();
       expect(screen.getByText("-1")).toBeTruthy();
       expect(screen.getByText("+2")).toBeTruthy();
@@ -381,9 +392,9 @@ describe("NewRunDetailScreen git actions", () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         gitStatus: {
+          state: "needs_rebase",
           sourceBranch: { name: "main", ahead: 0, behind: 0 },
           isWorktreeClean: true,
-          requiresRebase: true,
           isRebaseAllowed: true,
           isMergeAllowed: false,
         },
@@ -395,8 +406,40 @@ describe("NewRunDetailScreen git actions", () => {
     await topbar.invokeAction("Git");
 
     await waitFor(() => {
+      expect(screen.getByText("Rebase Required")).toBeTruthy();
+      expect(screen.getByText("Rebase required")).toBeTruthy();
+      expect(
+        screen.getByText("Rebase current branch onto main before merge."),
+      ).toBeTruthy();
       expect(screen.getByText("Rebase onto main")).toBeTruthy();
       expect(screen.queryByText("Commit changes")).toBeNull();
+      expect(screen.queryByText("Merge into main")).toBeNull();
+    });
+    topbar.cleanup();
+  });
+
+  it("uses legacy ready state with requiresRebase to keep source row and action aligned", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        gitStatus: {
+          state: "ready",
+          sourceBranch: { name: "main", ahead: 0, behind: 0 },
+          isWorktreeClean: true,
+          isRebaseAllowed: true,
+          isMergeAllowed: false,
+          requiresRebase: true,
+        },
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    await waitFor(() => {
+      expect(screen.getByText("Rebase Required")).toBeTruthy();
+      expect(screen.getByText("Rebase required")).toBeTruthy();
+      expect(screen.getByText("Rebase onto main")).toBeTruthy();
       expect(screen.queryByText("Merge into main")).toBeNull();
     });
     topbar.cleanup();
@@ -485,6 +528,8 @@ describe("NewRunDetailScreen git actions", () => {
     await topbar.invokeAction("Git");
 
     await waitFor(() => {
+      expect(screen.getByText("Merged")).toBeTruthy();
+      expect(screen.getByText("Integration complete")).toBeTruthy();
       const completedIndicator = screen.getByText("MERGED");
       expect(completedIndicator).toBeTruthy();
       expect(completedIndicator.className).toContain(
@@ -492,6 +537,95 @@ describe("NewRunDetailScreen git actions", () => {
       );
       expect(screen.queryByText("Commit changes")).toBeNull();
       expect(screen.queryByText("Rebase onto main")).toBeNull();
+      expect(screen.queryByText("Merge into main")).toBeNull();
+    });
+    topbar.cleanup();
+  });
+
+  it("shows finalizing merge status without merge completion affordances", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        gitStatus: {
+          state: "completing",
+          isWorktreeClean: true,
+          isRebaseAllowed: false,
+          isMergeAllowed: false,
+          requiresRebase: false,
+        },
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    await waitFor(() => {
+      expect(screen.getByText("Finalizing Merge")).toBeTruthy();
+      expect(screen.getByText("Finalizing merge")).toBeTruthy();
+      expect(
+        screen.getByText("Completing integration into main."),
+      ).toBeTruthy();
+      expect(screen.queryByText("MERGED")).toBeNull();
+      expect(screen.queryByText("Commit changes")).toBeNull();
+      expect(screen.queryByText("Rebase onto main")).toBeNull();
+      expect(screen.queryByText("Merge into main")).toBeNull();
+    });
+    topbar.cleanup();
+  });
+
+  it("does not treat completion copy alone as a merged workflow state", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        gitStatus: {
+          state: "unknown",
+          rawState: "brand_new_state",
+          isWorktreeClean: true,
+          isRebaseAllowed: false,
+          isMergeAllowed: false,
+          requiresRebase: false,
+        },
+        postMergeCompletionMessage: "Merge completed. Returning to board...",
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    await waitFor(() => {
+      expect(screen.getByText("Status Unknown")).toBeTruthy();
+      expect(screen.getByText("Status unknown")).toBeTruthy();
+      expect(screen.queryByText("MERGED")).toBeNull();
+    });
+    topbar.cleanup();
+  });
+
+  it("shows conflict guidance without surfacing incorrect source cleanliness", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        gitStatus: {
+          state: "conflicted",
+          conflictSummary: "Resolve conflicts before retrying the merge.",
+          isWorktreeClean: false,
+          isRebaseAllowed: false,
+          isMergeAllowed: false,
+          requiresRebase: false,
+        },
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    await waitFor(() => {
+      expect(screen.getByText("Conflicts Detected")).toBeTruthy();
+      expect(screen.getByText("Conflicts detected")).toBeTruthy();
+      expect(
+        screen.getByText("Resolve conflicts before retrying the merge."),
+      ).toBeTruthy();
+      expect(screen.queryByText("Source Dirty")).toBeNull();
+      expect(screen.queryByText("Commit changes")).toBeNull();
       expect(screen.queryByText("Merge into main")).toBeNull();
     });
     topbar.cleanup();

@@ -104,7 +104,7 @@ pub fn run() {
             app::commands::runs::subscribe_run_opencode_events,
             app::commands::runs::unsubscribe_run_opencode_events,
             app::commands::runs::get_buffered_run_opencode_events,
-            app::commands::runs::get_run_opencode_session_messages,
+            app::commands::runs::get_run_opencode_session_messages_page,
             app::commands::runs::get_run_opencode_session_todos,
             app::commands::runs::list_run_opencode_providers,
             app::commands::runs::list_run_opencode_agents,

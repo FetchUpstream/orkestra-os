@@ -12,6 +12,7 @@
 
 import { render, waitFor } from "@solidjs/testing-library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { BootstrapRunOpenCodeResult } from "../../../../app/lib/runs";
 import { useRunDetailModel } from "../useRunDetailModel";
 
 const deferred = function <T>() {
@@ -31,6 +32,7 @@ const {
   navigateMock,
   bootstrapRunOpenCodeMock,
   getBufferedRunOpenCodeEventsMock,
+  getRunOpenCodeSessionMessagesPageMock,
   subscribeRunOpenCodeEventsMock,
   unsubscribeRunOpenCodeEventsMock,
   submitRunOpenCodePromptMock,
@@ -61,6 +63,7 @@ const {
   navigateMock: vi.fn(),
   bootstrapRunOpenCodeMock: vi.fn(),
   getBufferedRunOpenCodeEventsMock: vi.fn(),
+  getRunOpenCodeSessionMessagesPageMock: vi.fn(),
   subscribeRunOpenCodeEventsMock: vi.fn(),
   unsubscribeRunOpenCodeEventsMock: vi.fn(),
   submitRunOpenCodePromptMock: vi.fn(),
@@ -134,6 +137,7 @@ const buildRun = (overrides?: Record<string, unknown>) => ({
 vi.mock("../../../../app/lib/runs", () => ({
   bootstrapRunOpenCode: bootstrapRunOpenCodeMock,
   getBufferedRunOpenCodeEvents: getBufferedRunOpenCodeEventsMock,
+  getRunOpenCodeSessionMessagesPage: getRunOpenCodeSessionMessagesPageMock,
   appendCappedHistory: (current: unknown[], next: unknown[] | unknown) => [
     ...current,
     ...(Array.isArray(next) ? next : [next]),
@@ -204,6 +208,7 @@ describe("useRunDetailModel startup ownership", () => {
     );
     bootstrapRunOpenCodeMock.mockReset();
     getBufferedRunOpenCodeEventsMock.mockReset();
+    getRunOpenCodeSessionMessagesPageMock.mockReset();
     subscribeRunOpenCodeEventsMock.mockReset();
     unsubscribeRunOpenCodeEventsMock.mockReset();
     submitRunOpenCodePromptMock.mockReset();
@@ -240,9 +245,14 @@ describe("useRunDetailModel startup ownership", () => {
       state: "running",
       chatMode: "interactive",
       bufferedEvents: [],
-      messages: [],
-      todos: [],
       streamConnected: true,
+    });
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
+      messages: [],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
+      raw: {},
     });
     getBufferedRunOpenCodeEventsMock.mockResolvedValue([]);
     listRunOpenCodeQuestionRequestsMock.mockResolvedValue({
@@ -350,20 +360,33 @@ describe("useRunDetailModel startup ownership", () => {
           },
         },
       ],
-      messages: [
-        {
-          payload: {
-            info: {
-              id: "msg-1",
-              role: "assistant",
-              sessionID: "session-1",
-            },
-          },
-        },
-      ],
-      todos: [],
       streamConnected: false,
       readyPhase: "completed_history",
+      sessionId: "session-1",
+    });
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValueOnce({
+      messages: [
+        {
+          info: {
+            id: "msg-1",
+            role: "assistant",
+            sessionID: "session-1",
+          },
+          parts: [
+            {
+              id: "part-1",
+              type: "text",
+              text: "Read-only transcript message",
+              messageID: "msg-1",
+              sessionID: "session-1",
+            },
+          ],
+        }
+      ],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
+      raw: {},
     });
 
     let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
@@ -376,9 +399,96 @@ describe("useRunDetailModel startup ownership", () => {
       expect(modelRef).toBeDefined();
       expect(modelRef!.agent.chatMode()).toBe("read_only");
       expect(modelRef!.agent.events().length).toBe(1);
+      expect(modelRef!.agent.store().messageOrder).toEqual(["msg-1"]);
+      expect(
+        modelRef!.agent.store().messagesById["msg-1"]?.partsById["part-1"],
+      ).toMatchObject({
+        kind: "text",
+        text: "Read-only transcript message",
+      });
     });
 
+    expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledWith({
+      runId: "run-1",
+      sessionId: "session-1",
+      limit: 100,
+    });
     expect(subscribeRunOpenCodeEventsMock).not.toHaveBeenCalled();
+  });
+
+  it("loads older transcript pages from the backend and prepends them without duplicates", async () => {
+    bootstrapRunOpenCodeMock.mockResolvedValueOnce({
+      state: "running",
+      chatMode: "interactive",
+      bufferedEvents: [],
+      streamConnected: true,
+      sessionId: "session-1",
+    });
+    getRunOpenCodeSessionMessagesPageMock
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            info: {
+              id: "msg-2",
+              role: "assistant",
+              sessionID: "session-1",
+            },
+            parts: [],
+          },
+        ],
+        hasMore: true,
+        nextCursor: "cursor-1",
+        beforeCursor: undefined,
+        raw: {},
+      })
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            info: {
+              id: "msg-1",
+              role: "assistant",
+              sessionID: "session-1",
+            },
+            parts: [],
+          },
+          {
+            info: {
+              id: "msg-2",
+              role: "assistant",
+              sessionID: "session-1",
+            },
+            parts: [],
+          },
+        ],
+        hasMore: false,
+        nextCursor: undefined,
+        beforeCursor: "cursor-1",
+        raw: {},
+      });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+      expect(modelRef!.agent.store().messageOrder).toEqual(["msg-2"]);
+      expect(modelRef!.agent.history.canLoadOlder()).toBe(true);
+    });
+
+    const didLoad = await modelRef!.agent.history.loadOlder();
+
+    expect(didLoad).toBe(true);
+    expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenNthCalledWith(2, {
+      runId: "run-1",
+      sessionId: "session-1",
+      limit: 100,
+      before: "cursor-1",
+    });
+    expect(modelRef!.agent.store().messageOrder).toEqual(["msg-1", "msg-2"]);
+    expect(modelRef!.agent.history.canLoadOlder()).toBe(false);
   });
 
   it("navigates away and clears run-scoped state when current run is deleted", async () => {
@@ -971,8 +1081,7 @@ describe("useRunDetailModel startup ownership", () => {
     await waitFor(
       () => {
         const refreshCalls = getRunMock.mock.calls.length - baselineGetRunCalls;
-        expect(refreshCalls).toBeGreaterThanOrEqual(3);
-        expect(refreshCalls).toBeLessThanOrEqual(3);
+        expect(refreshCalls).toBe(3);
       },
       { timeout: 3000 },
     );
@@ -1009,6 +1118,10 @@ describe("useRunDetailModel startup ownership", () => {
       data: { reason: "missed_events" },
     });
 
+    await waitFor(() => {
+      expect(modelRef!.agent.connectionStatus()).toBe("warming");
+    });
+
     await waitFor(
       () => {
         expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(2);
@@ -1022,7 +1135,66 @@ describe("useRunDetailModel startup ownership", () => {
     );
   });
 
-  it("tracks OpenCode connection status across disconnect and reconnect events", async () => {
+  it("starts warming, then seeds the indicator from bootstrap streamConnected", async () => {
+    const bootstrapDeferred = deferred<BootstrapRunOpenCodeResult>();
+    bootstrapRunOpenCodeMock.mockReturnValueOnce(bootstrapDeferred.promise);
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    expect(modelRef).toBeDefined();
+    expect(modelRef!.agent.connectionStatus()).toBe("warming");
+
+    bootstrapDeferred.resolve({
+      state: "running",
+      chatMode: "interactive",
+      bufferedEvents: [],
+      streamConnected: true,
+    });
+
+    await waitFor(() => {
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+      expect(modelRef!.agent.connectionStatus()).toBe("idle");
+    });
+  });
+
+  it("does not treat buffered message history as a live connection during bootstrap", async () => {
+    bootstrapRunOpenCodeMock.mockResolvedValueOnce({
+      state: "running",
+      chatMode: "interactive",
+      bufferedEvents: [
+        {
+          runId: "run-1",
+          ts: "2026-01-01T00:00:00.000Z",
+          event: "message.part.delta",
+          data: {
+            sessionID: "session-1",
+            messageID: "msg-1",
+            partID: "part-1",
+            field: "text",
+            delta: "Hello",
+          },
+        },
+      ],
+      streamConnected: false,
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
+      expect(modelRef!.agent.connectionStatus()).toBe("disconnected");
+    });
+  });
+
+  it("tracks OpenCode connection status across idle, active, warming, and disconnected states", async () => {
     let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
     render(() => {
       modelRef = useRunDetailModel();
@@ -1032,7 +1204,7 @@ describe("useRunDetailModel startup ownership", () => {
     await waitFor(() => {
       expect(modelRef).toBeDefined();
       expect(subscribeRunOpenCodeEventsMock).toHaveBeenCalledTimes(1);
-      expect(modelRef!.agent.connectionStatus()).toBe("warming");
+      expect(modelRef!.agent.connectionStatus()).toBe("idle");
     });
 
     const subscribeCall = subscribeRunOpenCodeEventsMock.mock.calls[0]?.[0] as
@@ -1049,23 +1221,51 @@ describe("useRunDetailModel startup ownership", () => {
     subscribeCall?.onOutputChannel?.({
       runId: "run-1",
       ts: "2026-01-01T00:00:00.000Z",
-      event: "message",
-      data: { type: "server.disconnected", reason: "socket_closed" },
+      event: "message.part.delta",
+      data: {
+        sessionID: "session-1",
+        messageID: "msg-1",
+        partID: "part-1",
+        field: "text",
+        delta: "Hello",
+      },
     });
 
     await waitFor(() => {
-      expect(modelRef!.agent.connectionStatus()).toBe("disconnected");
+      expect(modelRef!.agent.connectionStatus()).toBe("connected");
     });
 
     subscribeCall?.onOutputChannel?.({
       runId: "run-1",
       ts: "2026-01-01T00:00:01.000Z",
-      event: "message",
-      data: { type: "server.connected", reason: "socket_recovered" },
+      event: "session.idle",
+      data: { sessionID: "session-1" },
     });
 
     await waitFor(() => {
-      expect(modelRef!.agent.connectionStatus()).toBe("connected");
+      expect(modelRef!.agent.connectionStatus()).toBe("idle");
+    });
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:02.000Z",
+      event: "message",
+      data: { type: "stream.reconnecting", reason: "socket_retry" },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.connectionStatus()).toBe("warming");
+    });
+
+    subscribeCall?.onOutputChannel?.({
+      runId: "run-1",
+      ts: "2026-01-01T00:00:03.000Z",
+      event: "message",
+      data: { type: "stream.terminated", reason: "socket_closed" },
+    });
+
+    await waitFor(() => {
+      expect(modelRef!.agent.connectionStatus()).toBe("disconnected");
     });
   });
 
@@ -1594,8 +1794,6 @@ describe("useRunDetailModel startup ownership", () => {
       state: "running",
       chatMode: "interactive",
       bufferedEvents: [],
-      messages: [],
-      todos: [],
       streamConnected: true,
       sessionId: "session-root",
     });
@@ -2015,8 +2213,6 @@ describe("useRunDetailModel startup ownership", () => {
       state: "running",
       chatMode: "interactive",
       bufferedEvents: [],
-      messages: [],
-      todos: [],
       streamConnected: true,
       sessionId: "session-root",
     });

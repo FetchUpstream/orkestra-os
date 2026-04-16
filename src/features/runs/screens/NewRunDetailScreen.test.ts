@@ -15,19 +15,22 @@ import { formatGitStateLabel } from "./gitStateLabels";
 
 describe("formatGitStateLabel", () => {
   it("maps known backend git states to user-facing labels", () => {
-    expect(formatGitStateLabel("clean")).toBe("Clean");
-    expect(formatGitStateLabel("needs_rebase")).toBe("Needs rebase");
+    expect(formatGitStateLabel("clean")).toBe("Up to Date");
+    expect(formatGitStateLabel("needs_rebase")).toBe("Rebase Required");
     expect(formatGitStateLabel("rebase_in_progress")).toBe(
-      "Rebase in progress",
+      "Rebase In Progress",
     );
-    expect(formatGitStateLabel("mergeable")).toBe("Mergeable");
-    expect(formatGitStateLabel("conflicted")).toBe("Conflicted");
+    expect(formatGitStateLabel("mergeable")).toBe("Ready to Merge");
+    expect(formatGitStateLabel("conflicted")).toBe("Conflicts Detected");
+    expect(formatGitStateLabel("merged")).toBe("Merged");
+    expect(formatGitStateLabel("completing")).toBe("Finalizing Merge");
+    expect(formatGitStateLabel("ready")).toBe("Status Unknown");
   });
 
-  it("keeps fallback text for unknown states", () => {
-    expect(formatGitStateLabel("unknown")).toBe("Unrecognized");
+  it("falls back to status unknown for unsupported states", () => {
+    expect(formatGitStateLabel("unknown")).toBe("Status Unknown");
     expect(formatGitStateLabel("unknown", "brand_new_state")).toBe(
-      "Unrecognized (brand_new_state)",
+      "Status Unknown",
     );
   });
 });
