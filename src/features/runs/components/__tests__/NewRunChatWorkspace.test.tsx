@@ -13,6 +13,13 @@
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  GetRunOpenCodeSessionMessagesPageParams,
+  RunAgentOption,
+  RunOpenCodeSessionMessagesPageResult,
+} from "../../../../app/lib/runs";
+import { createEmptyAgentStore } from "../../model/agentReducer";
+import type { AgentStore } from "../../model/agentTypes";
 import NewRunChatWorkspace, {
   buildStreamingTextPart,
 } from "../NewRunChatWorkspace";
@@ -31,7 +38,11 @@ const {
   getRunOpenCodeSessionMessagesPageMock,
   getRunOpenCodeSessionTodosMock,
 } = vi.hoisted(() => ({
-  getRunOpenCodeSessionMessagesPageMock: vi.fn(async () => ({
+  getRunOpenCodeSessionMessagesPageMock: vi.fn<
+    (
+      params: GetRunOpenCodeSessionMessagesPageParams,
+    ) => Promise<RunOpenCodeSessionMessagesPageResult>
+  >(async (_params) => ({
     messages: [],
     hasMore: false,
     nextCursor: undefined,
@@ -60,6 +71,19 @@ const createDeferred = <T,>() => {
 
   return { promise, resolve, reject };
 };
+
+const createRunAgentOption = (id: string, label: string): RunAgentOption => ({
+  id,
+  label,
+  scope: "project",
+  mode: "primary",
+  selectable: true,
+});
+
+const withAgentStoreDefaults = (overrides: Partial<AgentStore>): AgentStore => ({
+  ...createEmptyAgentStore(overrides.sessionId ?? null),
+  ...overrides,
+});
 
 const createModelStub = (
   runStatus: "running" | "completed",
@@ -163,7 +187,7 @@ const createModelStub = (
         };
       },
       submitPrompt: vi.fn(async () => true),
-      runAgentOptions: () => [{ id: "agent-1", label: "Planner" }],
+      runAgentOptions: () => [createRunAgentOption("agent-1", "Planner")],
       runProviderOptions: () => [{ id: "provider-1", label: "OpenAI" }],
       runModelOptions: () => [
         { id: "model-1", label: "GPT-5", providerId: "provider-1" },
@@ -496,7 +520,7 @@ describe("NewRunChatWorkspace", () => {
     render(() => <NewRunChatWorkspace model={model} />);
 
     expect(
-      screen.getByText((content, element) => {
+      screen.getByText((_content, element) => {
         return (
           element?.textContent?.replace(/\s+/g, " ").trim() ===
           "Source: Docs lookup - k2p5"
@@ -801,7 +825,8 @@ describe("NewRunChatWorkspace", () => {
     await fireEvent.click(sendButton);
     expect(replyQuestionMock).toHaveBeenCalledTimes(1);
 
-    resolveReply?.(true);
+    expect(resolveReply).toBeTruthy();
+    resolveReply!(true);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
     });
@@ -811,7 +836,8 @@ describe("NewRunChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "Sending..." })).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Sending..." }));
     expect(rejectQuestionMock).toHaveBeenCalledTimes(1);
-    resolveReject?.(true);
+    expect(resolveReject).toBeTruthy();
+    resolveReject!(true);
   });
 
   it("renders checked option state immediately", async () => {
@@ -1845,7 +1871,7 @@ describe("NewRunChatWorkspace", () => {
 
   it("hydrates lineage-routed child sessions from fetched history", async () => {
     getRunOpenCodeSessionMessagesPageMock.mockImplementation(
-      async ({ sessionId }: { sessionId: string }) => {
+      async ({ sessionId }: GetRunOpenCodeSessionMessagesPageParams) => {
         if (sessionId === "session-grandchild") {
           return {
             messages: [
@@ -2264,7 +2290,7 @@ describe("NewRunChatWorkspace", () => {
       () => todosDeferred.promise,
     );
 
-    const [store, setStore] = createSignal({
+    const [store, setStore] = createSignal<AgentStore>(withAgentStoreDefaults({
       sessionId: "session-root",
       status: "active",
       streamConnected: true,
@@ -2297,7 +2323,7 @@ describe("NewRunChatWorkspace", () => {
       todos: [],
       diffSummary: null,
       rawEvents: [],
-    });
+    }));
 
     const { model } = createModelStub("running", false, { id: "run-1" });
     model.agent.store = store as unknown as typeof model.agent.store;
@@ -2311,7 +2337,7 @@ describe("NewRunChatWorkspace", () => {
 
     setStore({
       ...store(),
-      diffSummary: { filesChanged: 1 },
+      diffSummary: { files: [], raw: { filesChanged: 1 } },
     });
 
     await waitFor(() => {
@@ -2329,7 +2355,7 @@ describe("NewRunChatWorkspace", () => {
 
     setStore({
       ...store(),
-      lastSyncAt: store().lastSyncAt + 1,
+      lastSyncAt: (store().lastSyncAt ?? 0) + 1,
     });
 
     await waitFor(() => {
@@ -2599,7 +2625,7 @@ describe("NewRunChatWorkspace", () => {
   });
 
   it("keeps the parent task row and sibling child cards stable during overlapping updates", async () => {
-    const [store, setStore] = createSignal({
+    const [store, setStore] = createSignal<AgentStore>(withAgentStoreDefaults({
       sessionId: "session-root",
       status: "active",
       streamConnected: true,
@@ -2713,7 +2739,7 @@ describe("NewRunChatWorkspace", () => {
           },
         },
       ],
-    });
+    }));
 
     const { model } = createModelStub("running");
     model.agent.store = store as unknown as typeof model.agent.store;
@@ -3806,8 +3832,8 @@ describe("NewRunChatWorkspace", () => {
     const { model } = createModelStub("running");
     model.agent.submitPrompt = submitPromptMock;
     model.agent.runAgentOptions = () => [
-      { id: "agent-1", label: "Planner" },
-      { id: "agent-2", label: "Builder" },
+      createRunAgentOption("agent-1", "Planner"),
+      createRunAgentOption("agent-2", "Builder"),
     ];
     model.agent.runProviderOptions = () => [
       { id: "provider-1", label: "OpenAI" },
@@ -3881,7 +3907,8 @@ describe("NewRunChatWorkspace", () => {
 
   it("renders assistant attribution subtitle only for assistant messages", () => {
     const { model } = createModelStub("running");
-    model.agent.store = () => ({
+    model.agent.store = () =>
+      withAgentStoreDefaults({
       sessionId: "session-1",
       status: "idle",
       streamConnected: true,
@@ -3960,7 +3987,7 @@ describe("NewRunChatWorkspace", () => {
       todos: [],
       diffSummary: null,
       rawEvents: [],
-    });
+      });
 
     render(() => <NewRunChatWorkspace model={model} />);
 
@@ -3972,7 +3999,8 @@ describe("NewRunChatWorkspace", () => {
 
   it("renders user and assistant message wrappers for readable bubble width styling", () => {
     const { model } = createModelStub("running");
-    model.agent.store = () => ({
+    model.agent.store = () =>
+      withAgentStoreDefaults({
       sessionId: "session-1",
       status: "idle",
       streamConnected: true,
@@ -4019,7 +4047,7 @@ describe("NewRunChatWorkspace", () => {
       todos: [],
       diffSummary: null,
       rawEvents: [],
-    });
+      });
 
     const { container } = render(() => <NewRunChatWorkspace model={model} />);
 

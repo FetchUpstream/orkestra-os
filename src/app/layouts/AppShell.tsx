@@ -911,7 +911,9 @@ const AppShellContent: Component<AppShellProps> = (props) => {
         isOpen={aboutModalOpen}
         onClose={onCloseSettings}
         updateState={linuxPackageUpdateState}
-        onCheckForUpdates={() => runLinuxPackageUpdateCheck()}
+        onCheckForUpdates={() => {
+          void runLinuxPackageUpdateCheck();
+        }}
       />
       <CloseWhileRunsActiveModal
         isOpen={closeWarningOpen}

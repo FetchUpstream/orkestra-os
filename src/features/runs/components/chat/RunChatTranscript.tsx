@@ -997,70 +997,44 @@ const VirtualizedTranscriptRow: Component<{
       style={{ top: `${layout()?.start ?? 0}px` }}
     >
       <Show when={assistantRow()}>
-        {() => (
-          <AssistantTranscriptRowContent
-            row={assistantRow as Accessor<RunChatTranscriptAssistantRow>}
-          />
-        )}
+        <AssistantTranscriptRowContent
+          row={assistantRow as Accessor<RunChatTranscriptAssistantRow>}
+        />
       </Show>
       <Show when={userRow()}>
-        {() => (
-          <UserTranscriptRowContent
-            row={userRow as Accessor<RunChatTranscriptUserRow>}
-          />
-        )}
+        <UserTranscriptRowContent
+          row={userRow as Accessor<RunChatTranscriptUserRow>}
+        />
       </Show>
       <Show when={systemRow()}>
-        {() => (
-          <SystemTranscriptRowContent
-            row={systemRow as Accessor<RunChatTranscriptSystemRow>}
-          />
-        )}
+        <SystemTranscriptRowContent
+          row={systemRow as Accessor<RunChatTranscriptSystemRow>}
+        />
       </Show>
       <Show when={failedQuestionRow()}>
-        {() => (
-          <FailedQuestionTranscriptRowContent
-            row={
-              failedQuestionRow as Accessor<RunChatTranscriptFailedQuestionRow>
-            }
-          />
-        )}
+        <FailedQuestionTranscriptRowContent
+          row={failedQuestionRow as Accessor<RunChatTranscriptFailedQuestionRow>}
+        />
       </Show>
       <Show when={pendingPermissionRow()}>
-        {() => (
-          <PendingPermissionTranscriptRowContent
-            row={
-              pendingPermissionRow as Accessor<RunChatTranscriptPendingPermissionRow>
-            }
-          />
-        )}
+        <PendingPermissionTranscriptRowContent
+          row={pendingPermissionRow as Accessor<RunChatTranscriptPendingPermissionRow>}
+        />
       </Show>
       <Show when={failedPermissionRow()}>
-        {() => (
-          <FailedPermissionTranscriptRowContent
-            row={
-              failedPermissionRow as Accessor<RunChatTranscriptFailedPermissionRow>
-            }
-          />
-        )}
+        <FailedPermissionTranscriptRowContent
+          row={failedPermissionRow as Accessor<RunChatTranscriptFailedPermissionRow>}
+        />
       </Show>
       <Show when={pendingPromptRow()}>
-        {() => (
-          <PendingPromptTranscriptRowContent
-            row={
-              pendingPromptRow as Accessor<RunChatTranscriptPendingPromptRow>
-            }
-          />
-        )}
+        <PendingPromptTranscriptRowContent
+          row={pendingPromptRow as Accessor<RunChatTranscriptPendingPromptRow>}
+        />
       </Show>
       <Show when={sessionStatusRow()}>
-        {() => (
-          <SessionStatusTranscriptRowContent
-            row={
-              sessionStatusRow as Accessor<RunChatTranscriptSessionStatusRow>
-            }
-          />
-        )}
+        <SessionStatusTranscriptRowContent
+          row={sessionStatusRow as Accessor<RunChatTranscriptSessionStatusRow>}
+        />
       </Show>
     </li>
   );

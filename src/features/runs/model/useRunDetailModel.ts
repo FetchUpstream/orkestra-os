@@ -40,6 +40,7 @@ import {
   type BootstrapRunOpenCodeResult,
   type Run,
   type RunSelectionOption,
+  type RunAgentOption,
   type RunModelOption,
   type RunDiffFile,
   type RunDiffFilePayload,
@@ -424,9 +425,7 @@ export const useRunDetailModel = () => {
     }
     return agentActivityState() === "idle" ? "idle" : "connected";
   });
-  const [runAgentOptions, setRunAgentOptions] = createSignal<
-    RunSelectionOption[]
-  >([]);
+  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>([]);
   const [runProviderOptions, setRunProviderOptions] = createSignal<
     RunSelectionOption[]
   >([]);

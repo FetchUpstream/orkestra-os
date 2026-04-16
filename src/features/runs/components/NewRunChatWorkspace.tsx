@@ -25,16 +25,12 @@ import {
   RunChatTranscript,
   type RunChatTranscriptHandle,
   type RunChatTranscriptRow,
-  RunChatMarkdown,
-  RunChatMessage,
-  RunChatSystemMessage,
-  RunChatToolRail,
-  RunChatUserMessage,
   type RunChatToolRailItem,
   type RunChatToolRailSubagentItem,
 } from "./chat";
 import RunAgentSelectOptions from "./RunAgentSelectOptions";
 import type {
+  AgentRole,
   AgentStore,
   OpenCodeBusEvent,
   UiAssistantStreamChannelMetadata,
@@ -43,6 +39,7 @@ import type {
   UiPermissionRequest,
   UiQuestionRequest,
   UiReasoningPart,
+  UiStreamChunkNode,
   UiTextPart,
 } from "../model/agentTypes";
 import { hydrateAgentStore } from "../model/agentReducer";
@@ -103,7 +100,7 @@ type NewRunChatWorkspaceProps = {
 
 type ChatRow = {
   key: string;
-  role: string;
+  role: AgentRole;
   content: string;
   reasoningContent: string;
   assistantStreaming?: UiAssistantStreamingMetadata;
@@ -111,99 +108,6 @@ type ChatRow = {
   timestamp: string;
   attributionLabel: string;
   hasRenderableContent: boolean;
-};
-
-type ChatTranscriptMessageItemProps = {
-  row: () => ChatRow | undefined;
-};
-
-const ChatTranscriptMessageItem: Component<ChatTranscriptMessageItemProps> = (
-  props,
-) => {
-  const row = createMemo(() => props.row());
-  const waitingRow = (
-    <RunInlineLoader
-      as="p"
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
-    />
-  );
-
-  return (
-    <Show when={row()}>
-      <div
-        data-run-chat-message-id={row()?.key}
-        data-run-chat-message-kind="parent"
-      >
-        <Show
-          when={row()?.role === "assistant"}
-          fallback={
-            <Show
-              when={row()?.role === "user"}
-              fallback={
-                <RunChatMessage role="system" class="run-chat-message-item">
-                  <RunChatSystemMessage>
-                    <RunChatMarkdown
-                      content={
-                        row()?.content.length
-                          ? (row()?.content ?? "")
-                          : (row()?.timestamp ?? "")
-                      }
-                    />
-                  </RunChatSystemMessage>
-                </RunChatMessage>
-              }
-            >
-              <RunChatMessage role="user" class="run-chat-message-item">
-                <RunChatUserMessage>
-                  <RunChatMarkdown
-                    content={
-                      row()?.content.length ? (row()?.content ?? "") : "(empty)"
-                    }
-                  />
-                </RunChatUserMessage>
-              </RunChatMessage>
-            </Show>
-          }
-        >
-          <RunChatMessage role="assistant" class="run-chat-message-item">
-            <RunChatAssistantMessage
-              content={row()?.content.length ? (row()?.content ?? " ") : " "}
-              streaming={row()?.assistantStreaming}
-              isStreamingActive={
-                row()?.assistantStreaming?.isStreaming === true
-              }
-              reasoning={
-                row()?.reasoningContent.length ? (
-                  <div class="run-chat-assistant-message__reasoning-inline">
-                    <RunChatMarkdown
-                      content={`*Thinking:* ${row()?.reasoningContent ?? ""}`}
-                    />
-                  </div>
-                ) : undefined
-              }
-              toolRail={
-                row()?.toolItems.length ? (
-                  <RunChatToolRail items={row()?.toolItems ?? []} />
-                ) : undefined
-              }
-              details={
-                row()?.attributionLabel.length ? (
-                  <p class="run-chat-assistant-message__attribution">
-                    {row()?.attributionLabel ?? ""}
-                  </p>
-                ) : undefined
-              }
-            />
-            <Show when={row() && !row()!.hasRenderableContent}>
-              {waitingRow}
-            </Show>
-          </RunChatMessage>
-        </Show>
-      </div>
-    </Show>
-  );
 };
 
 const resolveTranscriptPartText = (
@@ -360,7 +264,7 @@ const materializeStreamText = (
   }
 
   const deltas: string[] = [];
-  let cursor = tail;
+  let cursor: UiStreamChunkNode | undefined = tail;
   while (cursor) {
     deltas.push(cursor.delta);
     cursor = cursor.prev;
@@ -1338,9 +1242,6 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
     }
     return `Question ${activeStepIndex() + 1} of ${props.card.prompts.length}`;
   });
-  const currentQuestionKey = createMemo(
-    () => `${props.card.requestId}:${activeStepIndex()}`,
-  );
   const isInteractionLocked = createMemo(
     () => props.isReplying || isActionInFlight(),
   );
@@ -1455,142 +1356,138 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
             </div>
           }
         >
-          {(prompt) => (
-            <Show keyed when={currentQuestionKey()}>
-              {() => {
-                const isOptionChecked = (value: string) =>
-                  currentDraft().selectedOptionValues.includes(value);
-                const isCustomEnabled = () => prompt().custom;
-                const isCustomChecked = () =>
-                  isCustomEnabled() && currentDraft().useCustomAnswer;
+          {(prompt) => {
+            const isOptionChecked = (value: string) =>
+              currentDraft().selectedOptionValues.includes(value);
+            const isCustomEnabled = () => prompt().custom;
+            const isCustomChecked = () =>
+              isCustomEnabled() && currentDraft().useCustomAnswer;
 
-                return (
-                  <div class="border-base-content/10 bg-base-100 space-y-4 border p-4">
-                    <div class="space-y-1">
-                      <p class="text-sm font-semibold">{prompt().header}</p>
-                      <p class="text-base-content/90 text-sm leading-6">
-                        {prompt().question}
-                      </p>
-                    </div>
+            return (
+              <div class="border-base-content/10 bg-base-100 space-y-4 border p-4">
+                <div class="space-y-1">
+                  <p class="text-sm font-semibold">{prompt().header}</p>
+                  <p class="text-base-content/90 text-sm leading-6">
+                    {prompt().question}
+                  </p>
+                </div>
 
-                    <div class="space-y-2">
-                      <For each={prompt().options}>
-                        {(option) => {
-                          const checked = () => isOptionChecked(option.value);
-                          return (
-                            <button
-                              type="button"
-                              aria-label={option.label}
-                              data-checked={checked() ? "true" : "false"}
-                              class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
-                                checked()
-                                  ? "border-primary/50 bg-base-100"
-                                  : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
-                              }`}
-                              disabled={isInteractionLocked()}
-                              onClick={() => {
-                                updateDraftAt(activeStepIndex(), (draft) =>
-                                  toggleQuestionWizardOption(
-                                    prompt(),
-                                    draft,
-                                    option.value,
-                                  ),
-                                );
-                              }}
-                            >
-                              <span
-                                class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
-                                  checked()
-                                    ? "border-primary bg-primary text-primary-content"
-                                    : "border-base-content/30 bg-base-100"
-                                }`}
-                                aria-hidden="true"
-                              >
-                                <Show when={checked()}>✓</Show>
-                              </span>
-                              <span>
-                                <span class="block text-sm font-medium">
-                                  {option.label}
-                                </span>
-                                <Show when={option.description.length > 0}>
-                                  <span class="text-base-content/70 mt-1 block text-xs">
-                                    {option.description}
-                                  </span>
-                                </Show>
-                              </span>
-                            </button>
-                          );
-                        }}
-                      </For>
-
-                      <Show when={isCustomEnabled()}>
+                <div class="space-y-2">
+                  <For each={prompt().options}>
+                    {(option) => {
+                      const checked = () => isOptionChecked(option.value);
+                      return (
                         <button
                           type="button"
-                          aria-label="Type your own answer"
-                          data-checked={isCustomChecked() ? "true" : "false"}
+                          aria-label={option.label}
+                          data-checked={checked() ? "true" : "false"}
                           class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
-                            isCustomChecked()
+                            checked()
                               ? "border-primary/50 bg-base-100"
                               : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
                           }`}
                           disabled={isInteractionLocked()}
                           onClick={() => {
                             updateDraftAt(activeStepIndex(), (draft) =>
-                              toggleQuestionWizardCustomAnswer(prompt(), draft),
+                              toggleQuestionWizardOption(
+                                prompt(),
+                                draft,
+                                option.value,
+                              ),
                             );
                           }}
                         >
                           <span
                             class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
-                              isCustomChecked()
+                              checked()
                                 ? "border-primary bg-primary text-primary-content"
                                 : "border-base-content/30 bg-base-100"
                             }`}
                             aria-hidden="true"
                           >
-                            <Show when={isCustomChecked()}>✓</Show>
+                            <Show when={checked()}>✓</Show>
                           </span>
-                          <span class="block text-sm font-medium">
-                            Type your own answer
+                          <span>
+                            <span class="block text-sm font-medium">
+                              {option.label}
+                            </span>
+                            <Show when={option.description.length > 0}>
+                              <span class="text-base-content/70 mt-1 block text-xs">
+                                {option.description}
+                              </span>
+                            </Show>
                           </span>
                         </button>
-                      </Show>
-                    </div>
+                      );
+                    }}
+                  </For>
 
-                    <Show when={isCustomEnabled() && isCustomChecked()}>
-                      <div class="bg-base-100 space-y-2">
-                        <label
-                          class="text-base-content/60 text-xs font-semibold tracking-[0.18em] uppercase"
-                          for={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
-                        >
-                          Your answer
-                        </label>
-                        <textarea
-                          id={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
-                          class="textarea textarea-bordered bg-base-100 min-h-[96px] w-full rounded-none text-sm leading-6"
-                          value={currentDraft().customText}
-                          placeholder="Type your answer"
-                          disabled={isInteractionLocked()}
-                          rows={4}
-                          onInput={(event) => {
-                            updateDraftAt(activeStepIndex(), (draft) =>
-                              updateQuestionWizardCustomText(
-                                draft,
-                                event.currentTarget.value,
-                              ),
-                            );
-                          }}
-                        />
-                        <p class="text-base-content/60 text-xs">
-                          Type your own answer if none of the options fit.
-                        </p>
-                      </div>
-                    </Show>
+                  <Show when={isCustomEnabled()}>
+                    <button
+                      type="button"
+                      aria-label="Type your own answer"
+                      data-checked={isCustomChecked() ? "true" : "false"}
+                      class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
+                        isCustomChecked()
+                          ? "border-primary/50 bg-base-100"
+                          : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
+                      }`}
+                      disabled={isInteractionLocked()}
+                      onClick={() => {
+                        updateDraftAt(activeStepIndex(), (draft) =>
+                          toggleQuestionWizardCustomAnswer(prompt(), draft),
+                        );
+                      }}
+                    >
+                      <span
+                        class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
+                          isCustomChecked()
+                            ? "border-primary bg-primary text-primary-content"
+                            : "border-base-content/30 bg-base-100"
+                        }`}
+                        aria-hidden="true"
+                      >
+                        <Show when={isCustomChecked()}>✓</Show>
+                      </span>
+                      <span class="block text-sm font-medium">
+                        Type your own answer
+                      </span>
+                    </button>
+                  </Show>
+                </div>
+
+                <Show when={isCustomEnabled() && isCustomChecked()}>
+                  <div class="bg-base-100 space-y-2">
+                    <label
+                      class="text-base-content/60 text-xs font-semibold tracking-[0.18em] uppercase"
+                      for={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
+                    >
+                      Your answer
+                    </label>
+                    <textarea
+                      id={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
+                      class="textarea textarea-bordered bg-base-100 min-h-[96px] w-full rounded-none text-sm leading-6"
+                      value={currentDraft().customText}
+                      placeholder="Type your answer"
+                      disabled={isInteractionLocked()}
+                      rows={4}
+                      onInput={(event) => {
+                        updateDraftAt(activeStepIndex(), (draft) =>
+                          updateQuestionWizardCustomText(
+                            draft,
+                            event.currentTarget.value,
+                          ),
+                        );
+                      }}
+                    />
+                    <p class="text-base-content/60 text-xs">
+                      Type your own answer if none of the options fit.
+                    </p>
                   </div>
-                );
-              }}
-            </Show>
-          )}
+                </Show>
+              </div>
+            );
+          }}
         </Show>
 
         <Show
@@ -2488,113 +2385,113 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   };
 
   const buildChatRows = createMemo<ChatRow[]>(() => {
-    return transcriptMessageOrder()
-      .map((messageId) => {
-        const message = props.model.agent.store().messagesById[messageId];
-        if (!message) {
-          return null;
+    return transcriptMessageOrder().reduce<ChatRow[]>((rows, messageId) => {
+      const message = props.model.agent.store().messagesById[messageId];
+      if (!message) {
+        return rows;
+      }
+
+      const textParts: UiTextPart[] = [];
+      const reasoningParts: UiReasoningPart[] = [];
+      const toolItems: RunChatToolRailItem[] = [];
+
+      for (const partId of message.partOrder) {
+        const part = message.partsById[partId];
+        if (!part) {
+          continue;
         }
 
-        const textParts: UiTextPart[] = [];
-        const reasoningParts: UiReasoningPart[] = [];
-        const toolItems: RunChatToolRailItem[] = [];
-
-        for (const partId of message.partOrder) {
-          const part = message.partsById[partId];
-          if (!part) {
-            continue;
+        if (part.kind === "text") {
+          const text = resolvePartText(part, toolPathDisplayContext());
+          if (text.trim().length > 0 || part.streaming) {
+            textParts.push(part);
           }
-
-          if (part.kind === "text") {
-            const text = resolvePartText(part, toolPathDisplayContext());
-            if (text.trim().length > 0 || part.streaming) {
-              textParts.push(part);
-            }
-            continue;
-          }
-
-          if (part.kind === "reasoning") {
-            const text = resolvePartText(part, toolPathDisplayContext());
-            if (text.trim().length > 0 || part.streaming) {
-              reasoningParts.push(part);
-            }
-            continue;
-          }
-
-          if (part.kind === "tool") {
-            const summary = buildToolSummary(part, toolPathDisplayContext());
-            const isTask = isTaskToolName(part.toolName);
-            toolItems.push({
-              id: part.id,
-              label: part.title?.trim() || part.toolName || "Tool",
-              summary,
-              status: part.status,
-              isTask,
-              subagents: subagentPanelsByTaskPartId()[part.id] ?? [],
-            });
-            continue;
-          }
-
-          if (part.kind === "patch") {
-            continue;
-          }
-
-          if (part.kind === "file") {
-            continue;
-          }
-
-          const stepSummary = getStepDetailsSummary(part);
-          if (stepSummary) {
-            continue;
-          }
-
-          if (part.kind === "unknown") {
-            continue;
-          }
+          continue;
         }
 
-        const assistantStreaming =
-          message.role === "assistant"
-            ? buildAssistantStreamingMetadata(
-                message.id,
-                textParts,
-                reasoningParts,
-                toolPathDisplayContext(),
-              )
-            : undefined;
-        const content = assistantStreaming
-          ? assistantStreaming.targetText
-          : textParts
-              .map((part) => resolvePartText(part, toolPathDisplayContext()))
-              .join("\n\n")
-              .trim();
-        const reasoningContent = assistantStreaming
-          ? assistantStreaming.reasoningTargetText
-          : reasoningParts
-              .map((part) => resolvePartText(part, toolPathDisplayContext()))
-              .join("\n\n")
-              .trim();
-        const timestamp = formatAgentTimestamp(
-          message.updatedAt ?? message.createdAt ?? null,
-        );
+        if (part.kind === "reasoning") {
+          const text = resolvePartText(part, toolPathDisplayContext());
+          if (text.trim().length > 0 || part.streaming) {
+            reasoningParts.push(part);
+          }
+          continue;
+        }
 
-        return {
-          key: message.id,
-          role: message.role,
-          content,
-          reasoningContent,
-          assistantStreaming,
-          toolItems,
-          timestamp,
-          attributionLabel: formatMessageAttribution(message.attribution ?? {}),
-          hasRenderableContent:
-            (assistantStreaming?.hasVisibleContent ?? content.length > 0) ||
-            (assistantStreaming?.reasoning.hasVisibleContent ??
-              reasoningContent.length > 0) ||
-            toolItems.length > 0,
-        };
-      })
-      .filter((row): row is ChatRow => row !== null);
+        if (part.kind === "tool") {
+          const summary = buildToolSummary(part, toolPathDisplayContext());
+          const isTask = isTaskToolName(part.toolName);
+          toolItems.push({
+            id: part.id,
+            label: part.title?.trim() || part.toolName || "Tool",
+            summary,
+            status: part.status,
+            isTask,
+            subagents: subagentPanelsByTaskPartId()[part.id] ?? [],
+          });
+          continue;
+        }
+
+        if (part.kind === "patch") {
+          continue;
+        }
+
+        if (part.kind === "file") {
+          continue;
+        }
+
+        const stepSummary = getStepDetailsSummary(part);
+        if (stepSummary) {
+          continue;
+        }
+
+        if (part.kind === "unknown") {
+          continue;
+        }
+      }
+
+      const assistantStreaming =
+        message.role === "assistant"
+          ? buildAssistantStreamingMetadata(
+              message.id,
+              textParts,
+              reasoningParts,
+              toolPathDisplayContext(),
+            )
+          : undefined;
+      const content = assistantStreaming
+        ? assistantStreaming.targetText
+        : textParts
+            .map((part) => resolvePartText(part, toolPathDisplayContext()))
+            .join("\n\n")
+            .trim();
+      const reasoningContent = assistantStreaming
+        ? assistantStreaming.reasoningTargetText
+        : reasoningParts
+            .map((part) => resolvePartText(part, toolPathDisplayContext()))
+            .join("\n\n")
+            .trim();
+      const timestamp = formatAgentTimestamp(
+        message.updatedAt ?? message.createdAt ?? null,
+      );
+
+      rows.push({
+        key: message.id,
+        role: message.role,
+        content,
+        reasoningContent,
+        assistantStreaming,
+        toolItems,
+        timestamp,
+        attributionLabel: formatMessageAttribution(message.attribution ?? {}),
+        hasRenderableContent:
+          (assistantStreaming?.hasVisibleContent ?? content.length > 0) ||
+          (assistantStreaming?.reasoning.hasVisibleContent ??
+            reasoningContent.length > 0) ||
+          toolItems.length > 0,
+      });
+
+      return rows;
+    }, []);
   });
 
   const chatTranscriptRows = createMemo<RunChatTranscriptRow[]>(() => {

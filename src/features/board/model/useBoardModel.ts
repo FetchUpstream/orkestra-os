@@ -51,7 +51,11 @@ import {
   type RunStatus,
   type RunSourceBranchOption,
 } from "../../../app/lib/runs";
-import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
+import type {
+  RunAgentOption,
+  RunModelOption,
+  RunSelectionOption,
+} from "../../../app/lib/runs";
 import {
   getRunSelectionOptionsWithCache,
   readRunSelectionOptionsCache,
@@ -491,9 +495,7 @@ export const useBoardModel = () => {
   const [pendingDoneTaskId, setPendingDoneTaskId] = createSignal("");
   const [pendingInProgressTaskId, setPendingInProgressTaskId] =
     createSignal("");
-  const [runAgentOptions, setRunAgentOptions] = createSignal<
-    RunSelectionOption[]
-  >([]);
+  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>([]);
   const [runProviderOptions, setRunProviderOptions] = createSignal<
     RunSelectionOption[]
   >([]);
