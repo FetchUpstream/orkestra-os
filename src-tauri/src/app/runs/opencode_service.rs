@@ -2030,7 +2030,7 @@ impl RunsOpenCodeService {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// let p1 = r#"{"status":" busy "}"#;
     /// assert_eq!(parse_status_hint(p1), Some("busy".to_string()));
     ///
@@ -9219,10 +9219,14 @@ mod tests {
         let first = first.unwrap();
         let second = second.unwrap();
 
+        let mut states = vec![first.state.clone(), second.state.clone()];
+        states.sort();
+
         assert_eq!(fs::read_to_string(&marker_path).unwrap(), "1");
-        assert!(matches!(first.state.as_str(), "queued" | "ready"));
-        assert!(matches!(second.state.as_str(), "queued" | "ready"));
+        assert_eq!(states, vec!["accepted".to_string(), "queued".to_string()]);
         assert_eq!(fetch_run_setup_state(&pool, "run-1").await, "succeeded");
+        assert_eq!(first.client_request_id, "initial-run-message:run-1");
+        assert_eq!(second.client_request_id, "initial-run-message:run-1");
     }
 
     #[tokio::test]

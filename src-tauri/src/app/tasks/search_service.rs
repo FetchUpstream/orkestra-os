@@ -81,17 +81,20 @@ impl TaskSearchService {
             .map_err(|source| TaskSearchError::SearchRepository { source })?;
         let (candidates, used_fallback) = if strict_candidates.is_empty() {
             let relaxed_fts_query = Self::build_relaxed_fts_query(&normalized_query);
-            if relaxed_fts_query.is_empty() {
-                return Ok(Vec::new());
-            }
-
-            (
+            let relaxed_candidates = if relaxed_fts_query.is_empty() {
+                Vec::new()
+            } else {
                 self.repository
                     .list_project_candidates(project_id, &relaxed_fts_query, MAX_CANDIDATES)
                     .await
-                    .map_err(|source| TaskSearchError::SearchRepository { source })?,
-                true,
-            )
+                    .map_err(|source| TaskSearchError::SearchRepository { source })?
+            };
+
+            if relaxed_candidates.is_empty() {
+                (self.list_project_fallback_candidates(project_id).await?, true)
+            } else {
+                (relaxed_candidates, true)
+            }
         } else {
             (strict_candidates, false)
         };
@@ -188,6 +191,28 @@ impl TaskSearchService {
             .join(" OR ")
     }
 
+    async fn list_project_fallback_candidates(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<TaskSearchCandidate>, TaskSearchError> {
+        self.tasks_repository
+            .list_project_tasks(project_id)
+            .await
+            .map_err(|source| TaskSearchError::TasksRepository { source })
+            .map(|tasks| {
+                tasks
+                    .into_iter()
+                    .map(|task| TaskSearchCandidate {
+                        task_id: task.id,
+                        display_key: task.display_key,
+                        title: task.title,
+                        description: task.description.unwrap_or_default(),
+                        fts_rank: 0.0,
+                    })
+                    .collect()
+            })
+    }
+
     fn rerank_candidates(
         query: &str,
         candidates: Vec<TaskSearchCandidate>,
@@ -202,6 +227,14 @@ impl TaskSearchService {
         let mut ranked = candidates
             .into_iter()
             .filter_map(|candidate| {
+                let searchable_text = format!(
+                    "{} {} {}",
+                    candidate.title, candidate.description, candidate.display_key
+                );
+                let combined_score = pattern.score(
+                    Utf32Str::new(searchable_text.as_str(), &mut buf),
+                    &mut matcher,
+                );
                 let title_score = pattern.score(
                     Utf32Str::new(candidate.title.as_str(), &mut buf),
                     &mut matcher,
@@ -215,7 +248,8 @@ impl TaskSearchService {
                     &mut matcher,
                 );
 
-                if title_score.is_none()
+                if combined_score.is_none()
+                    && title_score.is_none()
                     && display_key_score.is_none()
                     && description_score.is_none()
                 {
@@ -224,7 +258,8 @@ impl TaskSearchService {
 
                 Some(RankedCandidate {
                     task_id: candidate.task_id,
-                    rank_score: (title_score.unwrap_or(0) * 3)
+                    rank_score: (combined_score.unwrap_or(0) * 4)
+                        + (title_score.unwrap_or(0) * 3)
                         + (display_key_score.unwrap_or(0) * 3)
                         + description_score.unwrap_or(0),
                     fts_rank: candidate.fts_rank,
@@ -376,8 +411,8 @@ mod tests {
         let (service, pool) = setup_service().await;
         seed_project(&pool, "project-1", "PRJ").await;
         seed_task(&pool, "task-0", "project-1", 1, "Runbook Setup", None).await;
-        seed_task(&pool, "task-1", "project-1", 1, "Run Details", None).await;
-        seed_task(&pool, "task-2", "project-1", 1, "Release Notes", None).await;
+        seed_task(&pool, "task-1", "project-1", 2, "Run Details", None).await;
+        seed_task(&pool, "task-2", "project-1", 3, "Release Notes", None).await;
 
         let results = service
             .search_project_tasks("project-1", "rund etails")

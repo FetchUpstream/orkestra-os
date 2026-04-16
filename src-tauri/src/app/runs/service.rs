@@ -1640,7 +1640,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_idle_transition_updates_task_to_review_only_for_active_run() {
+    async fn session_idle_transition_updates_task_to_review_only_for_idle_run() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
@@ -1655,11 +1655,30 @@ mod tests {
         .await
         .unwrap();
 
-        let transitioned = service
+        let transitioned_while_active = service
             .transition_task_to_review_on_session_idle("run-1", "session-1")
             .await
             .unwrap();
-        assert!(transitioned);
+        assert!(!transitioned_while_active);
+
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind("task-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_status, "doing");
+
+        sqlx::query("UPDATE runs SET status = 'idle' WHERE id = ?")
+            .bind("run-1")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let transitioned_when_idle = service
+            .transition_task_to_review_on_session_idle("run-1", "session-1")
+            .await
+            .unwrap();
+        assert!(transitioned_when_idle);
 
         let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
             .bind("task-1")
