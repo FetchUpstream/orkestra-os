@@ -144,6 +144,14 @@ const BoardScreen: Component = () => {
     );
   });
 
+  onCleanup(() => {
+    window.dispatchEvent(
+      new CustomEvent("board:project-context", {
+        detail: { projectId: "", projectName: "" },
+      }),
+    );
+  });
+
   return (
     <div class="flex min-h-full flex-col">
       <Show when={model.error()}>
