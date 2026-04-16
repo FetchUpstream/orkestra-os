@@ -2014,12 +2014,17 @@ impl RunsOpenCodeService {
             };
         }
 
-        self.restore_interrupted_run_state_or_recompute(
-            run_id,
-            session_runtime_state,
-            transition_source,
-        )
-        .await
+        match self
+            .restore_interrupted_run_state_or_recompute(
+                run_id,
+                session_runtime_state,
+                transition_source,
+            )
+            .await?
+        {
+            Some(run_state) => Ok(Some(run_state)),
+            None => self.resolve_current_effective_run_state(run_id).await,
+        }
     }
 
     /// Extracts a non-empty, trimmed status hint from a JSON payload.
