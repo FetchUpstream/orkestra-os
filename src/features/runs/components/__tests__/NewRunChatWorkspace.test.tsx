@@ -1599,6 +1599,22 @@ describe("NewRunChatWorkspace", () => {
       messages: [
         {
           info: {
+            id: "msg-child-user",
+            sessionID: "session-child",
+            role: "user",
+          },
+          parts: [
+            {
+              id: "part-child-user",
+              type: "text",
+              text: "Map repo structure",
+              messageID: "msg-child-user",
+              sessionID: "session-child",
+            },
+          ],
+        },
+        {
+          info: {
             id: "msg-child",
             sessionID: "session-child",
             role: "assistant",
@@ -1665,7 +1681,9 @@ describe("NewRunChatWorkspace", () => {
         runId: "run-1",
         sessionId: "session-child",
       });
-      expect(screen.getByText("Fetched child history output")).toBeTruthy();
+      expect(screen.getByText("Map repo structure")).toBeTruthy();
+      expect(screen.getByText("Completed")).toBeTruthy();
+      expect(screen.queryByText("Fetched child history output")).toBeNull();
     });
   });
 
@@ -1772,8 +1790,9 @@ describe("NewRunChatWorkspace", () => {
 
       await waitFor(() => {
         expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(2);
-        expect(screen.getByText("Fetched child older output")).toBeTruthy();
         expect(screen.getByText("Fetched child newer output")).toBeTruthy();
+        expect(screen.getByText("Completed")).toBeTruthy();
+        expect(screen.queryByText("Fetched child older output")).toBeNull();
       });
 
       expect(consoleWarnSpy).toHaveBeenCalledWith(
@@ -1968,7 +1987,9 @@ describe("NewRunChatWorkspace", () => {
         runId: "run-1",
         sessionId: "session-grandchild",
       });
-      expect(screen.getByText("Fetched lineage output")).toBeTruthy();
+      expect(screen.getByText("Nested explorer")).toBeTruthy();
+      expect(screen.getByText("Completed")).toBeTruthy();
+      expect(screen.queryByText("Fetched lineage output")).toBeNull();
     });
   });
 
@@ -2783,6 +2804,12 @@ describe("NewRunChatWorkspace", () => {
               toolName: "task",
               status: "running",
               title: "Coordinate concurrent subagents",
+              raw: {
+                sessionIds: [
+                  { sessionID: "session-child-a" },
+                  { sessionID: "session-child-b" },
+                ],
+              },
             },
           },
           partOrder: ["part-task"],
@@ -2964,6 +2991,7 @@ describe("NewRunChatWorkspace", () => {
       expect(plannerPanel()?.textContent).toContain(
         "Planner draft expanded ongoing",
       );
+      expect(researcherPanel()?.textContent).toContain("Completed");
       expect(researcherPanel()?.textContent).not.toContain("Research settled");
       expect(researcherPanel()?.textContent).not.toContain("ongoing");
       expect(
@@ -3105,6 +3133,7 @@ describe("NewRunChatWorkspace", () => {
       container.querySelector('[aria-label="Researcher output"]');
 
     await waitFor(() => {
+      expect(plannerPanel()?.textContent).toContain("Completed");
       expect(plannerPanel()?.textContent).not.toContain("Planner settled");
       expect(
         plannerPanel()?.querySelector(
@@ -3167,6 +3196,7 @@ describe("NewRunChatWorkspace", () => {
 
     await waitFor(() => {
       expect(plannerPanel()).toBe(initialPlannerPanel);
+      expect(plannerPanel()?.textContent).toContain("Completed");
       expect(plannerPanel()?.textContent).not.toContain("Planner settled");
       expect(
         plannerPanel()?.querySelectorAll(

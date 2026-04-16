@@ -366,6 +366,9 @@ const RunChatToolRailSubagentPanel: Component<
           <p class="run-chat-tool-rail__subagent-title">{subagent()?.label}</p>
         </div>
         <div class="run-chat-tool-rail__subagent-body">
+          <Show when={showCompletedSummaryOnly()}>
+            <p class="run-chat-tool-rail__subagent-summary">Completed</p>
+          </Show>
           <Show when={!showCompletedSummaryOnly()}>
             <For each={visibleEntryIds()}>
               {(entryId) => (

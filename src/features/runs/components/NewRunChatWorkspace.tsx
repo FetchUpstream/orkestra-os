@@ -627,6 +627,7 @@ const formatSubagentLabel = (
   agentType: string | null,
   model: string | null,
   hasOutput: boolean,
+  fallbackLabel: string | null,
 ): string => {
   const normalizedTitle = title?.trim();
   if (normalizedTitle) {
@@ -634,6 +635,10 @@ const formatSubagentLabel = (
     return normalizedModel
       ? `${normalizedTitle} - ${normalizedModel}`
       : normalizedTitle;
+  }
+
+  if (fallbackLabel) {
+    return fallbackLabel;
   }
 
   if (!hasOutput) {
@@ -648,6 +653,88 @@ const formatSubagentLabel = (
   }
 
   return "Subagent";
+};
+
+const hasRenderableSubagentEntries = (
+  entries: readonly RunChatToolRailSubagentEntry[],
+): boolean => {
+  return entries.some((entry) => entry.kind !== "assistant-placeholder");
+};
+
+const buildSubagentLabelFromEntries = (
+  entries: readonly RunChatToolRailSubagentEntry[],
+): string | null => {
+  const selectLabel = (
+    candidate: RunChatToolRailSubagentEntry | undefined,
+  ): string | null => {
+    if (!candidate) {
+      return null;
+    }
+
+    switch (candidate.kind) {
+      case "text":
+      case "reasoning":
+        return toSingleLine(candidate.content, 96);
+      case "tool":
+        return toSingleLine(candidate.toolItem.summary, 96);
+      case "assistant-placeholder":
+        return null;
+    }
+  };
+
+  return (
+    selectLabel(
+      entries.find(
+        (entry) =>
+          entry.kind === "text" &&
+          (entry.role === "user" || entry.role === "system"),
+      ),
+    ) ||
+    selectLabel(
+      [...entries]
+        .reverse()
+        .find((entry) => entry.kind !== "assistant-placeholder"),
+    )
+  );
+};
+
+const hasLiveSubagentMessageActivity = (
+  liveEvents: readonly OpenCodeBusEvent[],
+): boolean => {
+  return liveEvents.some((event) => {
+    return (
+      event.type === "message.part.updated" ||
+      event.type === "message.part.delta" ||
+      event.type === "message.removed" ||
+      event.type === "message.part.removed"
+    );
+  });
+};
+
+const hasLiveSubagentStatusActivity = (
+  liveEvents: readonly OpenCodeBusEvent[],
+): boolean => {
+  return liveEvents.some((event) => event.type === "session.status");
+};
+
+const deriveSubagentStatus = (
+  session: SubagentSessionSnapshot,
+  fetchedSnapshot: FetchedSubagentHistorySnapshot,
+  entries: readonly RunChatToolRailSubagentEntry[],
+): string => {
+  if (hasLiveSubagentStatusActivity(session.liveEvents)) {
+    return session.status;
+  }
+
+  if (
+    fetchedSnapshot &&
+    hasRenderableSubagentEntries(entries) &&
+    !hasLiveSubagentMessageActivity(session.liveEvents)
+  ) {
+    return "completed";
+  }
+
+  return session.status;
 };
 
 const buildSubagentEntriesFromStore = (
@@ -933,15 +1020,24 @@ const buildSubagentPanels = (
         .find(Boolean) ||
       null;
 
+    const effectiveStatus = deriveSubagentStatus(
+      session,
+      fetchedSnapshot,
+      entries,
+    );
+    const hasOutput = hasRenderableSubagentEntries(entries);
     const subagent: RunChatToolRailSubagentItem = {
       id: session.sessionId,
       label: formatSubagentLabel(
         session.title,
         fallbackAgentType,
         fallbackModel,
-        entries.some((entry) => entry.kind !== "assistant-placeholder"),
+        hasOutput,
+        hasCompletedRunStatus(effectiveStatus)
+          ? buildSubagentLabelFromEntries(entries)
+          : null,
       ),
-      status: session.status,
+      status: effectiveStatus,
       entries,
     };
 
@@ -973,9 +1069,7 @@ const buildRootTaskPartIdSet = (store: AgentStore): Set<string> => {
 const shouldRetainSubagentPanel = (
   subagent: RunChatToolRailSubagentItem,
 ): boolean => {
-  return subagent.entries.some(
-    (entry) => entry.kind !== "assistant-placeholder",
-  );
+  return hasRenderableSubagentEntries(subagent.entries);
 };
 
 const mergeRetainedSubagentPanels = (
@@ -1006,7 +1100,12 @@ const mergeRetainedSubagentPanels = (
     for (const previousPanel of previousPanels) {
       const currentPanel = currentPanelsById[previousPanel.id];
       if (currentPanel) {
-        retainedPanels.push(currentPanel);
+        retainedPanels.push(
+          shouldRetainSubagentPanel(currentPanel) ||
+            !shouldRetainSubagentPanel(previousPanel)
+            ? currentPanel
+            : previousPanel,
+        );
         continue;
       }
 
