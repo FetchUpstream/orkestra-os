@@ -739,7 +739,6 @@ export const useBoardModel = () => {
         }
 
         return [{ taskId: childTaskId, isBlocked: hasBlockingParents }];
-      },
     );
   };
 
