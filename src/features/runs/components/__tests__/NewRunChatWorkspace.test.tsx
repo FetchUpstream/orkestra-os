@@ -2241,6 +2241,145 @@ describe("NewRunChatWorkspace", () => {
     expect(visibleMessages[2]).toContain("Merged fourth");
   });
 
+  it("lets a newly started empty child assistant message shift the visible tail via a placeholder", async () => {
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
+      messages: [
+        {
+          info: {
+            id: "msg-child-1",
+            sessionID: "session-child",
+            role: "assistant",
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+          parts: [
+            {
+              id: "part-child-1",
+              type: "text",
+              text: "Placeholder first",
+              messageID: "msg-child-1",
+              sessionID: "session-child",
+            },
+          ],
+        },
+        {
+          info: {
+            id: "msg-child-2",
+            sessionID: "session-child",
+            role: "assistant",
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+          parts: [
+            {
+              id: "part-child-2",
+              type: "text",
+              text: "Placeholder second",
+              messageID: "msg-child-2",
+              sessionID: "session-child",
+            },
+          ],
+        },
+      ],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
+      raw: [],
+    } as any);
+
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Inspect child placeholder",
+              raw: {
+                sessionID: "session-child",
+              },
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child-3",
+              sessionID: "session-child",
+              role: "assistant",
+              createdAt: "2026-01-01T00:00:03.000Z",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child",
+            part: {
+              id: "part-child-3",
+              messageID: "msg-child-3",
+              sessionID: "session-child",
+              type: "text",
+              text: "Placeholder third",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child-4",
+              sessionID: "session-child",
+              role: "assistant",
+              createdAt: "2026-01-01T00:00:04.000Z",
+            },
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      expect(screen.queryByText("Placeholder first")).toBeNull();
+      expect(screen.getByText("Placeholder second")).toBeTruthy();
+      expect(screen.getByText("Placeholder third")).toBeTruthy();
+      expect(
+        container.querySelector(
+          ".run-chat-tool-rail__subagent-message .run-inline-loader",
+        ),
+      ).toBeTruthy();
+    });
+
+    expect(
+      container.querySelectorAll(".run-chat-tool-rail__subagent-message")
+        .length,
+    ).toBe(3);
+  });
+
   it("caches streamText across subagent text deltas", () => {
     const snapshotPart = buildStreamingTextPart(
       "part-child",

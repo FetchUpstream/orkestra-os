@@ -365,19 +365,25 @@ describe("RunChatAssistantMessage", () => {
                 id: "subagent-1",
                 label: "Inspector (@fixer)",
                 status: "running",
-                messages: [
+                entries: [
                   {
-                    id: "msg-user",
+                    id: "entry-user",
+                    kind: "text",
+                    messageId: "msg-user",
                     role: "user",
                     content: "User prompt stays static",
                   },
                   {
-                    id: "msg-system",
+                    id: "entry-system",
+                    kind: "text",
+                    messageId: "msg-system",
                     role: "system",
                     content: "System note stays static",
                   },
                   {
-                    id: "msg-assistant",
+                    id: "entry-assistant",
+                    kind: "text",
+                    messageId: "msg-assistant",
                     role: "assistant",
                     content: "Subagent reply",
                     assistantStreaming: createStreamingMetadata({

@@ -28,5 +28,6 @@ export type {
 } from "./RunChatTranscript";
 export type {
   RunChatToolRailItem,
+  RunChatToolRailSubagentEntry,
   RunChatToolRailSubagentItem,
 } from "./RunChatToolRail";

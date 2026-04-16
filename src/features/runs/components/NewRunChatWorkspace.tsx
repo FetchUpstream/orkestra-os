@@ -26,6 +26,7 @@ import {
   type RunChatTranscriptHandle,
   type RunChatTranscriptRow,
   type RunChatToolRailItem,
+  type RunChatToolRailSubagentEntry,
   type RunChatToolRailSubagentItem,
 } from "./chat";
 import RunAgentSelectOptions from "./RunAgentSelectOptions";
@@ -649,41 +650,84 @@ const formatSubagentLabel = (
   return "Subagent";
 };
 
-const buildSubagentMessagesFromStore = (
+const buildSubagentEntriesFromStore = (
   store: AgentStore,
   displayContext: ToolPathDisplayContext,
 ) => {
-  return store.messageOrder
-    .map((messageId) => store.messagesById[messageId])
-    .filter(Boolean)
-    .map((message) => {
+  const latestMessageId =
+    store.messageOrder[store.messageOrder.length - 1] ?? null;
+
+  return store.messageOrder.flatMap<RunChatToolRailSubagentEntry>(
+    (messageId) => {
+      const message = store.messagesById[messageId];
+      if (!message) {
+        return [];
+      }
+
       const textParts: UiTextPart[] = [];
       const reasoningParts: UiReasoningPart[] = [];
-      const toolItems: Array<{ id: string; summary: string; status?: string }> =
-        [];
+      const entries: RunChatToolRailSubagentEntry[] = [];
 
       for (const partId of message.partOrder) {
         const part = message.partsById[partId];
         if (!part) continue;
         if (part.kind === "text") {
           const text = resolveTranscriptPartText(part, displayContext);
-          if (text.trim().length > 0 || part.streaming) {
-            textParts.push(part);
+          const content = text.trim();
+          textParts.push(part);
+          if (content.length > 0) {
+            entries.push({
+              id: `${message.id}:${part.id}:text`,
+              kind: "text",
+              messageId: message.id,
+              role: message.role,
+              content,
+              assistantStreaming:
+                message.role === "assistant"
+                  ? buildAssistantStreamingMetadata(
+                      message.id,
+                      [part],
+                      [],
+                      displayContext,
+                    )
+                  : undefined,
+              isStreaming: part.streaming,
+              streamToken:
+                message.role === "assistant"
+                  ? undefined
+                  : `${message.id}:${part.id}:${part.streaming ? "streaming" : "static"}:${content.length}`,
+            });
           }
           continue;
         }
         if (part.kind === "reasoning") {
           const text = resolveTranscriptPartText(part, displayContext);
-          if (text.trim().length > 0 || part.streaming) {
-            reasoningParts.push(part);
+          const content = text.trim();
+          reasoningParts.push(part);
+          if (content.length > 0) {
+            entries.push({
+              id: `${message.id}:${part.id}:reasoning`,
+              kind: "reasoning",
+              messageId: message.id,
+              role: message.role,
+              content,
+              isStreaming: part.streaming,
+              streamToken: `${message.id}:${part.id}:${part.streaming ? "streaming" : "static"}:${content.length}`,
+            });
           }
           continue;
         }
         if (part.kind === "tool") {
-          toolItems.push({
-            id: part.id,
-            summary: buildToolSummary(part, displayContext),
-            status: part.status,
+          entries.push({
+            id: `${message.id}:${part.id}:tool`,
+            kind: "tool",
+            messageId: message.id,
+            role: message.role,
+            toolItem: {
+              id: part.id,
+              summary: buildToolSummary(part, displayContext),
+              status: part.status,
+            },
           });
         }
       }
@@ -697,32 +741,31 @@ const buildSubagentMessagesFromStore = (
               displayContext,
             )
           : undefined;
+      const hasPendingAssistantTextContent =
+        textParts.length > 0 || reasoningParts.length > 0;
 
-      return {
-        id: message.id,
-        role: message.role,
-        content: assistantStreaming
-          ? assistantStreaming.targetText
-          : textParts
-              .map((part) => resolveTranscriptPartText(part, displayContext))
-              .join("\n\n")
-              .trim(),
-        reasoningContent: assistantStreaming
-          ? assistantStreaming.reasoningTargetText
-          : reasoningParts
-              .map((part) => resolveTranscriptPartText(part, displayContext))
-              .join("\n\n")
-              .trim(),
-        assistantStreaming,
-        toolItems,
-      };
-    })
-    .filter(
-      (message) =>
-        message.content.length > 0 ||
-        message.reasoningContent.length > 0 ||
-        message.toolItems.length > 0,
-    );
+      if (
+        entries.length === 0 &&
+        message.role === "assistant" &&
+        latestMessageId === message.id &&
+        (message.partOrder.length === 0 ||
+          hasPendingAssistantTextContent ||
+          assistantStreaming?.isPlaceholderOnly)
+      ) {
+        entries.push({
+          id: `${message.id}:placeholder`,
+          kind: "assistant-placeholder",
+          messageId: message.id,
+          role: "assistant",
+          isStreaming: true,
+          streamToken:
+            assistantStreaming?.streamToken ?? `${message.id}:placeholder`,
+        });
+      }
+
+      return entries;
+    },
+  );
 };
 
 const buildSubagentPanels = (
@@ -870,10 +913,7 @@ const buildSubagentPanels = (
       fetchedStore: fetchedSnapshot?.store ?? null,
       liveEvents: session.liveEvents,
     });
-    const messages = buildSubagentMessagesFromStore(
-      mergedStore,
-      displayContext,
-    );
+    const entries = buildSubagentEntriesFromStore(mergedStore, displayContext);
     const mergedHistoryMessages = mergedStore.messageOrder.flatMap(
       (messageId) => {
         const message = mergedStore.messagesById[messageId];
@@ -899,10 +939,10 @@ const buildSubagentPanels = (
         session.title,
         fallbackAgentType,
         fallbackModel,
-        messages.length > 0,
+        entries.some((entry) => entry.kind !== "assistant-placeholder"),
       ),
       status: session.status,
-      messages,
+      entries,
     };
 
     acc[taskPartId] = [...(acc[taskPartId] ?? []), subagent];

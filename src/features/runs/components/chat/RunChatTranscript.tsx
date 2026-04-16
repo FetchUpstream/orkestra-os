@@ -29,9 +29,9 @@ import RunChatMarkdown from "./RunChatMarkdown";
 import RunChatMessage from "./RunChatMessage";
 import RunChatSystemMessage from "./RunChatSystemMessage";
 import RunChatToolRail, {
+  type RunChatToolRailSubagentEntry,
   type RunChatToolRailItem,
   type RunChatToolRailSubagentItem,
-  type RunChatToolRailSubagentMessage,
 } from "./RunChatToolRail";
 import RunChatUserMessage from "./RunChatUserMessage";
 
@@ -280,43 +280,9 @@ const areMetadataEntriesEqual = (
   );
 };
 
-const areSubagentToolItemsEqual = (
-  previous:
-    | readonly {
-        id: string;
-        summary: string;
-        status?: string;
-      }[]
-    | undefined,
-  next:
-    | readonly {
-        id: string;
-        summary: string;
-        status?: string;
-      }[]
-    | undefined,
-): boolean => {
-  if (previous === next) {
-    return true;
-  }
-  if (!previous || !next) {
-    return previous === next;
-  }
-  if (previous.length !== next.length) {
-    return false;
-  }
-
-  return previous.every(
-    (item, index) =>
-      item.id === next[index]?.id &&
-      item.summary === next[index]?.summary &&
-      item.status === next[index]?.status,
-  );
-};
-
-const areSubagentMessagesEqual = (
-  previous: readonly RunChatToolRailSubagentMessage[],
-  next: readonly RunChatToolRailSubagentMessage[],
+const areSubagentEntriesEqual = (
+  previous: readonly RunChatToolRailSubagentEntry[],
+  next: readonly RunChatToolRailSubagentEntry[],
 ): boolean => {
   if (previous === next) {
     return true;
@@ -325,17 +291,49 @@ const areSubagentMessagesEqual = (
     return false;
   }
 
-  return previous.every((message, index) => {
-    const nextMessage = next[index];
-    return (
-      message.id === nextMessage?.id &&
-      message.role === nextMessage?.role &&
-      message.content === nextMessage?.content &&
-      message.reasoningContent === nextMessage?.reasoningContent &&
-      (message.assistantStreaming?.streamToken ?? "") ===
-        (nextMessage?.assistantStreaming?.streamToken ?? "") &&
-      areSubagentToolItemsEqual(message.toolItems, nextMessage?.toolItems)
-    );
+  return previous.every((entry, index) => {
+    const nextEntry = next[index];
+    if (!nextEntry) {
+      return false;
+    }
+
+    if (
+      entry.id !== nextEntry.id ||
+      entry.kind !== nextEntry.kind ||
+      entry.messageId !== nextEntry.messageId ||
+      entry.role !== nextEntry.role
+    ) {
+      return false;
+    }
+
+    switch (entry.kind) {
+      case "text":
+        return (
+          nextEntry.kind === "text" &&
+          entry.content === nextEntry.content &&
+          (entry.streamToken ?? "") === (nextEntry.streamToken ?? "") &&
+          (entry.assistantStreaming?.streamToken ?? "") ===
+            (nextEntry.assistantStreaming?.streamToken ?? "")
+        );
+      case "reasoning":
+        return (
+          nextEntry.kind === "reasoning" &&
+          entry.content === nextEntry.content &&
+          (entry.streamToken ?? "") === (nextEntry.streamToken ?? "")
+        );
+      case "tool":
+        return (
+          nextEntry.kind === "tool" &&
+          entry.toolItem.id === nextEntry.toolItem.id &&
+          entry.toolItem.summary === nextEntry.toolItem.summary &&
+          entry.toolItem.status === nextEntry.toolItem.status
+        );
+      case "assistant-placeholder":
+        return (
+          nextEntry.kind === "assistant-placeholder" &&
+          (entry.streamToken ?? "") === (nextEntry.streamToken ?? "")
+        );
+    }
   });
 };
 
@@ -356,7 +354,7 @@ const areSubagentsEqual = (
       subagent.id === nextSubagent?.id &&
       subagent.label === nextSubagent?.label &&
       subagent.status === nextSubagent?.status &&
-      areSubagentMessagesEqual(subagent.messages, nextSubagent?.messages ?? [])
+      areSubagentEntriesEqual(subagent.entries, nextSubagent?.entries ?? [])
     );
   });
 };
@@ -461,17 +459,45 @@ const getTranscriptRowMeasureToken = (
                     subagent.id,
                     subagent.label,
                     subagent.status ?? "",
-                    ...subagent.messages.map((message) => {
-                      return [
-                        message.id,
-                        message.role,
-                        message.content ?? "",
-                        message.reasoningContent ?? "",
-                        message.assistantStreaming?.streamToken ?? "",
-                        ...(message.toolItems ?? []).map((toolItem) => {
-                          return `${toolItem.id}:${toolItem.summary}:${toolItem.status ?? ""}`;
-                        }),
-                      ].join("~");
+                    ...subagent.entries.map((entry) => {
+                      switch (entry.kind) {
+                        case "text":
+                          return [
+                            entry.id,
+                            entry.kind,
+                            entry.messageId,
+                            entry.role,
+                            entry.content,
+                            entry.assistantStreaming?.streamToken ?? "",
+                          ].join("~");
+                        case "reasoning":
+                          return [
+                            entry.id,
+                            entry.kind,
+                            entry.messageId,
+                            entry.role,
+                            entry.content,
+                            entry.streamToken ?? "",
+                          ].join("~");
+                        case "tool":
+                          return [
+                            entry.id,
+                            entry.kind,
+                            entry.messageId,
+                            entry.role,
+                            entry.toolItem.id,
+                            entry.toolItem.summary,
+                            entry.toolItem.status ?? "",
+                          ].join("~");
+                        case "assistant-placeholder":
+                          return [
+                            entry.id,
+                            entry.kind,
+                            entry.messageId,
+                            entry.role,
+                            entry.streamToken ?? "",
+                          ].join("~");
+                      }
                     }),
                   ].join("=");
                 })
