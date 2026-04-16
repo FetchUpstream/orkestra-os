@@ -38,6 +38,7 @@ import {
   searchProjectTasks,
   setTaskStatus,
   type Task,
+  type TaskDependencies,
   type TaskDependencyTask,
   type TaskStatus,
 } from "../../../app/lib/tasks";
@@ -535,7 +536,13 @@ export const useBoardModel = () => {
   let runSelectionOptionsRequestVersion = 0;
   let runSourceBranchesRequestVersion = 0;
   const taskRunRequestVersions: Record<string, number> = {};
+  const taskStatusPropagationVersions: Record<string, number> = {};
   const deletedRunIds = new Set<string>();
+  const taskDependencyCache = new Map<string, TaskDependencies>();
+  const pendingTaskDependencyRequests = new Map<
+    string,
+    Promise<TaskDependencies>
+  >();
   let boardEventSubscriptionDisposed = false;
   let removeBoardEventSubscription: (() => void) | null = null;
   let removeBoardRunStatusSubscription: (() => void) | null = null;
@@ -546,6 +553,70 @@ export const useBoardModel = () => {
     const nextVersion = (taskRunRequestVersions[taskId] ?? 0) + 1;
     taskRunRequestVersions[taskId] = nextVersion;
     return nextVersion;
+  };
+
+  const beginTaskStatusPropagation = (taskId: string): number => {
+    const nextVersion = (taskStatusPropagationVersions[taskId] ?? 0) + 1;
+    taskStatusPropagationVersions[taskId] = nextVersion;
+    return nextVersion;
+  };
+
+  const isTaskStatusPropagationCurrent = (
+    taskId: string,
+    requestVersion: number,
+  ) => {
+    return taskStatusPropagationVersions[taskId] === requestVersion;
+  };
+
+  const clearTaskDependencyCache = () => {
+    taskDependencyCache.clear();
+    pendingTaskDependencyRequests.clear();
+  };
+
+  const readTaskDependencies = async (
+    taskId: string,
+    options?: { force?: boolean },
+  ): Promise<TaskDependencies> => {
+    const normalizedTaskId = taskId.trim();
+    if (!normalizedTaskId) {
+      return { taskId: "", parents: [], children: [] };
+    }
+
+    if (!options?.force) {
+      const cachedDependencies = taskDependencyCache.get(normalizedTaskId);
+      if (cachedDependencies) {
+        return cachedDependencies;
+      }
+
+      const pendingRequest =
+        pendingTaskDependencyRequests.get(normalizedTaskId);
+      if (pendingRequest) {
+        return pendingRequest;
+      }
+    }
+
+    const dependencyRequest = listTaskDependencies(normalizedTaskId)
+      .then((dependencies) => {
+        const normalizedDependencies = {
+          ...dependencies,
+          taskId: dependencies.taskId || normalizedTaskId,
+        };
+        taskDependencyCache.set(normalizedTaskId, normalizedDependencies);
+        pendingTaskDependencyRequests.delete(normalizedTaskId);
+        return normalizedDependencies;
+      })
+      .catch((error) => {
+        pendingTaskDependencyRequests.delete(normalizedTaskId);
+        throw error;
+      });
+
+    pendingTaskDependencyRequests.set(normalizedTaskId, dependencyRequest);
+    return dependencyRequest;
+  };
+
+  type DependentBlockedStatePatch = {
+    taskId: string;
+    isBlocked: boolean;
   };
 
   const syncTaskBlockedState = (taskId: string, isBlockedNow: boolean) => {
@@ -564,12 +635,149 @@ export const useBoardModel = () => {
     );
   };
 
+  const syncDependentBlockedStatePatches = (
+    patches: DependentBlockedStatePatch[],
+  ) => {
+    if (patches.length === 0) {
+      return;
+    }
+
+    const patchLookup = new Map(
+      patches.map((patch) => [patch.taskId, patch.isBlocked] as const),
+    );
+    setTasks((currentTasks) => {
+      let didChange = false;
+      const nextTasks = currentTasks.map((task) => {
+        if (!patchLookup.has(task.id)) {
+          return task;
+        }
+
+        const isBlockedNow = patchLookup.get(task.id);
+        if (
+          typeof isBlockedNow !== "boolean" ||
+          task.isBlocked === isBlockedNow
+        ) {
+          return task;
+        }
+
+        didChange = true;
+        return { ...task, isBlocked: isBlockedNow };
+      });
+
+      return didChange ? nextTasks : currentTasks;
+    });
+  };
+
+  const readTaskDependenciesForPropagation = async (
+    taskId: string,
+    options?: { forceRefresh?: boolean },
+  ) => {
+    if (!options?.forceRefresh) {
+      return readTaskDependencies(taskId);
+    }
+
+    try {
+      return await readTaskDependencies(taskId, { force: true });
+    } catch {
+      return readTaskDependencies(taskId);
+    }
+  };
+
+  const collectDependentBlockedStatePatches = async (
+    taskId: string,
+    previousStatus: TaskStatus,
+    nextStatus: TaskStatus,
+    nextTasks: Task[],
+    options?: { forceRefresh?: boolean },
+  ): Promise<DependentBlockedStatePatch[]> => {
+    const previousWasDone = previousStatus === "done";
+    const nextIsDone = nextStatus === "done";
+    if (previousWasDone === nextIsDone) {
+      return [];
+    }
+
+    const movedTaskDependencies = await readTaskDependenciesForPropagation(
+      taskId,
+      options,
+    );
+    if (movedTaskDependencies.children.length === 0) {
+      return [];
+    }
+
+    const nextTaskLookup = new Map(nextTasks.map((task) => [task.id, task]));
+    const nextStatusLookup = new Map(
+      nextTasks.map((task) => [task.id, task.status] as const),
+    );
+    const previousStatusLookup = new Map(nextStatusLookup);
+    previousStatusLookup.set(taskId, previousStatus);
+
+    const childDependencyEntries = await Promise.all(
+      movedTaskDependencies.children.map(
+        async (childTask) =>
+          [
+            childTask.id,
+            await readTaskDependenciesForPropagation(childTask.id, options),
+          ] as const,
+      ),
+    );
+
+    return childDependencyEntries.flatMap(
+      ([childTaskId, childDependencies]) => {
+        const childTask = nextTaskLookup.get(childTaskId);
+        if (!childTask) {
+          return [];
+        }
+
+        const hadBlockingParents =
+          getBlockingParentTasks(childDependencies, previousStatusLookup)
+            .length > 0;
+        const hasBlockingParents =
+          getBlockingParentTasks(childDependencies, nextStatusLookup).length >
+          0;
+        if (hadBlockingParents === hasBlockingParents) {
+          return [];
+        }
+
+        return [{ taskId: childTaskId, isBlocked: hasBlockingParents }];
+      },
+    );
+  };
+
+  const queueDependentBlockedStateSync = async (
+    taskId: string,
+    previousStatus: TaskStatus,
+    nextStatus: TaskStatus,
+    nextTasks: Task[],
+    options?: { forceRefresh?: boolean },
+  ) => {
+    const requestVersion = beginTaskStatusPropagation(taskId);
+    try {
+      const patches = await collectDependentBlockedStatePatches(
+        taskId,
+        previousStatus,
+        nextStatus,
+        nextTasks,
+        options,
+      );
+      if (!isTaskStatusPropagationCurrent(taskId, requestVersion)) {
+        return;
+      }
+
+      syncDependentBlockedStatePatches(patches);
+    } catch {
+      if (!isTaskStatusPropagationCurrent(taskId, requestVersion)) {
+        return;
+      }
+      // Keep the moved card responsive even if dependency snapshots fail.
+    }
+  };
+
   const revalidateBlockingParentTasks = async (
     taskId: string,
   ): Promise<{ isBlockedNow: boolean; blockers: TaskDependencyTask[] }> => {
     const [freshTask, dependencies] = await Promise.all([
       getTask(taskId),
-      listTaskDependencies(taskId),
+      readTaskDependencies(taskId, { force: true }),
     ]);
     const unresolvedParents = getBlockingParentTasks(dependencies);
     const isBlockedNow =
@@ -1000,6 +1208,7 @@ export const useBoardModel = () => {
   const loadTasks = async (projectId: string) => {
     const requestVersion = ++activeTasksRequestVersion;
     const runRequestVersion = ++activeTaskRunsRequestVersion;
+    clearTaskDependencyCache();
     setIsTasksLoading(true);
     setError("");
 
@@ -1152,6 +1361,7 @@ export const useBoardModel = () => {
     if (!projectId) {
       activeProjectDetailRequestVersion += 1;
       activeTaskRunsRequestVersion += 1;
+      clearTaskDependencyCache();
       setSelectedProjectDetail(null);
       setRunAgentOptions([]);
       setRunProviderOptions([]);
@@ -1226,13 +1436,18 @@ export const useBoardModel = () => {
     if (!canTransitionStatus(taskToMove.status, targetStatus)) return false;
     const previousStatus = taskToMove.status;
     const previousMiniCards = taskRunMiniCards()[taskId];
+    const optimisticTasks = currentTasks.map((task) =>
+      task.id === taskId ? { ...task, status: targetStatus } : task,
+    );
 
     setUpdatingTaskIds((current) => [...current, taskId]);
     setError("");
-    setTasks(
-      currentTasks.map((task) =>
-        task.id === taskId ? { ...task, status: targetStatus } : task,
-      ),
+    setTasks(optimisticTasks);
+    void queueDependentBlockedStateSync(
+      taskId,
+      previousStatus,
+      targetStatus,
+      optimisticTasks,
     );
     if (targetStatus === "done") {
       beginTaskRunRequest(taskId);
@@ -1264,10 +1479,16 @@ export const useBoardModel = () => {
         status: targetStatus,
         sourceAction: "board_manual_move",
       });
-      setTasks((currentTasks) =>
-        currentTasks.map((task) =>
-          task.id === taskId ? { ...task, ...updatedTask } : task,
-        ),
+      const settledTasks = tasks().map((task) =>
+        task.id === taskId ? { ...task, ...updatedTask } : task,
+      );
+      setTasks(settledTasks);
+      await queueDependentBlockedStateSync(
+        taskId,
+        previousStatus,
+        updatedTask.status,
+        settledTasks,
+        { forceRefresh: true },
       );
       if (updatedTask.status === "done") {
         beginTaskRunRequest(taskId);
@@ -1296,10 +1517,16 @@ export const useBoardModel = () => {
         }
       }
     } catch {
-      setTasks((currentAfterFailure) =>
-        currentAfterFailure.map((task) =>
-          task.id === taskId ? { ...task, status: previousStatus } : task,
-        ),
+      const rollbackTasks = tasks().map((task) =>
+        task.id === taskId ? { ...task, status: previousStatus } : task,
+      );
+      setTasks(rollbackTasks);
+      await queueDependentBlockedStateSync(
+        taskId,
+        targetStatus,
+        previousStatus,
+        rollbackTasks,
+        { forceRefresh: true },
       );
       beginTaskRunRequest(taskId);
       setTaskRunMiniCards((current) => {
@@ -1520,12 +1747,18 @@ export const useBoardModel = () => {
           return;
         }
 
-        setTasks((current) =>
-          current.map((task) =>
-            task.id === event.taskId
-              ? { ...task, status: event.newStatus, updatedAt: event.timestamp }
-              : task,
-          ),
+        const nextTasks = tasks().map((task) =>
+          task.id === event.taskId
+            ? { ...task, status: event.newStatus, updatedAt: event.timestamp }
+            : task,
+        );
+        setTasks(nextTasks);
+        void queueDependentBlockedStateSync(
+          event.taskId,
+          event.previousStatus,
+          event.newStatus,
+          nextTasks,
+          { forceRefresh: true },
         );
       });
 
@@ -1595,6 +1828,7 @@ export const useBoardModel = () => {
 
       const initialProjectId = resolveInitialProjectSelection(loadedProjects);
       if (!initialProjectId) {
+        clearTaskDependencyCache();
         setSelectedProjectId("");
         setSelectedProjectDetail(null);
         setTasks([]);
@@ -1605,6 +1839,7 @@ export const useBoardModel = () => {
       await onProjectChange(initialProjectId, { persistSelection: false });
     } catch {
       setError("Failed to load projects. Please refresh.");
+      clearTaskDependencyCache();
       setProjects([]);
       setSelectedProjectId("");
       setSelectedProjectDetail(null);
@@ -1617,6 +1852,7 @@ export const useBoardModel = () => {
 
   onCleanup(() => {
     boardEventSubscriptionDisposed = true;
+    clearTaskDependencyCache();
     if (removeBoardEventSubscription) {
       removeBoardEventSubscription();
       removeBoardEventSubscription = null;

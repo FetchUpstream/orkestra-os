@@ -94,6 +94,16 @@ vi.mock("../../../../app/contexts/OpenCodeDependencyContext", () => ({
   }),
 }));
 
+const deferred = <T,>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
 describe("useBoardModel run settings defaults", () => {
   beforeEach(() => {
     listProjectsMock.mockReset();
@@ -451,6 +461,465 @@ describe("useBoardModel run settings defaults", () => {
     expect(setTaskStatusMock).not.toHaveBeenCalled();
     expect(createRunMock).not.toHaveBeenCalled();
     expect(startRunOpenCodeMock).not.toHaveBeenCalled();
+  });
+
+  it("optimistically blocks dependent children when moving a done parent back to todo", async () => {
+    const pendingStatusUpdate = deferred<{
+      id: string;
+      title: string;
+      status: "todo";
+      projectId: string;
+      isBlocked: false;
+    }>();
+    listProjectTasksMock.mockResolvedValue([
+      {
+        id: "parent-1",
+        title: "Parent task",
+        status: "done",
+        projectId: "project-1",
+        isBlocked: false,
+      },
+      {
+        id: "child-1",
+        title: "Child task",
+        status: "todo",
+        projectId: "project-1",
+        blockedByCount: 1,
+        isBlocked: false,
+      },
+      {
+        id: "task-3",
+        title: "Unrelated task",
+        status: "todo",
+        projectId: "project-1",
+        isBlocked: false,
+      },
+    ]);
+    listTaskDependenciesMock.mockImplementation((taskId: string) => {
+      if (taskId === "parent-1") {
+        return Promise.resolve({
+          taskId,
+          parents: [],
+          children: [
+            {
+              id: "child-1",
+              displayKey: "PRJ-2",
+              title: "Child task",
+              status: "todo",
+            },
+          ],
+        });
+      }
+
+      if (taskId === "child-1") {
+        return Promise.resolve({
+          taskId,
+          parents: [
+            {
+              id: "parent-1",
+              displayKey: "PRJ-1",
+              title: "Parent task",
+              status: "done",
+            },
+          ],
+          children: [],
+        });
+      }
+
+      return Promise.resolve({ taskId, parents: [], children: [] });
+    });
+    setTaskStatusMock.mockReturnValue(pendingStatusUpdate.promise);
+
+    const ref: { current: ReturnType<typeof useBoardModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useBoardModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().done.length).toBe(1);
+      expect(ref.current?.groupedTasks().todo.length).toBe(2);
+    });
+
+    const movePromise = ref.current!.moveTaskToStatus("parent-1", "todo");
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().done).toEqual([]);
+      expect(
+        ref.current?.groupedTasks().todo.find((task) => task.id === "parent-1")
+          ?.status,
+      ).toBe("todo");
+      expect(
+        ref.current?.groupedTasks().todo.find((task) => task.id === "child-1")
+          ?.isBlocked,
+      ).toBe(true);
+      expect(
+        ref.current?.groupedTasks().todo.find((task) => task.id === "task-3")
+          ?.isBlocked,
+      ).toBe(false);
+    });
+
+    pendingStatusUpdate.resolve({
+      id: "parent-1",
+      title: "Parent task",
+      status: "todo",
+      projectId: "project-1",
+      isBlocked: false,
+    });
+
+    await expect(movePromise).resolves.toBe(true);
+
+    await waitFor(() => {
+      expect(
+        ref.current?.groupedTasks().todo.find((task) => task.id === "child-1")
+          ?.isBlocked,
+      ).toBe(true);
+    });
+  });
+
+  it("optimistically clears blocked children when a single blocking parent moves to done", async () => {
+    const pendingStatusUpdate = deferred<{
+      id: string;
+      title: string;
+      status: "done";
+      projectId: string;
+      isBlocked: false;
+    }>();
+    listProjectTasksMock.mockResolvedValue([
+      {
+        id: "parent-1",
+        title: "Parent task",
+        status: "review",
+        projectId: "project-1",
+        isBlocked: false,
+      },
+      {
+        id: "child-1",
+        title: "Child task",
+        status: "todo",
+        projectId: "project-1",
+        blockedByCount: 1,
+        isBlocked: true,
+      },
+    ]);
+    listTaskDependenciesMock.mockImplementation((taskId: string) => {
+      if (taskId === "parent-1") {
+        return Promise.resolve({
+          taskId,
+          parents: [],
+          children: [
+            {
+              id: "child-1",
+              displayKey: "PRJ-2",
+              title: "Child task",
+              status: "todo",
+            },
+          ],
+        });
+      }
+
+      if (taskId === "child-1") {
+        return Promise.resolve({
+          taskId,
+          parents: [
+            {
+              id: "parent-1",
+              displayKey: "PRJ-1",
+              title: "Parent task",
+              status: "review",
+            },
+          ],
+          children: [],
+        });
+      }
+
+      return Promise.resolve({ taskId, parents: [], children: [] });
+    });
+    setTaskStatusMock.mockReturnValue(pendingStatusUpdate.promise);
+
+    const ref: { current: ReturnType<typeof useBoardModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useBoardModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().review.length).toBe(1);
+      expect(ref.current?.groupedTasks().todo.length).toBe(1);
+    });
+
+    const movePromise = ref.current!.moveTaskToStatus("parent-1", "done");
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().done.length).toBe(1);
+      expect(
+        ref.current?.groupedTasks().todo.find((task) => task.id === "child-1")
+          ?.isBlocked,
+      ).toBe(false);
+    });
+
+    pendingStatusUpdate.resolve({
+      id: "parent-1",
+      title: "Parent task",
+      status: "done",
+      projectId: "project-1",
+      isBlocked: false,
+    });
+
+    await expect(movePromise).resolves.toBe(true);
+
+    await waitFor(() => {
+      expect(
+        ref.current?.groupedTasks().todo.find((task) => task.id === "child-1")
+          ?.isBlocked,
+      ).toBe(false);
+    });
+  });
+
+  it("keeps multi-parent children blocked until every parent is done", async () => {
+    const firstStatusUpdate = deferred<{
+      id: string;
+      title: string;
+      status: "done";
+      projectId: string;
+      isBlocked: false;
+    }>();
+    const secondStatusUpdate = deferred<{
+      id: string;
+      title: string;
+      status: "done";
+      projectId: string;
+      isBlocked: false;
+    }>();
+    listProjectTasksMock.mockResolvedValue([
+      {
+        id: "parent-1",
+        title: "First parent",
+        status: "review",
+        projectId: "project-1",
+        isBlocked: false,
+      },
+      {
+        id: "parent-2",
+        title: "Second parent",
+        status: "review",
+        projectId: "project-1",
+        isBlocked: false,
+      },
+      {
+        id: "child-1",
+        title: "Child task",
+        status: "todo",
+        projectId: "project-1",
+        blockedByCount: 2,
+        isBlocked: true,
+      },
+    ]);
+    listTaskDependenciesMock.mockImplementation((taskId: string) => {
+      if (taskId === "parent-1" || taskId === "parent-2") {
+        return Promise.resolve({
+          taskId,
+          parents: [],
+          children: [
+            {
+              id: "child-1",
+              displayKey: "PRJ-3",
+              title: "Child task",
+              status: "todo",
+            },
+          ],
+        });
+      }
+
+      if (taskId === "child-1") {
+        return Promise.resolve({
+          taskId,
+          parents: [
+            {
+              id: "parent-1",
+              displayKey: "PRJ-1",
+              title: "First parent",
+              status: "review",
+            },
+            {
+              id: "parent-2",
+              displayKey: "PRJ-2",
+              title: "Second parent",
+              status: "review",
+            },
+          ],
+          children: [],
+        });
+      }
+
+      return Promise.resolve({ taskId, parents: [], children: [] });
+    });
+    setTaskStatusMock
+      .mockReturnValueOnce(firstStatusUpdate.promise)
+      .mockReturnValueOnce(secondStatusUpdate.promise);
+
+    const ref: { current: ReturnType<typeof useBoardModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useBoardModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().review.length).toBe(2);
+      expect(ref.current?.groupedTasks().todo.length).toBe(1);
+    });
+
+    const firstMovePromise = ref.current!.moveTaskToStatus("parent-1", "done");
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().done.length).toBe(1);
+      expect(
+        ref.current?.groupedTasks().todo.find((task) => task.id === "child-1")
+          ?.isBlocked,
+      ).toBe(true);
+    });
+
+    firstStatusUpdate.resolve({
+      id: "parent-1",
+      title: "First parent",
+      status: "done",
+      projectId: "project-1",
+      isBlocked: false,
+    });
+
+    await expect(firstMovePromise).resolves.toBe(true);
+
+    await waitFor(() => {
+      expect(
+        ref.current?.groupedTasks().todo.find((task) => task.id === "child-1")
+          ?.isBlocked,
+      ).toBe(true);
+    });
+
+    const secondMovePromise = ref.current!.moveTaskToStatus("parent-2", "done");
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().done.length).toBe(2);
+      expect(
+        ref.current?.groupedTasks().todo.find((task) => task.id === "child-1")
+          ?.isBlocked,
+      ).toBe(false);
+    });
+
+    secondStatusUpdate.resolve({
+      id: "parent-2",
+      title: "Second parent",
+      status: "done",
+      projectId: "project-1",
+      isBlocked: false,
+    });
+
+    await expect(secondMovePromise).resolves.toBe(true);
+
+    await waitFor(() => {
+      expect(
+        ref.current?.groupedTasks().todo.find((task) => task.id === "child-1")
+          ?.isBlocked,
+      ).toBe(false);
+    });
+  });
+
+  it("rolls back dependent blocked state when the parent move fails", async () => {
+    const pendingStatusUpdate = deferred<never>();
+    listProjectTasksMock.mockResolvedValue([
+      {
+        id: "parent-1",
+        title: "Parent task",
+        status: "done",
+        projectId: "project-1",
+        isBlocked: false,
+      },
+      {
+        id: "child-1",
+        title: "Child task",
+        status: "todo",
+        projectId: "project-1",
+        blockedByCount: 1,
+        isBlocked: false,
+      },
+    ]);
+    listTaskDependenciesMock.mockImplementation((taskId: string) => {
+      if (taskId === "parent-1") {
+        return Promise.resolve({
+          taskId,
+          parents: [],
+          children: [
+            {
+              id: "child-1",
+              displayKey: "PRJ-2",
+              title: "Child task",
+              status: "todo",
+            },
+          ],
+        });
+      }
+
+      if (taskId === "child-1") {
+        return Promise.resolve({
+          taskId,
+          parents: [
+            {
+              id: "parent-1",
+              displayKey: "PRJ-1",
+              title: "Parent task",
+              status: "done",
+            },
+          ],
+          children: [],
+        });
+      }
+
+      return Promise.resolve({ taskId, parents: [], children: [] });
+    });
+    setTaskStatusMock.mockReturnValue(pendingStatusUpdate.promise);
+
+    const ref: { current: ReturnType<typeof useBoardModel> | null } = {
+      current: null,
+    };
+    render(() => {
+      ref.current = useBoardModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().done.length).toBe(1);
+      expect(ref.current?.groupedTasks().todo.length).toBe(1);
+    });
+
+    const movePromise = ref.current!.moveTaskToStatus("parent-1", "todo");
+
+    await waitFor(() => {
+      expect(
+        ref.current?.groupedTasks().todo.find((task) => task.id === "child-1")
+          ?.isBlocked,
+      ).toBe(true);
+    });
+
+    pendingStatusUpdate.reject(new Error("save failed"));
+
+    await expect(movePromise).resolves.toBe(false);
+
+    await waitFor(() => {
+      expect(ref.current?.groupedTasks().done.length).toBe(1);
+      expect(
+        ref.current?.groupedTasks().todo.find((task) => task.id === "child-1")
+          ?.isBlocked,
+      ).toBe(false);
+      expect(ref.current?.error()).toBe(
+        "Failed to update task status. Please try again.",
+      );
+    });
   });
 
   it("removes deleted run mini-cards from active task surfaces", async () => {
