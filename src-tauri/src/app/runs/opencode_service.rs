@@ -1880,34 +1880,13 @@ impl RunsOpenCodeService {
             state.pending_questions = pending_ids.clone();
         }
 
-        let has_pending_permissions = {
-            let state = handle
-                .session_runtime_state
-                .lock()
-                .map_err(|_| lock_error("OpenCode session runtime state"))?;
-            !state.pending_permissions.is_empty()
-        };
-
-        if pending_ids.is_empty() {
-            if has_pending_permissions {
-                let _ = self
-                    .run_state_service
-                    .handle_permission_requested(run_id)
-                    .await?;
-            } else {
-                self.restore_interrupted_run_state_or_recompute(
-                    run_id,
-                    &handle.session_runtime_state,
-                    "question_list_refreshed",
-                )
-                .await?;
-            }
-        } else {
-            let _ = self
-                .run_state_service
-                .handle_question_pending(run_id, "question_list_refreshed")
-                .await?;
-        }
+        let _ = self
+            .apply_run_state_for_current_blockers(
+                run_id,
+                &handle.session_runtime_state,
+                "question_list_refreshed",
+            )
+            .await?;
 
         Ok(pending_ids)
     }
@@ -1985,6 +1964,62 @@ impl RunsOpenCodeService {
                 Ok(event.and_then(|payload| payload.new_run_state))
             }
         }
+    }
+
+    async fn resolve_current_effective_run_state(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<String>, AppError> {
+        let run = self.runs_service.get_run_model(run_id).await?;
+        self.run_state_service
+            .resolve_effective_run_state(&run)
+            .await
+    }
+
+    async fn apply_run_state_for_current_blockers(
+        &self,
+        run_id: &str,
+        session_runtime_state: &Arc<Mutex<SessionRuntimeState>>,
+        transition_source: &str,
+    ) -> Result<Option<String>, AppError> {
+        let (has_pending_questions, has_pending_permissions) = {
+            let state = session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            (
+                !state.pending_questions.is_empty(),
+                !state.pending_permissions.is_empty(),
+            )
+        };
+
+        if has_pending_questions {
+            let event = self
+                .run_state_service
+                .handle_question_pending(run_id, transition_source)
+                .await?;
+            return match event.and_then(|payload| payload.new_run_state) {
+                Some(run_state) => Ok(Some(run_state)),
+                None => self.resolve_current_effective_run_state(run_id).await,
+            };
+        }
+
+        if has_pending_permissions {
+            let event = self
+                .run_state_service
+                .handle_permission_requested(run_id)
+                .await?;
+            return match event.and_then(|payload| payload.new_run_state) {
+                Some(run_state) => Ok(Some(run_state)),
+                None => self.resolve_current_effective_run_state(run_id).await,
+            };
+        }
+
+        self.restore_interrupted_run_state_or_recompute(
+            run_id,
+            session_runtime_state,
+            transition_source,
+        )
+        .await
     }
 
     /// Extracts a non-empty, trimmed status hint from a JSON payload.
@@ -2179,11 +2214,12 @@ impl RunsOpenCodeService {
                         .map_err(|_| lock_error("OpenCode session runtime state"))?;
                     state.pending_questions.insert(request_id);
                 }
-                let event = self
-                    .run_state_service
-                    .handle_question_pending(run_id, "question_asked")
-                    .await?;
-                Ok(event.and_then(|payload| payload.new_run_state))
+                self.apply_run_state_for_current_blockers(
+                    run_id,
+                    session_runtime_state,
+                    "question_asked",
+                )
+                .await
             }
             "question.replied" | "question.rejected" => {
                 let Some(_session_id) =
@@ -2195,33 +2231,44 @@ impl RunsOpenCodeService {
                 let Some(request_id) = Self::parse_question_request_id(payload) else {
                     return Ok(None);
                 };
-                let (has_pending_questions, has_pending_permissions) = {
+                let (removed, has_pending_questions, has_pending_permissions) = {
                     let mut state = session_runtime_state
                         .lock()
                         .map_err(|_| lock_error("OpenCode session runtime state"))?;
-                    state.pending_questions.remove(&request_id);
+                    let removed = state.pending_questions.remove(&request_id);
                     (
+                        removed,
                         !state.pending_questions.is_empty(),
                         !state.pending_permissions.is_empty(),
                     )
                 };
-                if has_pending_questions {
+                if !removed {
                     return Ok(None);
                 }
-                if has_pending_permissions {
-                    let event = self
-                        .run_state_service
-                        .handle_permission_requested(run_id)
-                        .await?;
-                    Ok(event.and_then(|payload| payload.new_run_state))
-                } else {
-                    self.restore_interrupted_run_state_or_recompute(
-                        run_id,
-                        session_runtime_state,
-                        "user_reply",
-                    )
-                    .await
+                if has_pending_questions {
+                    return self
+                        .apply_run_state_for_current_blockers(
+                            run_id,
+                            session_runtime_state,
+                            runtime_event_name.as_str(),
+                        )
+                        .await;
                 }
+                if has_pending_permissions {
+                    return self
+                        .apply_run_state_for_current_blockers(
+                            run_id,
+                            session_runtime_state,
+                            runtime_event_name.as_str(),
+                        )
+                        .await;
+                }
+                self.restore_interrupted_run_state_or_recompute(
+                    run_id,
+                    session_runtime_state,
+                    "user_reply",
+                )
+                .await
             }
             "permission.asked" => {
                 let Some(session_id) =
@@ -2270,11 +2317,12 @@ impl RunsOpenCodeService {
                     was_new = was_new,
                     "Tracked pending permission request"
                 );
-                let event = self
-                    .run_state_service
-                    .handle_permission_requested(run_id)
-                    .await?;
-                Ok(event.and_then(|payload| payload.new_run_state))
+                self.apply_run_state_for_current_blockers(
+                    run_id,
+                    session_runtime_state,
+                    "permission_asked",
+                )
+                .await
             }
             "permission.replied" | "permission.rejected" => {
                 let Some(session_id) =
@@ -2316,9 +2364,9 @@ impl RunsOpenCodeService {
                     removed = removed,
                     "Cleared pending permission request from runtime state"
                 );
-                if removed && pending_count == 0 && !has_pending_questions {
+                if removed && (has_pending_questions || pending_count == 0) {
                     return self
-                        .restore_interrupted_run_state_or_recompute(
+                        .apply_run_state_for_current_blockers(
                             run_id,
                             session_runtime_state,
                             "permission_resolved",
@@ -4959,13 +5007,14 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             (removed, pending_count, has_pending_questions)
         };
 
-        if removed && pending_count == 0 && !has_pending_questions {
-            self.restore_interrupted_run_state_or_recompute(
-                run_id,
-                &handle.session_runtime_state,
-                "permission_resolved",
-            )
-            .await?;
+        if removed && (has_pending_questions || pending_count == 0) {
+            let _ = self
+                .apply_run_state_for_current_blockers(
+                    run_id,
+                    &handle.session_runtime_state,
+                    "permission_resolved",
+                )
+                .await?;
         }
 
         Ok(ReplyRunOpenCodePermissionResponse {
@@ -5021,33 +5070,13 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             state.pending_questions = pending_ids.clone();
         }
 
-        if pending_ids.is_empty() {
-            let has_pending_permissions = {
-                let state = handle
-                    .session_runtime_state
-                    .lock()
-                    .map_err(|_| lock_error("OpenCode session runtime state"))?;
-                !state.pending_permissions.is_empty()
-            };
-            if has_pending_permissions {
-                let _ = self
-                    .run_state_service
-                    .handle_permission_requested(run_id)
-                    .await?;
-            } else {
-                self.restore_interrupted_run_state_or_recompute(
-                    run_id,
-                    &handle.session_runtime_state,
-                    "question_list_requested",
-                )
-                .await?;
-            }
-        } else {
-            let _ = self
-                .run_state_service
-                .handle_question_pending(run_id, "question_list_requested")
-                .await?;
-        }
+        let _ = self
+            .apply_run_state_for_current_blockers(
+                run_id,
+                &handle.session_runtime_state,
+                "question_list_requested",
+            )
+            .await?;
 
         Ok(question_requests)
     }
@@ -5144,34 +5173,22 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let mut run_state = None;
-        let (has_pending_questions, has_pending_permissions) = {
+        let removed = {
             let mut state = handle
                 .session_runtime_state
                 .lock()
                 .map_err(|_| lock_error("OpenCode session runtime state"))?;
-            state.pending_questions.remove(request_id);
-            (
-                !state.pending_questions.is_empty(),
-                !state.pending_permissions.is_empty(),
-            )
+            state.pending_questions.remove(request_id)
         };
 
-        if !has_pending_questions {
-            if has_pending_permissions {
-                run_state = self
-                    .run_state_service
-                    .handle_permission_requested(run_id)
-                    .await?
-                    .and_then(|payload| payload.new_run_state);
-            } else {
-                run_state = self
-                    .restore_interrupted_run_state_or_recompute(
-                        run_id,
-                        &handle.session_runtime_state,
-                        "user_reply",
-                    )
-                    .await?;
-            }
+        if removed {
+            run_state = self
+                .apply_run_state_for_current_blockers(
+                    run_id,
+                    &handle.session_runtime_state,
+                    "user_reply",
+                )
+                .await?;
         }
 
         Ok(ReplyRunOpenCodeQuestionResponse {
@@ -5271,34 +5288,22 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         }
 
         let mut run_state = None;
-        let (has_pending_questions, has_pending_permissions) = {
+        let removed = {
             let mut state = handle
                 .session_runtime_state
                 .lock()
                 .map_err(|_| lock_error("OpenCode session runtime state"))?;
-            state.pending_questions.remove(request_id);
-            (
-                !state.pending_questions.is_empty(),
-                !state.pending_permissions.is_empty(),
-            )
+            state.pending_questions.remove(request_id)
         };
 
-        if !has_pending_questions {
-            if has_pending_permissions {
-                run_state = self
-                    .run_state_service
-                    .handle_permission_requested(run_id)
-                    .await?
-                    .and_then(|payload| payload.new_run_state);
-            } else {
-                run_state = self
-                    .restore_interrupted_run_state_or_recompute(
-                        run_id,
-                        &handle.session_runtime_state,
-                        "user_reply",
-                    )
-                    .await?;
-            }
+        if removed {
+            run_state = self
+                .apply_run_state_for_current_blockers(
+                    run_id,
+                    &handle.session_runtime_state,
+                    "user_reply",
+                )
+                .await?;
         }
 
         Ok(RejectRunOpenCodeQuestionResponse {
@@ -8220,6 +8225,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn permission_asked_while_question_pending_keeps_question_pending() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.asked","properties":{"requestID":"question-sub-5","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"permission.asked","properties":{"id":"perm-sub-4","permission":"external_directory","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("question_pending")
+        );
+    }
+
+    #[tokio::test]
+    async fn permission_resolution_while_question_pending_keeps_question_pending() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.asked","properties":{"requestID":"question-sub-6","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"permission.asked","properties":{"id":"perm-sub-5","permission":"external_directory","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"permission.replied","properties":{"requestID":"perm-sub-5","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("question_pending")
+        );
+    }
+
+    #[tokio::test]
     async fn question_resolution_restores_committing_changes_when_commit_turn_resumes() {
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
@@ -8258,6 +8344,48 @@ mod tests {
         assert_eq!(
             fetch_run_state(&pool, "run-1").await.as_deref(),
             Some("committing_changes")
+        );
+    }
+
+    #[tokio::test]
+    async fn question_resolution_restores_resolving_rebase_conflicts_when_rebase_turn_resumes() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+        set_run_state(&pool, "run-1", Some("resolving_rebase_conflicts")).await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.asked","properties":{"requestID":"question-sub-7","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("question_pending")
+        );
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.replied","properties":{"requestID":"question-sub-7","sessionID":"session-child"}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("resolving_rebase_conflicts")
         );
     }
 
@@ -8449,6 +8577,146 @@ mod tests {
 
         let guard = handle.session_runtime_state.lock().unwrap();
         assert!(!guard.pending_permissions.contains("perm-sub-3"));
+        drop(guard);
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("busy_coding")
+        );
+    }
+
+    #[tokio::test]
+    async fn canonical_permission_reject_clears_tracked_child_session_request_id() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get("run-1")
+            .cloned()
+            .unwrap();
+
+        {
+            let mut session_id = handle.session_id.lock().unwrap();
+            *session_id = Some("session-root".to_string());
+        }
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"permission.asked","properties":{"id":"perm-sub-6","permission":"external_directory","sessionID":"session-child"}}"#,
+                &handle.session_runtime_state,
+            )
+            .await
+            .unwrap();
+
+        let response = opencode_service
+            .reply_run_opencode_permission("run-1", "session-root", "perm-sub-6", "reject", false)
+            .await
+            .unwrap();
+
+        assert_eq!(response.state, "accepted");
+        let guard = handle.session_runtime_state.lock().unwrap();
+        assert!(!guard.pending_permissions.contains("perm-sub-6"));
+        drop(guard);
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("busy_coding")
+        );
+    }
+
+    #[tokio::test]
+    async fn canonical_question_reply_clears_question_pending_to_busy_coding() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get("run-1")
+            .cloned()
+            .unwrap();
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.asked","properties":{"requestID":"question-sub-8","sessionID":"session-child"}}"#,
+                &handle.session_runtime_state,
+            )
+            .await
+            .unwrap();
+
+        let response = opencode_service
+            .reply_run_opencode_question(
+                "run-1",
+                "question-sub-8",
+                vec![vec!["Continue".to_string()]],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.state, "accepted");
+        assert_eq!(response.run_state.as_deref(), Some("busy_coding"));
+        let guard = handle.session_runtime_state.lock().unwrap();
+        assert!(!guard.pending_questions.contains("question-sub-8"));
+        drop(guard);
+        assert_eq!(
+            fetch_run_state(&pool, "run-1").await.as_deref(),
+            Some("busy_coding")
+        );
+    }
+
+    #[tokio::test]
+    async fn canonical_question_reject_clears_question_pending_to_busy_coding() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-root").await;
+        insert_running_handle(&opencode_service, "run-1", "task-1", &repo_path, None).await;
+
+        let handle = opencode_service
+            .handles
+            .read()
+            .await
+            .get("run-1")
+            .cloned()
+            .unwrap();
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"question.asked","properties":{"requestID":"question-sub-9","sessionID":"session-child"}}"#,
+                &handle.session_runtime_state,
+            )
+            .await
+            .unwrap();
+
+        let response = opencode_service
+            .reject_run_opencode_question("run-1", "question-sub-9")
+            .await
+            .unwrap();
+
+        assert_eq!(response.state, "accepted");
+        assert_eq!(response.run_state.as_deref(), Some("busy_coding"));
+        let guard = handle.session_runtime_state.lock().unwrap();
+        assert!(!guard.pending_questions.contains("question-sub-9"));
         drop(guard);
         assert_eq!(
             fetch_run_state(&pool, "run-1").await.as_deref(),
