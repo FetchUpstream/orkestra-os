@@ -34,6 +34,29 @@ const installResizeObserverStub = () => {
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 };
 
+const installLocalStorageStub = () => {
+  const storage = new Map<string, string>();
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        storage.set(key, String(value));
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
+      },
+      clear: () => {
+        storage.clear();
+      },
+      key: (index: number) => Array.from(storage.keys())[index] ?? null,
+      get length() {
+        return storage.size;
+      },
+    } satisfies Storage,
+  });
+};
+
 const {
   getRunOpenCodeSessionMessagesPageMock,
   getRunOpenCodeSessionTodosMock,
@@ -210,6 +233,8 @@ const createModelStub = (
 describe("NewRunChatWorkspace", () => {
   beforeEach(() => {
     installResizeObserverStub();
+    installLocalStorageStub();
+    window.localStorage.clear();
     getRunOpenCodeSessionMessagesPageMock.mockClear();
     getRunOpenCodeSessionTodosMock.mockClear();
     getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
@@ -1990,6 +2015,144 @@ describe("NewRunChatWorkspace", () => {
       expect(screen.getByText("Nested explorer")).toBeTruthy();
       expect(screen.getByText("Completed")).toBeTruthy();
       expect(screen.queryByText("Fetched lineage output")).toBeNull();
+    });
+  });
+
+  it("restores completed lineage-only subagent cards after refresh", async () => {
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
+      messages: [
+        {
+          info: {
+            id: "msg-child-history",
+            sessionID: "session-child",
+            role: "assistant",
+          },
+          parts: [
+            {
+              id: "part-child-history",
+              type: "text",
+              text: "Fetched child history output",
+              messageID: "msg-child-history",
+              sessionID: "session-child",
+            },
+          ],
+        },
+      ],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
+      raw: [],
+    } as any);
+
+    const createRootStore = (rawEvents: unknown[]) => ({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Map repo structure",
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: rawEvents as any,
+    });
+
+    const [initialStore] = createSignal(
+      createRootStore([
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "session-child",
+              parentID: "msg-root",
+              title: "Map repo structure",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child-live",
+              sessionID: "session-child",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child",
+            part: {
+              id: "part-child-live",
+              messageID: "msg-child-live",
+              sessionID: "session-child",
+              type: "text",
+              text: "Live child output",
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "session-child",
+            status: { type: "completed" },
+          },
+        },
+      ]),
+    );
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = initialStore as unknown as typeof model.agent.store;
+
+    const initialRender = render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      const panel = initialRender.container.querySelector(
+        '[aria-label="Map repo structure output"]',
+      );
+      expect(panel?.textContent).toContain("Completed");
+    });
+
+    initialRender.unmount();
+    getRunOpenCodeSessionMessagesPageMock.mockClear();
+
+    const [refreshedStore] = createSignal(createRootStore([]));
+    model.agent.store = refreshedStore as unknown as typeof model.agent.store;
+
+    const refreshedRender = render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledWith({
+        runId: "run-1",
+        sessionId: "session-child",
+      });
+
+      const panel = refreshedRender.container.querySelector(
+        '[aria-label="Map repo structure output"]',
+      );
+      expect(panel?.textContent).toContain("Completed");
     });
   });
 

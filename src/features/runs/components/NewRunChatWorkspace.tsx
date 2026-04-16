@@ -403,6 +403,7 @@ const TRANSCRIPT_NEAR_BOTTOM_THRESHOLD = 96;
 const INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS = 6;
 const OLDER_TRANSCRIPT_RESTORE_MAX_ATTEMPTS = 12;
 const MAX_SUBAGENT_HISTORY_PAGES = 100;
+const SUBAGENT_SNAPSHOT_STORAGE_KEY_PREFIX = "runs.chat.subagentSnapshots";
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 const INTERNAL_ID_DETECTION_PATTERN =
@@ -550,6 +551,13 @@ type SubagentHistorySnapshot = {
 
 type FetchedSubagentHistorySnapshot = SubagentHistorySnapshot | null;
 
+type PersistedSubagentSnapshot = {
+  sessionId: string;
+  assignedTaskPartId: string | null;
+  label: string | null;
+  status: string | null;
+};
+
 const getStatusType = (value: unknown): string | null => {
   if (typeof value === "string") {
     return value.trim() || null;
@@ -596,6 +604,212 @@ const sanitizeSubagentModelLabel = (value: unknown): string | null => {
   }
 
   return normalized;
+};
+
+const isGenericSubagentLabel = (value: string | null | undefined): boolean => {
+  const normalized = value?.trim() || "";
+  return (
+    normalized.length === 0 ||
+    normalized === "~ Delegating..." ||
+    normalized === "Subagent"
+  );
+};
+
+const getPersistedSubagentSnapshotStorageKey = (
+  runId: string,
+  rootSessionId: string,
+): string => {
+  return `${SUBAGENT_SNAPSHOT_STORAGE_KEY_PREFIX}:${runId}:${rootSessionId}`;
+};
+
+const serializePersistedSubagentSnapshots = (
+  snapshots: Record<string, PersistedSubagentSnapshot>,
+): string => {
+  return JSON.stringify(
+    Object.keys(snapshots)
+      .sort((left, right) => left.localeCompare(right))
+      .map((sessionId) => snapshots[sessionId]),
+  );
+};
+
+const normalizePersistedSubagentSnapshot = (
+  value: unknown,
+): PersistedSubagentSnapshot | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const sessionId =
+    typeof value.sessionId === "string" ? value.sessionId.trim() : "";
+  if (!sessionId) {
+    return null;
+  }
+
+  const assignedTaskPartId =
+    typeof value.assignedTaskPartId === "string"
+      ? value.assignedTaskPartId.trim() || null
+      : null;
+  const label =
+    typeof value.label === "string" ? value.label.trim() || null : null;
+  const status =
+    typeof value.status === "string" ? value.status.trim() || null : null;
+
+  return {
+    sessionId,
+    assignedTaskPartId,
+    label,
+    status,
+  };
+};
+
+const readPersistedSubagentSnapshots = (
+  runId: string | null | undefined,
+  rootSessionId: string | null | undefined,
+): Record<string, PersistedSubagentSnapshot> => {
+  const normalizedRunId = runId?.trim() || "";
+  const normalizedRootSessionId = rootSessionId?.trim() || "";
+  if (
+    !normalizedRunId ||
+    !normalizedRootSessionId ||
+    typeof window === "undefined"
+  ) {
+    return {};
+  }
+
+  try {
+    const serialized = window.localStorage.getItem(
+      getPersistedSubagentSnapshotStorageKey(
+        normalizedRunId,
+        normalizedRootSessionId,
+      ),
+    );
+    if (!serialized) {
+      return {};
+    }
+
+    const parsed = JSON.parse(serialized);
+    const items = Array.isArray(parsed)
+      ? parsed
+      : isRecord(parsed)
+        ? Object.values(parsed)
+        : [];
+
+    return Object.fromEntries(
+      items
+        .map((item) => normalizePersistedSubagentSnapshot(item))
+        .filter((item): item is PersistedSubagentSnapshot => item !== null)
+        .map((item) => [item.sessionId, item]),
+    );
+  } catch {
+    return {};
+  }
+};
+
+const persistSubagentSnapshots = (
+  runId: string | null | undefined,
+  rootSessionId: string | null | undefined,
+  snapshots: Record<string, PersistedSubagentSnapshot>,
+): void => {
+  const normalizedRunId = runId?.trim() || "";
+  const normalizedRootSessionId = rootSessionId?.trim() || "";
+  if (
+    !normalizedRunId ||
+    !normalizedRootSessionId ||
+    typeof window === "undefined"
+  ) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      getPersistedSubagentSnapshotStorageKey(
+        normalizedRunId,
+        normalizedRootSessionId,
+      ),
+      serializePersistedSubagentSnapshots(snapshots),
+    );
+  } catch {}
+};
+
+const mergePersistedSubagentSnapshots = (
+  previous: Record<string, PersistedSubagentSnapshot>,
+  next: Record<string, PersistedSubagentSnapshot>,
+): Record<string, PersistedSubagentSnapshot> => {
+  const merged: Record<string, PersistedSubagentSnapshot> = { ...previous };
+
+  for (const snapshot of Object.values(next)) {
+    const existing = merged[snapshot.sessionId];
+    merged[snapshot.sessionId] = {
+      sessionId: snapshot.sessionId,
+      assignedTaskPartId:
+        snapshot.assignedTaskPartId ?? existing?.assignedTaskPartId ?? null,
+      label: !isGenericSubagentLabel(snapshot.label)
+        ? snapshot.label
+        : !isGenericSubagentLabel(existing?.label)
+          ? (existing?.label ?? null)
+          : (snapshot.label ?? existing?.label ?? null),
+      status: snapshot.status ?? existing?.status ?? null,
+    };
+  }
+
+  return merged;
+};
+
+const buildPersistedSubagentSnapshotsFromPanels = (
+  panelsByTaskPartId: Record<string, RunChatToolRailSubagentItem[]>,
+): Record<string, PersistedSubagentSnapshot> => {
+  const snapshots: Record<string, PersistedSubagentSnapshot> = {};
+
+  for (const [taskPartId, panels] of Object.entries(panelsByTaskPartId)) {
+    for (const panel of panels) {
+      snapshots[panel.id] = {
+        sessionId: panel.id,
+        assignedTaskPartId: taskPartId,
+        label: panel.label.trim() || null,
+        status: panel.status?.trim() || null,
+      };
+    }
+  }
+
+  return snapshots;
+};
+
+const mergePersistedSubagentSessionAssignments = (
+  assignments: Record<string, SubagentSessionAssignmentSnapshot>,
+  persistedSnapshots: Record<string, PersistedSubagentSnapshot>,
+): Record<string, SubagentSessionAssignmentSnapshot> => {
+  const merged: Record<string, SubagentSessionAssignmentSnapshot> = {
+    ...assignments,
+  };
+
+  for (const snapshot of Object.values(persistedSnapshots)) {
+    if (!snapshot.assignedTaskPartId) {
+      continue;
+    }
+
+    const existing = merged[snapshot.sessionId];
+    if (!existing) {
+      merged[snapshot.sessionId] = {
+        sessionId: snapshot.sessionId,
+        parentSessionId: null,
+        parentMessageId: null,
+        assignedTaskPartId: snapshot.assignedTaskPartId,
+        assignmentSource: null,
+        assignmentConfidence: 0,
+        assignmentProvisional: true,
+      };
+      continue;
+    }
+
+    if (!existing.assignedTaskPartId) {
+      merged[snapshot.sessionId] = {
+        ...existing,
+        assignedTaskPartId: snapshot.assignedTaskPartId,
+      };
+    }
+  }
+
+  return merged;
 };
 
 const readSubagentAttribution = (
@@ -721,6 +935,7 @@ const deriveSubagentStatus = (
   session: SubagentSessionSnapshot,
   fetchedSnapshot: FetchedSubagentHistorySnapshot,
   entries: readonly RunChatToolRailSubagentEntry[],
+  persistedSnapshot: PersistedSubagentSnapshot | null,
 ): string => {
   if (hasLiveSubagentStatusActivity(session.liveEvents)) {
     return session.status;
@@ -732,6 +947,13 @@ const deriveSubagentStatus = (
     !hasLiveSubagentMessageActivity(session.liveEvents)
   ) {
     return "completed";
+  }
+
+  if (
+    persistedSnapshot?.status &&
+    !hasLiveSubagentMessageActivity(session.liveEvents)
+  ) {
+    return persistedSnapshot.status;
   }
 
   return session.status;
@@ -859,13 +1081,29 @@ const buildSubagentPanels = (
   rawEvents: readonly OpenCodeBusEvent[],
   rootSessionId: string | null,
   displayContext: ToolPathDisplayContext,
+  rootMessagesById: AgentStore["messagesById"],
   subagentAssignmentsBySessionId: Record<
     string,
     SubagentSessionAssignmentSnapshot
   >,
   fetchedSessionHistories: Record<string, FetchedSubagentHistorySnapshot>,
+  persistedSnapshotsBySessionId: Record<string, PersistedSubagentSnapshot>,
 ): Record<string, RunChatToolRailSubagentItem[]> => {
   const sessions = new Map<string, SubagentSessionSnapshot>();
+  const taskPartFallbackLabelsById = new Map<string, string>();
+
+  for (const message of Object.values(rootMessagesById)) {
+    for (const partId of message.partOrder) {
+      const part = message.partsById[partId];
+      if (part?.kind !== "tool" || !isTaskToolName(part.toolName)) {
+        continue;
+      }
+      taskPartFallbackLabelsById.set(
+        part.id,
+        toSingleLine(buildToolSummary(part, displayContext), 96) ?? "",
+      );
+    }
+  }
 
   const syncSessionAssignment = (
     session: SubagentSessionSnapshot,
@@ -894,6 +1132,7 @@ const buildSubagentPanels = (
     }
 
     const assignment = subagentAssignmentsBySessionId[sessionId];
+    const persistedSnapshot = persistedSnapshotsBySessionId[sessionId] ?? null;
     const created: SubagentSessionSnapshot = {
       sessionId,
       parentSessionId: assignment?.parentSessionId ?? null,
@@ -902,7 +1141,7 @@ const buildSubagentPanels = (
       assignmentSource: assignment?.assignmentSource ?? null,
       assignmentConfidence: assignment?.assignmentConfidence ?? 0,
       assignmentProvisional: assignment?.assignmentProvisional ?? true,
-      status: "running",
+      status: persistedSnapshot?.status ?? "running",
       title: null,
       agentType: null,
       model: null,
@@ -995,6 +1234,8 @@ const buildSubagentPanels = (
     }
 
     const fetchedSnapshot = fetchedSessionHistories[session.sessionId] ?? null;
+    const persistedSnapshot =
+      persistedSnapshotsBySessionId[session.sessionId] ?? null;
     const mergedStore = buildMergedSubagentMessageStore({
       sessionId: session.sessionId,
       fetchedStore: fetchedSnapshot?.store ?? null,
@@ -1024,8 +1265,16 @@ const buildSubagentPanels = (
       session,
       fetchedSnapshot,
       entries,
+      persistedSnapshot,
     );
     const hasOutput = hasRenderableSubagentEntries(entries);
+    const completedFallbackLabel =
+      (!isGenericSubagentLabel(persistedSnapshot?.label)
+        ? (persistedSnapshot?.label ?? null)
+        : null) ||
+      buildSubagentLabelFromEntries(entries) ||
+      taskPartFallbackLabelsById.get(taskPartId) ||
+      null;
     const subagent: RunChatToolRailSubagentItem = {
       id: session.sessionId,
       label: formatSubagentLabel(
@@ -1033,9 +1282,7 @@ const buildSubagentPanels = (
         fallbackAgentType,
         fallbackModel,
         hasOutput,
-        hasCompletedRunStatus(effectiveStatus)
-          ? buildSubagentLabelFromEntries(entries)
-          : null,
+        hasCompletedRunStatus(effectiveStatus) ? completedFallbackLabel : null,
       ),
       status: effectiveStatus,
       entries,
@@ -2465,12 +2712,31 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     );
   });
 
-  const subagentSessionAssignments = createMemo(() => {
+  const [persistedSubagentSnapshots, setPersistedSubagentSnapshots] =
+    createSignal<Record<string, PersistedSubagentSnapshot>>({});
+
+  createEffect(() => {
+    setPersistedSubagentSnapshots(
+      readPersistedSubagentSnapshots(
+        props.model.run()?.id,
+        props.model.agent.store().sessionId,
+      ),
+    );
+  });
+
+  const liveSubagentSessionAssignments = createMemo(() => {
     return buildSubagentSessionAssignments(
       props.model.agent.store().rawEvents ?? [],
       props.model.agent.store().sessionId,
       props.model.agent.store().messagesById,
       taskPartSessionIdsByPartId(),
+    );
+  });
+
+  const subagentSessionAssignments = createMemo(() => {
+    return mergePersistedSubagentSessionAssignments(
+      liveSubagentSessionAssignments(),
+      persistedSubagentSnapshots(),
     );
   });
 
@@ -2581,8 +2847,10 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       store.rawEvents ?? [],
       store.sessionId,
       toolPathDisplayContext(),
+      store.messagesById,
       subagentSessionAssignments(),
       fetchedSubagentHistories(),
+      persistedSubagentSnapshots(),
     );
 
     return mergeRetainedSubagentPanels(
@@ -2591,6 +2859,28 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       buildRootTaskPartIdSet(store),
     );
   }, {});
+
+  createEffect(() => {
+    const runId = props.model.run()?.id;
+    const rootSessionId = props.model.agent.store().sessionId;
+    if (!runId || !rootSessionId) {
+      return;
+    }
+
+    const mergedSnapshots = mergePersistedSubagentSnapshots(
+      persistedSubagentSnapshots(),
+      buildPersistedSubagentSnapshotsFromPanels(subagentPanelsByTaskPartId()),
+    );
+    if (
+      serializePersistedSubagentSnapshots(mergedSnapshots) ===
+      serializePersistedSubagentSnapshots(persistedSubagentSnapshots())
+    ) {
+      return;
+    }
+
+    persistSubagentSnapshots(runId, rootSessionId, mergedSnapshots);
+    setPersistedSubagentSnapshots(mergedSnapshots);
+  });
 
   const getStepDetailsSummary = (part: UiPart): string | null => {
     if (part.kind === "step-start") {
