@@ -791,6 +791,8 @@ describe("RunChatToolRail", () => {
       expect(panel()?.className).toContain(
         "run-chat-tool-rail__subagent-panel--completed",
       );
+      expect(panel()?.textContent).not.toContain("Settled final output");
+      expect(container.querySelector('[data-message-id="msg-1"]')).toBeNull();
       expect(
         container.querySelector(".run-chat-tool-rail__subagent-status-row"),
       ).toBeTruthy();

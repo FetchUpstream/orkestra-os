@@ -344,6 +344,9 @@ const RunChatToolRailSubagentPanel: Component<
     return subagent()?.status;
   });
   const subagentStatus = createMemo(() => normalizeStatus(renderedStatus()));
+  const showCompletedSummaryOnly = createMemo(() => {
+    return !hasActiveStreamingEntry() && subagentStatus() === "completed";
+  });
   const showTerminalStatusRow = createMemo(() => {
     if (hasActiveStreamingEntry()) {
       return false;
@@ -363,13 +366,15 @@ const RunChatToolRailSubagentPanel: Component<
           <p class="run-chat-tool-rail__subagent-title">{subagent()?.label}</p>
         </div>
         <div class="run-chat-tool-rail__subagent-body">
-          <For each={visibleEntryIds()}>
-            {(entryId) => (
-              <RunChatToolRailSubagentEntryItem
-                entry={() => entriesById()[entryId]}
-              />
-            )}
-          </For>
+          <Show when={!showCompletedSummaryOnly()}>
+            <For each={visibleEntryIds()}>
+              {(entryId) => (
+                <RunChatToolRailSubagentEntryItem
+                  entry={() => entriesById()[entryId]}
+                />
+              )}
+            </For>
+          </Show>
           <Show when={showTerminalStatusRow()}>
             <div class="run-chat-tool-rail__subagent-status-row">
               <RunChatToolRailStatus status={subagent()?.status} />

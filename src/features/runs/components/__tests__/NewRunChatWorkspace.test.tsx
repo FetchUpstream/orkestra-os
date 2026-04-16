@@ -2960,12 +2960,17 @@ describe("NewRunChatWorkspace", () => {
       expect(plannerPanel()).toBe(initialPlannerPanel);
       expect(researcherPanel()).toBe(initialResearcherPanel);
       expect(plannerMessage()).toBe(initialPlannerMessage);
-      expect(researcherMessage()).toBe(initialResearcherMessage);
+      expect(researcherMessage()).toBeNull();
       expect(plannerPanel()?.textContent).toContain(
         "Planner draft expanded ongoing",
       );
-      expect(researcherPanel()?.textContent).toContain("Research settled");
+      expect(researcherPanel()?.textContent).not.toContain("Research settled");
       expect(researcherPanel()?.textContent).not.toContain("ongoing");
+      expect(
+        researcherPanel()?.querySelectorAll(
+          ".run-chat-tool-rail__subagent-message",
+        ).length,
+      ).toBe(0);
       expect(
         researcherPanel()?.querySelector(
           ".run-chat-tool-rail__subagent-status-row",
@@ -3100,7 +3105,12 @@ describe("NewRunChatWorkspace", () => {
       container.querySelector('[aria-label="Researcher output"]');
 
     await waitFor(() => {
-      expect(plannerPanel()?.textContent).toContain("Planner settled");
+      expect(plannerPanel()?.textContent).not.toContain("Planner settled");
+      expect(
+        plannerPanel()?.querySelector(
+          ".run-chat-tool-rail__subagent-status-row",
+        ),
+      ).toBeTruthy();
       expect(researcherPanel()?.textContent).toContain("Research ongoing");
     });
 
@@ -3157,7 +3167,12 @@ describe("NewRunChatWorkspace", () => {
 
     await waitFor(() => {
       expect(plannerPanel()).toBe(initialPlannerPanel);
-      expect(plannerPanel()?.textContent).toContain("Planner settled");
+      expect(plannerPanel()?.textContent).not.toContain("Planner settled");
+      expect(
+        plannerPanel()?.querySelectorAll(
+          ".run-chat-tool-rail__subagent-message",
+        ).length,
+      ).toBe(0);
       expect(
         plannerPanel()?.querySelector(
           ".run-chat-tool-rail__subagent-status-row",
