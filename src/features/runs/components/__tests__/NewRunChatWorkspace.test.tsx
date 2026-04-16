@@ -2979,6 +2979,196 @@ describe("NewRunChatWorkspace", () => {
     });
   });
 
+  it("retains completed subagent cards when later sibling activity drops their live events", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Coordinate concurrent subagents",
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child-a",
+            info: {
+              id: "session-child-a",
+              parentID: "msg-root",
+              title: "Planner",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child-a",
+            info: {
+              id: "msg-child-a",
+              sessionID: "session-child-a",
+              parentID: "msg-root",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child-a",
+            part: {
+              id: "part-child-a",
+              messageID: "msg-child-a",
+              sessionID: "session-child-a",
+              type: "text",
+              text: "Planner settled",
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "session-child-a",
+            status: { type: "completed" },
+          },
+        },
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child-b",
+            info: {
+              id: "session-child-b",
+              parentID: "msg-root",
+              title: "Researcher",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child-b",
+            info: {
+              id: "msg-child-b",
+              sessionID: "session-child-b",
+              parentID: "msg-root",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-b",
+            messageID: "msg-child-b",
+            partID: "part-child-b",
+            field: "text",
+            delta: "Research ongoing",
+          },
+        },
+      ] as any,
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    const plannerPanel = () =>
+      container.querySelector('[aria-label="Planner output"]');
+    const researcherPanel = () =>
+      container.querySelector('[aria-label="Researcher output"]');
+
+    await waitFor(() => {
+      expect(plannerPanel()?.textContent).toContain("Planner settled");
+      expect(researcherPanel()?.textContent).toContain("Research ongoing");
+    });
+
+    const initialPlannerPanel = plannerPanel();
+
+    setStore((current) => ({
+      ...current,
+      rawEvents: [
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child-b",
+            info: {
+              id: "session-child-b",
+              parentID: "msg-root",
+              title: "Researcher",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child-b",
+            info: {
+              id: "msg-child-b",
+              sessionID: "session-child-b",
+              parentID: "msg-root",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-b",
+            messageID: "msg-child-b",
+            partID: "part-child-b",
+            field: "text",
+            delta: "Research ongoing",
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-b",
+            messageID: "msg-child-b",
+            partID: "part-child-b",
+            field: "text",
+            delta: " continuing",
+          },
+        },
+      ] as any,
+    }));
+
+    await waitFor(() => {
+      expect(plannerPanel()).toBe(initialPlannerPanel);
+      expect(plannerPanel()?.textContent).toContain("Planner settled");
+      expect(
+        plannerPanel()?.querySelector(
+          ".run-chat-tool-rail__subagent-status-row",
+        ),
+      ).toBeTruthy();
+      expect(researcherPanel()?.textContent).toContain(
+        "Research ongoing continuing",
+      );
+    });
+  });
+
   it("anchors once to the true transcript bottom after initial history arrives", async () => {
     const [store, setStore] = createSignal({
       sessionId: "session-root",

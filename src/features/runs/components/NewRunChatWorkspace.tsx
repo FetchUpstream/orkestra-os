@@ -950,6 +950,92 @@ const buildSubagentPanels = (
   }, {});
 };
 
+const buildRootTaskPartIdSet = (store: AgentStore): Set<string> => {
+  const taskPartIds = new Set<string>();
+
+  for (const messageId of store.messageOrder) {
+    const message = store.messagesById[messageId];
+    if (!message) {
+      continue;
+    }
+
+    for (const partId of message.partOrder) {
+      const part = message.partsById[partId];
+      if (part?.kind === "tool" && isTaskToolName(part.toolName)) {
+        taskPartIds.add(part.id);
+      }
+    }
+  }
+
+  return taskPartIds;
+};
+
+const shouldRetainSubagentPanel = (
+  subagent: RunChatToolRailSubagentItem,
+): boolean => {
+  return subagent.entries.some(
+    (entry) => entry.kind !== "assistant-placeholder",
+  );
+};
+
+const mergeRetainedSubagentPanels = (
+  previous: Record<string, RunChatToolRailSubagentItem[]>,
+  current: Record<string, RunChatToolRailSubagentItem[]>,
+  activeTaskPartIds: Set<string>,
+): Record<string, RunChatToolRailSubagentItem[]> => {
+  const merged: Record<string, RunChatToolRailSubagentItem[]> = {};
+  const currentTaskPartIdsBySubagentId = new Map<string, string>();
+
+  for (const [taskPartId, panels] of Object.entries(current)) {
+    for (const panel of panels) {
+      currentTaskPartIdsBySubagentId.set(panel.id, taskPartId);
+    }
+  }
+
+  for (const taskPartId of activeTaskPartIds) {
+    const previousPanels = previous[taskPartId] ?? [];
+    const currentPanels = current[taskPartId] ?? [];
+    const currentPanelsById = Object.fromEntries(
+      currentPanels.map((subagent) => [subagent.id, subagent]),
+    );
+    const previousPanelIds = new Set(
+      previousPanels.map((subagent) => subagent.id),
+    );
+    const retainedPanels: RunChatToolRailSubagentItem[] = [];
+
+    for (const previousPanel of previousPanels) {
+      const currentPanel = currentPanelsById[previousPanel.id];
+      if (currentPanel) {
+        retainedPanels.push(currentPanel);
+        continue;
+      }
+
+      const reboundTaskPartId = currentTaskPartIdsBySubagentId.get(
+        previousPanel.id,
+      );
+      if (reboundTaskPartId && reboundTaskPartId !== taskPartId) {
+        continue;
+      }
+
+      if (shouldRetainSubagentPanel(previousPanel)) {
+        retainedPanels.push(previousPanel);
+      }
+    }
+
+    for (const currentPanel of currentPanels) {
+      if (!previousPanelIds.has(currentPanel.id)) {
+        retainedPanels.push(currentPanel);
+      }
+    }
+
+    if (retainedPanels.length > 0) {
+      merged[taskPartId] = retainedPanels;
+    }
+  }
+
+  return merged;
+};
+
 const sanitizeAttributionValue = (value: unknown): string => {
   if (typeof value !== "string") {
     return "";
@@ -2388,15 +2474,24 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     }
   });
 
-  const subagentPanelsByTaskPartId = createMemo(() => {
-    return buildSubagentPanels(
-      props.model.agent.store().rawEvents ?? [],
-      props.model.agent.store().sessionId,
+  const subagentPanelsByTaskPartId = createMemo<
+    Record<string, RunChatToolRailSubagentItem[]>
+  >((previous) => {
+    const store = props.model.agent.store();
+    const currentPanels = buildSubagentPanels(
+      store.rawEvents ?? [],
+      store.sessionId,
       toolPathDisplayContext(),
       subagentSessionAssignments(),
       fetchedSubagentHistories(),
     );
-  });
+
+    return mergeRetainedSubagentPanels(
+      previous ?? {},
+      currentPanels,
+      buildRootTaskPartIdSet(store),
+    );
+  }, {});
 
   const getStepDetailsSummary = (part: UiPart): string | null => {
     if (part.kind === "step-start") {
