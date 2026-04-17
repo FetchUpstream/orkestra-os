@@ -1,10 +1,12 @@
 {
   "version": "0.0.2",
-  "releasedAt": "2026-04-13T12:00:00Z",
+  "releasedAt": "2026-04-17T12:00:00Z",
  "notes": [
-  "Run chat transcript UX fixes: fixes initial anchoring to the latest message, improves bottom anchoring and jump-to-bottom behavior, and expands tests around chat scroll and anchor behavior.",
-  "About modal refresh: simplifies and polishes the About modal layout, updates hierarchy, copy, and presentation, and adjusts support link handling and related tests.",
-  "Sidebar polish: fixes sidebar version display wrapping and refreshes the sidebar after creating a new project."
+  "Run details and chat feel much better: paged history, smoother streaming text, better scroll anchoring, and clearer subagent activity during long sessions.",
+  "Board and task workflows are more reliable: blocker details appear before starting work, warning states are clearer, and board/task status updates handle stale state more cleanly.",
+  "Run setup is more flexible: new run worktrees can use a selected source branch, and run cards now show clearer, more human-friendly identifiers.",
+  "Project setup is easier: local repository paths now support fuzzy search, and project defaults, settings autosave, and repository guidance are more polished.",
+  "The app shell is more polished overall: the About modal was refreshed, sidebar behavior was improved, and supported Linux installs can now surface package update notices."
 ],
   "commands": {
     "deb": "sudo apt update && sudo apt install --only-upgrade orkestraos",
