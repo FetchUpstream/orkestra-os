@@ -20,6 +20,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AppRouter from "../../router";
 import { resetRunSelectionOptionsCacheForTests } from "../lib/runSelectionOptionsCache";
+import { resetTaskDependenciesCacheForTests } from "../lib/taskDependenciesCache";
 
 const {
   invokeMock,
@@ -246,6 +247,7 @@ const resetLocalStorageMock = () => {
 describe("app routing and shell", () => {
   beforeEach(() => {
     resetRunSelectionOptionsCacheForTests();
+    resetTaskDependenciesCacheForTests();
     setViewportMobile(false);
     resetLocalStorageMock();
     invokeMock.mockReset();
@@ -3877,11 +3879,10 @@ describe("app routing and shell", () => {
     renderAt("/tasks/task-123?origin=board");
 
     await waitFor(() => {
-      expect(screen.getByText("ALP-5 - Seed data")).toBeTruthy();
+      expect(screen.getByText("Seed data")).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByText("ALP-5 - Seed data"));
-
+    await fireEvent.click(screen.getByText("Seed data"));
     await waitFor(() => {
       expect(window.location.pathname).toBe(
         "/projects/p-1/tasks/task-parent-1",
@@ -5167,8 +5168,8 @@ describe("app routing and shell", () => {
     renderAt("/projects/p-1/tasks/task-123");
 
     await waitFor(() => {
-      expect(screen.getByText("ALP-5 - Seed data")).toBeTruthy();
-      expect(screen.getByText("ALP-8 - Wire dashboard")).toBeTruthy();
+      expect(screen.getByText("Seed data")).toBeTruthy();
+      expect(screen.getByText("Wire dashboard")).toBeTruthy();
     });
 
     await fireEvent.click(
@@ -5181,14 +5182,14 @@ describe("app routing and shell", () => {
       });
       expect(linkDialog).toBeTruthy();
     });
-    expect(screen.queryByText("ALP-444 - Already done")).toBeNull();
+    expect(screen.queryByText("Already done")).toBeNull();
     await fireEvent.change(screen.getByLabelText("Search dependency tasks"), {
       target: { value: "ALP-44" },
     });
-    expect(screen.queryByText("ALP-444 - Already done")).toBeNull();
+    expect(screen.queryByText("Already done")).toBeNull();
     await fireEvent.click(screen.getByLabelText("Show done tasks"));
     await waitFor(() => {
-      expect(screen.getByText("ALP-444 - Already done")).toBeTruthy();
+      expect(screen.getByText("Already done")).toBeTruthy();
     });
     await fireEvent.change(screen.getByLabelText("Search dependency tasks"), {
       target: { value: "ALP-222" },
@@ -5209,7 +5210,7 @@ describe("app routing and shell", () => {
     await waitFor(() => {
       expect(screen.getAllByRole("button", { name: "Remove" }).length).toBe(2);
     });
-    const childRow = screen.getByText("ALP-8 - Wire dashboard").closest("li");
+    const childRow = screen.getByText("Wire dashboard").closest("li");
     expect(childRow).toBeTruthy();
     const pathBeforeRemove = window.location.pathname;
     await fireEvent.click(
@@ -5224,12 +5225,10 @@ describe("app routing and shell", () => {
     expect(window.location.pathname).toBe(pathBeforeRemove);
 
     await waitFor(() => {
-      expect(screen.getByText("ALP-5 - Seed data")).toBeTruthy();
+      expect(screen.getByText("Seed data")).toBeTruthy();
     });
 
-    const parentDependencyRow = screen
-      .getByText("ALP-5 - Seed data")
-      .closest("li");
+    const parentDependencyRow = screen.getByText("Seed data").closest("li");
     expect(parentDependencyRow).toBeTruthy();
     await fireEvent.click(parentDependencyRow as HTMLElement);
     await waitFor(() => {
@@ -5359,7 +5358,7 @@ describe("app routing and shell", () => {
     renderAt("/projects/p-1/tasks/task-123");
 
     await waitFor(() => {
-      expect(screen.getByText("ALP-5 - Seed data")).toBeTruthy();
+      expect(screen.getByText("Seed data")).toBeTruthy();
     });
 
     await fireEvent.click(
@@ -5370,8 +5369,8 @@ describe("app routing and shell", () => {
       name: "Link blocking prerequisite",
     });
 
-    expect(within(dialog).queryByText("ALP-7 - Sample task")).toBeNull();
-    expect(within(dialog).queryByText("ALP-5 - Seed data")).toBeNull();
+    expect(within(dialog).queryByText("Sample task")).toBeNull();
+    expect(within(dialog).queryByText("Seed data")).toBeNull();
     expect(
       within(dialog).getByText("No tasks match your filters."),
     ).toBeTruthy();
