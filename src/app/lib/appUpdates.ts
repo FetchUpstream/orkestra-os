@@ -73,8 +73,7 @@ export type TauriAppUpdateErrorResult = {
 
 type RawTauriAppUpdateCheckResult =
   | Omit<TauriAppUpdateAvailableResult, "kind">
-  | Omit<TauriAppUpToDateResult, "kind">
-  | Omit<TauriAppUpdateErrorResult, "kind">;
+  | Omit<TauriAppUpToDateResult, "kind">;
 
 export type TauriAppUpdateCheckResult =
   | TauriAppUpdateAvailableResult
