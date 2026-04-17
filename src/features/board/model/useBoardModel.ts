@@ -34,7 +34,6 @@ import { subscribeToRunDeleted } from "../../../app/lib/runDeletedEvents";
 import {
   getTask,
   listProjectTasks,
-  listTaskDependencies,
   searchProjectTasks,
   setTaskStatus,
   type Task,
@@ -42,6 +41,10 @@ import {
   type TaskDependencyTask,
   type TaskStatus,
 } from "../../../app/lib/tasks";
+import {
+  getTaskDependenciesWithCache,
+  invalidateTaskDependenciesCache,
+} from "../../../app/lib/taskDependenciesCache";
 import {
   createRun,
   listTaskRuns,
@@ -539,12 +542,6 @@ export const useBoardModel = () => {
   const taskStatusPropagationGenerationByTask = new Map<string, number>();
   let nextTaskStatusPropagationGeneration = 0;
   const deletedRunIds = new Set<string>();
-  const taskDependencyCache = new Map<string, TaskDependencies>();
-  const pendingTaskDependencyRequests = new Map<
-    string,
-    Promise<TaskDependencies>
-  >();
-  let taskDependencyCacheVersion = 0;
   let boardEventSubscriptionDisposed = false;
   let removeBoardEventSubscription: (() => void) | null = null;
   let removeBoardRunStatusSubscription: (() => void) | null = null;
@@ -593,61 +590,14 @@ export const useBoardModel = () => {
 
   const clearTaskDependencyCache = () => {
     taskStatusPropagationGenerationByTask.clear();
-    taskDependencyCacheVersion += 1;
-    taskDependencyCache.clear();
-    pendingTaskDependencyRequests.clear();
+    invalidateTaskDependenciesCache();
   };
 
   const readTaskDependencies = async (
     taskId: string,
     options?: { force?: boolean },
   ): Promise<TaskDependencies> => {
-    const normalizedTaskId = taskId.trim();
-    if (!normalizedTaskId) {
-      return { taskId: "", parents: [], children: [] };
-    }
-
-    if (!options?.force) {
-      const cachedDependencies = taskDependencyCache.get(normalizedTaskId);
-      if (cachedDependencies) {
-        return cachedDependencies;
-      }
-
-      const pendingRequest =
-        pendingTaskDependencyRequests.get(normalizedTaskId);
-      if (pendingRequest) {
-        return pendingRequest;
-      }
-    }
-
-    const cacheVersion = taskDependencyCacheVersion;
-    const dependencyRequest = listTaskDependencies(normalizedTaskId)
-      .then((dependencies) => {
-        const normalizedDependencies = {
-          ...dependencies,
-          taskId: dependencies.taskId || normalizedTaskId,
-        };
-        if (taskDependencyCacheVersion === cacheVersion) {
-          taskDependencyCache.set(normalizedTaskId, normalizedDependencies);
-          if (pendingTaskDependencyRequests.get(normalizedTaskId) === dependencyRequest) {
-            pendingTaskDependencyRequests.delete(normalizedTaskId);
-          }
-        }
-        return normalizedDependencies;
-      })
-      .catch((error) => {
-        if (taskDependencyCacheVersion === cacheVersion) {
-          if (pendingTaskDependencyRequests.get(normalizedTaskId) === dependencyRequest) {
-            pendingTaskDependencyRequests.delete(normalizedTaskId);
-          }
-        }
-        throw error;
-      });
-
-    if (taskDependencyCacheVersion === cacheVersion) {
-      pendingTaskDependencyRequests.set(normalizedTaskId, dependencyRequest);
-    }
-    return dependencyRequest;
+    return getTaskDependenciesWithCache(taskId, { refresh: options?.force });
   };
 
   type DependentBlockedStatePatch = {

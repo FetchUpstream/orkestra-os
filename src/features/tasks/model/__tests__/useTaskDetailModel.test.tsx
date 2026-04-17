@@ -13,6 +13,7 @@
 import { render, waitFor } from "@solidjs/testing-library";
 import { createMutable } from "solid-js/store";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resetTaskDependenciesCacheForTests } from "../../../../app/lib/taskDependenciesCache";
 import { useTaskDetailModel } from "../useTaskDetailModel";
 
 const paramsState = createMutable({ projectId: "project-1", taskId: "task-1" });
@@ -115,6 +116,7 @@ vi.mock("../../../../app/contexts/OpenCodeDependencyContext", () => ({
 
 describe("useTaskDetailModel start run", () => {
   beforeEach(() => {
+    resetTaskDependenciesCacheForTests();
     paramsState.projectId = "project-1";
     paramsState.taskId = "task-1";
     navigateMock.mockReset();

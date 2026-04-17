@@ -12,9 +12,9 @@
 
 import { render, waitFor } from "@solidjs/testing-library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useBoardModel } from "../useBoardModel";
-
+import { resetTaskDependenciesCacheForTests } from "../../../../app/lib/taskDependenciesCache";
 import type { TaskDependencies } from "../../../../app/lib/tasks";
+import { useBoardModel } from "../useBoardModel";
 
 const {
   listProjectsMock,
@@ -108,6 +108,7 @@ const deferred = <T,>() => {
 
 describe("useBoardModel run settings defaults", () => {
   beforeEach(() => {
+    resetTaskDependenciesCacheForTests();
     listProjectsMock.mockReset();
     getProjectMock.mockReset();
     getTaskMock.mockReset();

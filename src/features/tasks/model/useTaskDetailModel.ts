@@ -29,7 +29,6 @@ import {
   deleteTask,
   getTask,
   listProjectTasks,
-  listTaskDependencies,
   moveTask,
   removeTaskDependency,
   setTaskStatus,
@@ -39,6 +38,7 @@ import {
   type Task,
   type TaskStatus,
 } from "../../../app/lib/tasks";
+import { getTaskDependenciesWithCache } from "../../../app/lib/taskDependenciesCache";
 import {
   createRun,
   deleteRun,
@@ -579,11 +579,14 @@ export const useTaskDetailModel = () => {
 
   const refreshDependencies = async (
     taskId: string,
+    options?: { force?: boolean },
   ): Promise<TaskDependencies | null> => {
     setIsLoadingDependencies(true);
     setDependenciesError("");
     try {
-      const loadedDependencies = await listTaskDependencies(taskId);
+      const loadedDependencies = await getTaskDependenciesWithCache(taskId, {
+        refresh: options?.force,
+      });
       setDependencies(loadedDependencies);
       return loadedDependencies;
     } catch {
@@ -612,7 +615,7 @@ export const useTaskDetailModel = () => {
   ): Promise<BlockingParentTaskRevalidation> => {
     const [freshTask, loadedDependencies] = await Promise.all([
       getTask(taskId),
-      refreshDependencies(taskId),
+      refreshDependencies(taskId, { force: true }),
     ]);
     setTask(freshTask);
     if (!loadedDependencies) {
@@ -944,7 +947,7 @@ export const useTaskDetailModel = () => {
       } else {
         await addTaskDependency(taskValue.id, dependencyTaskId);
       }
-      await refreshDependencies(taskValue.id);
+      await refreshDependencies(taskValue.id, { force: true });
       setIsLinkDependencyModalOpen(false);
     } catch (mutationError) {
       setActionError(
@@ -990,7 +993,7 @@ export const useTaskDetailModel = () => {
         await addTaskDependency(taskValue.id, created.id);
       }
       await Promise.all([
-        refreshDependencies(taskValue.id),
+        refreshDependencies(taskValue.id, { force: true }),
         loadDependencyCandidates(resolvedProjectId),
       ]);
       setIsCreateDependencyModalOpen(false);
@@ -1212,7 +1215,7 @@ export const useTaskDetailModel = () => {
     setRemovingDependencyKey(`${parentTaskId}:${childTaskId}`);
     try {
       await removeTaskDependency(parentTaskId, childTaskId);
-      await refreshDependencies(taskValue.id);
+      await refreshDependencies(taskValue.id, { force: true });
     } catch (mutationError) {
       setActionError(
         getActionErrorMessage("Failed to remove dependency.", mutationError),
