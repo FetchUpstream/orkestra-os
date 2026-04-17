@@ -536,7 +536,8 @@ export const useBoardModel = () => {
   let runSelectionOptionsRequestVersion = 0;
   let runSourceBranchesRequestVersion = 0;
   const taskRunRequestVersions: Record<string, number> = {};
-  let taskStatusPropagationGeneration = 0;
+  const taskStatusPropagationGenerationByTask = new Map<string, number>();
+  let nextTaskStatusPropagationGeneration = 0;
   const deletedRunIds = new Set<string>();
   const taskDependencyCache = new Map<string, TaskDependencies>();
   const pendingTaskDependencyRequests = new Map<
@@ -556,16 +557,42 @@ export const useBoardModel = () => {
     return nextVersion;
   };
 
-  const beginTaskStatusPropagation = (): number => {
-    taskStatusPropagationGeneration += 1;
-    return taskStatusPropagationGeneration;
+  const allocateTaskStatusPropagationGeneration = (): number => {
+    nextTaskStatusPropagationGeneration += 1;
+    return nextTaskStatusPropagationGeneration;
   };
 
-  const isTaskStatusPropagationCurrent = (requestVersion: number) => {
-    return taskStatusPropagationGeneration === requestVersion;
+  const beginTaskStatusPropagation = (
+    taskId: string,
+    requestVersion: number,
+  ): number => {
+    const normalizedTaskId = taskId.trim();
+    if (!normalizedTaskId) {
+      return requestVersion;
+    }
+
+    const currentVersion =
+      taskStatusPropagationGenerationByTask.get(normalizedTaskId) ?? 0;
+    if (requestVersion > currentVersion) {
+      taskStatusPropagationGenerationByTask.set(normalizedTaskId, requestVersion);
+    }
+
+    return requestVersion;
+  };
+
+  const isTaskStatusPropagationCurrent = (
+    taskId: string,
+    requestVersion: number,
+  ) => {
+    const normalizedTaskId = taskId.trim();
+    return (
+      (taskStatusPropagationGenerationByTask.get(normalizedTaskId) ?? 0) ===
+      requestVersion
+    );
   };
 
   const clearTaskDependencyCache = () => {
+    taskStatusPropagationGenerationByTask.clear();
     taskDependencyCacheVersion += 1;
     taskDependencyCache.clear();
     pendingTaskDependencyRequests.clear();
@@ -626,6 +653,7 @@ export const useBoardModel = () => {
   type DependentBlockedStatePatch = {
     taskId: string;
     isBlocked: boolean;
+    requestVersion: number;
   };
 
   const syncTaskBlockedState = (taskId: string, isBlockedNow: boolean) => {
@@ -647,12 +675,15 @@ export const useBoardModel = () => {
   const syncDependentBlockedStatePatches = (
     patches: DependentBlockedStatePatch[],
   ) => {
-    if (patches.length === 0) {
+    const currentPatches = patches.filter((patch) =>
+      isTaskStatusPropagationCurrent(patch.taskId, patch.requestVersion),
+    );
+    if (currentPatches.length === 0) {
       return;
     }
 
     const patchLookup = new Map(
-      patches.map((patch) => [patch.taskId, patch.isBlocked] as const),
+      currentPatches.map((patch) => [patch.taskId, patch.isBlocked] as const),
     );
     setTasks((currentTasks) => {
       let didChange = false;
@@ -698,6 +729,7 @@ export const useBoardModel = () => {
     nextStatus: TaskStatus,
     nextTasks: Task[],
     options?: { forceRefresh?: boolean },
+    requestVersion?: number,
   ): Promise<DependentBlockedStatePatch[]> => {
     const previousWasDone = previousStatus === "done";
     const nextIsDone = nextStatus === "done";
@@ -721,17 +753,22 @@ export const useBoardModel = () => {
     previousStatusLookup.set(taskId, previousStatus);
 
     const childDependencyEntries = await Promise.all(
-      movedTaskDependencies.children.map(
-        async (childTask) =>
-          [
-            childTask.id,
-            await readTaskDependenciesForPropagation(childTask.id, options),
-          ] as const,
-      ),
+      movedTaskDependencies.children.map(async (childTask) => {
+        const childRequestVersion = beginTaskStatusPropagation(
+          childTask.id,
+          requestVersion ?? allocateTaskStatusPropagationGeneration(),
+        );
+
+        return [
+          childTask.id,
+          childRequestVersion,
+          await readTaskDependenciesForPropagation(childTask.id, options),
+        ] as const;
+      }),
     );
 
     return childDependencyEntries.flatMap(
-      ([childTaskId, childDependencies]) => {
+      ([childTaskId, childRequestVersion, childDependencies]) => {
         const childTask = nextTaskLookup.get(childTaskId);
         if (!childTask) {
           return [];
@@ -747,7 +784,13 @@ export const useBoardModel = () => {
           return [];
         }
 
-        return [{ taskId: childTaskId, isBlocked: hasBlockingParents }];
+        return [
+          {
+            taskId: childTaskId,
+            isBlocked: hasBlockingParents,
+            requestVersion: childRequestVersion,
+          },
+        ];
       },
     );
   };
@@ -759,7 +802,7 @@ export const useBoardModel = () => {
     nextTasks: Task[],
     options?: { forceRefresh?: boolean },
   ) => {
-    const requestVersion = beginTaskStatusPropagation();
+    const requestVersion = allocateTaskStatusPropagationGeneration();
     try {
       const patches = await collectDependentBlockedStatePatches(
         taskId,
@@ -767,16 +810,10 @@ export const useBoardModel = () => {
         nextStatus,
         nextTasks,
         options,
+        requestVersion,
       );
-      if (!isTaskStatusPropagationCurrent(requestVersion)) {
-        return;
-      }
-
       syncDependentBlockedStatePatches(patches);
     } catch {
-      if (!isTaskStatusPropagationCurrent(requestVersion)) {
-        return;
-      }
       // Keep the moved card responsive even if dependency snapshots fail.
     }
   };
