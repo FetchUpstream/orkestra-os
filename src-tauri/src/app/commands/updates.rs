@@ -15,11 +15,14 @@ use crate::app::errors::AppError;
 use reqwest::{Client, Url};
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tauri::AppHandle;
 use tauri_plugin_updater::UpdaterExt;
 
 const GITHUB_API_ACCEPT: &str = "application/vnd.github+json";
 const GITHUB_API_VERSION: &str = "2022-11-28";
+const GITHUB_API_TIMEOUT_SECS: u64 = 10;
+const GITHUB_API_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 const UPDATER_LATEST_MANIFEST_NAME: &str = "latest.json";
 
 #[derive(Debug, Serialize)]
@@ -206,10 +209,22 @@ fn build_channel_updater(
 
 async fn fetch_github_releases() -> Result<Vec<GitHubReleaseSummary>, AppError> {
     let api_url = github_releases_api_url()?;
-    let response = Client::new()
+    let client = Client::builder()
+        .timeout(Duration::from_secs(GITHUB_API_TIMEOUT_SECS))
+        .build()
+        .map_err(|error| {
+            AppError::infrastructure_with_source(
+                "updates",
+                "github_release_list_client_build_failed",
+                "Unable to initialize the release feed client for app updates.",
+                error,
+            )
+        })?;
+    let response = client
         .get(api_url.as_str())
         .header("accept", GITHUB_API_ACCEPT)
         .header("x-github-api-version", GITHUB_API_VERSION)
+        .header("user-agent", GITHUB_API_USER_AGENT)
         .send()
         .await
         .map_err(|error| {
@@ -398,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn prerelease_clients_can_see_newer_prereleases() {
+    fn prerelease_clients_pick_highest_semver_including_stables() {
         let current = Version::parse("0.0.2-RC.1").unwrap();
         let selected = select_latest_release(
             &current,

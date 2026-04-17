@@ -140,13 +140,21 @@ export const checkForAppUpdate = async (): Promise<AppUpdateCheckResult> => {
     };
   }
 
-  const tauriResult = await invoke<RawTauriAppUpdateCheckResult>(
-    "check_tauri_app_update",
-  );
-  return {
-    ...tauriResult,
-    kind: "tauri",
-  } as TauriAppUpdateCheckResult;
+  try {
+    const tauriResult = await invoke<RawTauriAppUpdateCheckResult>(
+      "check_tauri_app_update",
+    );
+    return {
+      ...tauriResult,
+      kind: "tauri",
+    } as TauriAppUpdateCheckResult;
+  } catch (error) {
+    return {
+      kind: "tauri",
+      status: "error",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
 };
 
 export const installTauriAppUpdate = async (

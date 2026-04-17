@@ -85,7 +85,6 @@ describe("appUpdates", () => {
     getBundleTypeMock.mockResolvedValue("nsis");
     getVersionMock.mockResolvedValue("0.0.2-RC.1");
     invokeMock.mockResolvedValue({
-      kind: "tauri",
       status: "update-available",
       currentVersion: "0.0.2-RC.1",
       availableVersion: "0.0.2",
@@ -100,6 +99,20 @@ describe("appUpdates", () => {
       status: "update-available",
       currentVersion: "0.0.2-RC.1",
       availableVersion: "0.0.2",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("check_tauri_app_update");
+    expect(checkForLinuxPackageUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a tauri error result when the updater command throws", async () => {
+    getBundleTypeMock.mockResolvedValue("nsis");
+    getVersionMock.mockResolvedValue("0.0.2-RC.1");
+    invokeMock.mockRejectedValue(new Error("network down"));
+
+    await expect(checkForAppUpdate()).resolves.toMatchObject({
+      kind: "tauri",
+      status: "error",
+      message: "network down",
     });
     expect(invokeMock).toHaveBeenCalledWith("check_tauri_app_update");
     expect(checkForLinuxPackageUpdateMock).not.toHaveBeenCalled();
