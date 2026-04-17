@@ -157,11 +157,11 @@ describe("AboutModal", () => {
       status: "update-available" as const,
       bundleType: "deb" as const,
       currentVersion: "0.0.1+2",
-      availableVersion: "0.0.2",
+      availableVersion: "0.0.2-RC.1",
       command: "sudo apt update && sudo apt install --only-upgrade orkestraos",
       metadata: {
-        version: "0.0.2",
-        releasedAt: "2026-04-13T12:00:00Z",
+        version: "0.0.2-RC.1",
+        releasedAt: "2026-04-17T12:00:00Z",
         notes: ["Sidebar polish"],
         commands: {
           deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",

@@ -1,5 +1,5 @@
 {
-  "version": "0.0.2",
+  "version": "0.0.2-RC.1",
   "releasedAt": "2026-04-17T12:00:00Z",
  "notes": [
   "Run details and chat feel much better: paged history, smoother streaming text, better scroll anchoring, and clearer subagent activity during long sessions.",
