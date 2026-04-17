@@ -868,8 +868,9 @@ export const upsertPart = (
           ? typeof existingTextPart?.streamTextLength === "number"
             ? existingTextPart.streamTextLength
             : finalizedText.length
-          : finalizedText.length,
-        streamRevision: nextStreamRevision > 0 ? nextStreamRevision : undefined,
+          : undefined,
+        streamRevision:
+          nextStreaming && nextStreamRevision > 0 ? nextStreamRevision : undefined,
       };
     } else {
       nextPart = {
