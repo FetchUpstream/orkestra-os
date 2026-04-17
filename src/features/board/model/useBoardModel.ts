@@ -536,13 +536,14 @@ export const useBoardModel = () => {
   let runSelectionOptionsRequestVersion = 0;
   let runSourceBranchesRequestVersion = 0;
   const taskRunRequestVersions: Record<string, number> = {};
-  const taskStatusPropagationVersions: Record<string, number> = {};
+  let taskStatusPropagationGeneration = 0;
   const deletedRunIds = new Set<string>();
   const taskDependencyCache = new Map<string, TaskDependencies>();
   const pendingTaskDependencyRequests = new Map<
     string,
     Promise<TaskDependencies>
   >();
+  let taskDependencyCacheVersion = 0;
   let boardEventSubscriptionDisposed = false;
   let removeBoardEventSubscription: (() => void) | null = null;
   let removeBoardRunStatusSubscription: (() => void) | null = null;
@@ -555,20 +556,17 @@ export const useBoardModel = () => {
     return nextVersion;
   };
 
-  const beginTaskStatusPropagation = (taskId: string): number => {
-    const nextVersion = (taskStatusPropagationVersions[taskId] ?? 0) + 1;
-    taskStatusPropagationVersions[taskId] = nextVersion;
-    return nextVersion;
+  const beginTaskStatusPropagation = (): number => {
+    taskStatusPropagationGeneration += 1;
+    return taskStatusPropagationGeneration;
   };
 
-  const isTaskStatusPropagationCurrent = (
-    taskId: string,
-    requestVersion: number,
-  ) => {
-    return taskStatusPropagationVersions[taskId] === requestVersion;
+  const isTaskStatusPropagationCurrent = (requestVersion: number) => {
+    return taskStatusPropagationGeneration === requestVersion;
   };
 
   const clearTaskDependencyCache = () => {
+    taskDependencyCacheVersion += 1;
     taskDependencyCache.clear();
     pendingTaskDependencyRequests.clear();
   };
@@ -595,22 +593,33 @@ export const useBoardModel = () => {
       }
     }
 
+    const cacheVersion = taskDependencyCacheVersion;
     const dependencyRequest = listTaskDependencies(normalizedTaskId)
       .then((dependencies) => {
         const normalizedDependencies = {
           ...dependencies,
           taskId: dependencies.taskId || normalizedTaskId,
         };
-        taskDependencyCache.set(normalizedTaskId, normalizedDependencies);
-        pendingTaskDependencyRequests.delete(normalizedTaskId);
+        if (taskDependencyCacheVersion === cacheVersion) {
+          taskDependencyCache.set(normalizedTaskId, normalizedDependencies);
+          if (pendingTaskDependencyRequests.get(normalizedTaskId) === dependencyRequest) {
+            pendingTaskDependencyRequests.delete(normalizedTaskId);
+          }
+        }
         return normalizedDependencies;
       })
       .catch((error) => {
-        pendingTaskDependencyRequests.delete(normalizedTaskId);
+        if (taskDependencyCacheVersion === cacheVersion) {
+          if (pendingTaskDependencyRequests.get(normalizedTaskId) === dependencyRequest) {
+            pendingTaskDependencyRequests.delete(normalizedTaskId);
+          }
+        }
         throw error;
       });
 
-    pendingTaskDependencyRequests.set(normalizedTaskId, dependencyRequest);
+    if (taskDependencyCacheVersion === cacheVersion) {
+      pendingTaskDependencyRequests.set(normalizedTaskId, dependencyRequest);
+    }
     return dependencyRequest;
   };
 
@@ -739,6 +748,7 @@ export const useBoardModel = () => {
         }
 
         return [{ taskId: childTaskId, isBlocked: hasBlockingParents }];
+      },
     );
   };
 
@@ -749,7 +759,7 @@ export const useBoardModel = () => {
     nextTasks: Task[],
     options?: { forceRefresh?: boolean },
   ) => {
-    const requestVersion = beginTaskStatusPropagation(taskId);
+    const requestVersion = beginTaskStatusPropagation();
     try {
       const patches = await collectDependentBlockedStatePatches(
         taskId,
@@ -758,13 +768,13 @@ export const useBoardModel = () => {
         nextTasks,
         options,
       );
-      if (!isTaskStatusPropagationCurrent(taskId, requestVersion)) {
+      if (!isTaskStatusPropagationCurrent(requestVersion)) {
         return;
       }
 
       syncDependentBlockedStatePatches(patches);
     } catch {
-      if (!isTaskStatusPropagationCurrent(taskId, requestVersion)) {
+      if (!isTaskStatusPropagationCurrent(requestVersion)) {
         return;
       }
       // Keep the moved card responsive even if dependency snapshots fail.
