@@ -28,10 +28,12 @@ import {
   formatSupportDebugInfo,
   readAppSupportMetadata,
 } from "../../app/lib/appSupport";
+import { LINUX_PACKAGE_UPDATE_METADATA_URL } from "../../app/lib/linuxPackageUpdates";
 import {
-  LINUX_PACKAGE_UPDATE_METADATA_URL,
-  type LinuxPackageUpdateCheckState,
-} from "../../app/lib/linuxPackageUpdates";
+  installTauriAppUpdate,
+  isTauriAppUpdateAvailable,
+  type AppUpdateCheckState,
+} from "../../app/lib/appUpdates";
 import { AppIcon } from "../ui/icons";
 import appLogo from "../../assets/logo.svg";
 import LinuxPackageUpdatePanel from "./LinuxPackageUpdatePanel";
@@ -39,7 +41,7 @@ import LinuxPackageUpdatePanel from "./LinuxPackageUpdatePanel";
 type AboutModalProps = {
   isOpen: Accessor<boolean>;
   onClose: () => void;
-  updateState?: Accessor<LinuxPackageUpdateCheckState>;
+  updateState?: Accessor<AppUpdateCheckState>;
   onCheckForUpdates?: () => void | Promise<void>;
 };
 
@@ -87,41 +89,66 @@ const AboutModal: Component<AboutModalProps> = (props) => {
   const [updateCommandCopyStatus, setUpdateCommandCopyStatus] = createSignal<
     "idle" | "copied" | "error"
   >("idle");
+  const [updateInstallStatus, setUpdateInstallStatus] = createSignal<
+    "idle" | "installing" | "error"
+  >("idle");
   let closeButtonRef: HTMLButtonElement | undefined;
 
   const appVersion = createMemo(() =>
     formatAppVersionForDisplay(metadata()?.appVersion),
   );
   const releaseChannel = createMemo(() => formatBadgeLabel(metadata()?.build));
-  const updateState = createMemo<LinuxPackageUpdateCheckState>(
+  const updateState = createMemo<AppUpdateCheckState>(
     () => props.updateState?.() ?? { status: "idle" },
   );
-  const availableUpdate = createMemo(() => {
+  const availableLinuxUpdate = createMemo(() => {
     const nextState = updateState();
-    return nextState.status === "update-available" ? nextState : null;
+    return nextState.status === "update-available" &&
+      nextState.kind === "linux-package"
+      ? nextState
+      : null;
   });
-  const upToDateUpdate = createMemo(() => {
+  const upToDateLinuxUpdate = createMemo(() => {
     const nextState = updateState();
-    return nextState.status === "up-to-date" ? nextState : null;
+    return nextState.status === "up-to-date" &&
+      nextState.kind === "linux-package"
+      ? nextState
+      : null;
+  });
+  const availableTauriUpdate = createMemo(() => {
+    const nextState = updateState();
+    return isTauriAppUpdateAvailable(nextState) ? nextState : null;
+  });
+  const upToDateTauriUpdate = createMemo(() => {
+    const nextState = updateState();
+    return nextState.status === "up-to-date" && nextState.kind === "tauri"
+      ? nextState
+      : null;
   });
   const manualCheckStatusMessage = createMemo(() => {
     const nextState = updateState();
 
     switch (nextState.status) {
       case "checking":
-        return `Checking ${LINUX_PACKAGE_UPDATE_METADATA_URL}...`;
+        return "Checking for updates...";
       case "update-available":
-        return `Checked ${LINUX_PACKAGE_UPDATE_METADATA_URL}. Update found.`;
+        return nextState.kind === "linux-package"
+          ? `Checked ${LINUX_PACKAGE_UPDATE_METADATA_URL}. Update found.`
+          : "Checked for an in-app update. Update found.";
       case "up-to-date":
-        return `Checked ${LINUX_PACKAGE_UPDATE_METADATA_URL}. You're up to date.`;
+        return nextState.kind === "linux-package"
+          ? `Checked ${LINUX_PACKAGE_UPDATE_METADATA_URL}. You're up to date.`
+          : "Checked for an in-app update. You're up to date.";
       case "not-applicable":
         return nextState.reason === "bundle-type-unavailable"
-          ? "Checked for updates, but couldn't determine an install type for package-manager guidance."
+          ? "Checked for updates, but this build does not expose an install type for updater guidance."
           : "Checked for updates. Package-manager guidance only applies to Linux deb and rpm installs.";
       case "error":
-        return `Couldn't check ${LINUX_PACKAGE_UPDATE_METADATA_URL} right now.`;
+        return nextState.kind === "linux-package"
+          ? `Couldn't check ${LINUX_PACKAGE_UPDATE_METADATA_URL} right now.`
+          : "Couldn't check for an in-app update right now.";
       default:
-        return `Checks ${LINUX_PACKAGE_UPDATE_METADATA_URL} for the latest published update metadata.`;
+        return "Checks for in-app updates on packaged desktop installs and shows package-manager guidance for Linux deb and rpm installs.";
     }
   });
 
@@ -147,6 +174,7 @@ const AboutModal: Component<AboutModalProps> = (props) => {
     if (!props.isOpen()) {
       setCopyStatus("idle");
       setUpdateCommandCopyStatus("idle");
+      setUpdateInstallStatus("idle");
     }
   });
 
@@ -166,13 +194,29 @@ const AboutModal: Component<AboutModalProps> = (props) => {
 
   const onCopyUpdateCommand = async () => {
     const nextUpdateState = updateState();
-    if (nextUpdateState.status !== "update-available") return;
+    if (nextUpdateState.status !== "update-available" || nextUpdateState.kind !== "linux-package") {
+      return;
+    }
 
     try {
       await navigator.clipboard.writeText(nextUpdateState.command);
       setUpdateCommandCopyStatus("copied");
     } catch {
       setUpdateCommandCopyStatus("error");
+    }
+  };
+
+  const onInstallUpdate = async () => {
+    const nextUpdateState = availableTauriUpdate();
+    if (!nextUpdateState || updateInstallStatus() === "installing") {
+      return;
+    }
+
+    try {
+      setUpdateInstallStatus("installing");
+      await installTauriAppUpdate(nextUpdateState.manifestUrl);
+    } catch {
+      setUpdateInstallStatus("error");
     }
   };
 
@@ -302,8 +346,9 @@ const AboutModal: Component<AboutModalProps> = (props) => {
                     Updates
                   </p>
                   <p class="text-base-content/55 mt-1 text-xs leading-5">
-                    Checks the published Linux package metadata and shows
-                    package-manager upgrade guidance for supported installs.
+                    Checks for in-app updates on packaged desktop installs and
+                    shows package-manager upgrade guidance for Linux deb and rpm
+                    installs.
                   </p>
                 </div>
                 <button
@@ -311,16 +356,20 @@ const AboutModal: Component<AboutModalProps> = (props) => {
                   class="btn btn-sm border-base-content/20 bg-base-100 text-base-content rounded-none border px-4 text-xs font-semibold"
                   onClick={() => {
                     setUpdateCommandCopyStatus("idle");
+                    setUpdateInstallStatus("idle");
                     void props.onCheckForUpdates?.();
                   }}
                   disabled={
                     !props.onCheckForUpdates ||
-                    updateState().status === "checking"
+                    updateState().status === "checking" ||
+                    updateInstallStatus() === "installing"
                   }
                 >
                   {updateState().status === "checking"
                     ? "Checking..."
-                    : "Check for updates"}
+                    : updateInstallStatus() === "installing"
+                      ? "Installing..."
+                      : "Check for updates"}
                 </button>
               </div>
 
@@ -334,8 +383,7 @@ const AboutModal: Component<AboutModalProps> = (props) => {
               <Show when={updateState().status === "idle"}>
                 <div class="border-base-content/10 bg-base-100/45 rounded-none border px-4 py-3">
                   <p class="text-base-content/65 text-xs leading-5">
-                    Run a manual update check for supported Linux package
-                    installs.
+                    Run a manual update check for this install.
                   </p>
                 </div>
               </Show>
@@ -343,7 +391,7 @@ const AboutModal: Component<AboutModalProps> = (props) => {
               <Show when={updateState().status === "checking"}>
                 <div class="border-base-content/10 bg-base-100/45 rounded-none border px-4 py-3">
                   <p class="text-base-content/65 text-xs leading-5">
-                    Checking the latest published package metadata...
+                    Checking for the latest available update...
                   </p>
                 </div>
               </Show>
@@ -359,13 +407,13 @@ const AboutModal: Component<AboutModalProps> = (props) => {
               <Show when={updateState().status === "not-applicable"}>
                 <div class="border-base-content/10 bg-base-100/45 rounded-none border px-4 py-3">
                   <p class="text-base-content/65 text-xs leading-5">
-                    Package-manager update notices are available for Linux deb
-                    and rpm installs only.
+                    This build does not currently support automatic in-app
+                    updates.
                   </p>
                 </div>
               </Show>
 
-              <Show when={availableUpdate()}>
+              <Show when={availableLinuxUpdate()}>
                 {(result) => (
                   <LinuxPackageUpdatePanel
                     result={result()}
@@ -377,13 +425,132 @@ const AboutModal: Component<AboutModalProps> = (props) => {
                 )}
               </Show>
 
-              <Show when={upToDateUpdate()}>
+              <Show when={upToDateLinuxUpdate()}>
                 {(result) => (
                   <LinuxPackageUpdatePanel
                     result={result()}
                     title="You’re up to date"
                     summary="This Linux package install already matches the latest published update metadata."
                   />
+                )}
+              </Show>
+
+              <Show when={availableTauriUpdate()}>
+                {(result) => (
+                  <section class="border-base-content/10 bg-base-100/45 rounded-none border px-4 py-4">
+                    <div class="flex items-start justify-between gap-3">
+                      <div class="space-y-1">
+                        <p class="text-base-content/50 text-[11px] font-semibold tracking-[0.18em] uppercase">
+                          In-app update
+                        </p>
+                        <h3 class="text-base-content text-sm font-semibold">
+                          A newer app update is available
+                        </h3>
+                        <p class="text-base-content/65 text-xs leading-5">
+                          This build can download and install the latest release
+                          in-app. The app will restart to finish applying the
+                          update.
+                        </p>
+                      </div>
+                      <span class="badge badge-primary badge-sm rounded-none text-[10px] uppercase">
+                        New
+                      </span>
+                    </div>
+
+                    <dl class="text-base-content/60 mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                      <div>
+                        <dt class="font-semibold tracking-[0.16em] uppercase">
+                          Installed
+                        </dt>
+                        <dd class="text-base-content mt-1 font-medium">
+                          v{result().currentVersion}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt class="font-semibold tracking-[0.16em] uppercase">
+                          Latest
+                        </dt>
+                        <dd class="text-base-content mt-1 font-medium">
+                          v{result().availableVersion}
+                        </dd>
+                      </div>
+                    </dl>
+
+                    <div class="mt-4 space-y-2">
+                      <p class="text-base-content/55 text-[11px] font-semibold tracking-[0.18em] uppercase">
+                        Release notes
+                      </p>
+                      <Show
+                        when={result().notes.length > 0}
+                        fallback={
+                          <p class="text-base-content/60 text-xs leading-5">
+                            No release notes were published for this release.
+                          </p>
+                        }
+                      >
+                        <ul class="text-base-content/75 list-disc space-y-2 pl-5 text-xs leading-5">
+                          <For each={result().notes}>
+                            {(note) => <li>{note}</li>}
+                          </For>
+                        </ul>
+                      </Show>
+                    </div>
+
+                    <div class="mt-4 flex items-center gap-3">
+                      <button
+                        type="button"
+                        class="btn btn-sm border-primary/35 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
+                        onClick={() => void onInstallUpdate()}
+                        disabled={updateInstallStatus() === "installing"}
+                      >
+                        {updateInstallStatus() === "installing"
+                          ? "Installing..."
+                          : "Download and install"}
+                      </button>
+                      <div class="min-h-4 text-xs" aria-live="polite">
+                        <Show when={updateInstallStatus() === "error"}>
+                          <p class="text-error">
+                            Couldn’t install the app update.
+                          </p>
+                        </Show>
+                      </div>
+                    </div>
+                  </section>
+                )}
+              </Show>
+
+              <Show when={upToDateTauriUpdate()}>
+                {(result) => (
+                  <section class="border-base-content/10 bg-base-100/45 rounded-none border px-4 py-4">
+                    <p class="text-base-content/50 text-[11px] font-semibold tracking-[0.18em] uppercase">
+                      In-app update
+                    </p>
+                    <h3 class="text-base-content mt-1 text-sm font-semibold">
+                      You’re up to date
+                    </h3>
+                    <p class="text-base-content/65 mt-1 text-xs leading-5">
+                      This packaged desktop install already matches the latest
+                      available in-app update.
+                    </p>
+                    <div class="text-base-content/60 mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                      <div>
+                        <dt class="font-semibold tracking-[0.16em] uppercase">
+                          Installed
+                        </dt>
+                        <dd class="text-base-content mt-1 font-medium">
+                          v{result().currentVersion}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt class="font-semibold tracking-[0.16em] uppercase">
+                          Latest
+                        </dt>
+                        <dd class="text-base-content mt-1 font-medium">
+                          v{result().availableVersion}
+                        </dd>
+                      </div>
+                    </div>
+                  </section>
                 )}
               </Show>
             </div>
