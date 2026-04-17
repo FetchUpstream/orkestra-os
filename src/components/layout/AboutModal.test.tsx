@@ -14,16 +14,22 @@ import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SUPPORT_LINKS } from "../../app/config/supportLinks";
-import type { LinuxPackageUpdateCheckState } from "../../app/lib/linuxPackageUpdates";
+import type { AppUpdateCheckState } from "../../app/lib/appUpdates";
 import AboutModal from "./AboutModal";
 
-const { getNameMock, getVersionMock, getTauriVersionMock, openUrlMock } =
-  vi.hoisted(() => ({
-    getNameMock: vi.fn<() => Promise<string>>(),
-    getVersionMock: vi.fn<() => Promise<string>>(),
-    getTauriVersionMock: vi.fn<() => Promise<string>>(),
-    openUrlMock: vi.fn<(url: string) => Promise<void>>(),
-  }));
+const {
+  getNameMock,
+  getVersionMock,
+  getTauriVersionMock,
+  openUrlMock,
+  installTauriAppUpdateMock,
+} = vi.hoisted(() => ({
+  getNameMock: vi.fn<() => Promise<string>>(),
+  getVersionMock: vi.fn<() => Promise<string>>(),
+  getTauriVersionMock: vi.fn<() => Promise<string>>(),
+  openUrlMock: vi.fn<(url: string) => Promise<void>>(),
+  installTauriAppUpdateMock: vi.fn<(manifestUrl: string) => Promise<void>>(),
+}));
 
 vi.mock("@tauri-apps/api/app", () => ({
   getName: getNameMock,
@@ -35,6 +41,17 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: openUrlMock,
 }));
 
+vi.mock("../../app/lib/appUpdates", async () => {
+  const actual = await vi.importActual<typeof import("../../app/lib/appUpdates")>(
+    "../../app/lib/appUpdates",
+  );
+
+  return {
+    ...actual,
+    installTauriAppUpdate: installTauriAppUpdateMock,
+  };
+});
+
 describe("AboutModal", () => {
   let windowOpenMock: ReturnType<typeof vi.spyOn>;
 
@@ -43,11 +60,13 @@ describe("AboutModal", () => {
     getVersionMock.mockReset();
     getTauriVersionMock.mockReset();
     openUrlMock.mockReset();
+    installTauriAppUpdateMock.mockReset();
 
     getNameMock.mockResolvedValue("OrkestraOS");
     getVersionMock.mockResolvedValue("0.0.12+105");
     getTauriVersionMock.mockResolvedValue("2.0.0");
     openUrlMock.mockResolvedValue();
+    installTauriAppUpdateMock.mockResolvedValue();
 
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -72,7 +91,7 @@ describe("AboutModal", () => {
   };
 
   const renderOpenModalWithUpdateState = (
-    status: LinuxPackageUpdateCheckState,
+    status: AppUpdateCheckState,
   ) => {
     const [isOpen, setIsOpen] = createSignal(true);
     const [updateState] = createSignal(status);
@@ -154,14 +173,15 @@ describe("AboutModal", () => {
 
   it("shows Linux package update details and copies the update command", async () => {
     const { onCheckForUpdates } = renderOpenModalWithUpdateState({
+      kind: "linux-package",
       status: "update-available" as const,
       bundleType: "deb" as const,
       currentVersion: "0.0.1+2",
-      availableVersion: "0.0.2",
+      availableVersion: "0.0.2-RC.1",
       command: "sudo apt update && sudo apt install --only-upgrade orkestraos",
       metadata: {
-        version: "0.0.2",
-        releasedAt: "2026-04-13T12:00:00Z",
+        version: "0.0.2-RC.1",
+        releasedAt: "2026-04-17T12:00:00Z",
         notes: ["Sidebar polish"],
         commands: {
           deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
@@ -194,9 +214,40 @@ describe("AboutModal", () => {
     );
   });
 
+  it("shows in-app update details and installs the selected release", async () => {
+    const { onCheckForUpdates } = renderOpenModalWithUpdateState({
+      kind: "tauri",
+      status: "update-available",
+      currentVersion: "0.0.2-RC.1",
+      availableVersion: "0.0.2",
+      manifestUrl:
+        "https://github.com/fetchupstream/orkestra-os/releases/download/v0.0.2/latest.json",
+      releasedAt: "2026-04-17T12:00:00Z",
+      notes: ["Installer and updater polish"],
+    });
+
+    expect(screen.getByText("A newer app update is available")).toBeTruthy();
+    expect(screen.getByText("Installer and updater polish")).toBeTruthy();
+    expect(screen.getByText("v0.0.2-RC.1")).toBeTruthy();
+    expect(screen.getByText("v0.0.2")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    expect(onCheckForUpdates).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Download and install" }),
+    );
+
+    await waitFor(() => {
+      expect(installTauriAppUpdateMock).toHaveBeenCalledWith(
+        "https://github.com/fetchupstream/orkestra-os/releases/download/v0.0.2/latest.json",
+      );
+    });
+  });
+
   it("disables the update button when no handler is provided", () => {
     const [isOpen] = createSignal(true);
-    const [updateState] = createSignal<LinuxPackageUpdateCheckState>({
+    const [updateState] = createSignal<AppUpdateCheckState>({
       status: "idle",
     });
 

@@ -10,9 +10,9 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+import latestRelease from "../../../docs/updates/latest.json";
 import { SUPPORT_LINKS } from "./supportLinks";
 
-export const ALPHA_BUILD_RELEASE_NOTES =
-  "Alpha version 0.0.1 released. This alpha build expands project/task/run workflows while we continue refining stability, visual polish, and edge-case handling.";
+export const ALPHA_BUILD_RELEASE_NOTES = latestRelease.notes;
 
 export const ALPHA_BUILD_GITHUB_HOMEPAGE = SUPPORT_LINKS.githubRepository;

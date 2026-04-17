@@ -12,6 +12,7 @@
 
 import { getVersion } from "@tauri-apps/api/app";
 import {
+  For,
   Show,
   createEffect,
   createMemo,
@@ -76,7 +77,7 @@ const AlphaNoticeModal: Component = () => {
             Alpha Build
           </h2>
 
-          <div id="alpha-build-modal-copy" class="space-y-3 text-sm">
+          <div id="alpha-build-modal-copy" class="space-y-3 text-sm font-sans">
             <p class="project-placeholder-text">
               You’re using an alpha version of this app.
             </p>
@@ -93,15 +94,25 @@ const AlphaNoticeModal: Component = () => {
               Please use caution and avoid relying on this build for critical
               work.
             </p>
-            <p class="project-placeholder-text">Version: {resolvedVersion()}</p>
+            <p
+              class="m-0 text-[0.85rem] leading-[1.4] font-sans"
+              style={{ color: "var(--text)" }}
+            >
+              Version: {resolvedVersion()}
+            </p>
 
             <div class="border-base-content/10 bg-base-100/55 rounded-none border px-3 py-2">
               <p class="text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                 What’s new in this build
               </p>
-              <p class="project-placeholder-text mt-1">
-                {ALPHA_BUILD_RELEASE_NOTES}
-              </p>
+              <ul
+                class="mt-1 list-disc space-y-1 pl-5 text-[0.85rem] leading-[1.4] font-sans"
+                style={{ color: "var(--text)" }}
+              >
+                <For each={ALPHA_BUILD_RELEASE_NOTES}>
+                  {(note) => <li>{note}</li>}
+                </For>
+              </ul>
             </div>
 
             <p class="project-placeholder-text">

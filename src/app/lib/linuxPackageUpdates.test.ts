@@ -21,8 +21,8 @@ describe("linuxPackageUpdates", () => {
   it("parses the canonical metadata shape", () => {
     expect(
       parseLinuxPackageUpdateMetadata({
-        version: "0.0.2",
-        releasedAt: "2026-04-13T12:00:00Z",
+        version: "0.0.2-RC.1",
+        releasedAt: "2026-04-17T12:00:00Z",
         notes: ["Fixes and polish"],
         commands: {
           deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
@@ -30,7 +30,7 @@ describe("linuxPackageUpdates", () => {
         },
       }),
     ).toMatchObject({
-      version: "0.0.2",
+      version: "0.0.2-RC.1",
       notes: ["Fixes and polish"],
     });
   });
@@ -38,8 +38,8 @@ describe("linuxPackageUpdates", () => {
   it("defaults missing notes to an empty list", () => {
     expect(
       parseLinuxPackageUpdateMetadata({
-        version: "0.0.2",
-        releasedAt: "2026-04-13T12:00:00Z",
+        version: "0.0.2-RC.1",
+        releasedAt: "2026-04-17T12:00:00Z",
         commands: {
           deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
           rpm: "sudo dnf upgrade orkestraos",
@@ -52,8 +52,8 @@ describe("linuxPackageUpdates", () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
       ok: true,
       json: async () => ({
-        version: "0.0.2",
-        releasedAt: "2026-04-13T12:00:00Z",
+        version: "0.0.2-RC.1",
+        releasedAt: "2026-04-17T12:00:00Z",
         notes: [],
         commands: {
           deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
@@ -79,8 +79,8 @@ describe("linuxPackageUpdates", () => {
       fetchImpl: vi.fn<typeof fetch>().mockResolvedValue({
         ok: true,
         json: async () => ({
-          version: "0.0.2",
-          releasedAt: "2026-04-13T12:00:00Z",
+          version: "0.0.2-RC.1",
+          releasedAt: "2026-04-17T12:00:00Z",
           notes: ["Run chat transcript UX fixes"],
           commands: {
             deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
@@ -94,7 +94,7 @@ describe("linuxPackageUpdates", () => {
     expect(result).toMatchObject({
       status: "update-available",
       bundleType: "deb",
-      availableVersion: "0.0.2",
+      availableVersion: "0.0.2-RC.1",
       command: "sudo apt update && sudo apt install --only-upgrade orkestraos",
     });
   });
@@ -108,8 +108,8 @@ describe("linuxPackageUpdates", () => {
       fetchImpl: vi.fn<typeof fetch>().mockResolvedValue({
         ok: true,
         json: async () => ({
-          version: "0.0.2",
-          releasedAt: "2026-04-13T12:00:00Z",
+          version: "0.0.2-RC.1",
+          releasedAt: "2026-04-17T12:00:00Z",
           notes: [],
           commands: {
             deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
@@ -131,13 +131,13 @@ describe("linuxPackageUpdates", () => {
     const result = await checkForLinuxPackageUpdate({
       runtimeContext: {
         bundleType: "deb",
-        currentVersion: "0.0.2",
+        currentVersion: "0.0.2-RC.1",
       },
       fetchImpl: vi.fn<typeof fetch>().mockResolvedValue({
         ok: true,
         json: async () => ({
-          version: "0.0.2",
-          releasedAt: "2026-04-13T12:00:00Z",
+          version: "0.0.2-RC.1",
+          releasedAt: "2026-04-17T12:00:00Z",
           notes: [],
           commands: {
             deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
@@ -150,8 +150,8 @@ describe("linuxPackageUpdates", () => {
 
     expect(result).toMatchObject({
       status: "up-to-date",
-      availableVersion: "0.0.2",
-      currentVersion: "0.0.2",
+      availableVersion: "0.0.2-RC.1",
+      currentVersion: "0.0.2-RC.1",
     });
   });
 
@@ -164,8 +164,8 @@ describe("linuxPackageUpdates", () => {
       fetchImpl: vi.fn<typeof fetch>().mockResolvedValue({
         ok: true,
         json: async () => ({
-          version: "0.0.2",
-          releasedAt: "2026-04-13T12:00:00Z",
+          version: "0.0.2-RC.1",
+          releasedAt: "2026-04-17T12:00:00Z",
           notes: [],
           commands: {
             deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
@@ -209,13 +209,14 @@ describe("linuxPackageUpdates", () => {
       fetchImpl: vi.fn<typeof fetch>().mockResolvedValue({
         ok: true,
         json: async () => ({
-          version: "0.0.2",
+          version: "0.0.2-RC.1",
         }),
       } as Response),
       cacheBustValue: "1",
     });
 
     expect(result.status).toBe("error");
+
   });
 
   it("returns an error when fetching update metadata fails", async () => {

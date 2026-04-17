@@ -21,6 +21,10 @@ use tracing::warn;
 pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+
             let startup_paths = app::bootstrap::paths::resolve_startup_paths(app.handle())?;
             app::bootstrap::logging::init(&startup_paths.log_dir);
             let db_path = startup_paths.db_path();
@@ -124,6 +128,8 @@ pub fn run() {
             app::commands::tasks::list_task_dependencies,
             app::commands::tasks::add_task_dependency,
             app::commands::tasks::remove_task_dependency,
+            app::commands::updates::check_tauri_app_update,
+            app::commands::updates::install_tauri_app_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

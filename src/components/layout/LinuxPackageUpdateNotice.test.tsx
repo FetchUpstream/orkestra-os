@@ -49,11 +49,11 @@ describe("LinuxPackageUpdateNotice", () => {
       status: "update-available" as const,
       bundleType: "deb" as const,
       currentVersion: "0.0.1+2",
-      availableVersion: "0.0.2",
+      availableVersion: "0.0.2-RC.1",
       command: "sudo apt update && sudo apt install --only-upgrade orkestraos",
       metadata: {
-        version: "0.0.2",
-        releasedAt: "2026-04-13T12:00:00Z",
+        version: "0.0.2-RC.1",
+        releasedAt: "2026-04-17T12:00:00Z",
         notes: ["About modal refresh"],
         commands: {
           deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
@@ -69,7 +69,7 @@ describe("LinuxPackageUpdateNotice", () => {
     renderNotice();
 
     expect(screen.getByText("A newer Linux package is available")).toBeTruthy();
-    expect(screen.getByText("v0.0.2")).toBeTruthy();
+    expect(screen.getByText("v0.0.2-RC.1")).toBeTruthy();
     expect(screen.getByText("v0.0.1+2")).toBeTruthy();
     expect(screen.getByText("deb")).toBeTruthy();
     expect(screen.getByText("About modal refresh")).toBeTruthy();
@@ -103,13 +103,13 @@ describe("LinuxPackageUpdateNotice", () => {
       window.localStorage.getItem(
         LINUX_PACKAGE_UPDATE_NOTICE_DISMISSED_VERSION_STORAGE_KEY,
       ),
-    ).toBe("0.0.2");
+    ).toBe("0.0.2-RC.1");
   });
 
   it("stays hidden when the available version was already dismissed", async () => {
     window.localStorage.setItem(
       LINUX_PACKAGE_UPDATE_NOTICE_DISMISSED_VERSION_STORAGE_KEY,
-      "0.0.2",
+      "0.0.2-RC.1",
     );
 
     renderNotice();

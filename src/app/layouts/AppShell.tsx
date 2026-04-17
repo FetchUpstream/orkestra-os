@@ -27,10 +27,15 @@ import { primeRunSelectionOptionsCache } from "../lib/runSelectionOptionsCache";
 import { listActiveRuns } from "../lib/runs";
 import type { TaskStatus } from "../lib/tasks";
 import {
-  checkForLinuxPackageUpdate,
   type LinuxPackageUpdateAvailableResult,
-  type LinuxPackageUpdateCheckState,
 } from "../lib/linuxPackageUpdates";
+import {
+  checkForAppUpdate,
+  isLinuxPackageAppUpdateAvailable,
+  isTauriAppUpdateAvailable,
+  type AppUpdateCheckState,
+  type TauriAppUpdateAvailableResult,
+} from "../lib/appUpdates";
 import MainContent from "../../components/layout/MainContent";
 import OpenCodeRequiredModal from "../../components/layout/OpenCodeRequiredModal";
 import SidebarNav from "../../components/layout/SidebarNav";
@@ -39,6 +44,7 @@ import AlphaNoticeModal from "../../components/layout/AlphaNoticeModal";
 import AboutModal from "../../components/layout/AboutModal";
 import CloseWhileRunsActiveModal from "../../components/layout/CloseWhileRunsActiveModal";
 import LinuxPackageUpdateNotice from "../../components/layout/LinuxPackageUpdateNotice";
+import TauriAppUpdateNotice from "../../components/layout/TauriAppUpdateNotice";
 import { AppIcon } from "../../components/ui/icons";
 import { formatStatus } from "../../features/tasks/utils/taskDetail";
 import {
@@ -147,11 +153,14 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   const [closeWarningRunCount, setCloseWarningRunCount] = createSignal(0);
   const [confirmedCloseInProgress, setConfirmedCloseInProgress] =
     createSignal(false);
-  const [linuxPackageUpdateState, setLinuxPackageUpdateState] =
-    createSignal<LinuxPackageUpdateCheckState>({ status: "idle" });
+  const [appUpdateState, setAppUpdateState] = createSignal<AppUpdateCheckState>({
+    status: "idle",
+  });
   const [startupLinuxPackageUpdate, setStartupLinuxPackageUpdate] =
     createSignal<LinuxPackageUpdateAvailableResult | null>(null);
-  let linuxPackageUpdateRequestId = 0;
+  const [startupTauriAppUpdate, setStartupTauriAppUpdate] =
+    createSignal<TauriAppUpdateAvailableResult | null>(null);
+  let appUpdateRequestId = 0;
 
   const isSidebarVisible = () => (isMobile() ? mobileSidebarOpen() : true);
 
@@ -171,31 +180,32 @@ const AppShellContent: Component<AppShellProps> = (props) => {
     applyProjects(nextProjects);
   };
 
-  const runLinuxPackageUpdateCheck = async ({
+  const runAppUpdateCheck = async ({
     silent = false,
   }: {
     silent?: boolean;
   } = {}) => {
-    const requestId = ++linuxPackageUpdateRequestId;
-
+    const requestId = ++appUpdateRequestId;
     if (!silent) {
-      setLinuxPackageUpdateState({ status: "checking" });
+      setAppUpdateState({ status: "checking" });
     }
 
-    const result = await checkForLinuxPackageUpdate();
-
-    if (requestId !== linuxPackageUpdateRequestId) {
+    const result = await checkForAppUpdate();
+    if (requestId !== appUpdateRequestId) {
       return result;
     }
 
     if (silent && result.status === "error") {
-      console.warn("Linux package update check failed", result.message);
+      console.warn("App update check failed", result.message);
       return result;
     }
 
-    setLinuxPackageUpdateState(result);
+    setAppUpdateState(result);
     setStartupLinuxPackageUpdate(
-      result.status === "update-available" ? result : null,
+      isLinuxPackageAppUpdateAvailable(result) ? result : null,
+    );
+    setStartupTauriAppUpdate(
+      isTauriAppUpdateAvailable(result) ? result : null,
     );
     return result;
   };
@@ -233,7 +243,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
       setHasLoadedProjects(true);
     }
 
-    void runLinuxPackageUpdateCheck({ silent: true });
+    void runAppUpdateCheck({ silent: true });
 
     const onTaskDetailTopbarConfig = (event: Event) => {
       const customEvent = event as CustomEvent<TaskDetailTopbarConfig>;
@@ -981,9 +991,9 @@ const AppShellContent: Component<AppShellProps> = (props) => {
       <AboutModal
         isOpen={aboutModalOpen}
         onClose={onCloseSettings}
-        updateState={linuxPackageUpdateState}
+        updateState={appUpdateState}
         onCheckForUpdates={() => {
-          void runLinuxPackageUpdateCheck();
+          void runAppUpdateCheck();
         }}
       />
       <CloseWhileRunsActiveModal
@@ -992,6 +1002,9 @@ const AppShellContent: Component<AppShellProps> = (props) => {
         onCancel={onCancelCloseWarning}
         onConfirm={() => void onConfirmCloseWarning()}
       />
+      <AlphaNoticeModal />
+      <LinuxPackageUpdateNotice result={startupLinuxPackageUpdate} />
+      <TauriAppUpdateNotice result={startupTauriAppUpdate} />
       <OpenCodeRequiredModal
         isOpen={() =>
           openCodeDependency.isModalVisible() || isStartupProjectSetupBlocked()
@@ -1006,8 +1019,6 @@ const AppShellContent: Component<AppShellProps> = (props) => {
           void openCodeDependency.refresh(true);
         }}
       />
-      <AlphaNoticeModal />
-      <LinuxPackageUpdateNotice result={startupLinuxPackageUpdate} />
     </div>
   );
 };

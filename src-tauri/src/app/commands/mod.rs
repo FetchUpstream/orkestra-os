@@ -17,4 +17,5 @@ pub mod projects;
 pub mod runs;
 pub mod tasks;
 pub mod terminal;
+pub mod updates;
 pub mod worktrees;

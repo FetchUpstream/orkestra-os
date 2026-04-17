@@ -81,7 +81,9 @@ describe("AlphaNoticeModal", () => {
 
     expect(screen.getByText("Version: 0.1.0")).toBeTruthy();
     expect(screen.getByText("What’s new in this build")).toBeTruthy();
-    expect(screen.getByText(ALPHA_BUILD_RELEASE_NOTES)).toBeTruthy();
+    for (const note of ALPHA_BUILD_RELEASE_NOTES) {
+      expect(screen.getByText(note)).toBeTruthy();
+    }
     expect(
       screen.getByText(
         "This project is dual-licensed under Apache 2.0 and MIT.",
