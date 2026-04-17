@@ -10,14 +10,14 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { For, Show, createMemo, type Component } from "solid-js";
+import { For, Match, Show, Switch, createMemo, type Component } from "solid-js";
 import RunInlineLoader from "../../../../components/ui/RunInlineLoader";
 import { AppIcon } from "../../../../components/ui/icons";
 import type { UiAssistantStreamingMetadata } from "../../model/agentTypes";
 import RunChatAssistantMessage from "./RunChatAssistantMessage";
 import RunChatMarkdown from "./RunChatMarkdown";
 
-const SUBAGENT_VISIBLE_MESSAGE_LIMIT = 3;
+const SUBAGENT_VISIBLE_ENTRY_LIMIT = 3;
 
 export type RunChatToolRailItem = {
   id: string;
@@ -30,24 +30,46 @@ export type RunChatToolRailItem = {
   subagents?: readonly RunChatToolRailSubagentItem[];
 };
 
-export type RunChatToolRailSubagentMessage = {
+export type RunChatToolRailSubagentToolItem = {
   id: string;
-  role: "assistant" | "user" | "system" | "unknown";
-  content?: string;
-  reasoningContent?: string;
-  assistantStreaming?: UiAssistantStreamingMetadata;
-  toolItems?: readonly {
-    id: string;
-    summary: string;
-    status?: string;
-  }[];
+  summary: string;
+  status?: string;
 };
+
+type RunChatToolRailSubagentBaseEntry = {
+  id: string;
+  messageId: string;
+  role: "assistant" | "user" | "system" | "unknown";
+  isStreaming?: boolean;
+  streamToken?: string;
+};
+
+export type RunChatToolRailSubagentEntry =
+  | (RunChatToolRailSubagentBaseEntry & {
+      kind: "text";
+      content: string;
+      assistantStreaming?: UiAssistantStreamingMetadata;
+    })
+  | (RunChatToolRailSubagentBaseEntry & {
+      kind: "reasoning";
+      content: string;
+    })
+  | (RunChatToolRailSubagentBaseEntry & {
+      kind: "tool";
+      toolItem: RunChatToolRailSubagentToolItem;
+    })
+  | (RunChatToolRailSubagentBaseEntry & {
+      kind: "assistant-placeholder";
+      role: "assistant";
+      isStreaming: true;
+      streamToken: string;
+    });
 
 export type RunChatToolRailSubagentItem = {
   id: string;
   label: string;
   status?: string;
-  messages: readonly RunChatToolRailSubagentMessage[];
+  entries: readonly RunChatToolRailSubagentEntry[];
 };
 
 type RunChatToolRailProps = {
@@ -107,6 +129,24 @@ const buildLookupById = <T extends { id: string }>(
     lookup[item.id] = item;
   }
   return lookup;
+};
+
+const isSubagentEntryStreaming = (
+  entry: RunChatToolRailSubagentEntry,
+): boolean => {
+  switch (entry.kind) {
+    case "assistant-placeholder":
+      return true;
+    case "text":
+      return (
+        entry.isStreaming === true ||
+        entry.assistantStreaming?.isStreaming === true
+      );
+    case "reasoning":
+      return entry.isStreaming === true;
+    case "tool":
+      return false;
+  }
 };
 
 type RunChatToolRailStatusProps = {
@@ -171,13 +211,7 @@ const RunChatToolRailStatus: Component<RunChatToolRailStatusProps> = (
 };
 
 type RunChatToolRailSubagentToolItemProps = {
-  toolItem: () =>
-    | {
-        id: string;
-        summary: string;
-        status?: string;
-      }
-    | undefined;
+  toolItem: () => RunChatToolRailSubagentToolItem | undefined;
 };
 
 const RunChatToolRailSubagentToolItem: Component<
@@ -195,76 +229,86 @@ const RunChatToolRailSubagentToolItem: Component<
   );
 };
 
-type RunChatToolRailSubagentMessageProps = {
-  message: () => RunChatToolRailSubagentMessage | undefined;
+type RunChatToolRailSubagentEntryProps = {
+  entry: () => RunChatToolRailSubagentEntry | undefined;
 };
 
-const RunChatToolRailSubagentMessageItem: Component<
-  RunChatToolRailSubagentMessageProps
+const RunChatToolRailSubagentEntryItem: Component<
+  RunChatToolRailSubagentEntryProps
 > = (props) => {
-  const message = createMemo(() => props.message());
-  const toolItemIds = createMemo(() => {
-    return message()?.toolItems?.map((toolItem) => toolItem.id) ?? [];
+  const entry = createMemo(() => props.entry());
+  const textEntry = createMemo(() => {
+    const currentEntry = entry();
+    return currentEntry?.kind === "text" ? currentEntry : undefined;
   });
-  const toolItemsById = createMemo(() => buildLookupById(message()?.toolItems));
-  const assistantReasoningNode = (
-    <div class="run-chat-tool-rail__subagent-reasoning">
-      <RunChatMarkdown
-        content={`*Thinking:* ${message()?.reasoningContent ?? ""}`}
-      />
-    </div>
-  );
-  const assistantToolRailNode = (
-    <ul class="run-chat-tool-rail__subagent-tools">
-      <For each={toolItemIds()}>
-        {(toolItemId) => (
-          <RunChatToolRailSubagentToolItem
-            toolItem={() => toolItemsById()[toolItemId]}
-          />
-        )}
-      </For>
-    </ul>
-  );
+  const reasoningEntry = createMemo(() => {
+    const currentEntry = entry();
+    return currentEntry?.kind === "reasoning" ? currentEntry : undefined;
+  });
+  const toolEntry = createMemo(() => {
+    const currentEntry = entry();
+    return currentEntry?.kind === "tool" ? currentEntry : undefined;
+  });
+  const placeholderEntry = createMemo(() => {
+    const currentEntry = entry();
+    return currentEntry?.kind === "assistant-placeholder"
+      ? currentEntry
+      : undefined;
+  });
+  const assistantTextEntry = createMemo(() => {
+    const currentEntry = textEntry();
+    return currentEntry?.role === "assistant" ? currentEntry : undefined;
+  });
 
   return (
-    <Show when={message()}>
-      <article class="run-chat-tool-rail__subagent-message">
-        <Show
-          when={message()?.role === "assistant"}
-          fallback={
-            <>
-              <Show when={message()?.content?.trim().length}>
-                <div class="run-chat-tool-rail__subagent-markdown">
-                  <RunChatMarkdown content={message()?.content ?? ""} />
-                </div>
-              </Show>
-              <Show when={message()?.reasoningContent?.trim().length}>
-                {assistantReasoningNode}
-              </Show>
-              <Show when={toolItemIds().length > 0}>
-                {assistantToolRailNode}
-              </Show>
-            </>
-          }
-        >
-          <RunChatAssistantMessage
-            content={
-              message()?.content?.length ? (message()?.content ?? " ") : " "
-            }
-            streaming={message()?.assistantStreaming}
-            isStreamingActive={
-              message()?.assistantStreaming?.isStreaming === true
-            }
-            reasoning={
-              message()?.reasoningContent?.trim().length
-                ? assistantReasoningNode
-                : undefined
-            }
-            toolRail={
-              toolItemIds().length > 0 ? assistantToolRailNode : undefined
-            }
-          />
-        </Show>
+    <Show when={entry()}>
+      <article
+        class="run-chat-tool-rail__subagent-message"
+        data-run-chat-subagent-entry-id={entry()?.id}
+        data-run-chat-subagent-entry-kind={entry()?.kind}
+      >
+        <Switch>
+          <Match when={placeholderEntry()}>
+            <RunInlineLoader
+              as="p"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            />
+          </Match>
+          <Match when={toolEntry()}>
+            <ul class="run-chat-tool-rail__subagent-tools">
+              <RunChatToolRailSubagentToolItem
+                toolItem={() => toolEntry()?.toolItem}
+              />
+            </ul>
+          </Match>
+          <Match when={reasoningEntry()}>
+            <div class="run-chat-tool-rail__subagent-reasoning">
+              <RunChatMarkdown
+                content={`*Thinking:* ${reasoningEntry()?.content ?? ""}`}
+              />
+            </div>
+          </Match>
+          <Match when={assistantTextEntry()}>
+            <RunChatAssistantMessage
+              content={
+                assistantTextEntry()?.content.length
+                  ? (assistantTextEntry()?.content ?? " ")
+                  : " "
+              }
+              streaming={assistantTextEntry()?.assistantStreaming}
+              isStreamingActive={
+                assistantTextEntry()?.assistantStreaming?.isStreaming === true
+              }
+            />
+          </Match>
+          <Match when={textEntry()}>
+            <div class="run-chat-tool-rail__subagent-markdown">
+              <RunChatMarkdown content={textEntry()?.content ?? ""} />
+            </div>
+          </Match>
+        </Switch>
       </article>
     </Show>
   );
@@ -278,31 +322,33 @@ const RunChatToolRailSubagentPanel: Component<
   RunChatToolRailSubagentPanelProps
 > = (props) => {
   const subagent = createMemo(() => props.subagent());
-  const visibleMessageIds = createMemo(() => {
+  const visibleEntryIds = createMemo(() => {
     return (
       subagent()
-        ?.messages.slice(-SUBAGENT_VISIBLE_MESSAGE_LIMIT)
-        .map((message) => message.id) ?? []
+        ?.entries.slice(-SUBAGENT_VISIBLE_ENTRY_LIMIT)
+        .map((entry) => entry.id) ?? []
     );
   });
-  const messagesById = createMemo(() => buildLookupById(subagent()?.messages));
-  const hasActiveStreamingMessage = createMemo(() => {
+  const entriesById = createMemo(() => buildLookupById(subagent()?.entries));
+  const hasActiveStreamingEntry = createMemo(() => {
     return (
-      subagent()?.messages.some(
-        (message) => message.assistantStreaming?.isStreaming === true,
-      ) ?? false
+      subagent()?.entries.some((entry) => isSubagentEntryStreaming(entry)) ??
+      false
     );
   });
   const renderedStatus = createMemo(() => {
-    if (hasActiveStreamingMessage()) {
+    if (hasActiveStreamingEntry()) {
       return "running";
     }
 
     return subagent()?.status;
   });
   const subagentStatus = createMemo(() => normalizeStatus(renderedStatus()));
+  const showCompletedSummaryOnly = createMemo(() => {
+    return !hasActiveStreamingEntry() && subagentStatus() === "completed";
+  });
   const showTerminalStatusRow = createMemo(() => {
-    if (hasActiveStreamingMessage()) {
+    if (hasActiveStreamingEntry()) {
       return false;
     }
 
@@ -320,13 +366,18 @@ const RunChatToolRailSubagentPanel: Component<
           <p class="run-chat-tool-rail__subagent-title">{subagent()?.label}</p>
         </div>
         <div class="run-chat-tool-rail__subagent-body">
-          <For each={visibleMessageIds()}>
-            {(messageId) => (
-              <RunChatToolRailSubagentMessageItem
-                message={() => messagesById()[messageId]}
-              />
-            )}
-          </For>
+          <Show when={showCompletedSummaryOnly()}>
+            <p class="run-chat-tool-rail__subagent-summary">Completed</p>
+          </Show>
+          <Show when={!showCompletedSummaryOnly()}>
+            <For each={visibleEntryIds()}>
+              {(entryId) => (
+                <RunChatToolRailSubagentEntryItem
+                  entry={() => entriesById()[entryId]}
+                />
+              )}
+            </For>
+          </Show>
           <Show when={showTerminalStatusRow()}>
             <div class="run-chat-tool-rail__subagent-status-row">
               <RunChatToolRailStatus status={subagent()?.status} />

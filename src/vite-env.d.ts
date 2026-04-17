@@ -21,3 +21,24 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+
+declare module "markdown-it" {
+  type LinkOpenRule = (
+    tokens: any[],
+    idx: number,
+    options: any,
+    env: any,
+    self: { renderToken(tokens: any[], idx: number, options: any): string },
+  ) => string;
+
+  export default class MarkdownIt {
+    constructor(options?: { html?: boolean; linkify?: boolean });
+    renderer: {
+      rules: {
+        link_open?: LinkOpenRule;
+      };
+    };
+    render(input: string): string;
+  }
+}

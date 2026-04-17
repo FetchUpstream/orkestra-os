@@ -870,7 +870,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_migrations_dedupes_existing_active_runs() {
+    async fn run_migrations_preserves_existing_active_runs_after_dropping_unique_index() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
 
         sqlx::query(MIGRATION_0001).execute(&pool).await.unwrap();
@@ -925,28 +925,13 @@ mod tests {
 
         run_migrations(&pool).await.unwrap();
 
-        let active_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM runs WHERE task_id = 'task-1' AND status IN ('queued', 'preparing', 'in_progress', 'idle')",
+        let active_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM runs WHERE task_id = 'task-1' AND status IN ('queued', 'preparing', 'in_progress', 'idle') ORDER BY created_at ASC",
         )
-        .fetch_one(&pool)
+        .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(active_count, 1);
-
-        let kept_active_id: String = sqlx::query_scalar(
-            "SELECT id FROM runs WHERE task_id = 'task-1' AND status IN ('queued', 'preparing', 'in_progress', 'idle')",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(kept_active_id, "run-new");
-
-        let cancelled_status: String =
-            sqlx::query_scalar("SELECT status FROM runs WHERE id = 'run-old'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(cancelled_status, "cancelled");
+        assert_eq!(active_ids, vec!["run-old".to_string(), "run-new".to_string()]);
 
         let index_exists: Option<i64> = sqlx::query_scalar(
             "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_single_active_per_task' LIMIT 1",

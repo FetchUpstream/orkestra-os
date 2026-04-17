@@ -25,16 +25,13 @@ import {
   RunChatTranscript,
   type RunChatTranscriptHandle,
   type RunChatTranscriptRow,
-  RunChatMarkdown,
-  RunChatMessage,
-  RunChatSystemMessage,
-  RunChatToolRail,
-  RunChatUserMessage,
   type RunChatToolRailItem,
+  type RunChatToolRailSubagentEntry,
   type RunChatToolRailSubagentItem,
 } from "./chat";
 import RunAgentSelectOptions from "./RunAgentSelectOptions";
 import type {
+  AgentRole,
   AgentStore,
   OpenCodeBusEvent,
   UiAssistantStreamChannelMetadata,
@@ -43,6 +40,7 @@ import type {
   UiPermissionRequest,
   UiQuestionRequest,
   UiReasoningPart,
+  UiStreamChunkNode,
   UiTextPart,
 } from "../model/agentTypes";
 import { hydrateAgentStore } from "../model/agentReducer";
@@ -103,7 +101,7 @@ type NewRunChatWorkspaceProps = {
 
 type ChatRow = {
   key: string;
-  role: string;
+  role: AgentRole;
   content: string;
   reasoningContent: string;
   assistantStreaming?: UiAssistantStreamingMetadata;
@@ -111,99 +109,6 @@ type ChatRow = {
   timestamp: string;
   attributionLabel: string;
   hasRenderableContent: boolean;
-};
-
-type ChatTranscriptMessageItemProps = {
-  row: () => ChatRow | undefined;
-};
-
-const ChatTranscriptMessageItem: Component<ChatTranscriptMessageItemProps> = (
-  props,
-) => {
-  const row = createMemo(() => props.row());
-  const waitingRow = (
-    <RunInlineLoader
-      as="p"
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
-    />
-  );
-
-  return (
-    <Show when={row()}>
-      <div
-        data-run-chat-message-id={row()?.key}
-        data-run-chat-message-kind="parent"
-      >
-        <Show
-          when={row()?.role === "assistant"}
-          fallback={
-            <Show
-              when={row()?.role === "user"}
-              fallback={
-                <RunChatMessage role="system" class="run-chat-message-item">
-                  <RunChatSystemMessage>
-                    <RunChatMarkdown
-                      content={
-                        row()?.content.length
-                          ? (row()?.content ?? "")
-                          : (row()?.timestamp ?? "")
-                      }
-                    />
-                  </RunChatSystemMessage>
-                </RunChatMessage>
-              }
-            >
-              <RunChatMessage role="user" class="run-chat-message-item">
-                <RunChatUserMessage>
-                  <RunChatMarkdown
-                    content={
-                      row()?.content.length ? (row()?.content ?? "") : "(empty)"
-                    }
-                  />
-                </RunChatUserMessage>
-              </RunChatMessage>
-            </Show>
-          }
-        >
-          <RunChatMessage role="assistant" class="run-chat-message-item">
-            <RunChatAssistantMessage
-              content={row()?.content.length ? (row()?.content ?? " ") : " "}
-              streaming={row()?.assistantStreaming}
-              isStreamingActive={
-                row()?.assistantStreaming?.isStreaming === true
-              }
-              reasoning={
-                row()?.reasoningContent.length ? (
-                  <div class="run-chat-assistant-message__reasoning-inline">
-                    <RunChatMarkdown
-                      content={`*Thinking:* ${row()?.reasoningContent ?? ""}`}
-                    />
-                  </div>
-                ) : undefined
-              }
-              toolRail={
-                row()?.toolItems.length ? (
-                  <RunChatToolRail items={row()?.toolItems ?? []} />
-                ) : undefined
-              }
-              details={
-                row()?.attributionLabel.length ? (
-                  <p class="run-chat-assistant-message__attribution">
-                    {row()?.attributionLabel ?? ""}
-                  </p>
-                ) : undefined
-              }
-            />
-            <Show when={row() && !row()!.hasRenderableContent}>
-              {waitingRow}
-            </Show>
-          </RunChatMessage>
-        </Show>
-      </div>
-    </Show>
-  );
 };
 
 const resolveTranscriptPartText = (
@@ -360,7 +265,7 @@ const materializeStreamText = (
   }
 
   const deltas: string[] = [];
-  let cursor = tail;
+  let cursor: UiStreamChunkNode | undefined = tail;
   while (cursor) {
     deltas.push(cursor.delta);
     cursor = cursor.prev;
@@ -498,6 +403,7 @@ const TRANSCRIPT_NEAR_BOTTOM_THRESHOLD = 96;
 const INITIAL_TRANSCRIPT_ANCHOR_MAX_ATTEMPTS = 6;
 const OLDER_TRANSCRIPT_RESTORE_MAX_ATTEMPTS = 12;
 const MAX_SUBAGENT_HISTORY_PAGES = 100;
+const SUBAGENT_SNAPSHOT_STORAGE_KEY_PREFIX = "runs.chat.subagentSnapshots";
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 const INTERNAL_ID_DETECTION_PATTERN =
@@ -645,6 +551,13 @@ type SubagentHistorySnapshot = {
 
 type FetchedSubagentHistorySnapshot = SubagentHistorySnapshot | null;
 
+type PersistedSubagentSnapshot = {
+  sessionId: string;
+  assignedTaskPartId: string | null;
+  label: string | null;
+  status: string | null;
+};
+
 const getStatusType = (value: unknown): string | null => {
   if (typeof value === "string") {
     return value.trim() || null;
@@ -693,6 +606,212 @@ const sanitizeSubagentModelLabel = (value: unknown): string | null => {
   return normalized;
 };
 
+const isGenericSubagentLabel = (value: string | null | undefined): boolean => {
+  const normalized = value?.trim() || "";
+  return (
+    normalized.length === 0 ||
+    normalized === "~ Delegating..." ||
+    normalized === "Subagent"
+  );
+};
+
+const getPersistedSubagentSnapshotStorageKey = (
+  runId: string,
+  rootSessionId: string,
+): string => {
+  return `${SUBAGENT_SNAPSHOT_STORAGE_KEY_PREFIX}:${runId}:${rootSessionId}`;
+};
+
+const serializePersistedSubagentSnapshots = (
+  snapshots: Record<string, PersistedSubagentSnapshot>,
+): string => {
+  return JSON.stringify(
+    Object.keys(snapshots)
+      .sort((left, right) => left.localeCompare(right))
+      .map((sessionId) => snapshots[sessionId]),
+  );
+};
+
+const normalizePersistedSubagentSnapshot = (
+  value: unknown,
+): PersistedSubagentSnapshot | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const sessionId =
+    typeof value.sessionId === "string" ? value.sessionId.trim() : "";
+  if (!sessionId) {
+    return null;
+  }
+
+  const assignedTaskPartId =
+    typeof value.assignedTaskPartId === "string"
+      ? value.assignedTaskPartId.trim() || null
+      : null;
+  const label =
+    typeof value.label === "string" ? value.label.trim() || null : null;
+  const status =
+    typeof value.status === "string" ? value.status.trim() || null : null;
+
+  return {
+    sessionId,
+    assignedTaskPartId,
+    label,
+    status,
+  };
+};
+
+const readPersistedSubagentSnapshots = (
+  runId: string | null | undefined,
+  rootSessionId: string | null | undefined,
+): Record<string, PersistedSubagentSnapshot> => {
+  const normalizedRunId = runId?.trim() || "";
+  const normalizedRootSessionId = rootSessionId?.trim() || "";
+  if (
+    !normalizedRunId ||
+    !normalizedRootSessionId ||
+    typeof window === "undefined"
+  ) {
+    return {};
+  }
+
+  try {
+    const serialized = window.localStorage.getItem(
+      getPersistedSubagentSnapshotStorageKey(
+        normalizedRunId,
+        normalizedRootSessionId,
+      ),
+    );
+    if (!serialized) {
+      return {};
+    }
+
+    const parsed = JSON.parse(serialized);
+    const items = Array.isArray(parsed)
+      ? parsed
+      : isRecord(parsed)
+        ? Object.values(parsed)
+        : [];
+
+    return Object.fromEntries(
+      items
+        .map((item) => normalizePersistedSubagentSnapshot(item))
+        .filter((item): item is PersistedSubagentSnapshot => item !== null)
+        .map((item) => [item.sessionId, item]),
+    );
+  } catch {
+    return {};
+  }
+};
+
+const persistSubagentSnapshots = (
+  runId: string | null | undefined,
+  rootSessionId: string | null | undefined,
+  snapshots: Record<string, PersistedSubagentSnapshot>,
+): void => {
+  const normalizedRunId = runId?.trim() || "";
+  const normalizedRootSessionId = rootSessionId?.trim() || "";
+  if (
+    !normalizedRunId ||
+    !normalizedRootSessionId ||
+    typeof window === "undefined"
+  ) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      getPersistedSubagentSnapshotStorageKey(
+        normalizedRunId,
+        normalizedRootSessionId,
+      ),
+      serializePersistedSubagentSnapshots(snapshots),
+    );
+  } catch {}
+};
+
+const mergePersistedSubagentSnapshots = (
+  previous: Record<string, PersistedSubagentSnapshot>,
+  next: Record<string, PersistedSubagentSnapshot>,
+): Record<string, PersistedSubagentSnapshot> => {
+  const merged: Record<string, PersistedSubagentSnapshot> = { ...previous };
+
+  for (const snapshot of Object.values(next)) {
+    const existing = merged[snapshot.sessionId];
+    merged[snapshot.sessionId] = {
+      sessionId: snapshot.sessionId,
+      assignedTaskPartId:
+        snapshot.assignedTaskPartId ?? existing?.assignedTaskPartId ?? null,
+      label: !isGenericSubagentLabel(snapshot.label)
+        ? snapshot.label
+        : !isGenericSubagentLabel(existing?.label)
+          ? (existing?.label ?? null)
+          : (snapshot.label ?? existing?.label ?? null),
+      status: snapshot.status ?? existing?.status ?? null,
+    };
+  }
+
+  return merged;
+};
+
+const buildPersistedSubagentSnapshotsFromPanels = (
+  panelsByTaskPartId: Record<string, RunChatToolRailSubagentItem[]>,
+): Record<string, PersistedSubagentSnapshot> => {
+  const snapshots: Record<string, PersistedSubagentSnapshot> = {};
+
+  for (const [taskPartId, panels] of Object.entries(panelsByTaskPartId)) {
+    for (const panel of panels) {
+      snapshots[panel.id] = {
+        sessionId: panel.id,
+        assignedTaskPartId: taskPartId,
+        label: panel.label.trim() || null,
+        status: panel.status?.trim() || null,
+      };
+    }
+  }
+
+  return snapshots;
+};
+
+const mergePersistedSubagentSessionAssignments = (
+  assignments: Record<string, SubagentSessionAssignmentSnapshot>,
+  persistedSnapshots: Record<string, PersistedSubagentSnapshot>,
+): Record<string, SubagentSessionAssignmentSnapshot> => {
+  const merged: Record<string, SubagentSessionAssignmentSnapshot> = {
+    ...assignments,
+  };
+
+  for (const snapshot of Object.values(persistedSnapshots)) {
+    if (!snapshot.assignedTaskPartId) {
+      continue;
+    }
+
+    const existing = merged[snapshot.sessionId];
+    if (!existing) {
+      merged[snapshot.sessionId] = {
+        sessionId: snapshot.sessionId,
+        parentSessionId: null,
+        parentMessageId: null,
+        assignedTaskPartId: snapshot.assignedTaskPartId,
+        assignmentSource: null,
+        assignmentConfidence: 0,
+        assignmentProvisional: true,
+      };
+      continue;
+    }
+
+    if (!existing.assignedTaskPartId) {
+      merged[snapshot.sessionId] = {
+        ...existing,
+        assignedTaskPartId: snapshot.assignedTaskPartId,
+      };
+    }
+  }
+
+  return merged;
+};
+
 const readSubagentAttribution = (
   value: unknown,
 ): { agent: string | null; model: string | null } => {
@@ -722,6 +841,7 @@ const formatSubagentLabel = (
   agentType: string | null,
   model: string | null,
   hasOutput: boolean,
+  fallbackLabel: string | null,
 ): string => {
   const normalizedTitle = title?.trim();
   if (normalizedTitle) {
@@ -729,6 +849,10 @@ const formatSubagentLabel = (
     return normalizedModel
       ? `${normalizedTitle} - ${normalizedModel}`
       : normalizedTitle;
+  }
+
+  if (fallbackLabel) {
+    return fallbackLabel;
   }
 
   if (!hasOutput) {
@@ -745,41 +869,174 @@ const formatSubagentLabel = (
   return "Subagent";
 };
 
-const buildSubagentMessagesFromStore = (
+const hasRenderableSubagentEntries = (
+  entries: readonly RunChatToolRailSubagentEntry[],
+): boolean => {
+  return entries.some((entry) => entry.kind !== "assistant-placeholder");
+};
+
+const buildSubagentLabelFromEntries = (
+  entries: readonly RunChatToolRailSubagentEntry[],
+): string | null => {
+  const selectLabel = (
+    candidate: RunChatToolRailSubagentEntry | undefined,
+  ): string | null => {
+    if (!candidate) {
+      return null;
+    }
+
+    switch (candidate.kind) {
+      case "text":
+      case "reasoning":
+        return toSingleLine(candidate.content, 96);
+      case "tool":
+        return toSingleLine(candidate.toolItem.summary, 96);
+      case "assistant-placeholder":
+        return null;
+    }
+  };
+
+  return (
+    selectLabel(
+      entries.find(
+        (entry) =>
+          entry.kind === "text" &&
+          (entry.role === "user" || entry.role === "system"),
+      ),
+    ) ||
+    selectLabel(
+      [...entries]
+        .reverse()
+        .find((entry) => entry.kind !== "assistant-placeholder"),
+    )
+  );
+};
+
+const hasLiveSubagentMessageActivity = (
+  liveEvents: readonly OpenCodeBusEvent[],
+): boolean => {
+  return liveEvents.some((event) => {
+    return (
+      event.type === "message.part.updated" ||
+      event.type === "message.part.delta" ||
+      event.type === "message.removed" ||
+      event.type === "message.part.removed"
+    );
+  });
+};
+
+const hasLiveSubagentStatusActivity = (
+  liveEvents: readonly OpenCodeBusEvent[],
+): boolean => {
+  return liveEvents.some((event) => event.type === "session.status");
+};
+
+const deriveSubagentStatus = (
+  session: SubagentSessionSnapshot,
+  fetchedSnapshot: FetchedSubagentHistorySnapshot,
+  entries: readonly RunChatToolRailSubagentEntry[],
+  persistedSnapshot: PersistedSubagentSnapshot | null,
+): string => {
+  if (hasLiveSubagentStatusActivity(session.liveEvents)) {
+    return session.status;
+  }
+
+  if (
+    fetchedSnapshot &&
+    hasRenderableSubagentEntries(entries) &&
+    !hasLiveSubagentMessageActivity(session.liveEvents)
+  ) {
+    return "completed";
+  }
+
+  if (
+    persistedSnapshot?.status &&
+    !hasLiveSubagentMessageActivity(session.liveEvents)
+  ) {
+    return persistedSnapshot.status;
+  }
+
+  return session.status;
+};
+
+const buildSubagentEntriesFromStore = (
   store: AgentStore,
   displayContext: ToolPathDisplayContext,
 ) => {
-  return store.messageOrder
-    .map((messageId) => store.messagesById[messageId])
-    .filter(Boolean)
-    .map((message) => {
+  const latestMessageId =
+    store.messageOrder[store.messageOrder.length - 1] ?? null;
+
+  return store.messageOrder.flatMap<RunChatToolRailSubagentEntry>(
+    (messageId) => {
+      const message = store.messagesById[messageId];
+      if (!message) {
+        return [];
+      }
+
       const textParts: UiTextPart[] = [];
       const reasoningParts: UiReasoningPart[] = [];
-      const toolItems: Array<{ id: string; summary: string; status?: string }> =
-        [];
+      const entries: RunChatToolRailSubagentEntry[] = [];
 
       for (const partId of message.partOrder) {
         const part = message.partsById[partId];
         if (!part) continue;
         if (part.kind === "text") {
           const text = resolveTranscriptPartText(part, displayContext);
-          if (text.trim().length > 0 || part.streaming) {
-            textParts.push(part);
+          const content = text.trim();
+          textParts.push(part);
+          if (content.length > 0) {
+            entries.push({
+              id: `${message.id}:${part.id}:text`,
+              kind: "text",
+              messageId: message.id,
+              role: message.role,
+              content,
+              assistantStreaming:
+                message.role === "assistant"
+                  ? buildAssistantStreamingMetadata(
+                      message.id,
+                      [part],
+                      [],
+                      displayContext,
+                    )
+                  : undefined,
+              isStreaming: part.streaming,
+              streamToken:
+                message.role === "assistant"
+                  ? undefined
+                  : `${message.id}:${part.id}:${part.streaming ? "streaming" : "static"}:${content.length}`,
+            });
           }
           continue;
         }
         if (part.kind === "reasoning") {
           const text = resolveTranscriptPartText(part, displayContext);
-          if (text.trim().length > 0 || part.streaming) {
-            reasoningParts.push(part);
+          const content = text.trim();
+          reasoningParts.push(part);
+          if (content.length > 0) {
+            entries.push({
+              id: `${message.id}:${part.id}:reasoning`,
+              kind: "reasoning",
+              messageId: message.id,
+              role: message.role,
+              content,
+              isStreaming: part.streaming,
+              streamToken: `${message.id}:${part.id}:${part.streaming ? "streaming" : "static"}:${content.length}`,
+            });
           }
           continue;
         }
         if (part.kind === "tool") {
-          toolItems.push({
-            id: part.id,
-            summary: buildToolSummary(part, displayContext),
-            status: part.status,
+          entries.push({
+            id: `${message.id}:${part.id}:tool`,
+            kind: "tool",
+            messageId: message.id,
+            role: message.role,
+            toolItem: {
+              id: part.id,
+              summary: buildToolSummary(part, displayContext),
+              status: part.status,
+            },
           });
         }
       }
@@ -793,45 +1050,60 @@ const buildSubagentMessagesFromStore = (
               displayContext,
             )
           : undefined;
+      const hasPendingAssistantTextContent =
+        textParts.length > 0 || reasoningParts.length > 0;
 
-      return {
-        id: message.id,
-        role: message.role,
-        content: assistantStreaming
-          ? assistantStreaming.targetText
-          : textParts
-              .map((part) => resolveTranscriptPartText(part, displayContext))
-              .join("\n\n")
-              .trim(),
-        reasoningContent: assistantStreaming
-          ? assistantStreaming.reasoningTargetText
-          : reasoningParts
-              .map((part) => resolveTranscriptPartText(part, displayContext))
-              .join("\n\n")
-              .trim(),
-        assistantStreaming,
-        toolItems,
-      };
-    })
-    .filter(
-      (message) =>
-        message.content.length > 0 ||
-        message.reasoningContent.length > 0 ||
-        message.toolItems.length > 0,
-    );
+      if (
+        entries.length === 0 &&
+        message.role === "assistant" &&
+        latestMessageId === message.id &&
+        (message.partOrder.length === 0 ||
+          hasPendingAssistantTextContent ||
+          assistantStreaming?.isPlaceholderOnly)
+      ) {
+        entries.push({
+          id: `${message.id}:placeholder`,
+          kind: "assistant-placeholder",
+          messageId: message.id,
+          role: "assistant",
+          isStreaming: true,
+          streamToken:
+            assistantStreaming?.streamToken ?? `${message.id}:placeholder`,
+        });
+      }
+
+      return entries;
+    },
+  );
 };
 
 const buildSubagentPanels = (
   rawEvents: readonly OpenCodeBusEvent[],
   rootSessionId: string | null,
   displayContext: ToolPathDisplayContext,
+  rootMessagesById: AgentStore["messagesById"],
   subagentAssignmentsBySessionId: Record<
     string,
     SubagentSessionAssignmentSnapshot
   >,
   fetchedSessionHistories: Record<string, FetchedSubagentHistorySnapshot>,
+  persistedSnapshotsBySessionId: Record<string, PersistedSubagentSnapshot>,
 ): Record<string, RunChatToolRailSubagentItem[]> => {
   const sessions = new Map<string, SubagentSessionSnapshot>();
+  const taskPartFallbackLabelsById = new Map<string, string>();
+
+  for (const message of Object.values(rootMessagesById)) {
+    for (const partId of message.partOrder) {
+      const part = message.partsById[partId];
+      if (part?.kind !== "tool" || !isTaskToolName(part.toolName)) {
+        continue;
+      }
+      taskPartFallbackLabelsById.set(
+        part.id,
+        toSingleLine(buildToolSummary(part, displayContext), 96) ?? "",
+      );
+    }
+  }
 
   const syncSessionAssignment = (
     session: SubagentSessionSnapshot,
@@ -860,6 +1132,7 @@ const buildSubagentPanels = (
     }
 
     const assignment = subagentAssignmentsBySessionId[sessionId];
+    const persistedSnapshot = persistedSnapshotsBySessionId[sessionId] ?? null;
     const created: SubagentSessionSnapshot = {
       sessionId,
       parentSessionId: assignment?.parentSessionId ?? null,
@@ -868,7 +1141,7 @@ const buildSubagentPanels = (
       assignmentSource: assignment?.assignmentSource ?? null,
       assignmentConfidence: assignment?.assignmentConfidence ?? 0,
       assignmentProvisional: assignment?.assignmentProvisional ?? true,
-      status: "running",
+      status: persistedSnapshot?.status ?? "running",
       title: null,
       agentType: null,
       model: null,
@@ -961,15 +1234,14 @@ const buildSubagentPanels = (
     }
 
     const fetchedSnapshot = fetchedSessionHistories[session.sessionId] ?? null;
+    const persistedSnapshot =
+      persistedSnapshotsBySessionId[session.sessionId] ?? null;
     const mergedStore = buildMergedSubagentMessageStore({
       sessionId: session.sessionId,
       fetchedStore: fetchedSnapshot?.store ?? null,
       liveEvents: session.liveEvents,
     });
-    const messages = buildSubagentMessagesFromStore(
-      mergedStore,
-      displayContext,
-    );
+    const entries = buildSubagentEntriesFromStore(mergedStore, displayContext);
     const mergedHistoryMessages = mergedStore.messageOrder.flatMap(
       (messageId) => {
         const message = mergedStore.messagesById[messageId];
@@ -989,21 +1261,125 @@ const buildSubagentPanels = (
         .find(Boolean) ||
       null;
 
+    const effectiveStatus = deriveSubagentStatus(
+      session,
+      fetchedSnapshot,
+      entries,
+      persistedSnapshot,
+    );
+    const hasOutput = hasRenderableSubagentEntries(entries);
+    const completedFallbackLabel =
+      (!isGenericSubagentLabel(persistedSnapshot?.label)
+        ? (persistedSnapshot?.label ?? null)
+        : null) ||
+      buildSubagentLabelFromEntries(entries) ||
+      taskPartFallbackLabelsById.get(taskPartId) ||
+      null;
     const subagent: RunChatToolRailSubagentItem = {
       id: session.sessionId,
       label: formatSubagentLabel(
         session.title,
         fallbackAgentType,
         fallbackModel,
-        messages.length > 0,
+        hasOutput,
+        hasCompletedRunStatus(effectiveStatus) ? completedFallbackLabel : null,
       ),
-      status: session.status,
-      messages,
+      status: effectiveStatus,
+      entries,
     };
 
     acc[taskPartId] = [...(acc[taskPartId] ?? []), subagent];
     return acc;
   }, {});
+};
+
+const buildRootTaskPartIdSet = (store: AgentStore): Set<string> => {
+  const taskPartIds = new Set<string>();
+
+  for (const messageId of store.messageOrder) {
+    const message = store.messagesById[messageId];
+    if (!message) {
+      continue;
+    }
+
+    for (const partId of message.partOrder) {
+      const part = message.partsById[partId];
+      if (part?.kind === "tool" && isTaskToolName(part.toolName)) {
+        taskPartIds.add(part.id);
+      }
+    }
+  }
+
+  return taskPartIds;
+};
+
+const shouldRetainSubagentPanel = (
+  subagent: RunChatToolRailSubagentItem,
+): boolean => {
+  return hasRenderableSubagentEntries(subagent.entries);
+};
+
+const mergeRetainedSubagentPanels = (
+  previous: Record<string, RunChatToolRailSubagentItem[]>,
+  current: Record<string, RunChatToolRailSubagentItem[]>,
+  activeTaskPartIds: Set<string>,
+): Record<string, RunChatToolRailSubagentItem[]> => {
+  const merged: Record<string, RunChatToolRailSubagentItem[]> = {};
+  const currentTaskPartIdsBySubagentId = new Map<string, string>();
+
+  for (const [taskPartId, panels] of Object.entries(current)) {
+    for (const panel of panels) {
+      currentTaskPartIdsBySubagentId.set(panel.id, taskPartId);
+    }
+  }
+
+  for (const taskPartId of activeTaskPartIds) {
+    const previousPanels = previous[taskPartId] ?? [];
+    const currentPanels = current[taskPartId] ?? [];
+    const currentPanelsById = Object.fromEntries(
+      currentPanels.map((subagent) => [subagent.id, subagent]),
+    );
+    const previousPanelIds = new Set(
+      previousPanels.map((subagent) => subagent.id),
+    );
+    const retainedPanels: RunChatToolRailSubagentItem[] = [];
+
+    for (const previousPanel of previousPanels) {
+      const currentPanel = currentPanelsById[previousPanel.id];
+      if (currentPanel) {
+        retainedPanels.push(
+          shouldRetainSubagentPanel(currentPanel) ||
+            !shouldRetainSubagentPanel(previousPanel)
+            ? currentPanel
+            : previousPanel,
+        );
+        continue;
+      }
+
+      const reboundTaskPartId = currentTaskPartIdsBySubagentId.get(
+        previousPanel.id,
+      );
+      if (reboundTaskPartId && reboundTaskPartId !== taskPartId) {
+        continue;
+      }
+
+      if (shouldRetainSubagentPanel(previousPanel)) {
+        retainedPanels.push(previousPanel);
+      }
+    }
+
+    for (const currentPanel of currentPanels) {
+      if (!previousPanelIds.has(currentPanel.id)) {
+        retainedPanels.push(currentPanel);
+      }
+    }
+
+    if (retainedPanels.length > 0) {
+      merged[taskPartId] = retainedPanels;
+    }
+  }
+
+  return merged;
 };
 
 const sanitizeAttributionValue = (value: unknown): string => {
@@ -1338,9 +1714,6 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
     }
     return `Question ${activeStepIndex() + 1} of ${props.card.prompts.length}`;
   });
-  const currentQuestionKey = createMemo(
-    () => `${props.card.requestId}:${activeStepIndex()}`,
-  );
   const isInteractionLocked = createMemo(
     () => props.isReplying || isActionInFlight(),
   );
@@ -1455,142 +1828,138 @@ const QuestionComposerTakeover: Component<QuestionComposerTakeoverProps> = (
             </div>
           }
         >
-          {(prompt) => (
-            <Show keyed when={currentQuestionKey()}>
-              {() => {
-                const isOptionChecked = (value: string) =>
-                  currentDraft().selectedOptionValues.includes(value);
-                const isCustomEnabled = () => prompt().custom;
-                const isCustomChecked = () =>
-                  isCustomEnabled() && currentDraft().useCustomAnswer;
+          {(prompt) => {
+            const isOptionChecked = (value: string) =>
+              currentDraft().selectedOptionValues.includes(value);
+            const isCustomEnabled = () => prompt().custom;
+            const isCustomChecked = () =>
+              isCustomEnabled() && currentDraft().useCustomAnswer;
 
-                return (
-                  <div class="border-base-content/10 bg-base-100 space-y-4 border p-4">
-                    <div class="space-y-1">
-                      <p class="text-sm font-semibold">{prompt().header}</p>
-                      <p class="text-base-content/90 text-sm leading-6">
-                        {prompt().question}
-                      </p>
-                    </div>
+            return (
+              <div class="border-base-content/10 bg-base-100 space-y-4 border p-4">
+                <div class="space-y-1">
+                  <p class="text-sm font-semibold">{prompt().header}</p>
+                  <p class="text-base-content/90 text-sm leading-6">
+                    {prompt().question}
+                  </p>
+                </div>
 
-                    <div class="space-y-2">
-                      <For each={prompt().options}>
-                        {(option) => {
-                          const checked = () => isOptionChecked(option.value);
-                          return (
-                            <button
-                              type="button"
-                              aria-label={option.label}
-                              data-checked={checked() ? "true" : "false"}
-                              class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
-                                checked()
-                                  ? "border-primary/50 bg-base-100"
-                                  : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
-                              }`}
-                              disabled={isInteractionLocked()}
-                              onClick={() => {
-                                updateDraftAt(activeStepIndex(), (draft) =>
-                                  toggleQuestionWizardOption(
-                                    prompt(),
-                                    draft,
-                                    option.value,
-                                  ),
-                                );
-                              }}
-                            >
-                              <span
-                                class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
-                                  checked()
-                                    ? "border-primary bg-primary text-primary-content"
-                                    : "border-base-content/30 bg-base-100"
-                                }`}
-                                aria-hidden="true"
-                              >
-                                <Show when={checked()}>✓</Show>
-                              </span>
-                              <span>
-                                <span class="block text-sm font-medium">
-                                  {option.label}
-                                </span>
-                                <Show when={option.description.length > 0}>
-                                  <span class="text-base-content/70 mt-1 block text-xs">
-                                    {option.description}
-                                  </span>
-                                </Show>
-                              </span>
-                            </button>
-                          );
-                        }}
-                      </For>
-
-                      <Show when={isCustomEnabled()}>
+                <div class="space-y-2">
+                  <For each={prompt().options}>
+                    {(option) => {
+                      const checked = () => isOptionChecked(option.value);
+                      return (
                         <button
                           type="button"
-                          aria-label="Type your own answer"
-                          data-checked={isCustomChecked() ? "true" : "false"}
+                          aria-label={option.label}
+                          data-checked={checked() ? "true" : "false"}
                           class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
-                            isCustomChecked()
+                            checked()
                               ? "border-primary/50 bg-base-100"
                               : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
                           }`}
                           disabled={isInteractionLocked()}
                           onClick={() => {
                             updateDraftAt(activeStepIndex(), (draft) =>
-                              toggleQuestionWizardCustomAnswer(prompt(), draft),
+                              toggleQuestionWizardOption(
+                                prompt(),
+                                draft,
+                                option.value,
+                              ),
                             );
                           }}
                         >
                           <span
                             class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
-                              isCustomChecked()
+                              checked()
                                 ? "border-primary bg-primary text-primary-content"
                                 : "border-base-content/30 bg-base-100"
                             }`}
                             aria-hidden="true"
                           >
-                            <Show when={isCustomChecked()}>✓</Show>
+                            <Show when={checked()}>✓</Show>
                           </span>
-                          <span class="block text-sm font-medium">
-                            Type your own answer
+                          <span>
+                            <span class="block text-sm font-medium">
+                              {option.label}
+                            </span>
+                            <Show when={option.description.length > 0}>
+                              <span class="text-base-content/70 mt-1 block text-xs">
+                                {option.description}
+                              </span>
+                            </Show>
                           </span>
                         </button>
-                      </Show>
-                    </div>
+                      );
+                    }}
+                  </For>
 
-                    <Show when={isCustomEnabled() && isCustomChecked()}>
-                      <div class="bg-base-100 space-y-2">
-                        <label
-                          class="text-base-content/60 text-xs font-semibold tracking-[0.18em] uppercase"
-                          for={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
-                        >
-                          Your answer
-                        </label>
-                        <textarea
-                          id={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
-                          class="textarea textarea-bordered bg-base-100 min-h-[96px] w-full rounded-none text-sm leading-6"
-                          value={currentDraft().customText}
-                          placeholder="Type your answer"
-                          disabled={isInteractionLocked()}
-                          rows={4}
-                          onInput={(event) => {
-                            updateDraftAt(activeStepIndex(), (draft) =>
-                              updateQuestionWizardCustomText(
-                                draft,
-                                event.currentTarget.value,
-                              ),
-                            );
-                          }}
-                        />
-                        <p class="text-base-content/60 text-xs">
-                          Type your own answer if none of the options fit.
-                        </p>
-                      </div>
-                    </Show>
+                  <Show when={isCustomEnabled()}>
+                    <button
+                      type="button"
+                      aria-label="Type your own answer"
+                      data-checked={isCustomChecked() ? "true" : "false"}
+                      class={`flex w-full items-start gap-3 rounded-none border px-3 py-3 text-left transition-colors ${
+                        isCustomChecked()
+                          ? "border-primary/50 bg-base-100"
+                          : "border-base-content/10 bg-base-100 hover:border-base-content/25 hover:bg-base-100"
+                      }`}
+                      disabled={isInteractionLocked()}
+                      onClick={() => {
+                        updateDraftAt(activeStepIndex(), (draft) =>
+                          toggleQuestionWizardCustomAnswer(prompt(), draft),
+                        );
+                      }}
+                    >
+                      <span
+                        class={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${
+                          isCustomChecked()
+                            ? "border-primary bg-primary text-primary-content"
+                            : "border-base-content/30 bg-base-100"
+                        }`}
+                        aria-hidden="true"
+                      >
+                        <Show when={isCustomChecked()}>✓</Show>
+                      </span>
+                      <span class="block text-sm font-medium">
+                        Type your own answer
+                      </span>
+                    </button>
+                  </Show>
+                </div>
+
+                <Show when={isCustomEnabled() && isCustomChecked()}>
+                  <div class="bg-base-100 space-y-2">
+                    <label
+                      class="text-base-content/60 text-xs font-semibold tracking-[0.18em] uppercase"
+                      for={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
+                    >
+                      Your answer
+                    </label>
+                    <textarea
+                      id={`question-answer-${props.card.requestId}-${activeStepIndex()}`}
+                      class="textarea textarea-bordered bg-base-100 min-h-[96px] w-full rounded-none text-sm leading-6"
+                      value={currentDraft().customText}
+                      placeholder="Type your answer"
+                      disabled={isInteractionLocked()}
+                      rows={4}
+                      onInput={(event) => {
+                        updateDraftAt(activeStepIndex(), (draft) =>
+                          updateQuestionWizardCustomText(
+                            draft,
+                            event.currentTarget.value,
+                          ),
+                        );
+                      }}
+                    />
+                    <p class="text-base-content/60 text-xs">
+                      Type your own answer if none of the options fit.
+                    </p>
                   </div>
-                );
-              }}
-            </Show>
-          )}
+                </Show>
+              </div>
+            );
+          }}
         </Show>
 
         <Show
@@ -2343,12 +2712,31 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     );
   });
 
-  const subagentSessionAssignments = createMemo(() => {
+  const [persistedSubagentSnapshots, setPersistedSubagentSnapshots] =
+    createSignal<Record<string, PersistedSubagentSnapshot>>({});
+
+  createEffect(() => {
+    setPersistedSubagentSnapshots(
+      readPersistedSubagentSnapshots(
+        props.model.run()?.id,
+        props.model.agent.store().sessionId,
+      ),
+    );
+  });
+
+  const liveSubagentSessionAssignments = createMemo(() => {
     return buildSubagentSessionAssignments(
       props.model.agent.store().rawEvents ?? [],
       props.model.agent.store().sessionId,
       props.model.agent.store().messagesById,
       taskPartSessionIdsByPartId(),
+    );
+  });
+
+  const subagentSessionAssignments = createMemo(() => {
+    return mergePersistedSubagentSessionAssignments(
+      liveSubagentSessionAssignments(),
+      persistedSubagentSnapshots(),
     );
   });
 
@@ -2451,14 +2839,47 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
     }
   });
 
-  const subagentPanelsByTaskPartId = createMemo(() => {
-    return buildSubagentPanels(
-      props.model.agent.store().rawEvents ?? [],
-      props.model.agent.store().sessionId,
+  const subagentPanelsByTaskPartId = createMemo<
+    Record<string, RunChatToolRailSubagentItem[]>
+  >((previous) => {
+    const store = props.model.agent.store();
+    const currentPanels = buildSubagentPanels(
+      store.rawEvents ?? [],
+      store.sessionId,
       toolPathDisplayContext(),
+      store.messagesById,
       subagentSessionAssignments(),
       fetchedSubagentHistories(),
+      persistedSubagentSnapshots(),
     );
+
+    return mergeRetainedSubagentPanels(
+      previous ?? {},
+      currentPanels,
+      buildRootTaskPartIdSet(store),
+    );
+  }, {});
+
+  createEffect(() => {
+    const runId = props.model.run()?.id;
+    const rootSessionId = props.model.agent.store().sessionId;
+    if (!runId || !rootSessionId) {
+      return;
+    }
+
+    const mergedSnapshots = mergePersistedSubagentSnapshots(
+      persistedSubagentSnapshots(),
+      buildPersistedSubagentSnapshotsFromPanels(subagentPanelsByTaskPartId()),
+    );
+    if (
+      serializePersistedSubagentSnapshots(mergedSnapshots) ===
+      serializePersistedSubagentSnapshots(persistedSubagentSnapshots())
+    ) {
+      return;
+    }
+
+    persistSubagentSnapshots(runId, rootSessionId, mergedSnapshots);
+    setPersistedSubagentSnapshots(mergedSnapshots);
   });
 
   const getStepDetailsSummary = (part: UiPart): string | null => {
@@ -2488,113 +2909,113 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
   };
 
   const buildChatRows = createMemo<ChatRow[]>(() => {
-    return transcriptMessageOrder()
-      .map((messageId) => {
-        const message = props.model.agent.store().messagesById[messageId];
-        if (!message) {
-          return null;
+    return transcriptMessageOrder().reduce<ChatRow[]>((rows, messageId) => {
+      const message = props.model.agent.store().messagesById[messageId];
+      if (!message) {
+        return rows;
+      }
+
+      const textParts: UiTextPart[] = [];
+      const reasoningParts: UiReasoningPart[] = [];
+      const toolItems: RunChatToolRailItem[] = [];
+
+      for (const partId of message.partOrder) {
+        const part = message.partsById[partId];
+        if (!part) {
+          continue;
         }
 
-        const textParts: UiTextPart[] = [];
-        const reasoningParts: UiReasoningPart[] = [];
-        const toolItems: RunChatToolRailItem[] = [];
-
-        for (const partId of message.partOrder) {
-          const part = message.partsById[partId];
-          if (!part) {
-            continue;
+        if (part.kind === "text") {
+          const text = resolvePartText(part, toolPathDisplayContext());
+          if (text.trim().length > 0 || part.streaming) {
+            textParts.push(part);
           }
-
-          if (part.kind === "text") {
-            const text = resolvePartText(part, toolPathDisplayContext());
-            if (text.trim().length > 0 || part.streaming) {
-              textParts.push(part);
-            }
-            continue;
-          }
-
-          if (part.kind === "reasoning") {
-            const text = resolvePartText(part, toolPathDisplayContext());
-            if (text.trim().length > 0 || part.streaming) {
-              reasoningParts.push(part);
-            }
-            continue;
-          }
-
-          if (part.kind === "tool") {
-            const summary = buildToolSummary(part, toolPathDisplayContext());
-            const isTask = isTaskToolName(part.toolName);
-            toolItems.push({
-              id: part.id,
-              label: part.title?.trim() || part.toolName || "Tool",
-              summary,
-              status: part.status,
-              isTask,
-              subagents: subagentPanelsByTaskPartId()[part.id] ?? [],
-            });
-            continue;
-          }
-
-          if (part.kind === "patch") {
-            continue;
-          }
-
-          if (part.kind === "file") {
-            continue;
-          }
-
-          const stepSummary = getStepDetailsSummary(part);
-          if (stepSummary) {
-            continue;
-          }
-
-          if (part.kind === "unknown") {
-            continue;
-          }
+          continue;
         }
 
-        const assistantStreaming =
-          message.role === "assistant"
-            ? buildAssistantStreamingMetadata(
-                message.id,
-                textParts,
-                reasoningParts,
-                toolPathDisplayContext(),
-              )
-            : undefined;
-        const content = assistantStreaming
-          ? assistantStreaming.targetText
-          : textParts
-              .map((part) => resolvePartText(part, toolPathDisplayContext()))
-              .join("\n\n")
-              .trim();
-        const reasoningContent = assistantStreaming
-          ? assistantStreaming.reasoningTargetText
-          : reasoningParts
-              .map((part) => resolvePartText(part, toolPathDisplayContext()))
-              .join("\n\n")
-              .trim();
-        const timestamp = formatAgentTimestamp(
-          message.updatedAt ?? message.createdAt ?? null,
-        );
+        if (part.kind === "reasoning") {
+          const text = resolvePartText(part, toolPathDisplayContext());
+          if (text.trim().length > 0 || part.streaming) {
+            reasoningParts.push(part);
+          }
+          continue;
+        }
 
-        return {
-          key: message.id,
-          role: message.role,
-          content,
-          reasoningContent,
-          assistantStreaming,
-          toolItems,
-          timestamp,
-          attributionLabel: formatMessageAttribution(message.attribution ?? {}),
-          hasRenderableContent:
-            (assistantStreaming?.hasVisibleContent ?? content.length > 0) ||
-            (assistantStreaming?.reasoning.hasVisibleContent ??
-              reasoningContent.length > 0) ||
-            toolItems.length > 0,
-        };
-      })
-      .filter((row): row is ChatRow => row !== null);
+        if (part.kind === "tool") {
+          const summary = buildToolSummary(part, toolPathDisplayContext());
+          const isTask = isTaskToolName(part.toolName);
+          toolItems.push({
+            id: part.id,
+            label: part.title?.trim() || part.toolName || "Tool",
+            summary,
+            status: part.status,
+            isTask,
+            subagents: subagentPanelsByTaskPartId()[part.id] ?? [],
+          });
+          continue;
+        }
+
+        if (part.kind === "patch") {
+          continue;
+        }
+
+        if (part.kind === "file") {
+          continue;
+        }
+
+        const stepSummary = getStepDetailsSummary(part);
+        if (stepSummary) {
+          continue;
+        }
+
+        if (part.kind === "unknown") {
+          continue;
+        }
+      }
+
+      const assistantStreaming =
+        message.role === "assistant"
+          ? buildAssistantStreamingMetadata(
+              message.id,
+              textParts,
+              reasoningParts,
+              toolPathDisplayContext(),
+            )
+          : undefined;
+      const content = assistantStreaming
+        ? assistantStreaming.targetText
+        : textParts
+            .map((part) => resolvePartText(part, toolPathDisplayContext()))
+            .join("\n\n")
+            .trim();
+      const reasoningContent = assistantStreaming
+        ? assistantStreaming.reasoningTargetText
+        : reasoningParts
+            .map((part) => resolvePartText(part, toolPathDisplayContext()))
+            .join("\n\n")
+            .trim();
+      const timestamp = formatAgentTimestamp(
+        message.updatedAt ?? message.createdAt ?? null,
+      );
+
+      rows.push({
+        key: message.id,
+        role: message.role,
+        content,
+        reasoningContent,
+        assistantStreaming,
+        toolItems,
+        timestamp,
+        attributionLabel: formatMessageAttribution(message.attribution ?? {}),
+        hasRenderableContent:
+          (assistantStreaming?.hasVisibleContent ?? content.length > 0) ||
+          (assistantStreaming?.reasoning.hasVisibleContent ??
+            reasoningContent.length > 0) ||
+          toolItems.length > 0,
+      });
+
+      return rows;
+    }, []);
   });
 
   const chatTranscriptRows = createMemo<RunChatTranscriptRow[]>(() => {

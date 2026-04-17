@@ -1434,6 +1434,93 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("falls back to the first board project when the query project is missing", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          { id: "p-1", name: "Alpha", key: "ALP" },
+          { id: "p-2", name: "Beta", key: "BET" },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board?projectId=p-missing");
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "Alpha" })).toBeTruthy();
+      expect(window.location.search).toBe("?projectId=p-1");
+    });
+  });
+
+  it("ignores stale board project context ids emitted after load", async () => {
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "list_projects") {
+        return Promise.resolve([
+          { id: "p-1", name: "Alpha", key: "ALP" },
+          { id: "p-2", name: "Beta", key: "BET" },
+        ]);
+      }
+      if (command === "get_project") {
+        const projectId = (args as { id?: string } | undefined)?.id || "p-1";
+        return Promise.resolve({
+          id: projectId,
+          name: projectId === "p-2" ? "Beta" : "Alpha",
+          key: projectId === "p-2" ? "BET" : "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board?projectId=p-1");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("link", { name: "Project settings" }).getAttribute(
+          "href",
+        ),
+      ).toBe("/projects/p-1");
+      expect(
+        (screen.getByRole("button", { name: "New task" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+    });
+
+    window.dispatchEvent(
+      new CustomEvent("board:project-context", {
+        detail: { projectId: "p-stale", projectName: "Ghost" },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Ghost")).toBeNull();
+      expect(
+        screen.getByRole("link", { name: "Project settings" }).getAttribute(
+          "href",
+        ),
+      ).toBe("/projects/p-1");
+      expect(
+        (screen.getByRole("button", { name: "New task" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+    });
+  });
+
   it("shows blocked badge on board cards", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") {
@@ -5660,7 +5747,81 @@ describe("app routing and shell", () => {
     });
   });
 
-  it("redirects to projects when there are no projects", async () => {
+  it("shows a board loader while projects are loading", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") return new Promise(() => {});
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("status", { name: "Loading projects" }),
+      ).toBeTruthy();
+    });
+
+    expect(
+      screen.queryByText("You currently don’t have any projects"),
+    ).toBeNull();
+    expect(screen.queryByText("No projects yet.", { exact: false })).toBeNull();
+    expect(screen.queryByLabelText("Search tasks")).toBeNull();
+    expect(window.location.pathname).toBe("/board");
+  });
+
+  it("shows the board empty state and create CTA when there are no projects", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") return Promise.resolve([]);
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/board");
+      expect(
+        screen.getByText("You currently don’t have any projects"),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "Create project" }),
+      ).toBeTruthy();
+    });
+
+    expect(
+      screen.queryByRole("status", { name: "Loading projects" }),
+    ).toBeNull();
+    expect(screen.queryByLabelText("Search tasks")).toBeNull();
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create project" }),
+    );
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/projects");
+      expect(
+        screen.getByRole("heading", { name: "Create Project" }),
+      ).toBeTruthy();
+    });
+  });
+
+  it("ignores stale remembered board project ids on the empty board", async () => {
+    window.localStorage.setItem("board.selectedProjectId", "p-stale");
+
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") return Promise.resolve([]);
       return Promise.resolve(null);
@@ -5669,8 +5830,88 @@ describe("app routing and shell", () => {
     renderAt("/board");
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe("/projects");
+      expect(
+        screen.getByText("You currently don’t have any projects"),
+      ).toBeTruthy();
     });
+
+    expect(
+      (screen.getByRole("button", { name: "New task" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(screen.queryByRole("link", { name: "Project settings" })).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "get_project_opencode_selection_catalog",
+      { projectId: "p-stale" },
+    );
+  });
+
+  it("keeps board shell actions conservative when shell project preload fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let listProjectsCallCount = 0;
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_projects") {
+        listProjectsCallCount += 1;
+        if (listProjectsCallCount === 1) {
+          return Promise.reject("shell startup failed");
+        }
+        return Promise.resolve([
+          {
+            id: "p-1",
+            name: "Alpha",
+            key: "ALP",
+            repositories: [
+              { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            ],
+          },
+        ]);
+      }
+      if (command === "get_project") {
+        return Promise.resolve({
+          id: "p-1",
+          name: "Alpha",
+          key: "ALP",
+          repositories: [
+            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+      expect(screen.getByText("Board")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "New task" })).toBeTruthy();
+    });
+
+    expect(
+      (screen.getByRole("button", { name: "New task" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(screen.queryByRole("link", { name: "Project settings" })).toBeNull();
+
+    warnSpy.mockRestore();
+  });
+
+  it("renders normal board content when projects exist", async () => {
+    renderAt("/board");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText("Search tasks")).toBeTruthy();
+    expect(
+      screen.queryByRole("status", { name: "Loading projects" }),
+    ).toBeNull();
+    expect(
+      screen.queryByText("You currently don’t have any projects"),
+    ).toBeNull();
   });
 
   it("keeps create-project run defaults blocked until OpenCode dependency check finishes", async () => {
@@ -5708,7 +5949,7 @@ describe("app routing and shell", () => {
       return Promise.resolve(null);
     });
 
-    renderAt("/board");
+    renderAt("/projects");
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/projects");
@@ -5801,10 +6042,12 @@ describe("app routing and shell", () => {
       expect(
         screen.getByText("Failed to load projects. Please refresh."),
       ).toBeTruthy();
-      expect(
-        screen.getByText("No projects yet.", { exact: false }),
-      ).toBeTruthy();
     });
+
+    expect(
+      screen.queryByText("You currently don’t have any projects"),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create project" })).toBeNull();
     expect(window.location.pathname).toBe("/board");
 
     warnSpy.mockRestore();

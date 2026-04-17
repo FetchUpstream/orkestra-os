@@ -201,7 +201,6 @@ const TaskDetailScreen: Component = () => {
     onSubmitCreateDependency,
     onEditImplementationGuideInput,
     flushTaskDetailsAutosave,
-    onSetStatus,
     onRequestSetStatus,
     onCancelDoneStatusWarning,
     onConfirmDoneStatusWarning,

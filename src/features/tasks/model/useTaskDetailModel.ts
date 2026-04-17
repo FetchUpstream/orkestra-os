@@ -29,7 +29,6 @@ import {
   deleteTask,
   getTask,
   listProjectTasks,
-  listTaskDependencies,
   moveTask,
   removeTaskDependency,
   setTaskStatus,
@@ -39,12 +38,14 @@ import {
   type Task,
   type TaskStatus,
 } from "../../../app/lib/tasks";
+import { getTaskDependenciesWithCache } from "../../../app/lib/taskDependenciesCache";
 import {
   createRun,
   deleteRun,
   listTaskRuns,
   listTaskRunSourceBranches,
   startRunOpenCode,
+  type RunAgentOption,
   type RunSelectionOption,
   type RunModelOption,
   type Run,
@@ -162,9 +163,7 @@ export const useTaskDetailModel = () => {
     createSignal(false);
   const [deletingRunId, setDeletingRunId] = createSignal("");
   const [startingRunId, setStartingRunId] = createSignal("");
-  const [runAgentOptions, setRunAgentOptions] = createSignal<
-    RunSelectionOption[]
-  >([]);
+  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>([]);
   const [runProviderOptions, setRunProviderOptions] = createSignal<
     RunSelectionOption[]
   >([]);
@@ -580,11 +579,14 @@ export const useTaskDetailModel = () => {
 
   const refreshDependencies = async (
     taskId: string,
+    options?: { force?: boolean },
   ): Promise<TaskDependencies | null> => {
     setIsLoadingDependencies(true);
     setDependenciesError("");
     try {
-      const loadedDependencies = await listTaskDependencies(taskId);
+      const loadedDependencies = await getTaskDependenciesWithCache(taskId, {
+        refresh: options?.force,
+      });
       setDependencies(loadedDependencies);
       return loadedDependencies;
     } catch {
@@ -613,7 +615,7 @@ export const useTaskDetailModel = () => {
   ): Promise<BlockingParentTaskRevalidation> => {
     const [freshTask, loadedDependencies] = await Promise.all([
       getTask(taskId),
-      refreshDependencies(taskId),
+      refreshDependencies(taskId, { force: true }),
     ]);
     setTask(freshTask);
     if (!loadedDependencies) {
@@ -680,7 +682,7 @@ export const useTaskDetailModel = () => {
       return next;
     });
     setWarmingRunIds((current) => {
-      if (!Object.hasOwn(current, normalizedRunId)) return current;
+      if (!Object.prototype.hasOwnProperty.call(current, normalizedRunId)) return current;
       const next = { ...current };
       delete next[normalizedRunId];
       return next;
@@ -945,7 +947,7 @@ export const useTaskDetailModel = () => {
       } else {
         await addTaskDependency(taskValue.id, dependencyTaskId);
       }
-      await refreshDependencies(taskValue.id);
+      await refreshDependencies(taskValue.id, { force: true });
       setIsLinkDependencyModalOpen(false);
     } catch (mutationError) {
       setActionError(
@@ -991,7 +993,7 @@ export const useTaskDetailModel = () => {
         await addTaskDependency(taskValue.id, created.id);
       }
       await Promise.all([
-        refreshDependencies(taskValue.id),
+        refreshDependencies(taskValue.id, { force: true }),
         loadDependencyCandidates(resolvedProjectId),
       ]);
       setIsCreateDependencyModalOpen(false);
@@ -1213,7 +1215,7 @@ export const useTaskDetailModel = () => {
     setRemovingDependencyKey(`${parentTaskId}:${childTaskId}`);
     try {
       await removeTaskDependency(parentTaskId, childTaskId);
-      await refreshDependencies(taskValue.id);
+      await refreshDependencies(taskValue.id, { force: true });
     } catch (mutationError) {
       setActionError(
         getActionErrorMessage("Failed to remove dependency.", mutationError),
@@ -1291,21 +1293,27 @@ export const useTaskDetailModel = () => {
   const onOpenRunSettingsModal = () => {
     if (isCreatingRun()) return;
 
+    const activeTaskId = params.taskId?.trim();
+    if (!activeTaskId) {
+      setActionError("Missing task ID.");
+      return;
+    }
+
     const openRunSettingsModal = () => {
       setActionError("");
       setPendingRunSettingsDefaultsInitialization(!hasRunSelectionOptions());
       initializeRunSettingsSelectionsFromProjectDefaults();
       setIsRunSettingsModalOpen(true);
-      void refreshRunSourceBranches(params.taskId);
+      void refreshRunSourceBranches(activeTaskId);
     };
 
     const verifyTaskCanStart = async () => {
       try {
         const { isBlockedNow } = await revalidateBlockingParentTasks(
-          params.taskId,
+          activeTaskId,
         );
         if (isBlockedNow) {
-          showBlockedTaskModal(params.taskId);
+          showBlockedTaskModal(activeTaskId);
           return false;
         }
 

@@ -109,6 +109,11 @@ type AppShellProps = {
   children?: JSX.Element;
 };
 
+type BoardProjectContext = {
+  projectId: string;
+  projectName: string;
+};
+
 const AppShell: Component<AppShellProps> = (props) => {
   return (
     <OpenCodeDependencyProvider>
@@ -129,6 +134,8 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   const [projects, setProjects] = createSignal<Project[]>([]);
   const [hasLoadedProjects, setHasLoadedProjects] = createSignal(false);
   const [boardSearchQuery, setBoardSearchQuery] = createSignal("");
+  const [boardProjectContext, setBoardProjectContext] =
+    createSignal<BoardProjectContext>({ projectId: "", projectName: "" });
   const [taskDetailTopbarConfig, setTaskDetailTopbarConfig] =
     createSignal<TaskDetailTopbarConfig | null>(null);
   const [runDetailTopbarConfig, setRunDetailTopbarConfig] =
@@ -150,7 +157,11 @@ const AppShellContent: Component<AppShellProps> = (props) => {
 
   const applyProjects = (nextProjects: Project[]) => {
     setProjects(nextProjects);
-    if (nextProjects.length === 0 && location.pathname !== "/projects") {
+    if (
+      nextProjects.length === 0 &&
+      location.pathname !== "/projects" &&
+      location.pathname !== BOARD_ROUTE_PATH
+    ) {
       navigate("/projects", { replace: true });
     }
   };
@@ -351,6 +362,41 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   });
 
   createEffect(() => {
+    const onBoardProjectContext = (event: Event) => {
+      const customEvent = event as CustomEvent<Partial<BoardProjectContext>>;
+      setBoardProjectContext({
+        projectId: customEvent.detail.projectId?.trim() ?? "",
+        projectName: customEvent.detail.projectName?.trim() ?? "",
+      });
+    };
+
+    window.addEventListener("board:project-context", onBoardProjectContext);
+    onCleanup(() => {
+      window.removeEventListener(
+        "board:project-context",
+        onBoardProjectContext,
+      );
+    });
+  });
+
+  createEffect(() => {
+    if (location.pathname !== BOARD_ROUTE_PATH) {
+      setBoardProjectContext({ projectId: "", projectName: "" });
+    }
+  });
+
+  createEffect(() => {
+    if (location.pathname === BOARD_ROUTE_PATH && boardProjectId()) {
+      return;
+    }
+
+    if (boardSearchQuery() !== "") {
+      setBoardSearchQuery("");
+      dispatchBoardSearchQuery("");
+    }
+  });
+
+  createEffect(() => {
     if (isMobile()) {
       location.pathname;
       setMobileSidebarOpen(false);
@@ -447,6 +493,15 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   const shellTitle = () => {
     if (location.pathname.endsWith("/tasks/new")) return "Create task";
     if (location.pathname === BOARD_ROUTE_PATH) {
+      const activeBoardProjectId = resolveExistingBoardProjectId(
+        boardProjectContext().projectId,
+      );
+      const activeBoardProjectName = activeBoardProjectId
+        ? boardProjectContext().projectName
+        : "";
+      if (activeBoardProjectName) {
+        return activeBoardProjectName;
+      }
       const projectId = boardProjectId();
       const project = projectId
         ? projects().find((item) => item.id === projectId)
@@ -534,11 +589,27 @@ const AppShellContent: Component<AppShellProps> = (props) => {
     return shellSubtitle();
   };
 
+  const resolveExistingBoardProjectId = (projectId: string) => {
+    const normalizedProjectId = projectId.trim();
+    if (!normalizedProjectId) return "";
+    return projects().some((project) => project.id === normalizedProjectId)
+      ? normalizedProjectId
+      : "";
+  };
+
   const boardProjectId = () => {
     if (location.pathname !== BOARD_ROUTE_PATH) return "";
-    const queryProjectId = getBoardProjectIdFromSearch(location.search);
+    const activeBoardProjectId = resolveExistingBoardProjectId(
+      boardProjectContext().projectId,
+    );
+    if (activeBoardProjectId) return activeBoardProjectId;
+    const queryProjectId = resolveExistingBoardProjectId(
+      getBoardProjectIdFromSearch(location.search),
+    );
     if (queryProjectId) return queryProjectId;
-    const rememberedProjectId = readRememberedBoardProjectId();
+    const rememberedProjectId = resolveExistingBoardProjectId(
+      readRememberedBoardProjectId(),
+    );
     if (rememberedProjectId) return rememberedProjectId;
     return projects()[0]?.id ?? "";
   };
@@ -634,7 +705,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
               ) : null
             }
             center={
-              location.pathname === BOARD_ROUTE_PATH ? (
+              location.pathname === BOARD_ROUTE_PATH && boardProjectId() ? (
                 <div class="projects-field m-0 w-[min(32rem,38vw)] min-w-64">
                   <input
                     type="search"
@@ -911,7 +982,9 @@ const AppShellContent: Component<AppShellProps> = (props) => {
         isOpen={aboutModalOpen}
         onClose={onCloseSettings}
         updateState={linuxPackageUpdateState}
-        onCheckForUpdates={() => runLinuxPackageUpdateCheck()}
+        onCheckForUpdates={() => {
+          void runLinuxPackageUpdateCheck();
+        }}
       />
       <CloseWhileRunsActiveModal
         isOpen={closeWarningOpen}

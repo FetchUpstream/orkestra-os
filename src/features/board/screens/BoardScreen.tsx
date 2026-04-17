@@ -14,10 +14,13 @@ import {
   For,
   Show,
   createEffect,
+  onCleanup,
   createSignal,
   type Component,
 } from "solid-js";
-import { A, useLocation } from "@solidjs/router";
+import { useLocation, useNavigate } from "@solidjs/router";
+import RunInlineLoader from "../../../components/ui/RunInlineLoader";
+import { buildBoardHref } from "../../../app/lib/boardNavigation";
 import RunSettingsModal from "../../runs/components/RunSettingsModal";
 import ActionWarningModal from "../../tasks/components/ActionWarningModal";
 import BlockedTaskModal from "../../tasks/components/BlockedTaskModal";
@@ -58,10 +61,14 @@ const resolveDroppedTaskId = (
 
 const BoardScreen: Component = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const model = useBoardModel();
   const [draggingTaskId, setDraggingTaskId] = createSignal<string | null>(null);
   const [activeDropStatus, setActiveDropStatus] =
     createSignal<TaskStatus | null>(null);
+  const hasProjects = () => model.projects().length > 0;
+  const showEmptyProjectsState = () =>
+    !model.isProjectsLoading() && !model.error() && !hasProjects();
 
   const onTaskDragStart = (taskId: string, event: DragEvent) => {
     event.stopPropagation();
@@ -100,6 +107,17 @@ const BoardScreen: Component = () => {
     const projectId =
       new URLSearchParams(location.search).get("projectId") ?? "";
     if (!projectId || projectId === model.selectedProjectId()) return;
+    const hasRequestedProject = model
+      .projects()
+      .some((project) => project.id === projectId);
+    if (!hasRequestedProject) {
+      if (!model.isProjectsLoading() && !model.error()) {
+        void navigate(buildBoardHref(model.selectedProjectId()), {
+          replace: true,
+        });
+      }
+      return;
+    }
     void model.onProjectChange(projectId);
   });
 
@@ -110,8 +128,28 @@ const BoardScreen: Component = () => {
     };
 
     window.addEventListener("board:search-query", onSearchQuery);
-    return () =>
+    onCleanup(() => {
       window.removeEventListener("board:search-query", onSearchQuery);
+    });
+  });
+
+  createEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("board:project-context", {
+        detail: {
+          projectId: model.selectedProjectId(),
+          projectName: model.selectedProject()?.name ?? "",
+        },
+      }),
+    );
+  });
+
+  onCleanup(() => {
+    window.dispatchEvent(
+      new CustomEvent("board:project-context", {
+        detail: { projectId: "", projectName: "" },
+      }),
+    );
   });
 
   return (
@@ -144,17 +182,37 @@ const BoardScreen: Component = () => {
         </p>
       </Show>
 
-      <Show
-        when={!model.isProjectsLoading() && model.projects().length > 0}
-        fallback={
-          <section class="projects-panel border-base-content/15 bg-base-200/40 border border-dashed p-6">
-            <p class="page-placeholder m-0 text-sm">
-              No projects yet.{" "}
-              <A href="/projects">Create a project to get started.</A>
-            </p>
-          </section>
-        }
-      >
+      <Show when={model.isProjectsLoading()}>
+        <div class="flex min-h-[calc(100vh-8.5rem)] flex-1 items-center justify-center px-6">
+          <RunInlineLoader
+            as="div"
+            class="justify-center"
+            role="status"
+            aria-label="Loading projects"
+            aria-live="polite"
+            srLabel="Loading projects"
+          />
+        </div>
+      </Show>
+
+      <Show when={showEmptyProjectsState()}>
+        <section class="flex min-h-[calc(100vh-8.5rem)] flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+          <p class="page-placeholder m-0 text-sm">
+            You currently don’t have any projects
+          </p>
+          <button
+            type="button"
+            class="btn btn-sm border-primary/40 bg-primary text-primary-content hover:bg-primary rounded-none border px-4 text-xs font-semibold"
+            onClick={() => {
+              void navigate("/projects");
+            }}
+          >
+            Create project
+          </button>
+        </section>
+      </Show>
+
+      <Show when={!model.isProjectsLoading() && hasProjects()}>
         <div class="board-columns min-h-0 flex-1">
           <For each={BOARD_COLUMNS}>
             {(column) => (

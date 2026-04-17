@@ -63,7 +63,7 @@ impl RunStateService {
         &self,
         run_id: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
-        self.transition_to_state(run_id, Some(BUSY_CODING), "run_started", true)
+        self.transition_to_state(run_id, Some(BUSY_CODING), "run_started", false)
             .await
     }
 
@@ -136,8 +136,13 @@ impl RunStateService {
         run_id: &str,
         transition_source: &str,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
-        self.transition_to_state(run_id, Some(QUESTION_PENDING), transition_source, false)
-            .await
+        self.transition_to_state(
+            run_id,
+            Some(QUESTION_PENDING),
+            transition_source,
+            !Self::is_non_authoritative_source(transition_source),
+        )
+        .await
     }
 
     pub async fn handle_permission_requested(
@@ -201,7 +206,7 @@ impl RunStateService {
             latest_run,
             next_state.as_deref(),
             transition_source,
-            false,
+            true,
         )
         .await
     }
@@ -211,7 +216,7 @@ impl RunStateService {
         run_id: &str,
         next_state: Option<&str>,
         transition_source: &str,
-        authoritative: bool,
+        allow_overwrite_special_state: bool,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
         let run_id = run_id.trim();
         if run_id.is_empty() {
@@ -226,7 +231,7 @@ impl RunStateService {
             latest_run,
             next_state,
             transition_source,
-            authoritative,
+            allow_overwrite_special_state,
         )
         .await
     }
@@ -236,7 +241,7 @@ impl RunStateService {
         latest_run: Run,
         next_state: Option<&str>,
         transition_source: &str,
-        authoritative: bool,
+        allow_overwrite_special_state: bool,
     ) -> Result<Option<RunStateChangedEventDto>, AppError> {
         if Self::is_terminal_status(latest_run.status.as_str()) {
             return Ok(None);
@@ -249,7 +254,7 @@ impl RunStateService {
             .filter(|state| !state.is_empty());
 
         if current_stored_state.is_some_and(Self::is_special_stored_state)
-            && (!authoritative || matches!(next_state, Some(BUSY_CODING)))
+            && !allow_overwrite_special_state
         {
             return Ok(None);
         }
@@ -678,7 +683,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recompute_preserves_special_stored_state_for_non_authoritative_transition() {
+    async fn recompute_clears_permission_requested_to_busy_coding() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -693,18 +698,23 @@ mod tests {
         .await;
 
         let event = service
-            .recompute_run_state("run-1", "poll_refresh")
+            .recompute_run_state("run-1", "permission_resolved")
             .await
             .unwrap();
 
-        assert!(event.is_none());
+        let payload = event.expect("expected run state change event");
+        assert_eq!(
+            payload.previous_run_state.as_deref(),
+            Some("permission_requested")
+        );
+        assert_eq!(payload.new_run_state.as_deref(), Some("busy_coding"));
         let run_state: Option<String> =
             sqlx::query_scalar("SELECT run_state FROM runs WHERE id = ?")
                 .bind("run-1")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(run_state.as_deref(), Some("permission_requested"));
+        assert_eq!(run_state.as_deref(), payload.new_run_state.as_deref());
     }
 
     #[tokio::test]
@@ -728,6 +738,41 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(run_state.as_deref(), Some("committing_changes"));
+    }
+
+    #[tokio::test]
+    async fn question_pending_interrupts_committing_changes() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(
+            &pool,
+            "run-1",
+            "task-1",
+            "in_progress",
+            "committing_changes",
+        )
+        .await;
+
+        let event = service
+            .handle_question_pending("run-1", "question_asked")
+            .await
+            .unwrap();
+
+        let payload = event.expect("expected run state change event");
+        assert_eq!(
+            payload.previous_run_state.as_deref(),
+            Some("committing_changes")
+        );
+        assert_eq!(payload.new_run_state.as_deref(), Some("question_pending"));
+        let run_state: Option<String> =
+            sqlx::query_scalar("SELECT run_state FROM runs WHERE id = ?")
+                .bind("run-1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(run_state.as_deref(), payload.new_run_state.as_deref());
     }
 
     #[tokio::test]

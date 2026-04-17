@@ -5764,6 +5764,13 @@ textarea::placeholder {
   min-width: 0;
 }
 
+.run-chat-tool-rail__subagent-summary {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
 .run-chat-tool-rail__subagent-status-row {
   display: flex;
   justify-content: flex-end;

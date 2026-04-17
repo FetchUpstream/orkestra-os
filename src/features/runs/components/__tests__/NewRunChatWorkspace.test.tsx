@@ -13,6 +13,13 @@
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  GetRunOpenCodeSessionMessagesPageParams,
+  RunAgentOption,
+  RunOpenCodeSessionMessagesPageResult,
+} from "../../../../app/lib/runs";
+import { createEmptyAgentStore } from "../../model/agentReducer";
+import type { AgentStore } from "../../model/agentTypes";
 import NewRunChatWorkspace, {
   buildStreamingTextPart,
 } from "../NewRunChatWorkspace";
@@ -27,11 +34,38 @@ const installResizeObserverStub = () => {
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 };
 
+const installLocalStorageStub = () => {
+  const storage = new Map<string, string>();
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        storage.set(key, String(value));
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
+      },
+      clear: () => {
+        storage.clear();
+      },
+      key: (index: number) => Array.from(storage.keys())[index] ?? null,
+      get length() {
+        return storage.size;
+      },
+    } satisfies Storage,
+  });
+};
+
 const {
   getRunOpenCodeSessionMessagesPageMock,
   getRunOpenCodeSessionTodosMock,
 } = vi.hoisted(() => ({
-  getRunOpenCodeSessionMessagesPageMock: vi.fn(async () => ({
+  getRunOpenCodeSessionMessagesPageMock: vi.fn<
+    (
+      params: GetRunOpenCodeSessionMessagesPageParams,
+    ) => Promise<RunOpenCodeSessionMessagesPageResult>
+  >(async (_params) => ({
     messages: [],
     hasMore: false,
     nextCursor: undefined,
@@ -60,6 +94,19 @@ const createDeferred = <T,>() => {
 
   return { promise, resolve, reject };
 };
+
+const createRunAgentOption = (id: string, label: string): RunAgentOption => ({
+  id,
+  label,
+  scope: "project",
+  mode: "primary",
+  selectable: true,
+});
+
+const withAgentStoreDefaults = (overrides: Partial<AgentStore>): AgentStore => ({
+  ...createEmptyAgentStore(overrides.sessionId ?? null),
+  ...overrides,
+});
 
 const createModelStub = (
   runStatus: "running" | "completed",
@@ -163,7 +210,7 @@ const createModelStub = (
         };
       },
       submitPrompt: vi.fn(async () => true),
-      runAgentOptions: () => [{ id: "agent-1", label: "Planner" }],
+      runAgentOptions: () => [createRunAgentOption("agent-1", "Planner")],
       runProviderOptions: () => [{ id: "provider-1", label: "OpenAI" }],
       runModelOptions: () => [
         { id: "model-1", label: "GPT-5", providerId: "provider-1" },
@@ -186,6 +233,8 @@ const createModelStub = (
 describe("NewRunChatWorkspace", () => {
   beforeEach(() => {
     installResizeObserverStub();
+    installLocalStorageStub();
+    window.localStorage.clear();
     getRunOpenCodeSessionMessagesPageMock.mockClear();
     getRunOpenCodeSessionTodosMock.mockClear();
     getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
@@ -496,7 +545,7 @@ describe("NewRunChatWorkspace", () => {
     render(() => <NewRunChatWorkspace model={model} />);
 
     expect(
-      screen.getByText((content, element) => {
+      screen.getByText((_content, element) => {
         return (
           element?.textContent?.replace(/\s+/g, " ").trim() ===
           "Source: Docs lookup - k2p5"
@@ -801,7 +850,8 @@ describe("NewRunChatWorkspace", () => {
     await fireEvent.click(sendButton);
     expect(replyQuestionMock).toHaveBeenCalledTimes(1);
 
-    resolveReply?.(true);
+    expect(resolveReply).toBeTruthy();
+    resolveReply!(true);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
     });
@@ -811,7 +861,8 @@ describe("NewRunChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "Sending..." })).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Sending..." }));
     expect(rejectQuestionMock).toHaveBeenCalledTimes(1);
-    resolveReject?.(true);
+    expect(resolveReject).toBeTruthy();
+    resolveReject!(true);
   });
 
   it("renders checked option state immediately", async () => {
@@ -1573,6 +1624,22 @@ describe("NewRunChatWorkspace", () => {
       messages: [
         {
           info: {
+            id: "msg-child-user",
+            sessionID: "session-child",
+            role: "user",
+          },
+          parts: [
+            {
+              id: "part-child-user",
+              type: "text",
+              text: "Map repo structure",
+              messageID: "msg-child-user",
+              sessionID: "session-child",
+            },
+          ],
+        },
+        {
+          info: {
             id: "msg-child",
             sessionID: "session-child",
             role: "assistant",
@@ -1592,7 +1659,7 @@ describe("NewRunChatWorkspace", () => {
       nextCursor: undefined,
       beforeCursor: undefined,
       raw: [],
-    } as any);
+    } satisfies RunOpenCodeSessionMessagesPageResult);
 
     const [store] = createSignal({
       sessionId: "session-root",
@@ -1639,7 +1706,9 @@ describe("NewRunChatWorkspace", () => {
         runId: "run-1",
         sessionId: "session-child",
       });
-      expect(screen.getByText("Fetched child history output")).toBeTruthy();
+      expect(screen.getByText("Map repo structure")).toBeTruthy();
+      expect(screen.getByText("Completed")).toBeTruthy();
+      expect(screen.queryByText("Fetched child history output")).toBeNull();
     });
   });
 
@@ -1673,7 +1742,7 @@ describe("NewRunChatWorkspace", () => {
             nextCursor: "cursor-1",
             beforeCursor: undefined,
             raw: [],
-          } as any;
+          } satisfies RunOpenCodeSessionMessagesPageResult;
         }
 
         return {
@@ -1699,7 +1768,7 @@ describe("NewRunChatWorkspace", () => {
           nextCursor: "cursor-1",
           beforeCursor: before,
           raw: [],
-        } as any;
+        } satisfies RunOpenCodeSessionMessagesPageResult;
       },
     );
 
@@ -1746,8 +1815,9 @@ describe("NewRunChatWorkspace", () => {
 
       await waitFor(() => {
         expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledTimes(2);
-        expect(screen.getByText("Fetched child older output")).toBeTruthy();
         expect(screen.getByText("Fetched child newer output")).toBeTruthy();
+        expect(screen.getByText("Completed")).toBeTruthy();
+        expect(screen.queryByText("Fetched child older output")).toBeNull();
       });
 
       expect(consoleWarnSpy).toHaveBeenCalledWith(
@@ -1779,7 +1849,7 @@ describe("NewRunChatWorkspace", () => {
           nextCursor: `cursor-${pageIndex + 1}`,
           beforeCursor: before,
           raw: [],
-        } as any;
+        } satisfies RunOpenCodeSessionMessagesPageResult;
       },
     );
 
@@ -1845,7 +1915,7 @@ describe("NewRunChatWorkspace", () => {
 
   it("hydrates lineage-routed child sessions from fetched history", async () => {
     getRunOpenCodeSessionMessagesPageMock.mockImplementation(
-      async ({ sessionId }: { sessionId: string }) => {
+      async ({ sessionId }: GetRunOpenCodeSessionMessagesPageParams) => {
         if (sessionId === "session-grandchild") {
           return {
             messages: [
@@ -1870,7 +1940,7 @@ describe("NewRunChatWorkspace", () => {
             nextCursor: undefined,
             beforeCursor: undefined,
             raw: [],
-          } as any;
+          } satisfies RunOpenCodeSessionMessagesPageResult;
         }
 
         return {
@@ -1879,7 +1949,7 @@ describe("NewRunChatWorkspace", () => {
           nextCursor: undefined,
           beforeCursor: undefined,
           raw: [],
-        } as any;
+        } satisfies RunOpenCodeSessionMessagesPageResult;
       },
     );
 
@@ -1942,7 +2012,149 @@ describe("NewRunChatWorkspace", () => {
         runId: "run-1",
         sessionId: "session-grandchild",
       });
-      expect(screen.getByText("Fetched lineage output")).toBeTruthy();
+      expect(screen.getByText("Nested explorer")).toBeTruthy();
+      expect(screen.getByText("Completed")).toBeTruthy();
+      expect(screen.queryByText("Fetched lineage output")).toBeNull();
+    });
+  });
+
+  it("restores completed lineage-only subagent cards after refresh", async () => {
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
+      messages: [
+        {
+          info: {
+            id: "msg-child-history",
+            sessionID: "session-child",
+            role: "assistant",
+          },
+          parts: [
+            {
+              id: "part-child-history",
+              type: "text",
+              text: "Fetched child history output",
+              messageID: "msg-child-history",
+              sessionID: "session-child",
+            },
+          ],
+        },
+      ],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
+      raw: [],
+    } satisfies RunOpenCodeSessionMessagesPageResult);
+
+    const createRootStore = (
+      rawEvents: AgentStore["rawEvents"],
+    ): AgentStore => ({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Map repo structure",
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents,
+    });
+
+    const [initialStore] = createSignal(
+      createRootStore([
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "session-child",
+              parentID: "msg-root",
+              title: "Map repo structure",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child-live",
+              sessionID: "session-child",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child",
+            part: {
+              id: "part-child-live",
+              messageID: "msg-child-live",
+              sessionID: "session-child",
+              type: "text",
+              text: "Live child output",
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "session-child",
+            status: { type: "completed" },
+          },
+        },
+      ]),
+    );
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = initialStore as unknown as typeof model.agent.store;
+
+    const initialRender = render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      const panel = initialRender.container.querySelector(
+        '[aria-label="Map repo structure output"]',
+      );
+      expect(panel?.textContent).toContain("Completed");
+    });
+
+    initialRender.unmount();
+    getRunOpenCodeSessionMessagesPageMock.mockClear();
+
+    const [refreshedStore] = createSignal(createRootStore([]));
+    model.agent.store = refreshedStore as unknown as typeof model.agent.store;
+
+    const refreshedRender = render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      expect(getRunOpenCodeSessionMessagesPageMock).toHaveBeenCalledWith({
+        runId: "run-1",
+        sessionId: "session-child",
+      });
+
+      const panel = refreshedRender.container.querySelector(
+        '[aria-label="Map repo structure output"]',
+      );
+      expect(panel?.textContent).toContain("Completed");
     });
   });
 
@@ -1988,7 +2200,7 @@ describe("NewRunChatWorkspace", () => {
       nextCursor: undefined,
       beforeCursor: undefined,
       raw: [],
-    } as any);
+    } satisfies RunOpenCodeSessionMessagesPageResult);
 
     const [store] = createSignal({
       sessionId: "session-root",
@@ -2105,7 +2317,7 @@ describe("NewRunChatWorkspace", () => {
       nextCursor: undefined,
       beforeCursor: undefined,
       raw: [],
-    } as any);
+    } satisfies RunOpenCodeSessionMessagesPageResult);
 
     const [store] = createSignal({
       sessionId: "session-root",
@@ -2215,6 +2427,145 @@ describe("NewRunChatWorkspace", () => {
     expect(visibleMessages[2]).toContain("Merged fourth");
   });
 
+  it("lets a newly started empty child assistant message shift the visible tail via a placeholder", async () => {
+    getRunOpenCodeSessionMessagesPageMock.mockResolvedValue({
+      messages: [
+        {
+          info: {
+            id: "msg-child-1",
+            sessionID: "session-child",
+            role: "assistant",
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+          parts: [
+            {
+              id: "part-child-1",
+              type: "text",
+              text: "Placeholder first",
+              messageID: "msg-child-1",
+              sessionID: "session-child",
+            },
+          ],
+        },
+        {
+          info: {
+            id: "msg-child-2",
+            sessionID: "session-child",
+            role: "assistant",
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+          parts: [
+            {
+              id: "part-child-2",
+              type: "text",
+              text: "Placeholder second",
+              messageID: "msg-child-2",
+              sessionID: "session-child",
+            },
+          ],
+        },
+      ],
+      hasMore: false,
+      nextCursor: undefined,
+      beforeCursor: undefined,
+      raw: [],
+    } satisfies RunOpenCodeSessionMessagesPageResult);
+
+    const [store] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Inspect child placeholder",
+              raw: {
+                sessionID: "session-child",
+              },
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child-3",
+              sessionID: "session-child",
+              role: "assistant",
+              createdAt: "2026-01-01T00:00:03.000Z",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child",
+            part: {
+              id: "part-child-3",
+              messageID: "msg-child-3",
+              sessionID: "session-child",
+              type: "text",
+              text: "Placeholder third",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child",
+            info: {
+              id: "msg-child-4",
+              sessionID: "session-child",
+              role: "assistant",
+              createdAt: "2026-01-01T00:00:04.000Z",
+            },
+          },
+        },
+      ],
+    });
+
+    const { model } = createModelStub("running", false, { id: "run-1" });
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    await waitFor(() => {
+      expect(screen.queryByText("Placeholder first")).toBeNull();
+      expect(screen.getByText("Placeholder second")).toBeTruthy();
+      expect(screen.getByText("Placeholder third")).toBeTruthy();
+      expect(
+        container.querySelector(
+          ".run-chat-tool-rail__subagent-message .run-inline-loader",
+        ),
+      ).toBeTruthy();
+    });
+
+    expect(
+      container.querySelectorAll(".run-chat-tool-rail__subagent-message")
+        .length,
+    ).toBe(3);
+  });
+
   it("caches streamText across subagent text deltas", () => {
     const snapshotPart = buildStreamingTextPart(
       "part-child",
@@ -2264,7 +2615,7 @@ describe("NewRunChatWorkspace", () => {
       () => todosDeferred.promise,
     );
 
-    const [store, setStore] = createSignal({
+    const [store, setStore] = createSignal<AgentStore>(withAgentStoreDefaults({
       sessionId: "session-root",
       status: "active",
       streamConnected: true,
@@ -2297,7 +2648,7 @@ describe("NewRunChatWorkspace", () => {
       todos: [],
       diffSummary: null,
       rawEvents: [],
-    });
+    }));
 
     const { model } = createModelStub("running", false, { id: "run-1" });
     model.agent.store = store as unknown as typeof model.agent.store;
@@ -2311,7 +2662,7 @@ describe("NewRunChatWorkspace", () => {
 
     setStore({
       ...store(),
-      diffSummary: { filesChanged: 1 },
+      diffSummary: { files: [], raw: { filesChanged: 1 } },
     });
 
     await waitFor(() => {
@@ -2329,7 +2680,7 @@ describe("NewRunChatWorkspace", () => {
 
     setStore({
       ...store(),
-      lastSyncAt: store().lastSyncAt + 1,
+      lastSyncAt: (store().lastSyncAt ?? 0) + 1,
     });
 
     await waitFor(() => {
@@ -2599,7 +2950,7 @@ describe("NewRunChatWorkspace", () => {
   });
 
   it("keeps the parent task row and sibling child cards stable during overlapping updates", async () => {
-    const [store, setStore] = createSignal({
+    const [store, setStore] = createSignal<AgentStore>(withAgentStoreDefaults({
       sessionId: "session-root",
       status: "active",
       streamConnected: true,
@@ -2618,6 +2969,12 @@ describe("NewRunChatWorkspace", () => {
               toolName: "task",
               status: "running",
               title: "Coordinate concurrent subagents",
+              raw: {
+                sessionIds: [
+                  { sessionID: "session-child-a" },
+                  { sessionID: "session-child-b" },
+                ],
+              },
             },
           },
           partOrder: ["part-task"],
@@ -2713,7 +3070,7 @@ describe("NewRunChatWorkspace", () => {
           },
         },
       ],
-    });
+    }));
 
     const { model } = createModelStub("running");
     model.agent.store = store as unknown as typeof model.agent.store;
@@ -2795,12 +3152,18 @@ describe("NewRunChatWorkspace", () => {
       expect(plannerPanel()).toBe(initialPlannerPanel);
       expect(researcherPanel()).toBe(initialResearcherPanel);
       expect(plannerMessage()).toBe(initialPlannerMessage);
-      expect(researcherMessage()).toBe(initialResearcherMessage);
+      expect(researcherMessage()).toBeNull();
       expect(plannerPanel()?.textContent).toContain(
         "Planner draft expanded ongoing",
       );
-      expect(researcherPanel()?.textContent).toContain("Research settled");
+      expect(researcherPanel()?.textContent).toContain("Completed");
+      expect(researcherPanel()?.textContent).not.toContain("Research settled");
       expect(researcherPanel()?.textContent).not.toContain("ongoing");
+      expect(
+        researcherPanel()?.querySelectorAll(
+          ".run-chat-tool-rail__subagent-message",
+        ).length,
+      ).toBe(0);
       expect(
         researcherPanel()?.querySelector(
           ".run-chat-tool-rail__subagent-status-row",
@@ -2811,6 +3174,208 @@ describe("NewRunChatWorkspace", () => {
           ".run-chat-tool-rail__subagent-status-row",
         ),
       ).toBeNull();
+    });
+  });
+
+  it("retains completed subagent cards when later sibling activity drops their live events", async () => {
+    const [store, setStore] = createSignal({
+      sessionId: "session-root",
+      status: "active",
+      streamConnected: true,
+      lastSyncAt: Date.now(),
+      messageOrder: ["msg-root"],
+      messagesById: {
+        "msg-root": {
+          id: "msg-root",
+          sessionId: "session-root",
+          role: "assistant",
+          partsById: {
+            "part-task": {
+              id: "part-task",
+              kind: "tool",
+              type: "tool",
+              toolName: "task",
+              status: "running",
+              title: "Coordinate concurrent subagents",
+            },
+          },
+          partOrder: ["part-task"],
+        },
+      },
+      pendingQuestionsById: {},
+      pendingPermissionsById: {},
+      failedPermissionsById: {},
+      todos: [],
+      diffSummary: null,
+      rawEvents: [
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child-a",
+            info: {
+              id: "session-child-a",
+              parentID: "msg-root",
+              title: "Planner",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child-a",
+            info: {
+              id: "msg-child-a",
+              sessionID: "session-child-a",
+              parentID: "msg-root",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "session-child-a",
+            part: {
+              id: "part-child-a",
+              messageID: "msg-child-a",
+              sessionID: "session-child-a",
+              type: "text",
+              text: "Planner settled",
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "session-child-a",
+            status: { type: "completed" },
+          },
+        },
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child-b",
+            info: {
+              id: "session-child-b",
+              parentID: "msg-root",
+              title: "Researcher",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child-b",
+            info: {
+              id: "msg-child-b",
+              sessionID: "session-child-b",
+              parentID: "msg-root",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-b",
+            messageID: "msg-child-b",
+            partID: "part-child-b",
+            field: "text",
+            delta: "Research ongoing",
+          },
+        },
+      ] satisfies AgentStore["rawEvents"],
+    });
+
+    const { model } = createModelStub("running");
+    model.agent.store = store as unknown as typeof model.agent.store;
+
+    const { container } = render(() => <NewRunChatWorkspace model={model} />);
+
+    const plannerPanel = () =>
+      container.querySelector('[aria-label="Planner output"]');
+    const researcherPanel = () =>
+      container.querySelector('[aria-label="Researcher output"]');
+
+    await waitFor(() => {
+      expect(plannerPanel()?.textContent).toContain("Completed");
+      expect(plannerPanel()?.textContent).not.toContain("Planner settled");
+      expect(
+        plannerPanel()?.querySelector(
+          ".run-chat-tool-rail__subagent-status-row",
+        ),
+      ).toBeTruthy();
+      expect(researcherPanel()?.textContent).toContain("Research ongoing");
+    });
+
+    const initialPlannerPanel = plannerPanel();
+
+    setStore((current) => ({
+      ...current,
+      rawEvents: [
+        {
+          type: "session.updated",
+          properties: {
+            sessionID: "session-child-b",
+            info: {
+              id: "session-child-b",
+              parentID: "msg-root",
+              title: "Researcher",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-child-b",
+            info: {
+              id: "msg-child-b",
+              sessionID: "session-child-b",
+              parentID: "msg-root",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-b",
+            messageID: "msg-child-b",
+            partID: "part-child-b",
+            field: "text",
+            delta: "Research ongoing",
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-child-b",
+            messageID: "msg-child-b",
+            partID: "part-child-b",
+            field: "text",
+            delta: " continuing",
+          },
+        },
+      ] satisfies AgentStore["rawEvents"],
+    }));
+
+    await waitFor(() => {
+      expect(plannerPanel()).toBe(initialPlannerPanel);
+      expect(plannerPanel()?.textContent).toContain("Completed");
+      expect(plannerPanel()?.textContent).not.toContain("Planner settled");
+      expect(
+        plannerPanel()?.querySelectorAll(
+          ".run-chat-tool-rail__subagent-message",
+        ).length,
+      ).toBe(0);
+      expect(
+        plannerPanel()?.querySelector(
+          ".run-chat-tool-rail__subagent-status-row",
+        ),
+      ).toBeTruthy();
+      expect(researcherPanel()?.textContent).toContain(
+        "Research ongoing continuing",
+      );
     });
   });
 
@@ -3806,8 +4371,8 @@ describe("NewRunChatWorkspace", () => {
     const { model } = createModelStub("running");
     model.agent.submitPrompt = submitPromptMock;
     model.agent.runAgentOptions = () => [
-      { id: "agent-1", label: "Planner" },
-      { id: "agent-2", label: "Builder" },
+      createRunAgentOption("agent-1", "Planner"),
+      createRunAgentOption("agent-2", "Builder"),
     ];
     model.agent.runProviderOptions = () => [
       { id: "provider-1", label: "OpenAI" },
@@ -3881,7 +4446,8 @@ describe("NewRunChatWorkspace", () => {
 
   it("renders assistant attribution subtitle only for assistant messages", () => {
     const { model } = createModelStub("running");
-    model.agent.store = () => ({
+    model.agent.store = () =>
+      withAgentStoreDefaults({
       sessionId: "session-1",
       status: "idle",
       streamConnected: true,
@@ -3960,7 +4526,7 @@ describe("NewRunChatWorkspace", () => {
       todos: [],
       diffSummary: null,
       rawEvents: [],
-    });
+      });
 
     render(() => <NewRunChatWorkspace model={model} />);
 
@@ -3972,7 +4538,8 @@ describe("NewRunChatWorkspace", () => {
 
   it("renders user and assistant message wrappers for readable bubble width styling", () => {
     const { model } = createModelStub("running");
-    model.agent.store = () => ({
+    model.agent.store = () =>
+      withAgentStoreDefaults({
       sessionId: "session-1",
       status: "idle",
       streamConnected: true,
@@ -4019,7 +4586,7 @@ describe("NewRunChatWorkspace", () => {
       todos: [],
       diffSummary: null,
       rawEvents: [],
-    });
+      });
 
     const { container } = render(() => <NewRunChatWorkspace model={model} />);
 

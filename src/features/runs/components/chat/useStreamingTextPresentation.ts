@@ -52,11 +52,31 @@ const getUnitsPerSecond = (backlog: number): number => {
   );
 };
 
-const graphemeSegmenter =
-  typeof Intl !== "undefined" && "Segmenter" in Intl
-    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
-    : null;
+type GraphemeSegment = {
+  segment: string;
+};
 
+type GraphemeSegmenter = {
+  segment(text: string): Iterable<GraphemeSegment>;
+};
+
+type IntlWithSegmenter = typeof Intl & {
+  Segmenter?: new (
+    locales?: string | string[],
+    options?: { granularity: "grapheme" },
+  ) => GraphemeSegmenter;
+};
+
+const graphemeSegmenter = (() => {
+  if (typeof Intl === "undefined") {
+    return null;
+  }
+
+  const Segmenter = (Intl as IntlWithSegmenter).Segmenter;
+  return Segmenter
+    ? new Segmenter(undefined, { granularity: "grapheme" })
+    : null;
+})();
 const segmentText = (text: string): string[] => {
   if (!text.length) {
     return [];
@@ -68,9 +88,10 @@ const segmentText = (text: string): string[] => {
 
   return Array.from(
     graphemeSegmenter.segment(text),
-    (segment) => segment.segment,
+    ({ segment }) => segment,
   );
 };
+
 
 const useStreamingTextPresentation = (
   options: StreamingTextPresentationOptions,

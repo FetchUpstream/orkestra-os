@@ -20,7 +20,11 @@ import {
 } from "solid-js";
 import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
 import { buildBoardHref } from "../../../app/lib/boardNavigation";
-import type { RunModelOption, RunSelectionOption } from "../../../app/lib/runs";
+import type {
+  RunAgentOption,
+  RunModelOption,
+  RunSelectionOption,
+} from "../../../app/lib/runs";
 import {
   cloneProject,
   createProject,
@@ -89,9 +93,7 @@ export const useProjectsPageModel = () => {
   const [runProviderOptions, setRunProviderOptions] = createSignal<
     RunSelectionOption[]
   >([]);
-  const [runAgentOptions, setRunAgentOptions] = createSignal<
-    RunSelectionOption[]
-  >([]);
+  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>([]);
   const [runModelOptions, setRunModelOptions] = createSignal<RunModelOption[]>(
     [],
   );

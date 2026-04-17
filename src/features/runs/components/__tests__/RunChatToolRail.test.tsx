@@ -14,7 +14,9 @@ import { render, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it } from "vitest";
 import type { UiAssistantStreamingMetadata } from "../../model/agentTypes";
-import RunChatToolRail from "../chat/RunChatToolRail";
+import RunChatToolRail, {
+  type RunChatToolRailItem,
+} from "../chat/RunChatToolRail";
 
 const createStreamingMetadata = (
   overrides: Partial<UiAssistantStreamingMetadata> & {
@@ -135,18 +137,28 @@ describe("RunChatToolRail", () => {
                 id: "subagent-1",
                 label: "Explore android folder - chatgpt-5.4",
                 status: "running",
-                messages: [
+                entries: [
                   {
-                    id: "msg-1",
+                    id: "entry-1",
+                    kind: "text",
+                    messageId: "msg-1",
                     role: "assistant",
                     content: "Investigating transcript wiring.",
-                    toolItems: [
-                      {
-                        id: "tool-child-1",
-                        summary: "-> Bash ls",
-                        status: "completed",
-                      },
-                    ],
+                    assistantStreaming: createStreamingMetadata({
+                      messageId: "msg-1",
+                      targetText: "Investigating transcript wiring.",
+                    }),
+                  },
+                  {
+                    id: "entry-2",
+                    kind: "tool",
+                    messageId: "msg-1",
+                    role: "assistant",
+                    toolItem: {
+                      id: "tool-child-1",
+                      summary: "-> Bash ls",
+                      status: "completed",
+                    },
                   },
                 ],
               },
@@ -177,7 +189,7 @@ describe("RunChatToolRail", () => {
     ).toBeNull();
   });
 
-  it("renders only the last three subagent messages", () => {
+  it("caps subagent cards by the last three visible entries", () => {
     const { queryByText, getByText } = render(() => (
       <RunChatToolRail
         items={[
@@ -192,24 +204,32 @@ describe("RunChatToolRail", () => {
                 id: "subagent-1",
                 label: "Trim transcript (@fixer)",
                 status: "running",
-                messages: [
+                entries: [
                   {
-                    id: "msg-1",
+                    id: "entry-1",
+                    kind: "text",
+                    messageId: "msg-1",
                     role: "assistant",
                     content: "Oldest message",
                   },
                   {
-                    id: "msg-2",
+                    id: "entry-2",
+                    kind: "text",
+                    messageId: "msg-2",
                     role: "assistant",
                     content: "Older message",
                   },
                   {
-                    id: "msg-3",
+                    id: "entry-3",
+                    kind: "text",
+                    messageId: "msg-3",
                     role: "assistant",
                     content: "Recent message",
                   },
                   {
-                    id: "msg-4",
+                    id: "entry-4",
+                    kind: "text",
+                    messageId: "msg-4",
                     role: "assistant",
                     content: "Newest message",
                   },
@@ -227,6 +247,72 @@ describe("RunChatToolRail", () => {
     expect(getByText("Newest message")).toBeTruthy();
   });
 
+  it("caps mixed reasoning, tool, and text sequences by visible entries", () => {
+    const { container, queryByText, getByText } = render(() => (
+      <RunChatToolRail
+        items={[
+          {
+            id: "tool-1",
+            label: "Task",
+            summary: "Keep mixed entry tail compact",
+            status: "running",
+            isTask: true,
+            subagents: [
+              {
+                id: "subagent-1",
+                label: "Mixed tail",
+                status: "running",
+                entries: [
+                  {
+                    id: "entry-1",
+                    kind: "text",
+                    messageId: "msg-1",
+                    role: "assistant",
+                    content: "Trimmed text",
+                  },
+                  {
+                    id: "entry-2",
+                    kind: "reasoning",
+                    messageId: "msg-2",
+                    role: "assistant",
+                    content: "Reasoning stays visible",
+                  },
+                  {
+                    id: "entry-3",
+                    kind: "tool",
+                    messageId: "msg-2",
+                    role: "assistant",
+                    toolItem: {
+                      id: "tool-child-1",
+                      summary: "-> Bash pwd",
+                      status: "completed",
+                    },
+                  },
+                  {
+                    id: "entry-4",
+                    kind: "text",
+                    messageId: "msg-3",
+                    role: "assistant",
+                    content: "Newest text",
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+      />
+    ));
+
+    expect(queryByText("Trimmed text")).toBeNull();
+    expect(getByText("Reasoning stays visible")).toBeTruthy();
+    expect(getByText("-> Bash pwd")).toBeTruthy();
+    expect(getByText("Newest text")).toBeTruthy();
+    expect(
+      container.querySelectorAll(".run-chat-tool-rail__subagent-message")
+        .length,
+    ).toBe(3);
+  });
+
   it("shows a delegating empty state before subagent output arrives", () => {
     const { getAllByText } = render(() => (
       <RunChatToolRail
@@ -242,7 +328,7 @@ describe("RunChatToolRail", () => {
                 id: "subagent-1",
                 label: "~ Delegating...",
                 status: "running",
-                messages: [],
+                entries: [],
               },
             ],
           },
@@ -254,7 +340,7 @@ describe("RunChatToolRail", () => {
   });
 
   it("preserves mounted subagent cards and message targets across overlapping updates", async () => {
-    const [items, setItems] = createSignal([
+    const [items, setItems] = createSignal<RunChatToolRailItem[]>([
       {
         id: "tool-1",
         label: "Task",
@@ -266,9 +352,11 @@ describe("RunChatToolRail", () => {
             id: "subagent-a",
             label: "Planner",
             status: "running",
-            messages: [
+            entries: [
               {
-                id: "msg-a",
+                id: "entry-a",
+                kind: "text",
+                messageId: "msg-a",
                 role: "assistant" as const,
                 content: "Planner draft",
                 assistantStreaming: createStreamingMetadata({
@@ -285,9 +373,11 @@ describe("RunChatToolRail", () => {
             id: "subagent-b",
             label: "Researcher",
             status: "running",
-            messages: [
+            entries: [
               {
-                id: "msg-b",
+                id: "entry-b",
+                kind: "text",
+                messageId: "msg-b",
                 role: "assistant" as const,
                 content: "Research notes",
                 assistantStreaming: createStreamingMetadata({
@@ -336,9 +426,11 @@ describe("RunChatToolRail", () => {
             id: "subagent-a",
             label: "Planner",
             status: "running",
-            messages: [
+            entries: [
               {
-                id: "msg-a",
+                id: "entry-a",
+                kind: "text",
+                messageId: "msg-a",
                 role: "assistant" as const,
                 content: "Planner draft refined",
                 assistantStreaming: createStreamingMetadata({
@@ -355,9 +447,11 @@ describe("RunChatToolRail", () => {
             id: "subagent-b",
             label: "Researcher",
             status: "running",
-            messages: [
+            entries: [
               {
-                id: "msg-b",
+                id: "entry-b",
+                kind: "text",
+                messageId: "msg-b",
                 role: "assistant" as const,
                 content: "Research notes expanded",
                 assistantStreaming: createStreamingMetadata({
@@ -387,7 +481,7 @@ describe("RunChatToolRail", () => {
   });
 
   it("keeps surviving message nodes mounted when the visible child window shifts", async () => {
-    const [items, setItems] = createSignal([
+    const [items, setItems] = createSignal<RunChatToolRailItem[]>([
       {
         id: "tool-1",
         label: "Task",
@@ -399,9 +493,11 @@ describe("RunChatToolRail", () => {
             id: "subagent-1",
             label: "Recorder",
             status: "running",
-            messages: [
+            entries: [
               {
-                id: "msg-1",
+                id: "entry-1",
+                kind: "text",
+                messageId: "msg-1",
                 role: "assistant" as const,
                 content: "One",
                 assistantStreaming: createStreamingMetadata({
@@ -410,7 +506,9 @@ describe("RunChatToolRail", () => {
                 }),
               },
               {
-                id: "msg-2",
+                id: "entry-2",
+                kind: "text",
+                messageId: "msg-2",
                 role: "assistant" as const,
                 content: "Two",
                 assistantStreaming: createStreamingMetadata({
@@ -419,7 +517,9 @@ describe("RunChatToolRail", () => {
                 }),
               },
               {
-                id: "msg-3",
+                id: "entry-3",
+                kind: "text",
+                messageId: "msg-3",
                 role: "assistant" as const,
                 content: "Three",
                 assistantStreaming: createStreamingMetadata({
@@ -428,7 +528,9 @@ describe("RunChatToolRail", () => {
                 }),
               },
               {
-                id: "msg-4",
+                id: "entry-4",
+                kind: "text",
+                messageId: "msg-4",
                 role: "assistant" as const,
                 content: "Four",
                 assistantStreaming: createStreamingMetadata({
@@ -469,9 +571,11 @@ describe("RunChatToolRail", () => {
             id: "subagent-1",
             label: "Recorder",
             status: "running",
-            messages: [
+            entries: [
               {
-                id: "msg-1",
+                id: "entry-1",
+                kind: "text",
+                messageId: "msg-1",
                 role: "assistant" as const,
                 content: "One",
                 assistantStreaming: createStreamingMetadata({
@@ -480,7 +584,9 @@ describe("RunChatToolRail", () => {
                 }),
               },
               {
-                id: "msg-2",
+                id: "entry-2",
+                kind: "text",
+                messageId: "msg-2",
                 role: "assistant" as const,
                 content: "Two",
                 assistantStreaming: createStreamingMetadata({
@@ -489,7 +595,9 @@ describe("RunChatToolRail", () => {
                 }),
               },
               {
-                id: "msg-3",
+                id: "entry-3",
+                kind: "text",
+                messageId: "msg-3",
                 role: "assistant" as const,
                 content: "Three",
                 assistantStreaming: createStreamingMetadata({
@@ -498,7 +606,9 @@ describe("RunChatToolRail", () => {
                 }),
               },
               {
-                id: "msg-4",
+                id: "entry-4",
+                kind: "text",
+                messageId: "msg-4",
                 role: "assistant" as const,
                 content: "Four",
                 assistantStreaming: createStreamingMetadata({
@@ -507,7 +617,9 @@ describe("RunChatToolRail", () => {
                 }),
               },
               {
-                id: "msg-5",
+                id: "entry-5",
+                kind: "text",
+                messageId: "msg-5",
                 role: "assistant" as const,
                 content: "Five",
                 assistantStreaming: createStreamingMetadata({
@@ -529,8 +641,71 @@ describe("RunChatToolRail", () => {
     });
   });
 
+  it("counts a newly started assistant placeholder toward the visible tail", () => {
+    const { container, queryByText, getByText } = render(() => (
+      <RunChatToolRail
+        items={[
+          {
+            id: "tool-1",
+            label: "Task",
+            summary: "Track streaming tail",
+            status: "running",
+            isTask: true,
+            subagents: [
+              {
+                id: "subagent-1",
+                label: "Streamer",
+                status: "running",
+                entries: [
+                  {
+                    id: "entry-1",
+                    kind: "text",
+                    messageId: "msg-1",
+                    role: "assistant",
+                    content: "First visible candidate",
+                  },
+                  {
+                    id: "entry-2",
+                    kind: "text",
+                    messageId: "msg-2",
+                    role: "assistant",
+                    content: "Second visible candidate",
+                  },
+                  {
+                    id: "entry-3",
+                    kind: "text",
+                    messageId: "msg-3",
+                    role: "assistant",
+                    content: "Third visible candidate",
+                  },
+                  {
+                    id: "entry-4",
+                    kind: "assistant-placeholder",
+                    messageId: "msg-4",
+                    role: "assistant",
+                    isStreaming: true,
+                    streamToken: "msg-4:placeholder:1",
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+      />
+    ));
+
+    expect(queryByText("First visible candidate")).toBeNull();
+    expect(getByText("Second visible candidate")).toBeTruthy();
+    expect(getByText("Third visible candidate")).toBeTruthy();
+    expect(
+      container.querySelector(
+        ".run-chat-tool-rail__subagent-message .run-inline-loader",
+      ),
+    ).toBeTruthy();
+  });
+
   it("keeps a completed card visually running until streaming content settles", async () => {
-    const [items, setItems] = createSignal([
+    const [items, setItems] = createSignal<RunChatToolRailItem[]>([
       {
         id: "tool-1",
         label: "Task",
@@ -542,9 +717,11 @@ describe("RunChatToolRail", () => {
             id: "subagent-1",
             label: "Finisher",
             status: "completed",
-            messages: [
+            entries: [
               {
-                id: "msg-1",
+                id: "entry-1",
+                kind: "text",
+                messageId: "msg-1",
                 role: "assistant" as const,
                 content: "Still streaming",
                 assistantStreaming: createStreamingMetadata({
@@ -588,9 +765,11 @@ describe("RunChatToolRail", () => {
             id: "subagent-1",
             label: "Finisher",
             status: "completed",
-            messages: [
+            entries: [
               {
-                id: "msg-1",
+                id: "entry-1",
+                kind: "text",
+                messageId: "msg-1",
                 role: "assistant" as const,
                 content: "Settled final output",
                 assistantStreaming: createStreamingMetadata({
@@ -612,6 +791,9 @@ describe("RunChatToolRail", () => {
       expect(panel()?.className).toContain(
         "run-chat-tool-rail__subagent-panel--completed",
       );
+      expect(panel()?.textContent).toContain("Completed");
+      expect(panel()?.textContent).not.toContain("Settled final output");
+      expect(container.querySelector('[data-message-id="msg-1"]')).toBeNull();
       expect(
         container.querySelector(".run-chat-tool-rail__subagent-status-row"),
       ).toBeTruthy();

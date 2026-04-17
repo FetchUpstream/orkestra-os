@@ -52,12 +52,21 @@ export const dependencyDisplayLabel = (dependencyTask: TaskDependencyTask) => {
   return key ? `${key} - ${dependencyTask.title}` : dependencyTask.title;
 };
 
+export const getBlockingDependencyParents = (
+  parentTasks: TaskDependencyTask[],
+  statusByTaskId?: ReadonlyMap<string, TaskStatus>,
+): TaskDependencyTask[] =>
+  parentTasks.filter(
+    (dependencyTask) =>
+      (statusByTaskId?.get(dependencyTask.id) ?? dependencyTask.status) !==
+      "done",
+  );
+
 export const getBlockingParentTasks = (
   dependencies?: TaskDependencies | null,
+  statusByTaskId?: ReadonlyMap<string, TaskStatus>,
 ): TaskDependencyTask[] =>
-  (dependencies?.parents ?? []).filter(
-    (dependencyTask) => dependencyTask.status !== "done",
-  );
+  getBlockingDependencyParents(dependencies?.parents ?? [], statusByTaskId);
 
 type DependencyCandidateLike = {
   id: string;
