@@ -6155,6 +6155,25 @@ mod tests {
     use tokio::sync::oneshot;
     use uuid::Uuid;
 
+    fn should_skip_ci_missing_opencode_cli() -> bool {
+        if std::env::var_os("CI").is_none() {
+            return false;
+        }
+
+        if std::process::Command::new("opencode")
+            .arg("--help")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+        {
+            return false;
+        }
+
+        eprintln!("skipping OpenCode CLI-dependent test in CI because 'opencode' is unavailable");
+        true
+    }
+
     #[test]
     fn build_opencode_server_options_applies_project_env() {
         let cwd = PathBuf::from("/tmp/project");
@@ -7109,6 +7128,9 @@ mod tests {
 
     #[tokio::test]
     async fn paged_session_messages_fetches_latest_page_for_running_handle() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -7156,6 +7178,9 @@ mod tests {
 
     #[tokio::test]
     async fn paged_session_messages_fetches_older_page_before_cursor_for_running_handle() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -7221,6 +7246,9 @@ mod tests {
 
     #[tokio::test]
     async fn bootstrap_completed_run_shuts_down_existing_unused_persistent_handle() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -7265,6 +7293,9 @@ mod tests {
 
     #[tokio::test]
     async fn bootstrap_running_run_preserves_interactive_mode() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -7356,6 +7387,9 @@ mod tests {
 
     #[tokio::test]
     async fn submit_initial_seed_releases_claim_when_ensure_ready_fails() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -7424,6 +7458,9 @@ mod tests {
 
     #[tokio::test]
     async fn manual_client_request_path_remains_unaffected() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -7453,6 +7490,9 @@ mod tests {
 
     #[tokio::test]
     async fn submit_initial_seed_releases_claim_when_session_creation_fails() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -7551,6 +7591,9 @@ mod tests {
 
     #[tokio::test]
     async fn stop_run_opencode_removes_handle_and_is_idempotent() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -7575,6 +7618,9 @@ mod tests {
 
     #[tokio::test]
     async fn stop_run_opencode_cleans_up_event_stream_and_subscribers() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -7620,6 +7666,9 @@ mod tests {
 
     #[tokio::test]
     async fn direct_composer_submit_waits_for_runtime_busy_event_to_set_busy_coding() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -7676,6 +7725,9 @@ mod tests {
 
     #[tokio::test]
     async fn commit_submit_does_not_fall_back_to_busy_coding() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -8535,6 +8587,9 @@ mod tests {
     /// ```
     #[tokio::test]
     async fn canonical_permission_reply_clears_tracked_child_session_request_id() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -8557,14 +8612,14 @@ mod tests {
         }
 
         opencode_service
-            .process_runtime_event(
-                "run-1",
-                "message",
-                r#"{"type":"permission.asked","properties":{"id":"perm-sub-3","permission":"external_directory","sessionID":"session-child"}}"#,
-                &handle.session_runtime_state,
-            )
-            .await
-            .unwrap();
+        .process_runtime_event(
+            "run-1",
+            "message",
+            r#"{"type":"permission.asked","properties":{"id":"perm-sub-3","permission":"external_directory","sessionID":"session-child"}}"#,
+            &handle.session_runtime_state,
+        )
+        .await
+        .unwrap();
 
         {
             let guard = handle.session_runtime_state.lock().unwrap();
@@ -8591,6 +8646,9 @@ mod tests {
 
     #[tokio::test]
     async fn canonical_permission_reject_clears_tracked_child_session_request_id() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -8613,14 +8671,14 @@ mod tests {
         }
 
         opencode_service
-            .process_runtime_event(
-                "run-1",
-                "message",
-                r#"{"type":"permission.asked","properties":{"id":"perm-sub-6","permission":"external_directory","sessionID":"session-child"}}"#,
-                &handle.session_runtime_state,
-            )
-            .await
-            .unwrap();
+        .process_runtime_event(
+            "run-1",
+            "message",
+            r#"{"type":"permission.asked","properties":{"id":"perm-sub-6","permission":"external_directory","sessionID":"session-child"}}"#,
+            &handle.session_runtime_state,
+        )
+        .await
+        .unwrap();
 
         let response = opencode_service
             .reply_run_opencode_permission("run-1", "session-root", "perm-sub-6", "reject", false)
@@ -8639,6 +8697,9 @@ mod tests {
 
     #[tokio::test]
     async fn canonical_question_reply_clears_question_pending_to_busy_coding() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -8656,14 +8717,14 @@ mod tests {
             .unwrap();
 
         opencode_service
-            .process_runtime_event(
-                "run-1",
-                "message",
-                r#"{"type":"question.asked","properties":{"requestID":"question-sub-8","sessionID":"session-child"}}"#,
-                &handle.session_runtime_state,
-            )
-            .await
-            .unwrap();
+        .process_runtime_event(
+            "run-1",
+            "message",
+            r#"{"type":"question.asked","properties":{"requestID":"question-sub-8","sessionID":"session-child"}}"#,
+            &handle.session_runtime_state,
+        )
+        .await
+        .unwrap();
 
         let response = opencode_service
             .reply_run_opencode_question(
@@ -8687,6 +8748,9 @@ mod tests {
 
     #[tokio::test]
     async fn canonical_question_reject_clears_question_pending_to_busy_coding() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -8704,14 +8768,14 @@ mod tests {
             .unwrap();
 
         opencode_service
-            .process_runtime_event(
-                "run-1",
-                "message",
-                r#"{"type":"question.asked","properties":{"requestID":"question-sub-9","sessionID":"session-child"}}"#,
-                &handle.session_runtime_state,
-            )
-            .await
-            .unwrap();
+        .process_runtime_event(
+            "run-1",
+            "message",
+            r#"{"type":"question.asked","properties":{"requestID":"question-sub-9","sessionID":"session-child"}}"#,
+            &handle.session_runtime_state,
+        )
+        .await
+        .unwrap();
 
         let response = opencode_service
             .reject_run_opencode_question("run-1", "question-sub-9")
@@ -8803,6 +8867,9 @@ mod tests {
 
     #[tokio::test]
     async fn viewer_leases_track_current_viewers_without_underflow() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -8834,6 +8901,9 @@ mod tests {
 
     #[tokio::test]
     async fn active_operation_guards_release_on_drop() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -8865,6 +8935,9 @@ mod tests {
 
     #[tokio::test]
     async fn active_operation_guard_rejects_non_active_lifecycle() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -8953,6 +9026,9 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_pass_keeps_protected_active_run_statuses() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -8968,6 +9044,9 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_pass_stops_idle_runs_after_grace_period() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -8983,6 +9062,9 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_pass_keeps_idle_runs_with_active_viewers_or_operations() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -9013,6 +9095,9 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_pass_keeps_idle_runs_inside_grace_period() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -9027,6 +9112,9 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_pass_stops_terminal_runs_when_unused() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -9042,6 +9130,9 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_pass_stops_rejected_runs_when_unused() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -9057,6 +9148,9 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_pass_is_idempotent_after_reclaiming_terminal_run() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -9073,6 +9167,9 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_inventory_summary_reports_completed_handle_retention() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -9102,6 +9199,9 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_shutdown_rechecks_status_and_clears_shutdown_request_on_error() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -9124,6 +9224,9 @@ mod tests {
 
     #[tokio::test]
     async fn stop_all_opencode_servers_stops_all_handles_and_is_idempotent() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -9189,6 +9292,9 @@ mod tests {
 
     #[tokio::test]
     async fn start_run_opencode_runs_setup_script_once_when_called_concurrently() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
         let repo_path = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_path).unwrap();
@@ -9206,16 +9312,16 @@ mod tests {
 
         let marker_path = temp_dir.path().join("setup-count.txt");
         update_repository_scripts(
-            &pool,
-            "repo-1",
-            Some(&format!(
-                "count=$(cat \"{}\" 2>/dev/null || printf '0')\nprintf '%s' $((count + 1)) > \"{}\"\nsleep 1",
-                marker_path.display(),
-                marker_path.display()
-            )),
-            None,
-        )
-        .await;
+        &pool,
+        "repo-1",
+        Some(&format!(
+            "count=$(cat \"{}\" 2>/dev/null || printf '0')\nprintf '%s' $((count + 1)) > \"{}\"\nsleep 1",
+            marker_path.display(),
+            marker_path.display()
+        )),
+        None,
+    )
+    .await;
 
         let (first, second) = tokio::join!(
             opencode_service.start_run_opencode("run-1"),

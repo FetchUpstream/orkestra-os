@@ -74,6 +74,25 @@ mod tests {
     use std::path::{Path, PathBuf};
     use uuid::Uuid;
 
+    fn should_skip_ci_missing_opencode_cli() -> bool {
+        if std::env::var_os("CI").is_none() {
+            return false;
+        }
+
+        if std::process::Command::new("opencode")
+            .arg("--help")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+        {
+            return false;
+        }
+
+        eprintln!("skipping OpenCode CLI-dependent test in CI because 'opencode' is unavailable");
+        true
+    }
+
     struct TempDir {
         path: PathBuf,
     }
@@ -226,6 +245,9 @@ mod tests {
 
     #[tokio::test]
     async fn delete_run_stops_active_opencode_runtime_before_hard_delete() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (delete_service, runs_service, opencode_service, pool, temp_dir) =
             setup_services().await;
         let repo_path = temp_dir.path().join("repo");
@@ -264,6 +286,9 @@ mod tests {
 
     #[tokio::test]
     async fn delete_run_surfaces_shutdown_failures_and_skips_hard_delete() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (delete_service, runs_service, opencode_service, pool, temp_dir) =
             setup_services().await;
         let repo_path = temp_dir.path().join("repo");
