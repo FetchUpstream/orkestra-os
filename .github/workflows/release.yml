@@ -124,6 +124,10 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      - name: Prepare Windows MSI config
+        if: runner.os == 'Windows'
+        run: bun scripts/tauri-config.mjs "${{ runner.temp }}/tauri.windows.ci.conf.json"
+
       - name: Build Tauri app and upload to GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -136,7 +140,7 @@ jobs:
           releaseBody: "Automated release for ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
-          args: ${{ matrix.args }}
+          args: ${{ runner.os == 'Windows' && format('--config "{0}/tauri.windows.ci.conf.json"', runner.temp) || matrix.args }}
 
       - name: Upload Linux packages for Cloudsmith publish job
         if: runner.os == 'Linux'
