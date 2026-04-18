@@ -17,7 +17,7 @@ use crate::app::runs::service::RunsService;
 use crate::app::worktrees::pathing::resolve_worktree_path;
 use git2::{Commit, Delta, Diff, DiffDelta, DiffOptions, Repository, Tree};
 use notify::RecursiveMode;
-use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, NoCache};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -28,7 +28,7 @@ use tracing::{info, warn};
 const RUN_DIFF_EVENT: &str = "run-diff-updated";
 const MAX_TEXT_BYTES: usize = 500_000;
 
-type ActiveDebouncer = Debouncer<notify::RecommendedWatcher, NoCache>;
+type ActiveDebouncer = Debouncer<notify::RecommendedWatcher, RecommendedCache>;
 
 #[derive(Clone)]
 pub struct RunsDiffService {

@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::app::errors::AppError;
+#[cfg(target_os = "linux")]
 use std::ffi::OsString;
 use std::path::PathBuf;
 use tauri::Manager;
