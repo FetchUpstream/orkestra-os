@@ -54,7 +54,11 @@ const AlphaNoticeModal: Component = () => {
       return currentVersion;
     }
 
-    return version.error ? "unknown" : "loading...";
+    if (version.loading) {
+      return "loading...";
+    }
+
+    return "unknown";
   });
 
   createEffect(() => {

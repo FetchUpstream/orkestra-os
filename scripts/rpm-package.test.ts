@@ -13,6 +13,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveRpmVersionParts,
+  parseCargoPackageMetadata,
   renderDesktopEntry,
   renderRpmSpec,
   toKebabCase,
@@ -30,6 +31,28 @@ describe("rpm-package helpers", () => {
     expect(deriveRpmVersionParts("0.0.2-RC.1+1")).toEqual({
       version: "0.0.2",
       release: "0.RC.1.1",
+    });
+  });
+
+  it("reads package metadata from the Cargo [package] table only", () => {
+    const metadata = parseCargoPackageMetadata(`
+[package]
+name = "orkestraos"
+description = "Desktop app for orchestrating AI agents."
+homepage = "https://example.com"
+repository = "https://example.com/repo"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+name = "should-not-win"
+`);
+
+    expect(metadata).toEqual({
+      name: "orkestraos",
+      description: "Desktop app for orchestrating AI agents.",
+      homepage: "https://example.com",
+      repository: "https://example.com/repo",
+      license: "MIT OR Apache-2.0",
     });
   });
 

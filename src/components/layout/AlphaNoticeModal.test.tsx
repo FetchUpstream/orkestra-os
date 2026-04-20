@@ -127,4 +127,16 @@ describe("AlphaNoticeModal", () => {
       expect(screen.queryByRole("dialog", { name: "Alpha Build" })).toBeNull();
     });
   });
+
+  it("shows unknown for a resolved but unparseable version", async () => {
+    getVersionMock.mockResolvedValue("v");
+
+    render(() => <AlphaNoticeModal />);
+
+    expect(
+      await screen.findByRole("dialog", { name: "Alpha Build" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Version: unknown")).toBeTruthy();
+    expect(window.localStorage.getItem(ALPHA_NOTICE_ACK_STORAGE_KEY)).toBeNull();
+  });
 });

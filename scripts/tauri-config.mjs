@@ -1,4 +1,3 @@
-/* global process, console, structuredClone */
 // Copyright 2026 Louis Scheepers
 //
 // This file is dual-licensed under:

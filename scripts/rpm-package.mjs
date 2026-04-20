@@ -87,10 +87,29 @@ async function loadJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));
 }
 
-async function readCargoPackageMetadata(projectRoot) {
-  const cargoText = await readFile(path.join(projectRoot, CARGO_MANIFEST_PATH), "utf8");
+export function parseCargoPackageMetadata(cargoText) {
+  const lines = cargoText.split(/\r?\n/);
+  const packageLines = [];
+  let inPackageSection = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      if (inPackageSection) {
+        break;
+      }
+      inPackageSection = trimmed === "[package]";
+      continue;
+    }
+
+    if (inPackageSection) {
+      packageLines.push(line);
+    }
+  }
+
+  const packageText = packageLines.join("\n");
   const getValue = (key) => {
-    const match = cargoText.match(new RegExp(`^${key}\\s*=\\s*\"([^\"]+)\"`, "m"));
+    const match = packageText.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, "m"));
     return match ? match[1] : "";
   };
 
@@ -101,6 +120,11 @@ async function readCargoPackageMetadata(projectRoot) {
     repository: getValue("repository"),
     license: getValue("license"),
   };
+}
+
+async function readCargoPackageMetadata(projectRoot) {
+  const cargoText = await readFile(path.join(projectRoot, CARGO_MANIFEST_PATH), "utf8");
+  return parseCargoPackageMetadata(cargoText);
 }
 
 export async function listLinuxIconFiles(iconDirPath) {
@@ -320,8 +344,6 @@ export async function buildRpmPackage(projectRoot = process.cwd()) {
       { cwd: context.topDir },
     );
 
-    await rm(context.rpmOutputDir, { recursive: true, force: true });
-    await mkdir(context.rpmOutputDir, { recursive: true });
     await runCommand(
       "rpmbuild",
       ["--define", `_topdir ${context.topDir}`, "-bb", specPath],
@@ -342,6 +364,9 @@ export async function buildRpmPackage(projectRoot = process.cwd()) {
     if (!builtRpmName) {
       throw new Error("rpmbuild completed without producing an RPM artifact.");
     }
+
+    await rm(context.rpmOutputDir, { recursive: true, force: true });
+    await mkdir(context.rpmOutputDir, { recursive: true });
 
     const builtRpmPath = path.join(rpmArtifactDir, builtRpmName);
     const outputPath = path.join(
