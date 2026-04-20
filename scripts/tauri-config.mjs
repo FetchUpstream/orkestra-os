@@ -50,6 +50,10 @@ function parsePositiveInteger(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function sanitizeLinuxReleaseSegment(value) {
+  return value.trim().replace(/-/g, ".");
+}
+
 function deriveWindowsWixVersion(version) {
   const { major, minor, patch, prerelease } = parseSemverVersion(version);
   if (!prerelease) {
@@ -75,13 +79,28 @@ function deriveWindowsWixVersion(version) {
 }
 
 function deriveLinuxBundleVersion(version) {
-  const { normalizedVersion, major, minor, patch, prerelease, buildmetadata } =
+  const { normalizedVersion, major, minor, patch, prerelease } =
     parseSemverVersion(version);
   if (!prerelease) {
     return normalizedVersion;
   }
 
-  return `${major}.${minor}.${patch}~${prerelease}${buildmetadata ? `+${buildmetadata}` : ""}`;
+  return `${major}.${minor}.${patch}`;
+}
+
+function deriveLinuxRpmRelease(version, currentRelease = "1") {
+  const { prerelease, buildmetadata } = parseSemverVersion(version);
+  if (!prerelease) {
+    return currentRelease;
+  }
+
+  const releaseSegments = [
+    "0",
+    sanitizeLinuxReleaseSegment(prerelease),
+    ...(buildmetadata ? buildmetadata.split(".").map(sanitizeLinuxReleaseSegment) : []),
+  ];
+
+  return releaseSegments.join(".");
 }
 
 function deriveMacBundleShortVersion(version) {
@@ -132,9 +151,19 @@ export function buildTauriConfigForWindowsMsi(baseConfig) {
 
 export function buildTauriConfigForLinuxBundles(baseConfig) {
   const config = structuredClone(baseConfig);
-  if (typeof config.version === "string") {
-    config.version = deriveLinuxBundleVersion(config.version);
+  if (typeof config.version !== "string") {
+    return config;
   }
+
+  config.version = deriveLinuxBundleVersion(config.version);
+
+  config.bundle ??= {};
+  config.bundle.linux ??= {};
+  config.bundle.linux.rpm ??= {};
+  config.bundle.linux.rpm.release = deriveLinuxRpmRelease(
+    baseConfig.version,
+    config.bundle.linux.rpm.release ?? "1",
+  );
 
   return config;
 }

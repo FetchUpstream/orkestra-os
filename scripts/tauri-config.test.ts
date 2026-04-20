@@ -19,16 +19,41 @@ import {
 } from "./tauri-config.mjs";
 
 describe("tauri-config CI helpers", () => {
-  it("rewrites Linux prerelease bundle versions to package-safe syntax", () => {
+  it("keeps Linux config semver-valid while deriving an RPM prerelease release tag", () => {
     const baseConfig = {
-      version: "0.0.2-RC.1",
-      bundle: {},
+      version: "0.0.2-RC.1+1",
+      bundle: {
+        linux: {
+          rpm: {
+            release: "1",
+          },
+        },
+      },
     };
 
     const result = buildTauriConfigForLinuxBundles(baseConfig);
 
-    expect(result.version).toBe("0.0.2~RC.1");
-    expect(baseConfig.version).toBe("0.0.2-RC.1");
+    expect(result.version).toBe("0.0.2");
+    expect(result.bundle.linux.rpm.release).toBe("0.RC.1.1");
+    expect(baseConfig.version).toBe("0.0.2-RC.1+1");
+  });
+
+  it("preserves the stable Linux RPM release", () => {
+    const baseConfig = {
+      version: "0.0.2",
+      bundle: {
+        linux: {
+          rpm: {
+            release: "1",
+          },
+        },
+      },
+    };
+
+    const result = buildTauriConfigForLinuxBundles(baseConfig);
+
+    expect(result.version).toBe("0.0.2");
+    expect(result.bundle.linux.rpm.release).toBe("1");
   });
 
   it("keeps the app version while deriving a Windows MSI version", () => {
