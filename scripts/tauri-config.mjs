@@ -17,7 +17,7 @@ const BASE_CONFIG_PATH = path.join("src-tauri", "tauri.conf.json");
 const VERSION_PATTERN =
   /^(?<major>0|[1-9]\d*)\.(?<minor>0|[1-9]\d*)\.(?<patch>0|[1-9]\d*)(?:-(?<prerelease>[0-9A-Za-z.-]+))?(?:\+(?<buildmetadata>[0-9A-Za-z.-]+))?$/;
 const MAX_MSI_BUILD = 65535;
-const SUPPORTED_BUILD_TARGETS = ["linux", "macos", "windows"];
+const SUPPORTED_BUILD_TARGETS = ["macos", "windows"];
 
 export async function loadBaseTauriConfig(projectRoot = process.cwd()) {
   const configPath = path.join(projectRoot, BASE_CONFIG_PATH);
@@ -50,10 +50,6 @@ function parsePositiveInteger(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function sanitizeLinuxReleaseSegment(value) {
-  return value.trim().replace(/-/g, ".");
-}
-
 function deriveWindowsWixVersion(version) {
   const { major, minor, patch, prerelease } = parseSemverVersion(version);
   if (!prerelease) {
@@ -76,31 +72,6 @@ function deriveWindowsWixVersion(version) {
   }
 
   return `${major}.${minor}.${patch}.${buildNumber}`;
-}
-
-function deriveLinuxBundleVersion(version) {
-  const { normalizedVersion, major, minor, patch, prerelease } =
-    parseSemverVersion(version);
-  if (!prerelease) {
-    return normalizedVersion;
-  }
-
-  return `${major}.${minor}.${patch}`;
-}
-
-function deriveLinuxRpmRelease(version, currentRelease = "1") {
-  const { prerelease, buildmetadata } = parseSemverVersion(version);
-  if (!prerelease) {
-    return currentRelease;
-  }
-
-  const releaseSegments = [
-    "0",
-    sanitizeLinuxReleaseSegment(prerelease),
-    ...(buildmetadata ? buildmetadata.split(".").map(sanitizeLinuxReleaseSegment) : []),
-  ];
-
-  return releaseSegments.join(".");
 }
 
 function deriveMacBundleShortVersion(version) {
@@ -149,25 +120,6 @@ export function buildTauriConfigForWindowsMsi(baseConfig) {
   return config;
 }
 
-export function buildTauriConfigForLinuxBundles(baseConfig) {
-  const config = structuredClone(baseConfig);
-  if (typeof config.version !== "string") {
-    return config;
-  }
-
-  config.version = deriveLinuxBundleVersion(config.version);
-
-  config.bundle ??= {};
-  config.bundle.linux ??= {};
-  config.bundle.linux.rpm ??= {};
-  config.bundle.linux.rpm.release = deriveLinuxRpmRelease(
-    baseConfig.version,
-    config.bundle.linux.rpm.release ?? "1",
-  );
-
-  return config;
-}
-
 export function buildTauriConfigForMacBundles(baseConfig, options = {}) {
   const config = structuredClone(baseConfig);
   if (typeof config.version !== "string") {
@@ -191,10 +143,6 @@ export function buildTauriConfigForMacBundles(baseConfig, options = {}) {
 export function buildTauriConfigForCi(baseConfig, platform, options = {}) {
   if (platform === "windows") {
     return buildTauriConfigForWindowsMsi(baseConfig);
-  }
-
-  if (platform === "linux") {
-    return buildTauriConfigForLinuxBundles(baseConfig);
   }
 
   if (platform === "macos") {

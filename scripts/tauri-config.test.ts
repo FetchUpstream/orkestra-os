@@ -13,49 +13,11 @@
 import { describe, expect, it } from "vitest";
 import {
   buildTauriConfigForCi,
-  buildTauriConfigForLinuxBundles,
   buildTauriConfigForMacBundles,
   buildTauriConfigForWindowsMsi,
 } from "./tauri-config.mjs";
 
 describe("tauri-config CI helpers", () => {
-  it("keeps Linux config semver-valid while deriving an RPM prerelease release tag", () => {
-    const baseConfig = {
-      version: "0.0.2-RC.1+1",
-      bundle: {
-        linux: {
-          rpm: {
-            release: "1",
-          },
-        },
-      },
-    };
-
-    const result = buildTauriConfigForLinuxBundles(baseConfig);
-
-    expect(result.version).toBe("0.0.2");
-    expect(result.bundle.linux.rpm.release).toBe("0.RC.1.1");
-    expect(baseConfig.version).toBe("0.0.2-RC.1+1");
-  });
-
-  it("preserves the stable Linux RPM release", () => {
-    const baseConfig = {
-      version: "0.0.2",
-      bundle: {
-        linux: {
-          rpm: {
-            release: "1",
-          },
-        },
-      },
-    };
-
-    const result = buildTauriConfigForLinuxBundles(baseConfig);
-
-    expect(result.version).toBe("0.0.2");
-    expect(result.bundle.linux.rpm.release).toBe("1");
-  });
-
   it("keeps the app version while deriving a Windows MSI version", () => {
     const baseConfig = {
       version: "0.0.2-RC.1",
@@ -100,7 +62,7 @@ describe("tauri-config CI helpers", () => {
 
   it("rejects unsupported CI platforms", () => {
     expect(() =>
-      buildTauriConfigForCi({ version: "0.0.2", bundle: {} }, "android"),
+      buildTauriConfigForCi({ version: "0.0.2", bundle: {} }, "linux"),
     ).toThrow(/Unsupported CI config platform/);
   });
 });
