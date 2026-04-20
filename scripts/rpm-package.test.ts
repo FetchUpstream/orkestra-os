@@ -10,7 +10,8 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
 import {
   deriveRpmVersionParts,
   parseCargoPackageMetadata,
@@ -19,11 +20,22 @@ import {
   toKebabCase,
 } from "./rpm-package.mjs";
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("rpm-package helpers", () => {
   it("derives stable RPM version parts", () => {
     expect(deriveRpmVersionParts("0.0.2")).toEqual({
       version: "0.0.2",
       release: "1",
+    });
+  });
+
+  it("includes stable build metadata in the RPM release", () => {
+    expect(deriveRpmVersionParts("0.0.2+build.7")).toEqual({
+      version: "0.0.2",
+      release: "1.build.7",
     });
   });
 
@@ -35,21 +47,37 @@ describe("rpm-package helpers", () => {
   });
 
   it("reads package metadata from the Cargo [package] table only", () => {
-    const metadata = parseCargoPackageMetadata(`
+    const parseMock = vi.fn().mockReturnValue({
+      package: {
+        name: "orkestraos",
+        description: 'Desktop app for orchestrating "AI" agents.',
+        homepage: "https://example.com",
+        repository: "https://example.com/repo",
+        license: "MIT OR Apache-2.0",
+      },
+      dependencies: {
+        name: "should-not-win",
+      },
+    });
+    vi.stubGlobal("Bun", { TOML: { parse: parseMock } });
+
+    const cargoText = `
 [package]
 name = "orkestraos"
-description = "Desktop app for orchestrating AI agents."
+description = "Desktop app for orchestrating \"AI\" agents."
 homepage = "https://example.com"
 repository = "https://example.com/repo"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
 name = "should-not-win"
-`);
+`;
+    const metadata = parseCargoPackageMetadata(cargoText);
 
+    expect(parseMock).toHaveBeenCalledWith(cargoText);
     expect(metadata).toEqual({
       name: "orkestraos",
-      description: "Desktop app for orchestrating AI agents.",
+      description: 'Desktop app for orchestrating "AI" agents.',
       homepage: "https://example.com",
       repository: "https://example.com/repo",
       license: "MIT OR Apache-2.0",

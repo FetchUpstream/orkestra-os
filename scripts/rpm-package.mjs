@@ -54,9 +54,13 @@ export function deriveRpmVersionParts(version) {
   const rpmVersion = `${major}.${minor}.${patch}`;
 
   if (!prerelease) {
+    const releaseSegments = [
+      "1",
+      ...(buildmetadata ? buildmetadata.split(".").map(sanitizeRpmSegment) : []),
+    ];
     return {
       version: rpmVersion,
-      release: "1",
+      release: releaseSegments.join("."),
     };
   }
 
@@ -88,37 +92,20 @@ async function loadJson(filePath) {
 }
 
 export function parseCargoPackageMetadata(cargoText) {
-  const lines = cargoText.split(/\r?\n/);
-  const packageLines = [];
-  let inPackageSection = false;
+  const parsed = Bun.TOML.parse(cargoText);
+  const packageMetadata =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed.package
+      : undefined;
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      if (inPackageSection) {
-        break;
-      }
-      inPackageSection = trimmed === "[package]";
-      continue;
-    }
-
-    if (inPackageSection) {
-      packageLines.push(line);
-    }
-  }
-
-  const packageText = packageLines.join("\n");
-  const getValue = (key) => {
-    const match = packageText.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, "m"));
-    return match ? match[1] : "";
-  };
+  const readString = (value) => (typeof value === "string" ? value : "");
 
   return {
-    name: getValue("name"),
-    description: getValue("description"),
-    homepage: getValue("homepage"),
-    repository: getValue("repository"),
-    license: getValue("license"),
+    name: readString(packageMetadata?.name),
+    description: readString(packageMetadata?.description),
+    homepage: readString(packageMetadata?.homepage),
+    repository: readString(packageMetadata?.repository),
+    license: readString(packageMetadata?.license),
   };
 }
 
