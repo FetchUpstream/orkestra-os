@@ -1,3 +1,4 @@
+/* global process, console, structuredClone */
 // Copyright 2026 Louis Scheepers
 //
 // This file is dual-licensed under:
@@ -31,7 +32,7 @@ function parseSemverVersion(version) {
   const match = normalizedVersion.match(VERSION_PATTERN);
   if (!match?.groups) {
     throw new Error(
-      `Unsupported Tauri app version \"${version}\". Expected semver like 1.2.3 or 1.2.3-rc.4.`,
+      `Unsupported Tauri app version "${version}". Expected semver like 1.2.3 or 1.2.3-rc.4.`,
     );
   }
 
@@ -60,14 +61,14 @@ function deriveWindowsWixVersion(version) {
   const buildIdentifier = prereleaseParts.at(-1);
   if (!buildIdentifier || !/^\d+$/.test(buildIdentifier)) {
     throw new Error(
-      `Windows MSI requires a numeric prerelease suffix. Update \"${version}\" to end with .<number> (for example 1.2.3-rc.4).`,
+      `Windows MSI requires a numeric prerelease suffix. Update "${version}" to end with .<number> (for example 1.2.3-rc.4).`,
     );
   }
 
   const buildNumber = Number(buildIdentifier);
   if (buildNumber > MAX_MSI_BUILD) {
     throw new Error(
-      `Windows MSI prerelease build number must be <= ${MAX_MSI_BUILD}, received ${buildNumber} from \"${version}\".`,
+      `Windows MSI prerelease build number must be <= ${MAX_MSI_BUILD}, received ${buildNumber} from "${version}".`,
     );
   }
 
@@ -150,7 +151,7 @@ export function buildTauriConfigForCi(baseConfig, platform, options = {}) {
   }
 
   throw new Error(
-    `Unsupported CI config platform \"${platform}\". Expected one of: ${SUPPORTED_BUILD_TARGETS.join(", ")}.`,
+    `Unsupported CI config platform "${platform}". Expected one of: ${SUPPORTED_BUILD_TARGETS.join(", ")}.`,
   );
 }
 

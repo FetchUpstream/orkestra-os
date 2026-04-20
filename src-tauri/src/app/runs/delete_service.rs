@@ -67,31 +67,13 @@ mod tests {
     use crate::app::projects::service::ProjectsService;
     use crate::app::runs::run_state_service::RunStateService;
     use crate::app::runs::status_transition_service::RunStatusTransitionService;
+    use crate::app::runs::test_utils::should_skip_ci_missing_opencode_cli;
     use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
     use crate::app::worktrees::service::WorktreesService;
     use sqlx::SqlitePool;
     use std::fs;
     use std::path::{Path, PathBuf};
     use uuid::Uuid;
-
-    fn should_skip_ci_missing_opencode_cli() -> bool {
-        if std::env::var_os("CI").is_none() {
-            return false;
-        }
-
-        if std::process::Command::new("opencode")
-            .arg("--help")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok()
-        {
-            return false;
-        }
-
-        eprintln!("skipping OpenCode CLI-dependent test in CI because 'opencode' is unavailable");
-        true
-    }
 
     struct TempDir {
         path: PathBuf,
