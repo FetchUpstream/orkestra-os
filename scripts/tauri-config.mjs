@@ -15,8 +15,9 @@ import path from "path";
 
 const BASE_CONFIG_PATH = path.join("src-tauri", "tauri.conf.json");
 const VERSION_PATTERN =
-  /^(?<major>0|[1-9]\d*)\.(?<minor>0|[1-9]\d*)\.(?<patch>0|[1-9]\d*)(?:-(?<prerelease>[0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+  /^(?<major>0|[1-9]\d*)\.(?<minor>0|[1-9]\d*)\.(?<patch>0|[1-9]\d*)(?:-(?<prerelease>[0-9A-Za-z.-]+))?(?:\+(?<buildmetadata>[0-9A-Za-z.-]+))?$/;
 const MAX_MSI_BUILD = 65535;
+const SUPPORTED_BUILD_TARGETS = ["linux", "macos", "windows"];
 
 export async function loadBaseTauriConfig(projectRoot = process.cwd()) {
   const configPath = path.join(projectRoot, BASE_CONFIG_PATH);
@@ -25,7 +26,7 @@ export async function loadBaseTauriConfig(projectRoot = process.cwd()) {
   return JSON.parse(configText);
 }
 
-function deriveWindowsWixVersion(version) {
+function parseSemverVersion(version) {
   const normalizedVersion = version.trim();
   const match = normalizedVersion.match(VERSION_PATTERN);
   if (!match?.groups) {
@@ -34,7 +35,23 @@ function deriveWindowsWixVersion(version) {
     );
   }
 
-  const { major, minor, patch, prerelease } = match.groups;
+  return {
+    normalizedVersion,
+    ...match.groups,
+  };
+}
+
+function parsePositiveInteger(value) {
+  if (typeof value !== "string" || !/^\d+$/.test(value)) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function deriveWindowsWixVersion(version) {
+  const { major, minor, patch, prerelease } = parseSemverVersion(version);
   if (!prerelease) {
     return null;
   }
@@ -57,6 +74,43 @@ function deriveWindowsWixVersion(version) {
   return `${major}.${minor}.${patch}.${buildNumber}`;
 }
 
+function deriveLinuxBundleVersion(version) {
+  const { normalizedVersion, major, minor, patch, prerelease, buildmetadata } =
+    parseSemverVersion(version);
+  if (!prerelease) {
+    return normalizedVersion;
+  }
+
+  return `${major}.${minor}.${patch}~${prerelease}${buildmetadata ? `+${buildmetadata}` : ""}`;
+}
+
+function deriveMacBundleShortVersion(version) {
+  const { major, minor, patch } = parseSemverVersion(version);
+  return `${major}.${minor}.${patch}`;
+}
+
+function deriveMacBundleVersion(version, options = {}) {
+  const runNumber = parsePositiveInteger(options.runNumber);
+  if (runNumber === null) {
+    return deriveMacBundleShortVersion(version);
+  }
+
+  const runAttempt = parsePositiveInteger(options.runAttempt) ?? 1;
+  return `${runNumber}.${runAttempt}`;
+}
+
+function createMacInfoPlistOverride(shortVersion) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleShortVersionString</key>
+  <string>${shortVersion}</string>
+</dict>
+</plist>
+`;
+}
+
 export function buildTauriConfigForWindowsMsi(baseConfig) {
   const config = structuredClone(baseConfig);
   const resolvedVersion =
@@ -76,27 +130,103 @@ export function buildTauriConfigForWindowsMsi(baseConfig) {
   return config;
 }
 
-export async function writeWindowsBuildConfig(
+export function buildTauriConfigForLinuxBundles(baseConfig) {
+  const config = structuredClone(baseConfig);
+  if (typeof config.version === "string") {
+    config.version = deriveLinuxBundleVersion(config.version);
+  }
+
+  return config;
+}
+
+export function buildTauriConfigForMacBundles(baseConfig, options = {}) {
+  const config = structuredClone(baseConfig);
+  if (typeof config.version !== "string") {
+    return config;
+  }
+
+  config.bundle ??= {};
+  config.bundle.macOS ??= {};
+  config.bundle.macOS.bundleVersion = deriveMacBundleVersion(
+    config.version,
+    options,
+  );
+
+  if (options.infoPlistPath) {
+    config.bundle.macOS.infoPlist = options.infoPlistPath;
+  }
+
+  return config;
+}
+
+export function buildTauriConfigForCi(baseConfig, platform, options = {}) {
+  if (platform === "windows") {
+    return buildTauriConfigForWindowsMsi(baseConfig);
+  }
+
+  if (platform === "linux") {
+    return buildTauriConfigForLinuxBundles(baseConfig);
+  }
+
+  if (platform === "macos") {
+    return buildTauriConfigForMacBundles(baseConfig, options);
+  }
+
+  throw new Error(
+    `Unsupported CI config platform \"${platform}\". Expected one of: ${SUPPORTED_BUILD_TARGETS.join(", ")}.`,
+  );
+}
+
+export async function writeCiBuildConfig(
   outPath,
+  platform,
   projectRoot = process.cwd(),
+  options = {},
 ) {
   const baseConfig = await loadBaseTauriConfig(projectRoot);
-  const config = buildTauriConfigForWindowsMsi(baseConfig);
+  const resolvedOutPath = path.resolve(outPath);
+  await mkdir(path.dirname(resolvedOutPath), { recursive: true });
 
-  await mkdir(path.dirname(outPath), { recursive: true });
-  await writeFile(outPath, JSON.stringify(config, null, 2));
+  let configOptions = options;
+  if (
+    platform === "macos" &&
+    typeof baseConfig.version === "string" &&
+    !options.infoPlistPath
+  ) {
+    const infoPlistPath = `${resolvedOutPath}.Info.plist`;
+    await writeFile(
+      infoPlistPath,
+      createMacInfoPlistOverride(deriveMacBundleShortVersion(baseConfig.version)),
+    );
+    configOptions = {
+      ...options,
+      infoPlistPath,
+    };
+  }
 
-  return outPath;
+  const config = buildTauriConfigForCi(baseConfig, platform, configOptions);
+  await writeFile(resolvedOutPath, JSON.stringify(config, null, 2));
+
+  return resolvedOutPath;
 }
 
 async function main() {
-  const outPath = process.argv[2];
+  const [platform, outPath] = process.argv.slice(2);
+  if (!SUPPORTED_BUILD_TARGETS.includes(platform)) {
+    throw new Error(
+      `Expected a build target (${SUPPORTED_BUILD_TARGETS.join(" | ")}) as the first argument.`,
+    );
+  }
+
   if (!outPath) {
     throw new Error("Expected an output path argument.");
   }
 
   const resolvedPath = path.resolve(outPath);
-  await writeWindowsBuildConfig(resolvedPath);
+  await writeCiBuildConfig(resolvedPath, platform, process.cwd(), {
+    runNumber: process.env.GITHUB_RUN_NUMBER,
+    runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+  });
   console.log(resolvedPath);
 }
 

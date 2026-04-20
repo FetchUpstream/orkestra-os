@@ -126,7 +126,15 @@ jobs:
 
       - name: Prepare Windows MSI config
         if: runner.os == 'Windows'
-        run: bun scripts/tauri-config.mjs "${{ runner.temp }}/tauri.windows.ci.conf.json"
+        run: bun scripts/tauri-config.mjs windows "${{ runner.temp }}/tauri.windows.ci.conf.json"
+
+      - name: Prepare Linux bundle config
+        if: runner.os == 'Linux'
+        run: bun scripts/tauri-config.mjs linux "${{ runner.temp }}/tauri.linux.ci.conf.json"
+
+      - name: Prepare macOS bundle config
+        if: runner.os == 'macOS'
+        run: bun scripts/tauri-config.mjs macos "${{ runner.temp }}/tauri.macos.ci.conf.json"
 
       - name: Build Tauri app and upload to GitHub Release
         uses: tauri-apps/tauri-action@v0
@@ -140,7 +148,7 @@ jobs:
           releaseBody: "Automated release for ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
-          args: ${{ runner.os == 'Windows' && format('--config "{0}/tauri.windows.ci.conf.json"', runner.temp) || matrix.args }}
+          args: ${{ runner.os == 'Windows' && format('--config "{0}/tauri.windows.ci.conf.json"', runner.temp) || runner.os == 'Linux' && format('--config "{0}/tauri.linux.ci.conf.json" {1}', runner.temp, matrix.args) || runner.os == 'macOS' && format('--config "{0}/tauri.macos.ci.conf.json" {1}', runner.temp, matrix.args) || matrix.args }}
 
       - name: Upload Linux packages for Cloudsmith publish job
         if: runner.os == 'Linux'

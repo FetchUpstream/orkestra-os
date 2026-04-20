@@ -155,6 +155,35 @@ describe("linuxPackageUpdates", () => {
     });
   });
 
+
+  it("treats Linux package runtime prerelease versions as semver-equivalent", async () => {
+    const result = await checkForLinuxPackageUpdate({
+      runtimeContext: {
+        bundleType: "rpm",
+        currentVersion: "0.0.2~RC.1",
+      },
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          version: "0.0.2-RC.1",
+          releasedAt: "2026-04-17T12:00:00Z",
+          notes: [],
+          commands: {
+            deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+            rpm: "sudo dnf upgrade orkestraos",
+          },
+        }),
+      } as Response),
+      cacheBustValue: "1",
+    });
+
+    expect(result).toMatchObject({
+      status: "up-to-date",
+      bundleType: "rpm",
+      currentVersion: "0.0.2-RC.1",
+      availableVersion: "0.0.2-RC.1",
+    });
+  });
   it("returns up-to-date when metadata is older", async () => {
     const result = await checkForLinuxPackageUpdate({
       runtimeContext: {
