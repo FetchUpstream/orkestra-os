@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Linux system dependencies
         run: |
@@ -68,7 +68,7 @@ jobs:
       matrix:
         include:
           - platform: ubuntu-24.04
-            args: "--bundles deb,rpm"
+            args: "--bundles deb"
             rust_targets: ""
           - platform: windows-latest
             args: ""
@@ -86,7 +86,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -124,6 +124,14 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      - name: Prepare Windows MSI config
+        if: runner.os == 'Windows'
+        run: bun scripts/tauri-config.mjs windows "${{ runner.temp }}/tauri.windows.ci.conf.json"
+
+      - name: Prepare macOS bundle config
+        if: runner.os == 'macOS'
+        run: bun scripts/tauri-config.mjs macos "${{ runner.temp }}/tauri.macos.ci.conf.json"
+
       - name: Build Tauri app and upload to GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -136,7 +144,27 @@ jobs:
           releaseBody: "Automated release for ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
-          args: ${{ matrix.args }}
+          args: ${{ runner.os == 'Windows' && format('--config "{0}/tauri.windows.ci.conf.json"', runner.temp) || runner.os == 'macOS' && format('--config "{0}/tauri.macos.ci.conf.json" {1}', runner.temp, matrix.args) || matrix.args }}
+
+      - name: Build Linux RPM package
+        if: runner.os == 'Linux'
+        run: bun scripts/rpm-package.mjs
+
+      - name: Upload Linux RPM to GitHub Release
+        if: runner.os == 'Linux'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(src-tauri/target/release/bundle/rpm/*.rpm)
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No .rpm files found"
+            exit 1
+          fi
+
+          gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber
 
       - name: Upload Linux packages for Cloudsmith publish job
         if: runner.os == 'Linux'

@@ -834,6 +834,7 @@ mod tests {
     fn init_git_repo(path: &Path) {
         fs::create_dir_all(path).unwrap();
         let repo = Repository::init(path).unwrap();
+        repo.set_head("refs/heads/main").unwrap();
         fs::write(path.join("README.md"), "seed\n").unwrap();
 
         let mut index = repo.index().unwrap();
@@ -1043,15 +1044,13 @@ mod tests {
         assert!(conflict
             .chat_prompt
             .contains("Never set `GIT_SEQUENCE_EDITOR` during normal conflict continuation."));
-        assert!(conflict
-            .chat_prompt
-            .contains("`git rebase --continue`"));
+        assert!(conflict.chat_prompt.contains("`git rebase --continue`"));
         assert!(conflict
             .chat_prompt
             .contains("`GIT_EDITOR=true git rebase --continue`"));
-        assert!(conflict.chat_prompt.contains(
-            "`GIT_SEQUENCE_EDITOR` is only for interactive todo editing"
-        ));
+        assert!(conflict
+            .chat_prompt
+            .contains("`GIT_SEQUENCE_EDITOR` is only for interactive todo editing"));
         assert!(conflict.chat_prompt.contains(
             "Inspect the real stdout/stderr and exit result of `git rebase --continue`."
         ));

@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::app::errors::AppError;
+#[cfg(target_os = "linux")]
 use std::ffi::OsString;
 use std::path::PathBuf;
 use tauri::Manager;
@@ -128,6 +129,7 @@ fn into_non_empty_path(value: Option<OsString>) -> Option<PathBuf> {
     Some(PathBuf::from(value))
 }
 
+#[cfg(target_os = "linux")]
 fn normalize_app_identifier(identifier: &str) -> String {
     let normalized = identifier.trim();
     if normalized.is_empty() {
@@ -163,6 +165,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn normalize_app_identifier_replaces_unsupported_chars() {
         assert_eq!(normalize_app_identifier("my app/name"), "my-app-name");

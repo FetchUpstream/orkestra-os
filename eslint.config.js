@@ -20,6 +20,22 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    files: ["scripts/**/*.{js,mjs}"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: {
+        Bun: "readonly",
+        console: "readonly",
+        process: "readonly",
+        structuredClone: "readonly",
+      },
+    },
+    rules: {
+      "no-useless-escape": "off",
+    },
+  },
+  {
     files: ["src/**/*.{ts,tsx}"],
     languageOptions: {
       parserOptions: {

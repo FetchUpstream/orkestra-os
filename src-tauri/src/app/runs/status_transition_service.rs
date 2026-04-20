@@ -128,23 +128,6 @@ impl RunStatusTransitionService {
         .await
     }
 
-    pub async fn handle_run_merged(
-        &self,
-        task_id: &str,
-        run_id: &str,
-    ) -> Result<Option<RunStatusChangedEventDto>, AppError> {
-        self.transition_run_status_for_active_task(
-            task_id,
-            run_id,
-            None,
-            &["queued", "preparing", "in_progress", "idle"],
-            "complete",
-            "run_merged",
-            None,
-        )
-        .await
-    }
-
     pub fn emit_run_status_changed(
         &self,
         payload: &RunStatusChangedEventDto,

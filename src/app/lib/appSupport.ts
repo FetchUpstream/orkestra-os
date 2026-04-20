@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import * as tauriApp from "@tauri-apps/api/app";
+import { formatAppVersionForDisplay, normalizeAppVersion } from "./appVersion";
 
 export type AppSupportMetadata = {
   appName?: string;
@@ -76,7 +77,7 @@ export const readAppSupportMetadata = async (): Promise<AppSupportMetadata> => {
         : undefined,
     appVersion:
       appVersionResult.status === "fulfilled"
-        ? normalize(appVersionResult.value)
+        ? normalizeAppVersion(appVersionResult.value)
         : undefined,
     tauriVersion:
       tauriVersionResult.status === "fulfilled"
@@ -109,16 +110,4 @@ export const formatSupportDebugInfo = (metadata: AppSupportMetadata) => {
     .join("\n");
 };
 
-export const formatAppVersionForDisplay = (version?: string | null) => {
-  const normalized = normalize(version);
-  if (!normalized) {
-    return "unknown";
-  }
-
-  const stripped = normalized.replace(/^v/i, "");
-  if (!stripped) {
-    return "unknown";
-  }
-
-  return `v${stripped}`;
-};
+export { formatAppVersionForDisplay };

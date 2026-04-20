@@ -24,6 +24,7 @@ import {
   ALPHA_BUILD_GITHUB_HOMEPAGE,
   ALPHA_BUILD_RELEASE_NOTES,
 } from "../../app/config/alphaBuild";
+import { normalizeAppVersion } from "../../app/lib/appVersion";
 
 export const ALPHA_NOTICE_ACK_STORAGE_KEY = "alphaNotice.acknowledgedVersion";
 
@@ -47,9 +48,18 @@ const AlphaNoticeModal: Component = () => {
   const [version] = createResource(getVersion);
   const [isOpen, setIsOpen] = createSignal(false);
 
-  const resolvedVersion = createMemo(
-    () => version() ?? (version.error ? "unknown" : "loading..."),
-  );
+  const resolvedVersion = createMemo(() => {
+    const currentVersion = normalizeAppVersion(version());
+    if (currentVersion) {
+      return currentVersion;
+    }
+
+    if (version.loading) {
+      return "loading...";
+    }
+
+    return "unknown";
+  });
 
   createEffect(() => {
     const currentVersion = resolvedVersion();

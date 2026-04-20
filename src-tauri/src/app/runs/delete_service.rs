@@ -67,6 +67,7 @@ mod tests {
     use crate::app::projects::service::ProjectsService;
     use crate::app::runs::run_state_service::RunStateService;
     use crate::app::runs::status_transition_service::RunStatusTransitionService;
+    use crate::app::runs::test_utils::should_skip_ci_missing_opencode_cli;
     use crate::app::tasks::status_transition_service::TaskStatusTransitionService;
     use crate::app::worktrees::service::WorktreesService;
     use sqlx::SqlitePool;
@@ -226,6 +227,9 @@ mod tests {
 
     #[tokio::test]
     async fn delete_run_stops_active_opencode_runtime_before_hard_delete() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (delete_service, runs_service, opencode_service, pool, temp_dir) =
             setup_services().await;
         let repo_path = temp_dir.path().join("repo");
@@ -264,6 +268,9 @@ mod tests {
 
     #[tokio::test]
     async fn delete_run_surfaces_shutdown_failures_and_skips_hard_delete() {
+        if should_skip_ci_missing_opencode_cli() {
+            return;
+        }
         let (delete_service, runs_service, opencode_service, pool, temp_dir) =
             setup_services().await;
         let repo_path = temp_dir.path().join("repo");

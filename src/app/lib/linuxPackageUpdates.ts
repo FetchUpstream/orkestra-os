@@ -10,9 +10,9 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { compareVersions } from "compare-versions";
 import { getBundleType, getVersion } from "@tauri-apps/api/app";
 import { z } from "zod";
+import { compareAppVersions, normalizeAppVersion } from "./appVersion";
 
 export const LINUX_PACKAGE_UPDATE_METADATA_URL =
   "https://fetchupstream.github.io/orkestra-os/updates/latest.json";
@@ -91,29 +91,29 @@ type CheckForLinuxPackageUpdateOptions = {
   cacheBustValue?: string;
 };
 
-const normalizeVersion = (value: string) => value.trim();
+const normalizeVersion = (value: string) => normalizeAppVersion(value) ?? value.trim();
 
 export const isSupportedLinuxPackageBundleType = (
   value: string,
-): value is SupportedLinuxPackageBundleType =>
+ ): value is SupportedLinuxPackageBundleType =>
   SUPPORTED_LINUX_PACKAGE_BUNDLE_TYPES.includes(
     value as SupportedLinuxPackageBundleType,
   );
 
 export const parseLinuxPackageUpdateMetadata = (
   payload: unknown,
-): LinuxPackageUpdateMetadata =>
+ ): LinuxPackageUpdateMetadata =>
   linuxPackageUpdateMetadataSchema.parse(payload);
 
 export const selectLinuxPackageUpgradeCommand = (
   metadata: LinuxPackageUpdateMetadata,
   bundleType: SupportedLinuxPackageBundleType,
-) => metadata.commands[bundleType];
+ ) => metadata.commands[bundleType];
 
 export const fetchLinuxPackageUpdateMetadata = async (
   fetchImpl: typeof fetch = fetch,
   cacheBustValue = `${Date.now()}`,
-): Promise<LinuxPackageUpdateMetadata> => {
+ ): Promise<LinuxPackageUpdateMetadata> => {
   const url = new URL(LINUX_PACKAGE_UPDATE_METADATA_URL);
   url.searchParams.set("t", cacheBustValue);
 
@@ -157,7 +157,7 @@ const readRuntimeContext = async (): Promise<RuntimeContext> => {
 
 export const checkForLinuxPackageUpdate = async (
   options: CheckForLinuxPackageUpdateOptions = {},
-): Promise<LinuxPackageUpdateCheckResult> => {
+ ): Promise<LinuxPackageUpdateCheckResult> => {
   try {
     const runtimeContext =
       options.runtimeContext ?? (await readRuntimeContext());
@@ -193,7 +193,7 @@ export const checkForLinuxPackageUpdate = async (
     );
     const availableVersion = normalizeVersion(metadata.version);
 
-    if (compareVersions(availableVersion, currentVersion) > 0) {
+    if (compareAppVersions(availableVersion, currentVersion) > 0) {
       return {
         status: "update-available",
         bundleType: runtimeContext.bundleType,
