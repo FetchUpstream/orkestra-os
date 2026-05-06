@@ -61,7 +61,7 @@ curl -1sLf \
   'https://dl.cloudsmith.io/public/fetchupstream/orkestra-os/setup.deb.sh' \
   | sudo -E bash
 
-sudo apt-get install orkestraos
+sudo apt-get install orkestra-os
 ```
 
 ## Prerequisites
