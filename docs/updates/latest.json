@@ -1,6 +1,6 @@
 {
-  "version": "0.0.2-RC.1",
-  "releasedAt": "2026-04-17T12:00:00Z",
+  "version": "0.0.2",
+  "releasedAt": "2026-05-06T06:16:28Z",
  "notes": [
   "Run details and chat feel much better: paged history, smoother streaming text, better scroll anchoring, and clearer subagent activity during long sessions.",
   "Board and task workflows are more reliable: blocker details appear before starting work, warning states are clearer, and board/task status updates handle stale state more cleanly.",
