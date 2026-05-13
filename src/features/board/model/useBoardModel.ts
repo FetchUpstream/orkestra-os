@@ -87,6 +87,7 @@ const ACTIVE_RUN_STATUSES = new Set([
   "in_progress",
   "idle",
 ]);
+const BOARD_VISIBLE_RUN_STATUSES = new Set([...ACTIVE_RUN_STATUSES, "failed"]);
 
 const hasActiveTaskRuns = (runs: Run[]): boolean =>
   runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status));
@@ -147,7 +148,7 @@ export type BoardTaskRunMiniCard = {
   runId: string;
   identityLabel: string;
   label: string;
-  state: RunState;
+  state: RunState | "error";
   status: RunStatus;
   statusLabel: string;
   agentLabel: string;
@@ -230,7 +231,7 @@ const boardLabelForRunStatus = (status: RunStatus): string => {
     case "complete":
       return "Complete";
     case "failed":
-      return "Failed";
+      return "Error";
     case "cancelled":
       return "Cancelled";
     case "rejected":
@@ -287,7 +288,9 @@ const resolveRunModelLabel = (run: Run, lookup: RunOptionLookup): string => {
   );
 };
 
-const boardLabelForRunState = (state: RunState): string => {
+const boardLabelForRunState = (
+  state: BoardTaskRunMiniCard["state"],
+): string => {
   switch (state) {
     case "warming_up":
       return "Warming Up";
@@ -305,10 +308,14 @@ const boardLabelForRunState = (state: RunState): string => {
       return "Resolving Rebase Conflicts";
     case "ready_to_merge":
       return "Ready to Merge";
+    case "error":
+      return "Error in run";
   }
 };
 
-const fallbackRunState = (status: string): RunState | null => {
+const fallbackRunState = (
+  status: string,
+): BoardTaskRunMiniCard["state"] | null => {
   switch (status) {
     case "queued":
     case "preparing":
@@ -317,6 +324,8 @@ const fallbackRunState = (status: string): RunState | null => {
       return "busy_coding";
     case "idle":
       return "waiting_for_input";
+    case "failed":
+      return "error";
     default:
       return null;
   }
@@ -415,7 +424,10 @@ const runToBoardTaskRunMiniCard = (
     return null;
   }
 
-  const runState = run.runState ?? fallbackRunState(run.status);
+  const runState =
+    run.status === "failed"
+      ? "error"
+      : (run.runState ?? fallbackRunState(run.status));
   if (!runState) {
     return null;
   }
@@ -461,7 +473,7 @@ const resolveTaskRunMiniCards = (
   if (task.status === "done") return [];
 
   return sortRunsForBoard(runItems)
-    .filter((run) => ACTIVE_RUN_STATUSES.has(run.status))
+    .filter((run) => BOARD_VISIBLE_RUN_STATUSES.has(run.status))
     .flatMap((run) => {
       const miniCard = runToBoardTaskRunMiniCard(run, lookup, deletedRunIds);
       return miniCard ? [miniCard] : [];

@@ -536,6 +536,34 @@ impl RunsRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn mark_run_failed(
+        &self,
+        run_id: &str,
+        finished_at: &str,
+        error_message: &str,
+    ) -> Result<bool, AppError> {
+        let query = format!(
+            "UPDATE runs
+             SET status = 'failed',
+                 run_state = NULL,
+                 finished_at = COALESCE(finished_at, ?),
+                 error_message = ?
+             WHERE id = ?
+               AND status IN ({})",
+            ACTIVE_RUN_STATUSES_SQL.as_str(),
+        );
+
+        let result = sqlx::query(&query)
+            .bind(finished_at)
+            .bind(error_message)
+            .bind(run_id)
+            .execute(&self.pool)
+            .await
+            .runs_db("marking run failed")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn update_run_state(
         &self,
         run_id: &str,

@@ -94,7 +94,7 @@ type TaskDetailTopbarConfig =
 type RunDetailTopbarConfig = {
   title: string;
   subtitle: string;
-  connectionStatus: "warming" | "connected" | "idle" | "disconnected";
+  connectionStatus: "warming" | "connected" | "idle" | "disconnected" | "error";
   backHref: string;
   backLabel: string;
   actions: Array<{

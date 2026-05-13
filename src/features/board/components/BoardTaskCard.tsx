@@ -49,6 +49,8 @@ const BoardTaskCard: Component<Props> = (props) => {
   };
   const runStateIcon = (miniCard: BoardTaskRunMiniCard) => {
     switch (miniCard.state) {
+      case "error":
+        return <span class="text-error font-semibold">!</span>;
       case "ready_to_merge":
         return <span class="text-success font-semibold">✓</span>;
       case "question_pending":

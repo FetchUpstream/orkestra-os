@@ -69,6 +69,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 };
 
+const trimmedString = (value: unknown): string =>
+  typeof value === "string" ? value.trim() : "";
+
 const parseMaybeJson = (value: unknown): unknown => {
   if (typeof value !== "string") {
     return value;
@@ -108,12 +111,43 @@ const isCompletedDebugEvent = (name: string, payload: unknown): boolean => {
   return time?.completed !== undefined;
 };
 
+const summarizeOpenCodeErrorPayload = (
+  record: Record<string, unknown>,
+): string => {
+  const propertiesRecord = isRecord(record.properties)
+    ? record.properties
+    : null;
+  const errorValue = isRecord(record.error)
+    ? record.error
+    : propertiesRecord?.error;
+  if (!isRecord(errorValue)) {
+    return "";
+  }
+
+  const errorName = trimmedString(errorValue.name);
+  const errorData = isRecord(errorValue.data) ? errorValue.data : null;
+  const errorMessage =
+    trimmedString(errorData?.message) || trimmedString(errorValue.message);
+
+  if (errorName && errorMessage) {
+    return normalizeLogText(`${errorName}: ${errorMessage}`);
+  }
+  if (errorMessage) {
+    return normalizeLogText(errorMessage);
+  }
+  return errorName ? normalizeLogText(errorName) : "";
+};
+
 const summarizeEventPayload = (payload: unknown): string => {
   if (payload === undefined || payload === null) {
     return "";
   }
 
   if (typeof payload === "string") {
+    const parsedPayload = parseMaybeJson(payload);
+    if (parsedPayload !== payload) {
+      return summarizeEventPayload(parsedPayload);
+    }
     return normalizeLogText(payload);
   }
 
@@ -123,6 +157,11 @@ const summarizeEventPayload = (payload: unknown): string => {
 
   if (typeof payload === "object") {
     const record = payload as Record<string, unknown>;
+    const errorSummary = summarizeOpenCodeErrorPayload(record);
+    if (errorSummary) {
+      return errorSummary;
+    }
+
     const summaryFields = [
       record.message,
       record.text,
@@ -149,6 +188,15 @@ const summarizeEventPayload = (payload: unknown): string => {
   }
 
   return normalizeLogText(String(payload));
+};
+
+const failedRunErrorMessage = (runValue: {
+  errorMessage?: string | null;
+}): string => {
+  const errorMessage = runValue.errorMessage;
+  return typeof errorMessage === "string" && errorMessage.trim().length > 0
+    ? redactInternalIds(errorMessage.trim())
+    : "The provider returned an error.";
 };
 
 const formatLogTimestamp = (ts: string | number | null): string => {
@@ -436,6 +484,13 @@ const NewRunDetailScreen: Component = () => {
   const hasDraftReviewComments = createMemo(() => {
     const plan = reviewSubmissionPlan();
     return plan.eligibleCount + plan.ineligibleCount > 0;
+  });
+  const runErrorMessage = createMemo(() => {
+    const runValue = model.run();
+    if (runValue?.status !== "failed") {
+      return "";
+    }
+    return failedRunErrorMessage(runValue);
   });
   const mergeRequiresRebase = createMemo(() => {
     const status = gitStatus();
@@ -1015,7 +1070,10 @@ const NewRunDetailScreen: Component = () => {
         detail: {
           title: runTopbarTitle(),
           subtitle: runTopbarSubtitle(),
-          connectionStatus: model.agent.connectionStatus(),
+          connectionStatus:
+            runErrorMessage().length > 0
+              ? "error"
+              : model.agent.connectionStatus(),
           backHref,
           backLabel,
           actions: [
@@ -1169,6 +1227,28 @@ const NewRunDetailScreen: Component = () => {
             }
           >
             <>
+              <Show when={runErrorMessage()}>
+                {(message) => (
+                  <section
+                    class="run-detail-error-status"
+                    role="status"
+                    aria-label="Error in run"
+                  >
+                    <span
+                      class="run-detail-error-status__icon"
+                      aria-hidden="true"
+                    >
+                      !
+                    </span>
+                    <div class="run-detail-error-status__content">
+                      <p class="run-detail-error-status__label">Error in run</p>
+                      <p class="run-detail-error-status__message">
+                        {message()}
+                      </p>
+                    </div>
+                  </section>
+                )}
+              </Show>
               <NewRunChatWorkspace
                 model={model}
                 hideTranscriptScrollbar={isDrawerOverlay()}

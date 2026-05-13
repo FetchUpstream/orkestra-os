@@ -3223,6 +3223,52 @@ textarea::placeholder {
   overflow: hidden;
 }
 
+.run-detail-error-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 107, 107, 0.32);
+  background: var(--danger-subtle);
+  color: var(--text);
+}
+
+.run-detail-error-status__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 107, 107, 0.42);
+  color: var(--danger);
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.run-detail-error-status__content {
+  min-width: 0;
+}
+
+.run-detail-error-status__label {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.run-detail-error-status__message {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
 .run-detail-card {
   display: flex;
   flex-direction: column;
@@ -4714,6 +4760,14 @@ textarea::placeholder {
 .run-detail-topbar__status-dot[data-status="disconnected"] {
   background: #ff8f9f;
   color: #ff8f9f;
+}
+
+.run-detail-topbar__status-dot[data-status="error"] {
+  background: var(--danger);
+  color: var(--danger);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--danger) 32%, transparent),
+    0 0 10px color-mix(in srgb, var(--danger) 38%, transparent);
 }
 
 .run-chat-log-stream {

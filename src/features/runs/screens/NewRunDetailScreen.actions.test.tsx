@@ -85,6 +85,7 @@ const createModelStub = (options?: {
     runNumber?: number | null;
     taskTitle?: string | null;
     runState?: string | null;
+    errorMessage?: string | null;
     status?:
       | "queued"
       | "preparing"
@@ -186,6 +187,7 @@ const createModelStub = (options?: {
         options?.run?.runNumber !== undefined ? options.run.runNumber : 123,
       taskTitle: options?.run?.taskTitle,
       runState: options?.run?.runState,
+      errorMessage: options?.run?.errorMessage,
     }),
     task: () => ({ title: options?.task?.title ?? "Ship redesign" }),
     backHref: () => "/tasks/task-1",
@@ -1314,6 +1316,56 @@ describe("NewRunDetailScreen git actions", () => {
     window.removeEventListener("run-detail:topbar-config", onTopbarConfig);
   });
 
+  it("shows failed run error details and emits topbar error status", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        run: {
+          status: "failed",
+          errorMessage: "UnknownError: Provider returned error",
+        },
+        agent: { connectionStatus: "disconnected" },
+      }),
+    );
+
+    const topbarEvents: CustomEvent[] = [];
+    const onTopbarConfig = (event: Event) => {
+      topbarEvents.push(event as CustomEvent);
+    };
+    window.addEventListener("run-detail:topbar-config", onTopbarConfig);
+
+    render(() => <NewRunDetailScreen />);
+
+    await waitFor(() => {
+      const payload = topbarEvents[topbarEvents.length - 1]?.detail as {
+        connectionStatus: string;
+      };
+      expect(payload.connectionStatus).toBe("error");
+    });
+
+    expect(screen.getByText("Error in run")).toBeTruthy();
+    expect(
+      screen.getByText("UnknownError: Provider returned error"),
+    ).toBeTruthy();
+    expect(
+      document.querySelector(".run-detail-error-status__icon"),
+    ).toBeTruthy();
+
+    window.removeEventListener("run-detail:topbar-config", onTopbarConfig);
+  });
+
+  it("shows a useful fallback for failed runs without an error message", () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        run: { status: "failed", errorMessage: "" },
+      }),
+    );
+
+    render(() => <NewRunDetailScreen />);
+
+    expect(screen.getByText("Error in run")).toBeTruthy();
+    expect(screen.getByText("The provider returned an error.")).toBeTruthy();
+  });
+
   it("still renders run workspace content when warming and connecting", () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
@@ -1431,6 +1483,38 @@ describe("NewRunDetailScreen git actions", () => {
         regularMessageLine.closest(".run-chat-log-stream__line")?.className,
       ).not.toContain("run-chat-log-stream__line--completed");
     });
+    topbar.cleanup();
+  });
+
+  it("summarizes nested session.error payloads in logs", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        agentEvents: [
+          {
+            event: "session.error",
+            data: {
+              error: {
+                name: "UnknownError",
+                data: { message: "Provider returned error" },
+              },
+            },
+          },
+        ],
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Logs");
+
+    await waitFor(() => {
+      expect(screen.getByText(/session\.error/)).toBeTruthy();
+      expect(
+        screen.getByText("UnknownError: Provider returned error"),
+      ).toBeTruthy();
+      expect(screen.queryByText(/\{.*Provider returned error.*\}/)).toBeNull();
+    });
+
     topbar.cleanup();
   });
 

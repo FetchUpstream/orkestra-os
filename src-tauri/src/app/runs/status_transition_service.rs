@@ -128,6 +128,106 @@ impl RunStatusTransitionService {
         .await
     }
 
+    pub async fn handle_run_failed(
+        &self,
+        run_id: &str,
+        error_message: &str,
+        source_event: &str,
+    ) -> Result<Option<RunStatusChangedEventDto>, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Ok(None);
+        }
+
+        let Some(run) = self.runs_repository.get_run(run_id).await? else {
+            warn!(
+                subsystem = "runs",
+                operation = "transition_run_status",
+                transition_source = "run_error",
+                run_id,
+                "Ignoring missing run"
+            );
+            return Ok(None);
+        };
+
+        if Self::is_terminal_status(run.status.as_str()) {
+            info!(
+                subsystem = "runs",
+                operation = "transition_run_status",
+                transition_source = "run_error",
+                run_id,
+                current_status = run.status.as_str(),
+                source_event,
+                "Ignoring transition from terminal run state"
+            );
+            return Ok(None);
+        }
+
+        if !matches!(
+            run.status.as_str(),
+            "queued" | "preparing" | "in_progress" | "idle"
+        ) {
+            info!(
+                subsystem = "runs",
+                operation = "transition_run_status",
+                transition_source = "run_error",
+                run_id,
+                current_status = run.status.as_str(),
+                source_event,
+                "Ignoring invalid transition"
+            );
+            return Ok(None);
+        }
+
+        let timestamp = Utc::now().to_rfc3339();
+        let changed = self
+            .runs_repository
+            .mark_run_failed(run_id, &timestamp, error_message)
+            .await?;
+
+        if !changed {
+            info!(
+                subsystem = "runs",
+                operation = "transition_run_status",
+                transition_source = "run_error",
+                run_id,
+                "Ignoring duplicate transition write"
+            );
+            return Ok(None);
+        }
+
+        let Some(updated_run) = self.runs_repository.get_run(run_id).await? else {
+            return Ok(None);
+        };
+
+        let payload = RunStatusChangedEventDto {
+            run_id: updated_run.id.clone(),
+            task_id: updated_run.task_id.clone(),
+            project_id: updated_run.project_id.clone(),
+            previous_status: run.status,
+            new_status: updated_run.status.clone(),
+            transition_source: "run_error".to_string(),
+            timestamp,
+        };
+
+        self.emit_run_status_changed(&payload)?;
+
+        info!(
+            subsystem = "runs",
+            operation = "transition_run_status",
+            transition_source = "run_error",
+            run_id = updated_run.id,
+            task_id = updated_run.task_id,
+            project_id = updated_run.project_id,
+            previous_status = payload.previous_status.as_str(),
+            new_status = payload.new_status.as_str(),
+            source_event,
+            "Applied run status transition"
+        );
+
+        Ok(Some(payload))
+    }
+
     pub fn emit_run_status_changed(
         &self,
         payload: &RunStatusChangedEventDto,
