@@ -629,6 +629,33 @@ const AppShellContent: Component<AppShellProps> = (props) => {
     return match?.[1] ?? "";
   };
 
+  const boardTopbarActions = (): JSX.Element | undefined => {
+    const projectId = boardProjectId();
+    if (!projectId) return undefined;
+
+    return (
+      <>
+        <button
+          type="button"
+          class="task-create-action-btn btn btn-sm rounded-none border px-4 text-xs font-semibold"
+          onClick={() => {
+            navigate(`/projects/${projectId}/tasks/new?origin=board`);
+          }}
+        >
+          New task
+        </button>
+        <a
+          href={`/projects/${projectId}`}
+          class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
+          aria-label="Project settings"
+          title="Project settings"
+        >
+          <AppIcon name="project.settings" size={16} stroke={1.75} />
+        </a>
+      </>
+    );
+  };
+
   const handleShellKeyDown: JSX.EventHandler<HTMLDivElement, KeyboardEvent> = (
     event,
   ) => {
@@ -950,36 +977,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
                   );
                 })()
               ) : location.pathname === BOARD_ROUTE_PATH ? (
-                <>
-                  <button
-                    type="button"
-                    class="task-create-action-btn btn btn-sm rounded-none border px-4 text-xs font-semibold"
-                    onClick={() => {
-                      if (boardProjectId()) {
-                        navigate(
-                          `/projects/${boardProjectId()}/tasks/new?origin=board`,
-                        );
-                      }
-                    }}
-                    disabled={!boardProjectId()}
-                  >
-                    New task
-                  </button>
-                  {boardProjectId() ? (
-                    <a
-                      href={`/projects/${boardProjectId()}`}
-                      class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
-                      aria-label="Project settings"
-                      title="Project settings"
-                    >
-                      <AppIcon
-                        name="project.settings"
-                        size={16}
-                        stroke={1.75}
-                      />
-                    </a>
-                  ) : null}
-                </>
+                boardTopbarActions()
               ) : undefined
             }
           />

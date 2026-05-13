@@ -5805,6 +5805,7 @@ describe("app routing and shell", () => {
       screen.queryByRole("status", { name: "Loading projects" }),
     ).toBeNull();
     expect(screen.queryByLabelText("Search tasks")).toBeNull();
+    expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
 
     await fireEvent.click(
       screen.getByRole("button", { name: "Create project" }),
@@ -5834,10 +5835,7 @@ describe("app routing and shell", () => {
       ).toBeTruthy();
     });
 
-    expect(
-      (screen.getByRole("button", { name: "New task" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
+    expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Project settings" })).toBeNull();
     expect(invokeMock).not.toHaveBeenCalledWith(
       "get_project_opencode_selection_catalog",
@@ -5885,13 +5883,9 @@ describe("app routing and shell", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
       expect(screen.getByText("Board")).toBeTruthy();
-      expect(screen.getByRole("button", { name: "New task" })).toBeTruthy();
     });
 
-    expect(
-      (screen.getByRole("button", { name: "New task" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
+    expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Project settings" })).toBeNull();
 
     warnSpy.mockRestore();
