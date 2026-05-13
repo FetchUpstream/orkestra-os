@@ -1220,12 +1220,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_active_runs_returns_only_active_statuses() {
+    async fn list_active_runs_returns_only_in_progress_runs_for_doing_tasks() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
-        for (task_id, task_number) in [("task-2", 2_i64), ("task-3", 3_i64)] {
+        sqlx::query("UPDATE tasks SET status = 'doing' WHERE id = 'task-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        for (task_id, task_number, task_status) in
+            [("task-2", 2_i64, "doing"), ("task-3", 3_i64, "done")]
+        {
             sqlx::query(
                 "INSERT INTO tasks (id, project_id, repository_id, task_number, title, description, status, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1236,7 +1243,7 @@ mod tests {
             .bind(task_number)
             .bind("Task")
             .bind(Option::<String>::None)
-            .bind("todo")
+            .bind(task_status)
             .bind("2024-01-01T00:00:00Z")
             .bind("2024-01-01T00:00:00Z")
             .execute(&pool)
@@ -1244,106 +1251,19 @@ mod tests {
             .unwrap();
         }
 
-        sqlx::query(
-            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind("run-completed")
-        .bind("task-1")
-        .bind("project-1")
-        .bind("repo-1")
-        .bind("complete")
-        .bind("user")
-        .bind("2024-01-01T00:00:00Z")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind("run-queued")
-        .bind("task-1")
-        .bind("project-1")
-        .bind("repo-1")
-        .bind("queued")
-        .bind("user")
-        .bind("2024-01-02T00:00:00Z")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind("run-preparing")
-        .bind("task-2")
-        .bind("project-1")
-        .bind("repo-1")
-        .bind("preparing")
-        .bind("user")
-        .bind("2024-01-03T00:00:00Z")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind("run-running")
-        .bind("task-3")
-        .bind("project-1")
-        .bind("repo-1")
-        .bind("in_progress")
-        .bind("user")
-        .bind("2024-01-04T00:00:00Z")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind("run-failed")
-        .bind("task-1")
-        .bind("project-1")
-        .bind("repo-1")
-        .bind("failed")
-        .bind("user")
-        .bind("2024-01-05T00:00:00Z")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "INSERT INTO runs (id, task_id, project_id, target_repo_id, status, triggered_by, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind("run-cancelled")
-        .bind("task-1")
-        .bind("project-1")
-        .bind("repo-1")
-        .bind("cancelled")
-        .bind("user")
-        .bind("2024-01-06T00:00:00Z")
-        .execute(&pool)
-        .await
-        .unwrap();
+        seed_run_with_status(&pool, "run-completed", "task-1", "complete").await;
+        seed_run_with_status(&pool, "run-queued", "task-1", "queued").await;
+        seed_run_with_status(&pool, "run-preparing", "task-2", "preparing").await;
+        seed_run_with_status(&pool, "run-running-doing", "task-2", "in_progress").await;
+        seed_run_with_status(&pool, "run-running-done", "task-3", "in_progress").await;
+        seed_run_with_status(&pool, "run-failed", "task-1", "failed").await;
+        seed_run_with_status(&pool, "run-cancelled", "task-1", "cancelled").await;
 
         let runs = service.list_active_runs().await.unwrap();
         let ids: Vec<&str> = runs.iter().map(|run| run.id.as_str()).collect();
 
-        assert_eq!(ids, vec!["run-running", "run-preparing", "run-queued"]);
-        assert!(runs.iter().all(|run| {
-            matches!(
-                run.status.as_str(),
-                "queued" | "preparing" | "in_progress" | "idle"
-            )
-        }));
+        assert_eq!(ids, vec!["run-running-doing"]);
+        assert!(runs.iter().all(|run| run.status == "in_progress"));
     }
 
     #[tokio::test]

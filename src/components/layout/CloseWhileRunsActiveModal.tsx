@@ -79,8 +79,7 @@ const CloseWhileRunsActiveModal: Component<CloseWhileRunsActiveModalProps> = (
             issues.
           </p>
           <p class="project-placeholder-text task-delete-modal-copy">
-            If possible, wait for queued, preparing, or running jobs to finish
-            before closing.
+            If possible, wait for running jobs to finish before closing.
           </p>
           <div class="task-delete-modal-actions">
             <button
