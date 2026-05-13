@@ -44,6 +44,7 @@ const TaskImplementationGuideCrepeEditor: Component<
   TaskImplementationGuideCrepeEditorProps
 > = (props) => {
   let mountRef: HTMLDivElement | undefined;
+  let shellRef: HTMLDivElement | undefined;
   let crepe: Crepe | null = null;
   let initToken = 0;
   let isApplyingExternalValue = false;
@@ -276,6 +277,32 @@ const TaskImplementationGuideCrepeEditor: Component<
     applyExternalValue(props.value || "");
   });
 
+  createEffect(() => {
+    if (!open()) return;
+
+    const isWithinEditorShell = (target: EventTarget | null) =>
+      target instanceof Node && shellRef?.contains(target);
+    const dismissIfOutside = (target: EventTarget | null) => {
+      if (!isWithinEditorShell(target)) {
+        clearMentionUi();
+      }
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      dismissIfOutside(event.target);
+    };
+    const handleFocusIn = (event: FocusEvent) => {
+      dismissIfOutside(event.target);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("focusin", handleFocusIn);
+
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("focusin", handleFocusIn);
+    });
+  });
+
   onCleanup(() => {
     initToken += 1;
     mountRef?.removeEventListener("keydown", onEditorKeyDown, true);
@@ -287,7 +314,13 @@ const TaskImplementationGuideCrepeEditor: Component<
   });
 
   return (
-    <div class="task-guide-crepe-shell" aria-label={props.ariaLabel}>
+    <div
+      ref={(element) => {
+        shellRef = element;
+      }}
+      class="task-guide-crepe-shell"
+      aria-label={props.ariaLabel}
+    >
       <div
         class="task-guide-crepe"
         ref={(element) => {
@@ -298,9 +331,10 @@ const TaskImplementationGuideCrepeEditor: Component<
         }}
         onFocusOut={() => {
           queueMicrotask(() => {
-            if (!mountRef?.contains(document.activeElement)) {
+            if (!shellRef?.contains(document.activeElement)) {
               isEditorFocused = false;
               flushMarkdown();
+              clearMentionUi();
               props.onBlur?.();
             }
           });

@@ -12,6 +12,8 @@
   SPDX-License-Identifier: MIT OR Apache-2.0
 */
 
+@import "./milkdown/link-tooltip.css";
+
 :root {
   --bg: #0a0f14;
   --surface: #111823;
@@ -19,6 +21,7 @@
   --surface-hover: #212c3a;
   --border: #2a3647;
   --border-subtle: #1f2a37;
+  --popup-border: color-mix(in srgb, var(--border) 72%, var(--accent) 28%);
   --text: #d7e0ea;
   --text-muted: #93a3b8;
   --text-subtle: #6d7c90;
@@ -66,6 +69,24 @@ body {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.app-tooltip-surface {
+  position: fixed;
+  z-index: 1200;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--popup-border);
+  background: color-mix(in srgb, var(--surface-alt) 88%, var(--bg) 12%);
+  box-shadow:
+    var(--shadow-md),
+    0 8px 18px rgb(0 0 0 / 32%);
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.35;
+  pointer-events: none;
+  white-space: normal;
 }
 
 button:focus-visible,
@@ -2191,7 +2212,7 @@ textarea::placeholder {
   max-width: min(560px, 92vw);
   max-height: 240px;
   overflow-y: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--popup-border);
   background: color-mix(in srgb, var(--surface) 85%, #000 15%);
   box-shadow: 0 10px 22px rgb(0 0 0 / 36%);
 }
@@ -2235,7 +2256,7 @@ textarea::placeholder {
   right: 0;
   max-height: 240px;
   overflow-y: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--popup-border);
   background: color-mix(in srgb, var(--surface) 85%, #000 15%);
   box-shadow: 0 10px 22px rgb(0 0 0 / 24%);
 }
@@ -2643,7 +2664,7 @@ textarea::placeholder {
   gap: 4px;
   padding: 6px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--popup-border);
   border-radius: 0;
   box-shadow: var(--shadow-md);
 }
@@ -2674,6 +2695,10 @@ textarea::placeholder {
   color: var(--text-subtle);
   font-size: 0.8rem;
   padding: 6px;
+}
+
+.run-source-branch-popover {
+  border-color: var(--popup-border);
 }
 
 .task-detail-definition-list {

@@ -4165,8 +4165,26 @@ describe("app routing and shell", () => {
       within(transitionMenu).queryByRole("menuitem", { name: "In review" }),
     ).toBeNull();
 
+    await fireEvent.pointerDown(screen.getByRole("button", { name: "New run" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("menu", { name: "Valid status transitions" }),
+      ).toBeNull();
+    });
+
     await fireEvent.click(
-      within(transitionMenu).getByRole("menuitem", { name: "In progress" }),
+      screen.getByRole("button", { name: "Open status transitions" }),
+    );
+
+    const reopenedTransitionMenu = screen.getByRole("menu", {
+      name: "Valid status transitions",
+    });
+
+    await fireEvent.click(
+      within(reopenedTransitionMenu).getByRole("menuitem", {
+        name: "In progress",
+      }),
     );
 
     await waitFor(() => {

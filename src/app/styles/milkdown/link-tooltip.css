@@ -26,6 +26,12 @@
       padding: 4px 10px;
       background: var(--crepe-color-surface);
       gap: 10px;
+      border: 1px solid
+        color-mix(
+          in srgb,
+          var(--crepe-color-outline) 74%,
+          var(--crepe-color-primary) 26%
+        );
       border-radius: 8px;
       cursor: pointer;
       box-shadow: var(--crepe-shadow-1);
@@ -96,6 +102,12 @@
       padding: 4px 10px 4px 20px;
       background: var(--crepe-color-surface);
       gap: 8px;
+      border: 1px solid
+        color-mix(
+          in srgb,
+          var(--crepe-color-outline) 74%,
+          var(--crepe-color-primary) 26%
+        );
       border-radius: 8px;
       box-shadow: var(--crepe-shadow-1);
 
