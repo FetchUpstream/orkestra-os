@@ -234,7 +234,13 @@ const createModelStub = (options?: {
       isMergePending: () => false,
       refreshStatus,
       rebaseWorktreeOntoSource: vi.fn(async () => undefined),
+      continueWorktreeRebase: vi.fn(async () => undefined),
+      abortWorktreeRebase: vi.fn(async () => undefined),
       mergeWorktreeIntoSource: vi.fn(async () => undefined),
+      requestMergeWorktreeIntoSource: vi.fn(async () => undefined),
+      cancelMergeWorktreeIntoSourceWarning: vi.fn(),
+      confirmMergeWorktreeIntoSourceWarning: vi.fn(async () => undefined),
+      isMergeWarningOpen: () => false,
     },
     terminal: {
       isStarting: () => false,
@@ -445,7 +451,7 @@ describe("NewRunDetailScreen git actions", () => {
     topbar.cleanup();
   });
 
-  it("suppresses commit flow and surfaces rebasing state when a rebase is already in progress", async () => {
+  it("shows continue and abort controls when a rebase is paused", async () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         gitStatus: {
@@ -465,12 +471,14 @@ describe("NewRunDetailScreen git actions", () => {
     await topbar.invokeAction("Git");
 
     await waitFor(() => {
-      expect(screen.getByText("Rebase in progress")).toBeTruthy();
+      expect(screen.getByText("Rebase paused on conflicts")).toBeTruthy();
       expect(
         screen.getByText(
-          "Normal commit actions are unavailable until the rebase is completed or aborted.",
+          "Resolve and stage the conflicted files, then click Continue Rebase. You can also abort the rebase from this drawer.",
         ),
       ).toBeTruthy();
+      expect(screen.getByText("Continue Rebase")).toBeTruthy();
+      expect(screen.getByText("Abort Rebase")).toBeTruthy();
       expect(screen.queryByText("Commit changes")).toBeNull();
       expect(screen.queryByText("Rebase onto main")).toBeNull();
       expect(screen.queryByText("Merge into main")).toBeNull();
@@ -478,13 +486,14 @@ describe("NewRunDetailScreen git actions", () => {
     topbar.cleanup();
   });
 
-  it("disables the primary action from run state while rebase resolution is active", async () => {
+  it("moves rebase resolution controls into the git drawer", async () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         run: {
           runState: "resolving_rebase_conflicts",
         },
         gitStatus: {
+          isRebaseInProgress: true,
           isWorktreeClean: false,
           isRebaseAllowed: true,
           isMergeAllowed: true,
@@ -499,13 +508,71 @@ describe("NewRunDetailScreen git actions", () => {
 
     await waitFor(() => {
       const button = screen.getByRole("button", {
-        name: "Rebase in progress",
+        name: "Continue Rebase",
       });
-      expect(button.hasAttribute("disabled")).toBe(true);
+      expect(button.hasAttribute("disabled")).toBe(false);
+      expect(screen.getByRole("button", { name: "Abort Rebase" })).toBeTruthy();
       expect(screen.queryByText("Commit changes")).toBeNull();
       expect(screen.queryByText("Rebase onto main")).toBeNull();
       expect(screen.queryByText("Merge into main")).toBeNull();
     });
+    topbar.cleanup();
+  });
+
+  it("does not show rebase controls from stale run state alone", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        run: {
+          runState: "resolving_rebase_conflicts",
+        },
+        gitStatus: {
+          isRebaseInProgress: false,
+          isWorktreeClean: false,
+          isRebaseAllowed: false,
+          isMergeAllowed: false,
+          requiresRebase: false,
+        },
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    await waitFor(() => {
+      expect(screen.queryByText("Continue Rebase")).toBeNull();
+      expect(screen.queryByText("Abort Rebase")).toBeNull();
+      expect(screen.getByText("Commit changes")).toBeTruthy();
+    });
+    topbar.cleanup();
+  });
+
+  it("routes rebase lifecycle controls through git drawer actions", async () => {
+    const model = createModelStub({
+      run: {
+        runState: "resolving_rebase_conflicts",
+      },
+      gitStatus: {
+        state: "conflicted",
+        isRebaseInProgress: true,
+        isRebaseAllowed: false,
+        isMergeAllowed: false,
+        requiresRebase: false,
+      },
+    });
+    modelFactoryMock.mockReturnValue(model);
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Continue Rebase" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Abort Rebase" }));
+
+    expect(model.git.continueWorktreeRebase).toHaveBeenCalledTimes(1);
+    expect(model.git.abortWorktreeRebase).toHaveBeenCalledTimes(1);
     topbar.cleanup();
   });
 

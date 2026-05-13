@@ -17,6 +17,8 @@ import { buildBoardHref } from "../../../app/lib/boardNavigation";
 import {
   bootstrapRunOpenCode,
   appendCappedHistory,
+  abortRunWorktreeRebase,
+  continueRunWorktreeRebase,
   getBufferedRunOpenCodeEvents,
   getRun,
   getRunOpenCodeSessionMessagesPage,
@@ -425,7 +427,9 @@ export const useRunDetailModel = () => {
     }
     return agentActivityState() === "idle" ? "idle" : "connected";
   });
-  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>([]);
+  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>(
+    [],
+  );
   const [runProviderOptions, setRunProviderOptions] = createSignal<
     RunSelectionOption[]
   >([]);
@@ -2571,6 +2575,96 @@ export const useRunDetailModel = () => {
     }
   };
 
+  const continueWorktreeRebase = async (): Promise<void> => {
+    const runId = params.runId?.trim() ?? "";
+    if (!runId || isGitRebasePending()) {
+      return;
+    }
+
+    setIsGitRebasePending(true);
+    setGitActionError("");
+    setGitLastActionMessage("");
+    setPostMergeCompletionMessage("");
+    clearPostMergeRedirectTimer();
+    try {
+      const result = await continueRunWorktreeRebase(runId);
+      if (params.runId !== runId) {
+        return;
+      }
+
+      if (result.status === "failed") {
+        setGitActionError(
+          result.message?.trim() || "Failed to continue rebase.",
+        );
+      } else if (result.message?.trim()) {
+        setGitLastActionMessage(result.message.trim());
+      }
+      if (result.status === "conflict") {
+        setGitActionError(
+          result.message?.trim() ||
+            "Rebase still has conflicts. Resolve and stage the conflicted files, then click Continue Rebase again.",
+        );
+        await sendGitConflictToChatOnce(
+          result.conflictSummary,
+          result.conflictFingerprint,
+        );
+      }
+      await refreshGitMergeStatus();
+      if (result.status === "accepted") {
+        await refreshRunDetails(runId);
+      }
+    } catch (continueError) {
+      if (params.runId === runId) {
+        setGitActionError(
+          getErrorMessage(continueError) || "Failed to continue rebase.",
+        );
+      }
+    } finally {
+      if (params.runId === runId) {
+        setIsGitRebasePending(false);
+      }
+    }
+  };
+
+  const abortWorktreeRebase = async (): Promise<void> => {
+    const runId = params.runId?.trim() ?? "";
+    if (!runId || isGitRebasePending()) {
+      return;
+    }
+
+    setIsGitRebasePending(true);
+    setGitActionError("");
+    setGitLastActionMessage("");
+    setPostMergeCompletionMessage("");
+    clearPostMergeRedirectTimer();
+    try {
+      const result = await abortRunWorktreeRebase(runId);
+      if (params.runId !== runId) {
+        return;
+      }
+
+      if (result.status === "failed") {
+        setGitActionError(result.message?.trim() || "Failed to abort rebase.");
+      } else {
+        setGitLastActionMessage(result.message?.trim() || "Rebase aborted.");
+      }
+      await refreshGitMergeStatus();
+      if (result.status === "accepted") {
+        await refreshRunDetails(runId);
+      }
+    } catch (abortError) {
+      if (params.runId === runId) {
+        setGitActionError(
+          getErrorMessage(abortError) || "Failed to abort rebase.",
+        );
+      }
+    } finally {
+      if (params.runId === runId) {
+        setIsGitRebasePending(false);
+      }
+    }
+  };
+
   const mergeWorktreeIntoSource = async (): Promise<void> => {
     const runId = params.runId?.trim() ?? "";
     if (!runId || isGitMergePending()) {
@@ -4651,6 +4745,8 @@ export const useRunDetailModel = () => {
       isMergeWarningOpen,
       refreshStatus: refreshGitMergeStatus,
       rebaseWorktreeOntoSource,
+      continueWorktreeRebase,
+      abortWorktreeRebase,
       mergeWorktreeIntoSource,
       requestMergeWorktreeIntoSource,
       cancelMergeWorktreeIntoSourceWarning,

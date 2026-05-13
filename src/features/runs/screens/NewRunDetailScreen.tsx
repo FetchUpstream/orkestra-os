@@ -21,7 +21,6 @@ import {
   onCleanup,
   type Component,
 } from "solid-js";
-import type { RunState } from "../../../app/lib/runs";
 import ActionWarningModal from "../../tasks/components/ActionWarningModal";
 import NewRunChatWorkspace from "../components/NewRunChatWorkspace";
 import RunDiffDrawerPanel from "../components/RunDiffDrawerPanel";
@@ -56,7 +55,6 @@ const LOG_NEAR_BOTTOM_THRESHOLD = 32;
 const LOG_NEW_ROW_HIGHLIGHT_MS = 1_000;
 const LOG_RENDER_CHUNK_SIZE = 100;
 const LOG_PREPEND_TRIGGER_THRESHOLD = 96;
-const REBASING_RUN_STATE: RunState = "resolving_rebase_conflicts";
 
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
@@ -291,9 +289,10 @@ const NewRunDetailScreen: Component = () => {
 
     return "unknown";
   });
-  const isRunRebaseResolving = createMemo(
-    () => model.run()?.runState === REBASING_RUN_STATE,
-  );
+  const isRebaseLifecycleActive = createMemo(() => {
+    const status = gitStatus();
+    return status?.isRebaseInProgress === true;
+  });
   const baseBranchName = createMemo(() => {
     const status = gitStatus();
     const name = status?.sourceBranch.name?.trim();
@@ -320,11 +319,11 @@ const NewRunDetailScreen: Component = () => {
       };
     }
 
-    if (isRunRebaseResolving() || status.isRebaseInProgress) {
+    if (isRebaseLifecycleActive()) {
       return {
-        headline: "Rebase in progress",
+        headline: "Rebase paused on conflicts",
         support:
-          "Normal commit actions are unavailable until the rebase is completed or aborted.",
+          "Resolve and stage the conflicted files, then click Continue Rebase. You can also abort the rebase from this drawer.",
       };
     }
 
@@ -446,19 +445,15 @@ const NewRunDetailScreen: Component = () => {
     );
   });
   const primaryAction = createMemo<
-    "commit" | "rebase" | "merge" | "rebasing" | null
+    "commit" | "rebase" | "merge" | "rebase_controls" | null
   >(() => {
     const status = gitStatus();
     if (!status || isWorkflowFinalized()) {
       return null;
     }
 
-    if (isRunRebaseResolving()) {
-      return "rebasing";
-    }
-
-    if (status.isRebaseInProgress) {
-      return null;
+    if (isRebaseLifecycleActive()) {
+      return "rebase_controls";
     }
 
     if (workflowSyncCategory() === "finalizing_merge") {
@@ -540,6 +535,18 @@ const NewRunDetailScreen: Component = () => {
       return "";
     }
     return status.mergeDisabledReason || "Merge is currently unavailable.";
+  });
+  const isRebaseLifecycleActionDisabled = createMemo(
+    () => model.isRunCompleted() || model.git.isRebasePending(),
+  );
+  const rebaseLifecycleDisabledReason = createMemo(() => {
+    if (model.git.isRebasePending()) {
+      return "Rebase action already running.";
+    }
+    if (model.isRunCompleted()) {
+      return "Run already completed.";
+    }
+    return "";
   });
   const runTopbarTitle = createMemo(() => {
     const runValue = model.run();
@@ -1515,15 +1522,46 @@ const NewRunDetailScreen: Component = () => {
                                     MERGED
                                   </p>
                                 </Show>
-                                <Show when={primaryAction() === "rebasing"}>
+                                <Show
+                                  when={primaryAction() === "rebase_controls"}
+                                >
                                   <button
                                     type="button"
                                     class="run-chat-git-drawer__button"
-                                    disabled
-                                    aria-live="polite"
+                                    disabled={isRebaseLifecycleActionDisabled()}
+                                    title={
+                                      rebaseLifecycleDisabledReason() ||
+                                      undefined
+                                    }
+                                    onClick={() => {
+                                      void model.git.continueWorktreeRebase();
+                                    }}
                                   >
-                                    Rebase in progress
+                                    Continue Rebase
                                   </button>
+                                  <button
+                                    type="button"
+                                    class="run-chat-git-drawer__button"
+                                    disabled={isRebaseLifecycleActionDisabled()}
+                                    title={
+                                      rebaseLifecycleDisabledReason() ||
+                                      undefined
+                                    }
+                                    onClick={() => {
+                                      void model.git.abortWorktreeRebase();
+                                    }}
+                                  >
+                                    Abort Rebase
+                                  </button>
+                                  <Show
+                                    when={
+                                      rebaseLifecycleDisabledReason().length > 0
+                                    }
+                                  >
+                                    <p class="project-placeholder-text">
+                                      {rebaseLifecycleDisabledReason()}
+                                    </p>
+                                  </Show>
                                 </Show>
                                 <Show when={primaryAction() === "rebase"}>
                                   <button

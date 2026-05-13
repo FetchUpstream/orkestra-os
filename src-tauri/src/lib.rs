@@ -92,6 +92,8 @@ pub fn run() {
             app::commands::runs::get_run_git_merge_status,
             app::commands::runs::rebase_run_worktree_branch,
             app::commands::runs::rebase_run_worktree_onto_source,
+            app::commands::runs::continue_run_worktree_rebase,
+            app::commands::runs::abort_run_worktree_rebase,
             app::commands::runs::merge_run_into_source_branch,
             app::commands::runs::merge_run_worktree_into_source,
             app::commands::runs::set_run_diff_watch,
