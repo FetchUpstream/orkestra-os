@@ -132,6 +132,10 @@ jobs:
         if: runner.os == 'macOS'
         run: bun scripts/tauri-config.mjs macos "${{ runner.temp }}/tauri.macos.ci.conf.json"
 
+      - name: Prepare release asset names
+        id: release-assets
+        run: bun scripts/release-assets.mjs tauri-pattern
+
       - name: Build Tauri app and upload to GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -144,11 +148,16 @@ jobs:
           releaseBody: "Automated release for ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
+          assetNamePattern: ${{ steps.release-assets.outputs.tauri_asset_name_pattern }}
           args: ${{ runner.os == 'Windows' && format('--config "{0}/tauri.windows.ci.conf.json"', runner.temp) || runner.os == 'macOS' && format('--config "{0}/tauri.macos.ci.conf.json" {1}', runner.temp, matrix.args) || matrix.args }}
 
       - name: Build Linux RPM package
         if: runner.os == 'Linux'
         run: bun scripts/rpm-package.mjs
+
+      - name: Normalize Linux package filenames
+        if: runner.os == 'Linux'
+        run: bun scripts/release-assets.mjs normalize-linux
 
       - name: Upload Linux RPM to GitHub Release
         if: runner.os == 'Linux'

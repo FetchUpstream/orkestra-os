@@ -10,7 +10,16 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { chmod, cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "fs/promises";
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "fs/promises";
 import os from "os";
 import path from "path";
 
@@ -46,17 +55,20 @@ export function toKebabCase(value) {
 }
 
 function sanitizeRpmSegment(value) {
-  return value.trim().replace(/-/g, ".");
+  return value.trim().toLowerCase().replace(/-/g, ".");
 }
 
 export function deriveRpmVersionParts(version) {
-  const { major, minor, patch, prerelease, buildmetadata } = parseSemverVersion(version);
+  const { major, minor, patch, prerelease, buildmetadata } =
+    parseSemverVersion(version);
   const rpmVersion = `${major}.${minor}.${patch}`;
 
   if (!prerelease) {
     const releaseSegments = [
       "1",
-      ...(buildmetadata ? buildmetadata.split(".").map(sanitizeRpmSegment) : []),
+      ...(buildmetadata
+        ? buildmetadata.split(".").map(sanitizeRpmSegment)
+        : []),
     ];
     return {
       version: rpmVersion,
@@ -83,7 +95,9 @@ export function mapArchitecture(nodeArch = process.arch) {
     case "arm64":
       return "aarch64";
     default:
-      throw new Error(`Unsupported RPM architecture for Node arch \"${nodeArch}\".`);
+      throw new Error(
+        `Unsupported RPM architecture for Node arch \"${nodeArch}\".`,
+      );
   }
 }
 
@@ -110,7 +124,10 @@ export function parseCargoPackageMetadata(cargoText) {
 }
 
 async function readCargoPackageMetadata(projectRoot) {
-  const cargoText = await readFile(path.join(projectRoot, CARGO_MANIFEST_PATH), "utf8");
+  const cargoText = await readFile(
+    path.join(projectRoot, CARGO_MANIFEST_PATH),
+    "utf8",
+  );
   return parseCargoPackageMetadata(cargoText);
 }
 
@@ -127,10 +144,18 @@ export async function listLinuxIconFiles(iconDirPath) {
         isHighDensity: Boolean(match.groups.density),
       };
     })
-    .sort((left, right) => left.width - right.width || left.height - right.height);
+    .sort(
+      (left, right) => left.width - right.width || left.height - right.height,
+    );
 }
 
-export function renderDesktopEntry({ categories, comment, binaryName, iconName, displayName }) {
+export function renderDesktopEntry({
+  categories,
+  comment,
+  binaryName,
+  iconName,
+  displayName,
+}) {
   return [
     "[Desktop Entry]",
     `Categories=${categories}`,
@@ -190,20 +215,28 @@ async function runCommand(command, args, options = {}) {
   });
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
-    throw new Error(`Command failed: ${command} ${args.join(" ")} (exit ${exitCode})`);
+    throw new Error(
+      `Command failed: ${command} ${args.join(" ")} (exit ${exitCode})`,
+    );
   }
 }
 
 export async function createRpmBuildContext(projectRoot = process.cwd()) {
-  const tauriConfig = await loadJson(path.join(projectRoot, BASE_TAURI_CONFIG_PATH));
+  const tauriConfig = await loadJson(
+    path.join(projectRoot, BASE_TAURI_CONFIG_PATH),
+  );
   if (typeof tauriConfig.version !== "string") {
-    throw new Error("Expected src-tauri/tauri.conf.json to define a string version.");
+    throw new Error(
+      "Expected src-tauri/tauri.conf.json to define a string version.",
+    );
   }
 
   const cargoPackage = await readCargoPackageMetadata(projectRoot);
   const binaryName = tauriConfig.mainBinaryName || cargoPackage.name;
   if (!binaryName) {
-    throw new Error("Unable to determine the Linux binary name from Tauri config or Cargo.toml.");
+    throw new Error(
+      "Unable to determine the Linux binary name from Tauri config or Cargo.toml.",
+    );
   }
 
   const packageName = toKebabCase(tauriConfig.productName || binaryName);
@@ -214,18 +247,38 @@ export async function createRpmBuildContext(projectRoot = process.cwd()) {
   const desktopFileName = `${packageName}.desktop`;
   const iconName = binaryName;
   const comment = cargoPackage.description || undefined;
-  const categories = tauriConfig.bundle?.category === "Development" ? "Development;" : "Utility;";
-  const iconFiles = await listLinuxIconFiles(path.join(projectRoot, "src-tauri", "icons"));
+  const categories =
+    tauriConfig.bundle?.category === "Development"
+      ? "Development;"
+      : "Utility;";
+  const iconFiles = await listLinuxIconFiles(
+    path.join(projectRoot, "src-tauri", "icons"),
+  );
   if (iconFiles.length === 0) {
-    throw new Error("Expected at least one PNG icon in src-tauri/icons for RPM packaging.");
+    throw new Error(
+      "Expected at least one PNG icon in src-tauri/icons for RPM packaging.",
+    );
   }
 
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "orkestra-rpm-"));
   const topDir = path.join(tempRoot, "rpmbuild");
   const buildRoot = path.join(topDir, sourceDirectoryName);
   const payloadRoot = path.join(buildRoot, "usr");
-  const rpmOutputDir = path.join(projectRoot, "src-tauri", "target", "release", "bundle", "rpm");
-  const binarySourcePath = path.join(projectRoot, "src-tauri", "target", "release", binaryName);
+  const rpmOutputDir = path.join(
+    projectRoot,
+    "src-tauri",
+    "target",
+    "release",
+    "bundle",
+    "rpm",
+  );
+  const binarySourcePath = path.join(
+    projectRoot,
+    "src-tauri",
+    "target",
+    "release",
+    binaryName,
+  );
 
   return {
     architecture,
@@ -245,8 +298,12 @@ export async function createRpmBuildContext(projectRoot = process.cwd()) {
     version: versionParts.version,
     release: versionParts.release,
     description:
-      cargoPackage.description || "Desktop app for orchestrating AI agents with OpenCode.",
-    homepage: cargoPackage.homepage || cargoPackage.repository || "https://github.com/FetchUpstream/orkestra-os",
+      cargoPackage.description ||
+      "Desktop app for orchestrating AI agents with OpenCode.",
+    homepage:
+      cargoPackage.homepage ||
+      cargoPackage.repository ||
+      "https://github.com/FetchUpstream/orkestra-os",
     license: cargoPackage.license || "MIT OR Apache-2.0",
     summary: DEFAULT_SUMMARY,
     buildRoot,
@@ -267,10 +324,18 @@ export async function buildRpmPackage(projectRoot = process.cwd()) {
     await mkdir(path.join(context.topDir, "SPECS"), { recursive: true });
     await mkdir(path.join(context.topDir, "SRPMS"), { recursive: true });
     await mkdir(path.join(context.payloadRoot, "bin"), { recursive: true });
-    await mkdir(path.join(context.payloadRoot, "share", "applications"), { recursive: true });
+    await mkdir(path.join(context.payloadRoot, "share", "applications"), {
+      recursive: true,
+    });
 
-    await cp(context.binarySourcePath, path.join(context.payloadRoot, "bin", context.binaryName));
-    await chmod(path.join(context.payloadRoot, "bin", context.binaryName), 0o755);
+    await cp(
+      context.binarySourcePath,
+      path.join(context.payloadRoot, "bin", context.binaryName),
+    );
+    await chmod(
+      path.join(context.payloadRoot, "bin", context.binaryName),
+      0o755,
+    );
 
     const desktopEntryPath = path.join(
       context.payloadRoot,
@@ -300,12 +365,19 @@ export async function buildRpmPackage(projectRoot = process.cwd()) {
         "apps",
       );
       await mkdir(iconDestinationDir, { recursive: true });
-      const destinationPath = path.join(iconDestinationDir, `${context.iconName}.png`);
+      const destinationPath = path.join(
+        iconDestinationDir,
+        `${context.iconName}.png`,
+      );
       await cp(icon.sourcePath, destinationPath);
       iconPaths.push(destinationPath.replace(context.buildRoot, ""));
     }
 
-    const specPath = path.join(context.topDir, "SPECS", `${context.packageName}.spec`);
+    const specPath = path.join(
+      context.topDir,
+      "SPECS",
+      `${context.packageName}.spec`,
+    );
     await writeFile(
       specPath,
       renderRpmSpec({
@@ -327,7 +399,13 @@ export async function buildRpmPackage(projectRoot = process.cwd()) {
 
     await runCommand(
       "tar",
-      ["-czf", path.join(context.topDir, "SOURCES", context.sourceArchiveName), "-C", context.topDir, context.sourceDirectoryName],
+      [
+        "-czf",
+        path.join(context.topDir, "SOURCES", context.sourceArchiveName),
+        "-C",
+        context.topDir,
+        context.sourceDirectoryName,
+      ],
       { cwd: context.topDir },
     );
 
@@ -356,10 +434,7 @@ export async function buildRpmPackage(projectRoot = process.cwd()) {
     await mkdir(context.rpmOutputDir, { recursive: true });
 
     const builtRpmPath = path.join(rpmArtifactDir, builtRpmName);
-    const outputPath = path.join(
-      context.rpmOutputDir,
-      builtRpmName,
-    );
+    const outputPath = path.join(context.rpmOutputDir, builtRpmName);
     await cp(builtRpmPath, outputPath);
     return outputPath;
   } finally {
