@@ -883,7 +883,7 @@ export const useProjectsPageModel = () => {
         new CustomEvent("projects:updated", { detail: nextProjects }),
       );
       resetForm();
-      navigate(`/projects/${createdProject.id}`);
+      navigate(buildBoardHref(createdProject.id));
     } catch (submitError) {
       const backendMessage = getCreateProjectErrorMessage(submitError);
       const prefix = "Failed to create project.";

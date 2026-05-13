@@ -6115,6 +6115,155 @@ describe("app routing and shell", () => {
     });
   });
 
+  it("navigates to the created project's board after refreshing projects", async () => {
+    const commandOrder: string[] = [];
+    let projectCreated = false;
+    let postCreateRefreshStarted = false;
+    let resolvePostCreateRefresh: ((projects: unknown[]) => void) | undefined;
+    const refreshedProjects = [
+      {
+        id: "p-created-from-return",
+        name: "Created From Return",
+        key: "CFR",
+        repositories: [
+          {
+            id: "r-created",
+            name: "Created Repo",
+            path: "/repo/created-from-return",
+            is_default: true,
+          },
+        ],
+      },
+    ];
+
+    invokeMock.mockImplementation((command: string) => {
+      commandOrder.push(command);
+
+      if (command === "list_projects") {
+        if (projectCreated) {
+          if (!postCreateRefreshStarted) {
+            postCreateRefreshStarted = true;
+            return new Promise((resolve) => {
+              resolvePostCreateRefresh = resolve;
+            });
+          }
+          return Promise.resolve(refreshedProjects);
+        }
+        return Promise.resolve([]);
+      }
+      if (command === "get_opencode_dependency_status") {
+        return Promise.resolve({ state: "available" });
+      }
+      if (command === "get_project_opencode_selection_catalog") {
+        return Promise.resolve({
+          agents: [{ id: "agent-a", name: "Agent A" }],
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              models: [{ id: "model-a", name: "Model A" }],
+            },
+          ],
+        });
+      }
+      if (command === "create_project") {
+        projectCreated = true;
+        return Promise.resolve({
+          project: {
+            id: "p-created-from-return",
+            name: "Created From Return",
+            key: "CFR",
+            description: null,
+            default_run_agent: null,
+            default_run_provider: "provider-a",
+            default_run_model: "model-a",
+          },
+          repositories: [
+            {
+              id: "r-created",
+              name: "Created Repo",
+              repo_path: "/repo/created-from-return",
+              is_default: true,
+              setup_script: null,
+              cleanup_script: null,
+            },
+          ],
+        });
+      }
+      if (command === "list_project_tasks") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    renderAt("/projects");
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Create Project" }),
+      ).toBeTruthy();
+      expect(
+        (
+          screen.getByLabelText(
+            "Project default run provider",
+          ) as HTMLSelectElement
+        ).value,
+      ).toBe("provider-a");
+      expect(
+        (
+          screen.getByLabelText(
+            "Project default run model",
+          ) as HTMLSelectElement
+        ).value,
+      ).toBe("provider-a::model-a");
+    });
+
+    await fireEvent.input(screen.getByLabelText("Project name"), {
+      target: { value: "Created From Return" },
+    });
+    await fireEvent.input(screen.getByLabelText("Repository 1 path"), {
+      target: { value: "/repo/created-from-return" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create project" }),
+    );
+
+    await waitFor(() => {
+      expect(resolvePostCreateRefresh).toBeTypeOf("function");
+    });
+    expect(window.location.pathname).toBe("/projects");
+    expect(window.location.search).toBe("");
+
+    resolvePostCreateRefresh?.(refreshedProjects);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/board");
+      expect(window.location.search).toBe("?projectId=p-created-from-return");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Todo (0)" })).toBeTruthy();
+    });
+
+    const createdProjectLink = await screen.findByRole("link", {
+      name: /created from return/i,
+    });
+    expect(createdProjectLink.getAttribute("href")).toBe(
+      "/board?projectId=p-created-from-return",
+    );
+
+    const createIndex = commandOrder.indexOf("create_project");
+    const refreshIndex = commandOrder.findIndex(
+      (command, index) => command === "list_projects" && index > createIndex,
+    );
+    const boardTasksIndex = commandOrder.findIndex(
+      (command, index) =>
+        command === "list_project_tasks" && index > createIndex,
+    );
+
+    expect(createIndex).toBeGreaterThanOrEqual(0);
+    expect(refreshIndex).toBeGreaterThan(createIndex);
+    expect(boardTasksIndex).toBeGreaterThan(refreshIndex);
+  });
+
   it("keeps project-create form interactive when backend create fails", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") return Promise.resolve([]);
@@ -6144,7 +6293,46 @@ describe("app routing and shell", () => {
         screen.getByRole("button", { name: "Create project" }),
       ).toBeTruthy();
       expect(screen.getByLabelText("Project name")).toBeTruthy();
+      expect(
+        (
+          screen.getByLabelText(
+            "Project default run provider",
+          ) as HTMLSelectElement
+        ).value,
+      ).toBe("provider-a");
+      expect(
+        (
+          screen.getByLabelText(
+            "Project default run model",
+          ) as HTMLSelectElement
+        ).value,
+      ).toBe("provider-a::model-a");
     });
+
+    await fireEvent.input(screen.getByLabelText("Project name"), {
+      target: { value: "Duplicate Project" },
+    });
+    await fireEvent.input(screen.getByLabelText("Repository 1 path"), {
+      target: { value: "/repo/duplicate" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create project" }),
+    );
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/projects");
+      expect(window.location.search).toBe("");
+      expect(
+        screen.getByText("Failed to create project. project key already exists"),
+      ).toBeTruthy();
+    });
+
+    expect(
+      (screen.getByLabelText("Project name") as HTMLInputElement).value,
+    ).toBe("Duplicate Project");
+    expect(
+      (screen.getByLabelText("Repository 1 path") as HTMLInputElement).value,
+    ).toBe("/repo/duplicate");
   });
 
   it("keeps internal project-create failures from crashing the route", async () => {
@@ -6275,6 +6463,7 @@ describe("app routing and shell", () => {
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/projects/p-1");
+      expect(window.location.search).toBe("");
       expect(
         screen.getByRole("heading", { name: "Edit Project" }),
       ).toBeTruthy();
@@ -6289,6 +6478,9 @@ describe("app routing and shell", () => {
     expect(
       (screen.getByLabelText("Repository 1 path") as HTMLInputElement).value,
     ).toBe("/repo/main");
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === "create_project"),
+    ).toHaveLength(0);
   });
 
   it("regenerates the edit-project key after the user clears it and changes the name", async () => {
