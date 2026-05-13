@@ -17,6 +17,29 @@ import { buildBoardHref } from "../../../app/lib/boardNavigation";
 import CreateProjectPanel from "../components/CreateProjectPanel";
 import { useProjectsPageModel } from "../model/useProjectsPageModel";
 
+const RunProvidersLoadingState: Component = () => (
+  <section
+    class="projects-panel border-base-content/15 bg-base-200/35 border"
+    aria-busy="true"
+    aria-live="polite"
+    aria-labelledby="run-providers-loading-heading"
+  >
+    <div class="project-section-header border-base-content/10 mb-4 border-b pb-3">
+      <div>
+        <h2
+          id="run-providers-loading-heading"
+          class="projects-section-title m-0"
+        >
+          Loading run providers…
+        </h2>
+        <p class="text-base-content/55 mt-1 text-xs">
+          Preparing provider and model defaults.
+        </p>
+      </div>
+    </div>
+  </section>
+);
+
 const ProjectsScreen: Component = () => {
   const params = useParams();
   const navigate = useNavigate();
@@ -29,6 +52,9 @@ const ProjectsScreen: Component = () => {
     if (model.projects().length > 0) return false;
     return openCodeDependency.state() !== "available";
   };
+
+  const shouldShowRunProvidersLoading = () =>
+    model.mode() === "create" && model.isRunSelectionOptionsLoading();
 
   createEffect(() => {
     const projectId = params.projectId?.trim() ?? "";
@@ -69,7 +95,14 @@ const ProjectsScreen: Component = () => {
   return (
     <>
       <div>
-        <Show when={!shouldBlockCreatePanel()}>
+        <Show
+          when={!shouldBlockCreatePanel() && !shouldShowRunProvidersLoading()}
+          fallback={
+            <Show when={shouldShowRunProvidersLoading()}>
+              <RunProvidersLoadingState />
+            </Show>
+          }
+        >
           <CreateProjectPanel
             mode={model.mode}
             name={model.name}

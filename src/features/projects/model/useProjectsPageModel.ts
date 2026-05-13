@@ -92,10 +92,15 @@ export const useProjectsPageModel = () => {
   const [runDefaultsError, setRunDefaultsError] = createSignal("");
   const [isSubmitting, setIsSubmitting] = createSignal(false);
   const [isLoadingRunDefaults, setIsLoadingRunDefaults] = createSignal(false);
+  // Prevent the create form from rendering before provider discovery starts.
+  const [isRunSelectionOptionsLoading, setIsRunSelectionOptionsLoading] =
+    createSignal(true);
   const [runProviderOptions, setRunProviderOptions] = createSignal<
     RunSelectionOption[]
   >([]);
-  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>([]);
+  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>(
+    [],
+  );
   const [runModelOptions, setRunModelOptions] = createSignal<RunModelOption[]>(
     [],
   );
@@ -262,70 +267,75 @@ export const useProjectsPageModel = () => {
     const projectId = editingProjectId()?.trim() || "";
     const catalogProjectId = projectId;
     const requestVersion = ++runSelectionOptionsRequestVersion;
+    const isLatestRequest = () =>
+      requestVersion === runSelectionOptionsRequestVersion;
     const isCurrentRequest = () =>
-      requestVersion === runSelectionOptionsRequestVersion &&
-      (editingProjectId()?.trim() || "") === projectId;
+      isLatestRequest() && (editingProjectId()?.trim() || "") === projectId;
 
-    if (!projectId && openCodeDependency.state() !== "available") {
-      setIsLoadingRunDefaults(true);
-      setRunDefaultsError("");
-      const isAvailable =
-        await openCodeDependency.ensureAvailableForRequiredFlow();
-      if (!isCurrentRequest()) {
+    setIsRunSelectionOptionsLoading(true);
+
+    try {
+      if (!projectId && openCodeDependency.state() !== "available") {
+        setIsLoadingRunDefaults(true);
+        setRunDefaultsError("");
+        const isAvailable =
+          await openCodeDependency.ensureAvailableForRequiredFlow();
+        if (!isCurrentRequest()) {
+          return;
+        }
+        if (!isAvailable) {
+          setRunAgentOptions([]);
+          setRunProviderOptions([]);
+          setRunModelOptions([]);
+          return;
+        }
+      }
+
+      const cachedOptions = readRunSelectionOptionsCache(catalogProjectId);
+      if (cachedOptions) {
+        if (!isCurrentRequest()) {
+          return;
+        }
+        setRunProviderOptions(cachedOptions.providers);
+        setRunAgentOptions(cachedOptions.agents);
+        setRunModelOptions(cachedOptions.models);
+        applyResolvedRunDefaults({
+          agentId: defaultRunAgent(),
+          providerId: defaultRunProvider(),
+          modelId: defaultRunModel(),
+        });
+        setRunDefaultsError("");
         return;
       }
-      if (!isAvailable) {
+
+      setIsLoadingRunDefaults(true);
+      setRunDefaultsError("");
+      try {
+        const options = await getRunSelectionOptionsWithCache(catalogProjectId);
+        if (!isCurrentRequest()) {
+          return;
+        }
+        setRunProviderOptions(options.providers);
+        setRunAgentOptions(options.agents);
+        setRunModelOptions(options.models);
+        applyResolvedRunDefaults({
+          agentId: defaultRunAgent(),
+          providerId: defaultRunProvider(),
+          modelId: defaultRunModel(),
+        });
+      } catch {
+        if (!isCurrentRequest()) {
+          return;
+        }
         setRunAgentOptions([]);
         setRunProviderOptions([]);
         setRunModelOptions([]);
-        setIsLoadingRunDefaults(false);
-        return;
+        setRunDefaultsError("Failed to load run defaults.");
       }
-    }
-
-    const cachedOptions = readRunSelectionOptionsCache(catalogProjectId);
-    if (cachedOptions) {
-      if (!isCurrentRequest()) {
-        return;
-      }
-      setRunProviderOptions(cachedOptions.providers);
-      setRunAgentOptions(cachedOptions.agents);
-      setRunModelOptions(cachedOptions.models);
-      applyResolvedRunDefaults({
-        agentId: defaultRunAgent(),
-        providerId: defaultRunProvider(),
-        modelId: defaultRunModel(),
-      });
-      setRunDefaultsError("");
-      return;
-    }
-
-    setIsLoadingRunDefaults(true);
-    setRunDefaultsError("");
-    try {
-      const options = await getRunSelectionOptionsWithCache(catalogProjectId);
-      if (!isCurrentRequest()) {
-        return;
-      }
-      setRunProviderOptions(options.providers);
-      setRunAgentOptions(options.agents);
-      setRunModelOptions(options.models);
-      applyResolvedRunDefaults({
-        agentId: defaultRunAgent(),
-        providerId: defaultRunProvider(),
-        modelId: defaultRunModel(),
-      });
-    } catch {
-      if (!isCurrentRequest()) {
-        return;
-      }
-      setRunAgentOptions([]);
-      setRunProviderOptions([]);
-      setRunModelOptions([]);
-      setRunDefaultsError("Failed to load run defaults.");
     } finally {
-      if (isCurrentRequest()) {
+      if (isLatestRequest()) {
         setIsLoadingRunDefaults(false);
+        setIsRunSelectionOptionsLoading(false);
       }
     }
   };
@@ -1099,6 +1109,7 @@ export const useProjectsPageModel = () => {
     runDefaultsError,
     isSubmitting,
     isLoadingRunDefaults,
+    isRunSelectionOptionsLoading,
     runProviderOptions,
     runAgentOptions,
     runModelOptions,
