@@ -586,7 +586,8 @@ describe("app routing and shell", () => {
     },
   );
 
-  it("preserves board origin when opening new task detail after create", async () => {
+  it("returns to the same board context after creating a task from the board", async () => {
+    let listProjectTasksCalls = 0;
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects") {
         return Promise.resolve([
@@ -617,7 +618,22 @@ describe("app routing and shell", () => {
           ],
         });
       }
-      if (command === "list_project_tasks") return Promise.resolve([]);
+      if (command === "list_project_tasks") {
+        listProjectTasksCalls += 1;
+        return Promise.resolve(
+          listProjectTasksCalls > 2
+            ? [
+                {
+                  id: "task-1",
+                  title: "Created from board",
+                  status: "todo",
+                  display_key: "ALP-8",
+                  target_repository_name: "Main",
+                },
+              ]
+            : [],
+        );
+      }
       if (command === "create_task") {
         return Promise.resolve({
           id: "task-1",
@@ -626,31 +642,23 @@ describe("app routing and shell", () => {
           display_key: "ALP-8",
         });
       }
-      if (command === "get_task") {
-        return Promise.resolve({
-          id: "task-1",
-          title: "Created from board",
-          description: "",
-          status: "todo",
-          project_id: "p-1",
-          target_repository_id: "r-1",
-          target_repository_name: "Main",
-          display_key: "ALP-8",
-        });
-      }
-      if (command === "list_task_dependencies") {
-        return Promise.resolve({
-          task_id: "task-1",
-          parents: [],
-          children: [],
-        });
-      }
+      if (command === "list_task_runs") return Promise.resolve([]);
       return Promise.resolve(null);
     });
 
-    renderAt("/projects/p-1/tasks/new?origin=board");
+    renderAt("/board?projectId=p-1");
 
     await waitFor(() => {
+      expect(
+        (screen.getByRole("button", { name: "New task" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "New task" }));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/projects/p-1/tasks/new");
       expect(screen.getByText("Create task")).toBeTruthy();
       expect(screen.getByLabelText("Task title")).toBeTruthy();
     });
@@ -661,28 +669,10 @@ describe("app routing and shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("create_task", {
-        input: {
-          project_id: "p-1",
-          title: "Created from board",
-          description: undefined,
-          implementation_guide: undefined,
-          status: "todo",
-          repository_id: "r-1",
-        },
-      });
-    });
-
-    await waitFor(() => {
-      expect(window.location.pathname).toBe("/projects/p-1/tasks/task-1");
-      expect(window.location.search).toBe("?origin=board");
-      expect(screen.getByRole("link", { name: "Back to board" })).toBeTruthy();
-    });
-
-    await fireEvent.click(screen.getByRole("link", { name: "Back to board" }));
-
-    await waitFor(() => {
       expect(window.location.pathname).toBe("/board");
+      expect(window.location.search).toBe("?projectId=p-1");
+      expect(screen.queryByText("Create task")).toBeNull();
+      expect(screen.getByText("Created from board")).toBeTruthy();
     });
   });
 
@@ -4007,6 +3997,10 @@ describe("app routing and shell", () => {
         },
       });
       expect(screen.getByText("Updated task")).toBeTruthy();
+      expect(window.location.pathname).toBe("/projects/p-1/tasks/task-123");
+      expect(
+        invokeMock.mock.calls.some(([command]) => command === "create_task"),
+      ).toBe(false);
     });
 
     await fireEvent.click(
@@ -7008,7 +7002,8 @@ describe("app routing and shell", () => {
     expect(screen.getByRole("button", { name: "Create" })).toBeTruthy();
   });
 
-  it("navigates to the created task after successful create", async () => {
+  it("navigates to the current project board after successful create", async () => {
+    let listProjectTasksCalls = 0;
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_projects")
         return Promise.resolve([
@@ -7020,63 +7015,72 @@ describe("app routing and shell", () => {
               { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
             ],
           },
+          {
+            id: "p-2",
+            name: "Beta",
+            key: "BET",
+            repositories: [
+              { id: "r-2", name: "Main", path: "/repo/beta", is_default: true },
+            ],
+          },
         ]);
       if (command === "get_project") {
         return Promise.resolve({
-          id: "p-1",
-          name: "Alpha",
-          key: "ALP",
+          id: "p-2",
+          name: "Beta",
+          key: "BET",
           repositories: [
-            { id: "r-1", name: "Main", path: "/repo/main", is_default: true },
+            { id: "r-2", name: "Main", path: "/repo/beta", is_default: true },
           ],
         });
       }
-      if (command === "list_project_tasks") return Promise.resolve([]);
+      if (command === "list_project_tasks") {
+        listProjectTasksCalls += 1;
+        return Promise.resolve(
+          listProjectTasksCalls > 1
+            ? [
+                {
+                  id: "task-1",
+                  title: "Created task",
+                  status: "todo",
+                  display_key: "BET-1",
+                  target_repository_name: "Main",
+                },
+              ]
+            : [],
+        );
+      }
       if (command === "create_task")
         return Promise.resolve({
           id: "task-1",
           title: "Created task",
           status: "todo",
+          display_key: "BET-1",
         });
-      if (command === "get_task")
-        return Promise.resolve({
-          id: "task-1",
-          title: "Created task",
-          description: "",
-          status: "todo",
-          project_id: "p-1",
-          target_repository_id: "r-1",
-          target_repository_name: "Main",
-          display_key: "ALP-1",
-        });
-      if (command === "list_task_dependencies")
-        return Promise.resolve({
-          task_id: "task-1",
-          parents: [],
-          children: [],
-        });
+      if (command === "list_task_runs") return Promise.resolve([]);
       return Promise.resolve(null);
     });
 
-    await renderCreateTaskPage();
+    await renderCreateTaskPage("/projects/p-2/tasks/new");
     await fireEvent.input(screen.getByLabelText("Task title"), {
       target: { value: "Created task" },
     });
     await fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe("/projects/p-1/tasks/task-1");
+      expect(window.location.pathname).toBe("/board");
+      expect(window.location.search).toBe("?projectId=p-2");
       expect(screen.getByText("Created task")).toBeTruthy();
     });
 
     expect(invokeMock).toHaveBeenCalledWith("create_task", {
       input: {
-        project_id: "p-1",
+        project_id: "p-2",
         title: "Created task",
         description: undefined,
         implementation_guide: undefined,
         status: "todo",
-        repository_id: "r-1",
+        repository_id: "r-2",
       },
     });
   });
@@ -7120,6 +7124,11 @@ describe("app routing and shell", () => {
       expect(
         screen.getByText("Failed to create task. invalid task status"),
       ).toBeTruthy();
+      expect(window.location.pathname).toBe("/projects/p-1/tasks/new");
+      expect(window.location.search).toBe("");
+      expect(
+        (screen.getByLabelText("Task title") as HTMLInputElement).value,
+      ).toBe("Created task");
     });
   });
 

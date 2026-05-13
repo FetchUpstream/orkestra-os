@@ -257,7 +257,7 @@ export const useTaskCreateModel = () => {
         );
         return;
       }
-      navigate(createdTaskHref(created.id));
+      navigate(buildBoardHref(params.projectId));
     } catch (createError) {
       const backendMessage = getCreateTaskErrorMessage(createError);
       setActionError(
