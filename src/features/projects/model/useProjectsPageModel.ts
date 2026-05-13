@@ -41,7 +41,9 @@ import {
   readRunSelectionOptionsCache,
 } from "../../../app/lib/runSelectionOptionsCache";
 import {
+  decodeRunModelSelectionValue,
   filterModelsForProvider,
+  findRunModelForProvider,
   resolveProjectRunDefaults,
 } from "../../../app/lib/projectRunDefaults";
 import {
@@ -160,11 +162,7 @@ export const useProjectsPageModel = () => {
 
   const doesModelMatchProvider = (modelId: string, providerId: string) => {
     if (!modelId || !providerId) return true;
-    const selectedModel = runModelOptions().find(
-      (option) => option.id === modelId,
-    );
-    if (!selectedModel?.providerId) return true;
-    return selectedModel.providerId === providerId;
+    return !!findRunModelForProvider(runModelOptions(), providerId, modelId);
   };
 
   const hasRunSelectionOptions = createMemo(
@@ -187,8 +185,10 @@ export const useProjectsPageModel = () => {
     }
     if (!defaultRunModel().trim()) return "Default model is required.";
     if (
-      !visibleRunModelOptions().some(
-        (option) => option.id === defaultRunModel().trim(),
+      !findRunModelForProvider(
+        runModelOptions(),
+        defaultRunProvider().trim(),
+        defaultRunModel().trim(),
       )
     ) {
       return "Selected model is unavailable for the selected provider. Please reselect.";
@@ -196,14 +196,24 @@ export const useProjectsPageModel = () => {
     return "";
   });
 
-  const setDefaultRunModel = (modelId: string) => {
+  const setDefaultRunModel = (selectionValue: string) => {
+    const selectedIdentity = decodeRunModelSelectionValue(selectionValue);
+    const modelId = selectedIdentity.modelId.trim();
     setDefaultRunModelSignal(modelId);
     if (!modelId) return;
-    const selectedModel = runModelOptions().find(
-      (option) => option.id === modelId,
+    const currentProviderId = defaultRunProvider().trim();
+    const selectedProviderId = selectedIdentity.providerId.trim();
+    const selectedModel = findRunModelForProvider(
+      runModelOptions(),
+      currentProviderId || selectedProviderId,
+      modelId,
     );
-    const providerId = selectedModel?.providerId?.trim() || "";
-    if (providerId && providerId !== defaultRunProvider().trim()) {
+    const providerId =
+      currentProviderId ||
+      selectedProviderId ||
+      selectedModel?.providerId?.trim() ||
+      "";
+    if (!currentProviderId && providerId) {
       setDefaultRunProvider(providerId);
     }
   };

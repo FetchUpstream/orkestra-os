@@ -16,6 +16,7 @@ import type {
   RunModelOption,
   RunSelectionOption,
 } from "../../../app/lib/runs";
+import { encodeRunModelSelectionValue } from "../../../app/lib/projectRunDefaults";
 import { AppIcon } from "../../../components/ui/icons";
 import RunAgentSelectOptions from "../../runs/components/RunAgentSelectOptions";
 import RepositoryPathPicker from "./RepositoryPathPicker";
@@ -366,7 +367,10 @@ const CreateProjectPanel: Component<Props> = (props) =>
                     </span>
                     <select
                       class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
-                      value={props.defaultRunModel()}
+                      value={encodeRunModelSelectionValue(
+                        props.defaultRunProvider(),
+                        props.defaultRunModel(),
+                      )}
                       onChange={(event) =>
                         props.setDefaultRunModel(event.currentTarget.value)
                       }
@@ -378,7 +382,14 @@ const CreateProjectPanel: Component<Props> = (props) =>
                       <option value="">Select model</option>
                       <For each={props.visibleRunModelOptions()}>
                         {(option) => (
-                          <option value={option.id}>{option.label}</option>
+                          <option
+                            value={encodeRunModelSelectionValue(
+                              option.providerId || props.defaultRunProvider(),
+                              option.id,
+                            )}
+                          >
+                            {option.label}
+                          </option>
                         )}
                       </For>
                     </select>

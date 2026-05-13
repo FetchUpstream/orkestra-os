@@ -41,6 +41,52 @@ describe("resolveProjectRunDefaults", () => {
     });
   });
 
+  it("keeps valid duplicate model ids scoped to the persisted provider", () => {
+    const resolved = resolveProjectRunDefaults({
+      persisted: { providerId: "opencode-go", modelId: "kimi-2.6" },
+      providers: [
+        { id: "opencode-zen", label: "OpenCode Zen" },
+        { id: "opencode-go", label: "OpenCode Go" },
+      ],
+      models: [
+        { id: "kimi-2.6", label: "Kimi 2.6", providerId: "opencode-zen" },
+        { id: "kimi-2.6", label: "Kimi 2.6", providerId: "opencode-go" },
+      ],
+    });
+
+    expect(resolved).toMatchObject({
+      providerId: "opencode-go",
+      modelId: "kimi-2.6",
+      validAsIs: true,
+      repaired: false,
+      reason: "valid",
+    });
+  });
+
+  it("repairs stale providers with duplicate model ids without false provider mismatch", () => {
+    const resolved = resolveProjectRunDefaults({
+      persisted: { providerId: "opencode-stale", modelId: "kimi-2.6" },
+      providers: [
+        { id: "opencode-zen", label: "OpenCode Zen" },
+        { id: "opencode-go", label: "OpenCode Go" },
+      ],
+      models: [
+        { id: "kimi-2.6", label: "Kimi 2.6", providerId: "opencode-zen" },
+        { id: "kimi-2.6", label: "Kimi 2.6", providerId: "opencode-go" },
+      ],
+    });
+
+    expect(resolved).toMatchObject({
+      providerId: "opencode-zen",
+      modelId: "kimi-2.6",
+      validAsIs: false,
+      repaired: true,
+      requiresUserAction: false,
+      reason: "provider_invalid",
+    });
+    expect(resolved.reason).not.toBe("model_provider_mismatch");
+  });
+
   it("falls back to first provider/model when persisted values are missing", () => {
     const resolved = resolveProjectRunDefaults({
       persisted: { providerId: "", modelId: "" },
