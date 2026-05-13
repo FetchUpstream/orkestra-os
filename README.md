@@ -94,6 +94,12 @@ Useful OpenCode docs:
 * [Bun](https://bun.sh/)
 * [Rust and Cargo](https://www.rust-lang.org/tools/install)
 
+Install dependencies:
+
+```bash
+bun install
+```
+
 Run the desktop app in development mode:
 
 ```bash
