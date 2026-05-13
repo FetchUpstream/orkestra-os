@@ -172,7 +172,7 @@ const BoardTaskCard: Component<Props> = (props) => {
         }}
       >
         <div class="project-task-main gap-2">
-          <div class="flex items-start justify-between gap-3">
+          <div class="board-task-title-row flex items-start justify-between gap-3">
             <p class="project-task-title text-[13px] font-medium">
               {props.task.title}
             </p>

@@ -1155,6 +1155,7 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
   border: 0;
   border-radius: 0;
   overflow: visible;
@@ -1164,6 +1165,8 @@ textarea::placeholder {
 .project-task-item {
   background: var(--surface-alt);
   border: 1px solid var(--border);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .board-task-card {
@@ -1184,6 +1187,8 @@ textarea::placeholder {
   align-items: stretch;
   justify-content: flex-start;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
   padding: 14px;
   color: inherit;
   text-decoration: none;
@@ -1205,6 +1210,7 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
   margin-bottom: 0;
   background: var(--surface);
   transition:
@@ -1247,9 +1253,20 @@ textarea::placeholder {
 
 .board-task-title-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   min-width: 0;
+  width: 100%;
+}
+
+.board-task-title-row > .project-task-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .board-task-key-tag {
@@ -1258,6 +1275,10 @@ textarea::placeholder {
   flex-shrink: 0;
   align-self: flex-end;
   margin-top: 0;
+  max-width: 40%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: right;
 }
 
 .board-task-run-details {
@@ -1266,6 +1287,8 @@ textarea::placeholder {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--surface);
+  min-width: 0;
+  max-width: calc(100% - 28px);
 }
 
 .board-task-run-details-link {
@@ -1305,6 +1328,8 @@ textarea::placeholder {
   font-weight: 600;
   color: var(--text);
   line-height: 1.3;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .board-task-run-meta {
@@ -1333,6 +1358,9 @@ textarea::placeholder {
   margin-top: 6px;
   font-size: 0.78rem;
   color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .board-task-run-state-row .run-inline-loader {
@@ -1451,6 +1479,8 @@ textarea::placeholder {
 
 .board-task-description {
   margin: 0;
+  min-width: 0;
+  max-width: 100%;
   color: var(--text-muted);
   font-size: 0.82rem;
   line-height: 1.4;
