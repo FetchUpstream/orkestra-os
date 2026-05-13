@@ -407,14 +407,14 @@ const NewRunDetailScreen: Component = () => {
   });
   const commitPromptPrefill = createMemo(() => {
     if (isCommitPrefillLoading() || model.isDiffFilesLoading()) {
-      return "There are still uncommited changes, please attomically commit the following changes\n- Loading changed files...";
+      return "There are still uncommited changes, please atomically commit the following changes\n- Loading changed files...";
     }
     const fileList = changedFilePaths();
     const renderedFiles =
       fileList.length > 0
         ? fileList.map((path) => `- \`${path}\``).join("\n")
         : "- (Unable to determine changed files)";
-    return `There are still uncommited changes, please attomically commit the following changes\n${renderedFiles}`;
+    return `There are still uncommited changes, please atomically commit the following changes\n${renderedFiles}`;
   });
   const isCommitDisabled = createMemo(() => model.agent.isSubmittingPrompt());
   const reviewSubmissionPlan = createMemo(() =>
@@ -818,7 +818,7 @@ const NewRunDetailScreen: Component = () => {
     }
 
     const loadingPrefill =
-      "There are still uncommited changes, please attomically commit the following changes\n- Loading changed files...";
+      "There are still uncommited changes, please atomically commit the following changes\n- Loading changed files...";
     setIsCommitPrefillLoading(true);
     setCommitPromptDraft(loadingPrefill);
     setIsCommitModalOpen(true);

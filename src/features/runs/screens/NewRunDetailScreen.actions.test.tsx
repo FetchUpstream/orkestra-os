@@ -721,7 +721,7 @@ describe("NewRunDetailScreen git actions", () => {
     const textarea = await screen.findByLabelText("Commit request message");
     await waitFor(() => {
       expect((textarea as HTMLTextAreaElement).value).toContain(
-        "There are still uncommited changes, please attomically commit the following changes",
+        "There are still uncommited changes, please atomically commit the following changes",
       );
       expect((textarea as HTMLTextAreaElement).value).toContain(
         "- `src/foo.ts`",
