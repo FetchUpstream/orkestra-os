@@ -458,7 +458,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
 
   createEffect(() => {
     if (isMobile()) {
-      location.pathname;
+      void location.pathname;
       setMobileSidebarOpen(false);
     }
   });

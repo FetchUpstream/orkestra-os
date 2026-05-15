@@ -21,18 +21,15 @@ type LinkOpenRule = NonNullable<
   typeof runChatMarkdown.renderer.rules.link_open
 >;
 
+type LinkOpenRuleArgs = Parameters<LinkOpenRule>;
+
 const defaultLinkOpenRender =
   runChatMarkdown.renderer.rules.link_open ??
-  (((tokens: any, idx: number, options: any, _env: any, self: any) =>
+  (((tokens, idx, options, _env, self) =>
     self.renderToken(tokens, idx, options)) satisfies LinkOpenRule);
 
-runChatMarkdown.renderer.rules.link_open = (
-  tokens: any,
-  idx: number,
-  options: any,
-  env: any,
-  self: any,
-) => {
+runChatMarkdown.renderer.rules.link_open = (...args: LinkOpenRuleArgs) => {
+  const [tokens, idx, options, env, self] = args;
   const token = tokens[idx];
   const href = token.attrGet("href") ?? "";
 

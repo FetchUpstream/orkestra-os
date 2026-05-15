@@ -242,11 +242,11 @@ export const resolveProjectRunDefaults = (
   );
   const modelBelongsToProvider = !!modelForProvider;
 
-  let modelId = "";
-  if (requestedModelId && modelBelongsToProvider) {
-    modelId = requestedModelId;
-  } else {
-    modelId = modelsForProvider[0]?.id || "";
+  const hasRequestedModelForProvider = requestedModelId && modelBelongsToProvider;
+  const modelId = hasRequestedModelForProvider
+    ? requestedModelId
+    : modelsForProvider[0]?.id || "";
+  if (!hasRequestedModelForProvider) {
     if (!requestedModelId) {
       reason = reason === "valid" ? "model_missing" : reason;
     } else if (!model) {

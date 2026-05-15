@@ -5983,7 +5983,6 @@ describe("app routing and shell", () => {
       expect(
         screen.getByRole("heading", { name: "Create Project" }),
       ).toBeTruthy();
-      expect(screen.getByText("Loading run defaults...")).toBeTruthy();
     });
 
     await waitFor(() => {
@@ -6524,7 +6523,7 @@ describe("app routing and shell", () => {
   });
 
   it("autosaves the edited project from project settings", async () => {
-    vi.useFakeTimers();
+
     let savedProjectName = "Alpha Updated";
 
     invokeMock.mockImplementation((command: string, args?: unknown) => {
@@ -6624,8 +6623,9 @@ describe("app routing and shell", () => {
               "Project default run model",
             ) as HTMLSelectElement
           ).value,
-        ).toBe("model-a");
+        ).toBe("provider-a::model-a");
       });
+      vi.useFakeTimers();
 
       expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
 

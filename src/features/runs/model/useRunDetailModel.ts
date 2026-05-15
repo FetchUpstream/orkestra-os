@@ -2777,7 +2777,7 @@ export const useRunDetailModel = () => {
   };
 
   createEffect(() => {
-    params.runId;
+    void params.runId;
     setIsMergeWarningOpen(false);
     setMergeWarningRunId("");
   });
@@ -2902,7 +2902,7 @@ export const useRunDetailModel = () => {
   });
 
   createEffect(() => {
-    params.runId;
+    void params.runId;
     setReviewDraftComments([]);
   });
 
@@ -4629,8 +4629,6 @@ export const useRunDetailModel = () => {
       const payload = await getRunDiffFile(runId, path);
       if (params.runId !== runId) return;
       setDiffFilePayloads((current) => ({ ...current, [path]: payload }));
-    } catch (loadError) {
-      throw loadError;
     } finally {
       if (params.runId === runId) {
         setDiffFileLoadingPaths((current) => {
