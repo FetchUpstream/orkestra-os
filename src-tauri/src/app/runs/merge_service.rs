@@ -24,7 +24,6 @@ use git2::{
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::process::Command;
 
 #[derive(Clone, Debug)]
 pub struct RunsMergeService {
@@ -618,33 +617,17 @@ impl RunsMergeService {
         branch_name: &str,
         target_oid: git2::Oid,
     ) -> Result<(), AppError> {
+        Self::update_branch_reference(repo, branch_name, target_oid)?;
+
         if !Self::is_head_on_branch(repo, branch_name)? {
-            return Self::update_branch_reference(repo, branch_name, target_oid);
-        }
-
-        let workdir = repo.workdir().ok_or_else(|| {
-            AppError::validation("source repository has no working directory".to_string())
-        })?;
-        let target = target_oid.to_string();
-        let merge_status = Command::new("git")
-            .arg("merge")
-            .arg("--ff-only")
-            .arg(target)
-            .current_dir(workdir)
-            .status()
-            .map_err(|err| AppError::validation(format!("failed to execute git merge: {err}")))?;
-
-        if !merge_status.success() {
-            return Err(AppError::validation(format!(
-                "failed to fast-forward source branch '{branch_name}'"
-            )));
+            return Ok(());
         }
 
         let mut checkout = CheckoutBuilder::new();
-        checkout.safe();
+        checkout.force();
         repo.checkout_head(Some(&mut checkout)).map_err(|err| {
             AppError::validation(format!(
-                "failed to safely refresh source branch '{branch_name}' working tree: {err}"
+                "failed to refresh source branch '{branch_name}' working tree after fast-forward: {err}"
             ))
         })
     }
