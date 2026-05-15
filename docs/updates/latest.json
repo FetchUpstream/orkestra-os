@@ -2,11 +2,12 @@
   "version": "0.0.3",
   "releasedAt": "2026-05-15T08:04:05Z",
   "notes": [
-    "Run details and chat feel much better: paged history, smoother streaming text, better scroll anchoring, and clearer subagent activity during long sessions.",
-    "Board and task workflows are more reliable: blocker details appear before starting work, warning states are clearer, and board/task status updates handle stale state more cleanly.",
-    "Run setup is more flexible: new run worktrees can use a selected source branch, and run cards now show clearer, more human-friendly identifiers.",
-    "Project setup is easier: local repository paths now support fuzzy search, and project defaults, settings autosave, and repository guidance are more polished.",
-    "The app shell is more polished overall: the About modal was refreshed, sidebar behavior was improved, and supported Linux installs can now surface package update notices."
+    "Runs now surface OpenCode session failures clearly instead of leaving work looking stuck, with failed runs shown in the board and run details.",
+    "Merge and rebase flows are more reliable: conflict pauses are detected from the real Git state, and Continue Rebase or Abort Rebase actions stay available when you need them.",
+    "Project and task creation flows land in the right place faster: new projects and new tasks take you back to the board, and project setup waits for run providers and models before showing defaults.",
+    "Default run model selection is more accurate when providers expose overlapping model names, keeping the chosen model tied to the selected provider.",
+    "The app shell is more polished: the desktop window opens maximized, long board card titles wrap better, the new-task action hides until a project is selected, and the quit warning counts active runs correctly.",
+    "Diff and editor interactions are smoother, with Python, Go, and PHP syntax highlighting plus more reliable tooltip, status-menu, and source-branch dropdown dismissal."
   ],
   "commands": {
     "deb": "sudo apt update && sudo apt install --only-upgrade orkestraos",
