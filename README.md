@@ -58,7 +58,7 @@ Install from Cloudsmith:
 
 ```bash
 curl -sLf \
-  'https://dl.cloudsmith.io/public/fetchupstream/orkestra/cfg/setup/bash.deb.sh' \
+  'https://dl.cloudsmith.io/public/fetchupstream/orkestra-os/cfg/setup/bash.deb.sh' \
   | sudo distro=any-distro codename=any-version bash
 
 sudo apt update
