@@ -47,7 +47,7 @@ type BoardTaskDescriptionPreview = {
   isTruncated: boolean;
 };
 
-function boardTaskDescriptionGraphemes(text: string): string[] {
+function* boardTaskDescriptionGraphemes(text: string): Iterable<string> {
   const Segmenter = (
     Intl as typeof Intl & {
       Segmenter?: GraphemeSegmenterConstructor;
@@ -55,25 +55,36 @@ function boardTaskDescriptionGraphemes(text: string): string[] {
   ).Segmenter;
 
   if (!Segmenter) {
-    return Array.from(text);
+    yield* text;
+    return;
   }
 
   const segmenter = new Segmenter(undefined, { granularity: "grapheme" });
 
-  return Array.from(segmenter.segment(text), ({ segment }) => segment);
+  for (const { segment } of segmenter.segment(text)) {
+    yield segment;
+  }
 }
 
 function boardTaskDescriptionPreview(
   text: string,
 ): BoardTaskDescriptionPreview {
-  const graphemes = boardTaskDescriptionGraphemes(text);
+  const previewGraphemes: string[] = [];
 
-  if (graphemes.length <= BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH) {
+  for (const grapheme of boardTaskDescriptionGraphemes(text)) {
+    previewGraphemes.push(grapheme);
+
+    if (previewGraphemes.length > BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH) {
+      break;
+    }
+  }
+
+  if (previewGraphemes.length <= BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH) {
     return { text, isTruncated: false };
   }
 
   return {
-    text: `${graphemes
+    text: `${previewGraphemes
       .slice(0, BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH)
       .join("")
       .trimEnd()}…`,

@@ -13,7 +13,7 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen } from "@solidjs/testing-library";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Route, Router } from "@solidjs/router";
 import BoardTaskCard from "./BoardTaskCard";
 
@@ -49,6 +49,10 @@ const renderBoardTaskCard = (description: string) => {
 describe("BoardTaskCard", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/board");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("starts task drag from a run mini-card link", async () => {
@@ -287,6 +291,27 @@ describe("BoardTaskCard", () => {
 
     expect(screen.getByText(`${"a".repeat(999)}👍🏽…`)).toBeTruthy();
     expect(screen.queryByText(`${"a".repeat(999)}👍…`)).toBeNull();
+  });
+
+  it("stops segmenting after the preview limit plus one grapheme", () => {
+    let segmentedCount = 0;
+
+    vi.stubGlobal("Intl", {
+      ...Intl,
+      Segmenter: class {
+        *segment(text: string) {
+          for (const segment of text) {
+            segmentedCount += 1;
+            yield { segment };
+          }
+        }
+      },
+    });
+
+    renderBoardTaskCard("a".repeat(5000));
+
+    expect(screen.getByText(`${"a".repeat(1000)}…`)).toBeTruthy();
+    expect(segmentedCount).toBe(1001);
   });
 
   it("does not mutate the underlying task description after render", () => {
