@@ -965,7 +965,9 @@ const STREAM_MAX_RECONNECT_ATTEMPTS: u32 = 8;
 const STREAM_RECONNECT_STABLE_RESET_AFTER: Duration = Duration::from_secs(5);
 const RUN_SERVER_IDLE_GRACE_PERIOD: Duration = Duration::from_secs(5 * 60);
 const RUN_SERVER_CLEANUP_SUPERVISOR_INTERVAL: Duration = Duration::from_secs(60);
-const GENERIC_OPENCODE_SESSION_ERROR_MESSAGE: &str = "The provider returned an error.";
+const GENERIC_OPENCODE_SESSION_ERROR_NAME: &str = "UnknownError";
+const OPENCODE_SESSION_ERROR_NO_MESSAGE: &str = "No error message provided.";
+const OPENCODE_SESSION_ERROR_NO_DETAILS: &str = "No error details provided.";
 
 #[derive(Clone)]
 pub struct RunsOpenCodeService {
@@ -1990,9 +1992,11 @@ impl RunsOpenCodeService {
         match (name, message) {
             (Some(name), Some(message)) if name == message => name.to_string(),
             (Some(name), Some(message)) => format!("{name}: {message}"),
-            (Some(name), None) => name.to_string(),
-            (None, Some(message)) => message.to_string(),
-            (None, None) => GENERIC_OPENCODE_SESSION_ERROR_MESSAGE.to_string(),
+            (Some(name), None) => format!("{name}: {OPENCODE_SESSION_ERROR_NO_MESSAGE}"),
+            (None, Some(message)) => format!("{GENERIC_OPENCODE_SESSION_ERROR_NAME}: {message}"),
+            (None, None) => format!(
+                "{GENERIC_OPENCODE_SESSION_ERROR_NAME}: {OPENCODE_SESSION_ERROR_NO_DETAILS}"
+            ),
         }
     }
 
@@ -6967,7 +6971,21 @@ mod tests {
 
         assert_eq!(
             RunsOpenCodeService::format_opencode_session_error_message(&details),
-            super::GENERIC_OPENCODE_SESSION_ERROR_MESSAGE
+            "UnknownError: No error details provided."
+        );
+    }
+
+    #[test]
+    fn opencode_session_error_message_uses_name_with_message_fallback() {
+        let details = RunsOpenCodeService::parse_opencode_session_error_details(
+            r#"{"type":"session.error","properties":{"error":{"name":"UnknownError","data":{}}}}"#,
+        );
+
+        assert_eq!(details.name.as_deref(), Some("UnknownError"));
+        assert_eq!(details.message.as_deref(), None);
+        assert_eq!(
+            RunsOpenCodeService::format_opencode_session_error_message(&details),
+            "UnknownError: No error message provided."
         );
     }
 
@@ -8652,7 +8670,7 @@ mod tests {
         assert_eq!(fetch_run_status(&pool, "run-1").await, "failed");
         assert_eq!(
             fetch_run_error_message(&pool, "run-1").await.as_deref(),
-            Some(super::GENERIC_OPENCODE_SESSION_ERROR_MESSAGE)
+            Some("UnknownError: No error details provided.")
         );
         assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
     }
