@@ -109,9 +109,11 @@ impl RunsRepository {
     ) -> Result<Option<RunInitialPromptContext>, AppError> {
         let row = sqlx::query(
             "SELECT r.id AS run_id, t.title AS task_title, t.description AS task_description, t.implementation_guide AS task_implementation_guide,
+                    p.run_prepend_instructions AS project_run_prepend_instructions,
                     pr.setup_script AS setup_script, pr.cleanup_script AS cleanup_script
               FROM runs r
               JOIN tasks t ON t.id = r.task_id
+              JOIN projects p ON p.id = t.project_id
               LEFT JOIN project_repositories pr ON pr.id = r.target_repo_id
               WHERE r.id = ?",
         )
@@ -125,6 +127,7 @@ impl RunsRepository {
             task_title: row.get("task_title"),
             task_description: row.get("task_description"),
             task_implementation_guide: row.get("task_implementation_guide"),
+            project_run_prepend_instructions: row.get("project_run_prepend_instructions"),
             setup_script: row.get("setup_script"),
             cleanup_script: row.get("cleanup_script"),
         }))
@@ -1322,6 +1325,31 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(task_status, "doing");
+    }
+
+    #[tokio::test]
+    async fn get_run_initial_prompt_context_loads_project_prepend_instructions() {
+        let repository = setup_repository().await;
+        let pool = repository.pool.clone();
+        seed_project_task_and_repository(&pool).await;
+        sqlx::query("UPDATE projects SET run_prepend_instructions = ? WHERE id = ?")
+            .bind("Use Bun.\nDo not use npm.")
+            .bind("project-1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        seed_run(&pool, "run-1", "queued", "2024-01-01T00:00:00Z").await;
+
+        let context = repository
+            .get_run_initial_prompt_context("run-1")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            context.project_run_prepend_instructions.as_deref(),
+            Some("Use Bun.\nDo not use npm.")
+        );
     }
 
     #[test]

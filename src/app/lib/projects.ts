@@ -35,6 +35,7 @@ export type Project = {
   defaultRunProvider?: string | null;
   defaultRunModel?: string | null;
   envVars?: ProjectEnvironmentVariable[] | null;
+  runPrependInstructions?: string | null;
   repositories: ProjectRepository[];
 };
 
@@ -46,6 +47,7 @@ export type CreateProjectInput = {
   defaultRunProvider: string;
   defaultRunModel: string;
   envVars?: ProjectEnvironmentVariable[];
+  runPrependInstructions?: string;
   repositories: Array<{
     id?: string;
     path: string;
@@ -80,6 +82,7 @@ type ProjectDetailsResponse = {
     default_run_provider?: string | null;
     default_run_model?: string | null;
     env_vars?: ProjectEnvironmentVariable[] | null;
+    run_prepend_instructions?: string | null;
   };
   repositories: Array<{
     id: string;
@@ -91,7 +94,8 @@ type ProjectDetailsResponse = {
   }>;
 };
 
-export const listProjects = () => invoke<Project[]>("list_projects");
+export const listProjects = async () =>
+  (await invoke<ProjectResponse[]>("list_projects")).map(normalizeProject);
 
 export const createProject = async (
   input: CreateProjectInput,
@@ -104,6 +108,8 @@ export const createProject = async (
     default_run_provider: input.defaultRunProvider,
     default_run_model: input.defaultRunModel,
     env_vars: input.envVars?.length ? input.envVars : undefined,
+    run_prepend_instructions:
+      input.runPrependInstructions?.trim() || undefined,
     repositories: input.repositories.map((repository) => ({
       repo_path: repository.path,
       name: repository.name ?? repository.path,
@@ -125,6 +131,7 @@ export const createProject = async (
     defaultRunProvider: response.project.default_run_provider,
     defaultRunModel: response.project.default_run_model,
     envVars: response.project.env_vars,
+    runPrependInstructions: response.project.run_prepend_instructions,
     repositories: response.repositories.map((repository) => ({
       id: repository.id,
       path: repository.repo_path,
@@ -148,6 +155,8 @@ export const updateProject = async (
     default_run_provider: input.defaultRunProvider,
     default_run_model: input.defaultRunModel,
     env_vars: input.envVars?.length ? input.envVars : undefined,
+    run_prepend_instructions:
+      input.runPrependInstructions?.trim() || undefined,
     repositories: input.repositories.map((repository) => ({
       id: repository.id,
       repo_path: repository.path,
@@ -172,6 +181,7 @@ export const updateProject = async (
     defaultRunProvider: response.project.default_run_provider,
     defaultRunModel: response.project.default_run_model,
     envVars: response.project.env_vars,
+    runPrependInstructions: response.project.run_prepend_instructions,
     repositories: response.repositories.map((repository) => ({
       id: repository.id,
       path: repository.repo_path,
@@ -186,6 +196,18 @@ export const updateProject = async (
 type ProjectResponse =
   | Project
   | {
+      id: string;
+      name: string;
+      key: string;
+      description?: string | null;
+      default_run_agent?: string | null;
+      default_run_provider?: string | null;
+      default_run_model?: string | null;
+      env_vars?: ProjectEnvironmentVariable[] | null;
+      run_prepend_instructions?: string | null;
+      repositories?: ProjectRepository[];
+    }
+  | {
       project: {
         id: string;
         name: string;
@@ -195,6 +217,7 @@ type ProjectResponse =
         default_run_provider?: string | null;
         default_run_model?: string | null;
         env_vars?: ProjectEnvironmentVariable[] | null;
+        run_prepend_instructions?: string | null;
       };
       repositories: Array<{
         id?: string;
@@ -218,6 +241,7 @@ const normalizeProject = (response: ProjectResponse): Project => {
       defaultRunProvider: response.project.default_run_provider,
       defaultRunModel: response.project.default_run_model,
       envVars: response.project.env_vars,
+      runPrependInstructions: response.project.run_prepend_instructions,
       repositories: response.repositories.map((repository) => ({
         id: repository.id,
         path: repository.path ?? repository.repo_path ?? "",
@@ -229,7 +253,28 @@ const normalizeProject = (response: ProjectResponse): Project => {
     };
   }
 
-  return response;
+  if (
+    "default_run_agent" in response ||
+    "default_run_provider" in response ||
+    "default_run_model" in response ||
+    "env_vars" in response ||
+    "run_prepend_instructions" in response
+  ) {
+    return {
+      id: response.id,
+      name: response.name,
+      key: response.key,
+      description: response.description,
+      defaultRunAgent: response.default_run_agent,
+      defaultRunProvider: response.default_run_provider,
+      defaultRunModel: response.default_run_model,
+      envVars: response.env_vars,
+      runPrependInstructions: response.run_prepend_instructions,
+      repositories: response.repositories ?? [],
+    };
+  }
+
+  return response as Project;
 };
 
 export const getProject = async (id: string): Promise<Project> => {
@@ -254,6 +299,7 @@ export const cloneProject = async (
     defaultRunProvider: response.project.default_run_provider,
     defaultRunModel: response.project.default_run_model,
     envVars: response.project.env_vars,
+    runPrependInstructions: response.project.run_prepend_instructions,
     repositories: response.repositories.map((repository) => ({
       id: repository.id,
       path: repository.repo_path,

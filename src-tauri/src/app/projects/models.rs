@@ -23,6 +23,7 @@ pub struct Project {
     pub default_run_provider: Option<String>,
     pub default_run_model: Option<String>,
     pub env_vars: Option<Vec<ProjectEnvVar>>,
+    pub run_prepend_instructions: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -75,6 +76,7 @@ pub struct NewProject {
     pub default_run_provider: Option<String>,
     pub default_run_model: Option<String>,
     pub env_vars: Option<Vec<ProjectEnvVar>>,
+    pub run_prepend_instructions: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub repositories: Vec<NewProjectRepository>,

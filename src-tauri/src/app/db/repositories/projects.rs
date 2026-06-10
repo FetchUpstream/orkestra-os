@@ -64,7 +64,7 @@ impl ProjectsRepository {
 
     pub async fn list_projects(&self) -> Result<Vec<Project>, ProjectsRepositoryError> {
         let rows = sqlx::query(
-            "SELECT id, key, name, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, env_vars_json, created_at, updated_at
+            "SELECT id, key, name, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, env_vars_json, run_prepend_instructions, created_at, updated_at
             FROM projects
             ORDER BY created_at DESC",
         )
@@ -85,6 +85,7 @@ impl ProjectsRepository {
                     default_run_provider: row.get("default_run_provider"),
                     default_run_model: row.get("default_run_model"),
                     env_vars: parse_project_env_vars(row.get("env_vars_json"))?,
+                    run_prepend_instructions: row.get("run_prepend_instructions"),
                     created_at: row.get("created_at"),
                     updated_at: row.get("updated_at"),
                 })
@@ -99,7 +100,7 @@ impl ProjectsRepository {
         id: &str,
     ) -> Result<Option<ProjectDetails>, ProjectsRepositoryError> {
         let maybe_project = sqlx::query(
-            "SELECT id, key, name, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, env_vars_json, created_at, updated_at
+            "SELECT id, key, name, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, env_vars_json, run_prepend_instructions, created_at, updated_at
             FROM projects
             WHERE id = ?",
         )
@@ -122,6 +123,7 @@ impl ProjectsRepository {
             default_run_provider: project_row.get("default_run_provider"),
             default_run_model: project_row.get("default_run_model"),
             env_vars: parse_project_env_vars(project_row.get("env_vars_json"))?,
+            run_prepend_instructions: project_row.get("run_prepend_instructions"),
             created_at: project_row.get("created_at"),
             updated_at: project_row.get("updated_at"),
         };
@@ -194,8 +196,8 @@ impl ProjectsRepository {
         let env_vars_json = serialize_project_env_vars(&input.env_vars)?;
 
         sqlx::query(
-            "INSERT INTO projects (id, name, key, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, env_vars_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO projects (id, name, key, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, env_vars_json, run_prepend_instructions, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&input.id)
         .bind(&input.name)
@@ -206,6 +208,7 @@ impl ProjectsRepository {
         .bind(&input.default_run_provider)
         .bind(&input.default_run_model)
         .bind(&env_vars_json)
+        .bind(&input.run_prepend_instructions)
         .bind(&input.created_at)
         .bind(&input.updated_at)
         .execute(&mut *tx)
@@ -274,6 +277,7 @@ impl ProjectsRepository {
                 default_run_provider: input.default_run_provider,
                 default_run_model: input.default_run_model,
                 env_vars: input.env_vars,
+                run_prepend_instructions: input.run_prepend_instructions,
                 created_at: input.created_at,
                 updated_at: input.updated_at,
             },
@@ -291,6 +295,7 @@ impl ProjectsRepository {
         default_run_provider: &str,
         default_run_model: &str,
         env_vars: &Option<Vec<ProjectEnvVar>>,
+        run_prepend_instructions: &Option<String>,
         updated_at: &str,
         repositories: &[UpsertProjectRepository],
     ) -> Result<Option<ProjectDetails>, ProjectsRepositoryError> {
@@ -314,7 +319,7 @@ impl ProjectsRepository {
         }
 
         sqlx::query(
-            "UPDATE projects SET name = ?, key = ?, description = ?, default_run_agent = ?, default_run_provider = ?, default_run_model = ?, env_vars_json = ?, updated_at = ? WHERE id = ?",
+            "UPDATE projects SET name = ?, key = ?, description = ?, default_run_agent = ?, default_run_provider = ?, default_run_model = ?, env_vars_json = ?, run_prepend_instructions = ?, updated_at = ? WHERE id = ?",
         )
         .bind(name)
         .bind(key)
@@ -323,6 +328,7 @@ impl ProjectsRepository {
         .bind(default_run_provider)
         .bind(default_run_model)
         .bind(&env_vars_json)
+        .bind(run_prepend_instructions)
         .bind(updated_at)
         .bind(project_id)
         .execute(&mut *tx)
@@ -465,7 +471,7 @@ impl ProjectsRepository {
 
         let source_project_row =
             sqlx::query(
-                "SELECT id, description, default_run_agent, default_run_provider, default_run_model, env_vars_json FROM projects WHERE id = ? LIMIT 1",
+                "SELECT id, description, default_run_agent, default_run_provider, default_run_model, env_vars_json, run_prepend_instructions FROM projects WHERE id = ? LIMIT 1",
             )
                 .bind(source_project_id)
                 .fetch_optional(&mut *tx)
@@ -509,8 +515,8 @@ impl ProjectsRepository {
         }
 
         sqlx::query(
-            "INSERT INTO projects (id, name, key, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, env_vars_json, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO projects (id, name, key, description, default_repo_id, default_run_agent, default_run_provider, default_run_model, env_vars_json, run_prepend_instructions, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(new_project_id)
         .bind(new_name)
@@ -538,6 +544,12 @@ impl ProjectsRepository {
         .bind(
             source_project_row
                 .try_get::<Option<String>, _>("env_vars_json")
+                .ok()
+                .flatten(),
+        )
+        .bind(
+            source_project_row
+                .try_get::<Option<String>, _>("run_prepend_instructions")
                 .ok()
                 .flatten(),
         )

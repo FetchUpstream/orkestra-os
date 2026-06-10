@@ -53,6 +53,7 @@ describe("projects contract", () => {
       defaultRunProvider: "provider-a",
       defaultRunModel: "model-a",
       envVars: [{ key: "API_TOKEN", value: "secret" }],
+      runPrependInstructions: "Use Bun.\nDo not use npm.",
       repositories: [{ path: "/repo/main", is_default: true }],
     };
 
@@ -67,6 +68,7 @@ describe("projects contract", () => {
         default_run_provider: "provider-a",
         default_run_model: "model-a",
         env_vars: [{ key: "API_TOKEN", value: "secret" }],
+        run_prepend_instructions: "Use Bun.\nDo not use npm.",
         repositories: [
           {
             repo_path: "/repo/main",
@@ -100,6 +102,7 @@ describe("projects contract", () => {
       defaultRunProvider: "provider-a",
       defaultRunModel: "model-a",
       envVars: [{ key: "NODE_ENV", value: "test" }],
+      runPrependInstructions: "  Keep changes scoped.  ",
       repositories: [{ id: "repo-1", path: "/repo/main", is_default: true }],
     });
 
@@ -113,6 +116,7 @@ describe("projects contract", () => {
         default_run_provider: "provider-a",
         default_run_model: "model-a",
         env_vars: [{ key: "NODE_ENV", value: "test" }],
+        run_prepend_instructions: "Keep changes scoped.",
         repositories: [
           {
             id: "repo-1",
@@ -137,6 +141,7 @@ describe("projects contract", () => {
           description: null,
           default_run_agent: "agent-a",
           env_vars: [{ key: "API_TOKEN", value: "secret" }],
+          run_prepend_instructions: "Follow project rules.",
         },
         repositories: [
           {
@@ -175,6 +180,7 @@ describe("projects contract", () => {
       description: null,
       defaultRunAgent: "agent-a",
       envVars: [{ key: "API_TOKEN", value: "secret" }],
+      runPrependInstructions: "Follow project rules.",
       repositories: [
         {
           id: "repo-path",
@@ -193,6 +199,7 @@ describe("projects contract", () => {
       defaultRunProvider: undefined,
       defaultRunModel: undefined,
       envVars: undefined,
+      runPrependInstructions: undefined,
       repositories: [
         {
           id: "repo-repo-path",

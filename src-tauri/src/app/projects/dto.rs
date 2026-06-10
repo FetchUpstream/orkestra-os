@@ -25,6 +25,7 @@ pub struct ProjectDto {
     pub default_run_provider: Option<String>,
     pub default_run_model: Option<String>,
     pub env_vars: Option<Vec<ProjectEnvVar>>,
+    pub run_prepend_instructions: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -38,6 +39,8 @@ pub struct CreateProjectRequest {
     pub default_run_provider: String,
     pub default_run_model: String,
     pub env_vars: Option<Vec<ProjectEnvVar>>,
+    #[serde(default)]
+    pub run_prepend_instructions: Option<String>,
     pub repositories: Vec<CreateProjectRepositoryRequest>,
 }
 
@@ -50,6 +53,8 @@ pub struct UpdateProjectRequest {
     pub default_run_provider: String,
     pub default_run_model: String,
     pub env_vars: Option<Vec<ProjectEnvVar>>,
+    #[serde(default)]
+    pub run_prepend_instructions: Option<String>,
     pub repositories: Vec<CreateProjectRepositoryRequest>,
 }
 
