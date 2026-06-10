@@ -309,7 +309,7 @@ const boardLabelForRunState = (
     case "ready_to_merge":
       return "Ready to Merge";
     case "error":
-      return "Error in run";
+      return "Error";
   }
 };
 

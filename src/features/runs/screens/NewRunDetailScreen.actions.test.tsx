@@ -1342,10 +1342,12 @@ describe("NewRunDetailScreen git actions", () => {
       expect(payload.connectionStatus).toBe("error");
     });
 
-    expect(screen.getByText("Error in run")).toBeTruthy();
+    expect(screen.getByText("Error")).toBeTruthy();
+    expect(screen.getByText("UnknownError")).toBeTruthy();
+    expect(screen.getByText("Provider returned error")).toBeTruthy();
     expect(
-      screen.getByText("UnknownError: Provider returned error"),
-    ).toBeTruthy();
+      screen.queryByText("UnknownError: Provider returned error"),
+    ).toBeNull();
     expect(
       document.querySelector(".run-detail-error-status__icon"),
     ).toBeTruthy();
@@ -1353,16 +1355,32 @@ describe("NewRunDetailScreen git actions", () => {
     window.removeEventListener("run-detail:topbar-config", onTopbarConfig);
   });
 
-  it("shows a useful fallback for failed runs without an error message", () => {
+  it.each(["", null])(
+    "shows a useful fallback for failed runs without an error message (%s)",
+    (errorMessage) => {
+      modelFactoryMock.mockReturnValue(
+        createModelStub({
+          run: { status: "failed", errorMessage },
+        }),
+      );
+
+      render(() => <NewRunDetailScreen />);
+
+      expect(screen.getByText("Error")).toBeTruthy();
+      expect(screen.getByText("The provider returned an error.")).toBeTruthy();
+    },
+  );
+
+  it("shows a useful fallback for failed runs with whitespace error messages", () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
-        run: { status: "failed", errorMessage: "" },
+        run: { status: "failed", errorMessage: "   " },
       }),
     );
 
     render(() => <NewRunDetailScreen />);
 
-    expect(screen.getByText("Error in run")).toBeTruthy();
+    expect(screen.getByText("Error")).toBeTruthy();
     expect(screen.getByText("The provider returned an error.")).toBeTruthy();
   });
 

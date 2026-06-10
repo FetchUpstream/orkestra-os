@@ -3257,6 +3257,14 @@ textarea::placeholder {
   text-transform: uppercase;
 }
 
+.run-detail-error-status__name {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
 .run-detail-error-status__message {
   margin: 2px 0 0;
   color: var(--text);

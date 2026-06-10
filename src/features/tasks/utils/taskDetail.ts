@@ -144,7 +144,7 @@ export const formatRunStatus = (status: RunStatus) => {
   if (status === "in_progress") return "In progress";
   if (status === "idle") return "Idle";
   if (status === "complete") return "Complete";
-  if (status === "failed") return "Failed";
+  if (status === "failed") return "Error";
   if (status === "rejected") return "Rejected";
   return "Cancelled";
 };

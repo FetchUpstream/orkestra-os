@@ -380,7 +380,7 @@ describe("useBoardModel run settings defaults", () => {
           expect.objectContaining({
             runId: "run-4",
             identityLabel: "RUN-44",
-            label: "Error in run",
+            label: "Error",
             state: "error",
             status: "failed",
             statusLabel: "Error",

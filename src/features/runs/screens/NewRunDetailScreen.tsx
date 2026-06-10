@@ -190,13 +190,51 @@ const summarizeEventPayload = (payload: unknown): string => {
   return normalizeLogText(String(payload));
 };
 
-const failedRunErrorMessage = (runValue: {
+type FailedRunErrorDetails = {
+  name: string | null;
+  message: string;
+};
+
+const DEFAULT_FAILED_RUN_ERROR_MESSAGE = "The provider returned an error.";
+const NO_ERROR_MESSAGE_PROVIDED = "No error message provided.";
+const ERROR_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]*$/;
+
+const isLikelyErrorName = (value: string): boolean =>
+  ERROR_NAME_PATTERN.test(value.trim());
+
+const failedRunErrorDetails = (runValue: {
   errorMessage?: string | null;
-}): string => {
+}): FailedRunErrorDetails => {
   const errorMessage = runValue.errorMessage;
-  return typeof errorMessage === "string" && errorMessage.trim().length > 0
-    ? redactInternalIds(errorMessage.trim())
-    : "The provider returned an error.";
+  const normalizedMessage =
+    typeof errorMessage === "string"
+      ? redactInternalIds(errorMessage.trim()).trim()
+      : "";
+
+  if (!normalizedMessage) {
+    return { name: null, message: DEFAULT_FAILED_RUN_ERROR_MESSAGE };
+  }
+
+  const separatorIndex = normalizedMessage.indexOf(":");
+  if (separatorIndex > 0) {
+    const name = normalizedMessage.slice(0, separatorIndex).trim();
+    const message = normalizedMessage.slice(separatorIndex + 1).trim();
+    if (isLikelyErrorName(name)) {
+      return {
+        name,
+        message: message || NO_ERROR_MESSAGE_PROVIDED,
+      };
+    }
+  }
+
+  if (isLikelyErrorName(normalizedMessage)) {
+    return {
+      name: normalizedMessage,
+      message: NO_ERROR_MESSAGE_PROVIDED,
+    };
+  }
+
+  return { name: null, message: normalizedMessage };
 };
 
 const formatLogTimestamp = (ts: string | number | null): string => {
@@ -485,12 +523,12 @@ const NewRunDetailScreen: Component = () => {
     const plan = reviewSubmissionPlan();
     return plan.eligibleCount + plan.ineligibleCount > 0;
   });
-  const runErrorMessage = createMemo(() => {
+  const runErrorDetails = createMemo(() => {
     const runValue = model.run();
     if (runValue?.status !== "failed") {
-      return "";
+      return null;
     }
-    return failedRunErrorMessage(runValue);
+    return failedRunErrorDetails(runValue);
   });
   const mergeRequiresRebase = createMemo(() => {
     const status = gitStatus();
@@ -1070,10 +1108,9 @@ const NewRunDetailScreen: Component = () => {
         detail: {
           title: runTopbarTitle(),
           subtitle: runTopbarSubtitle(),
-          connectionStatus:
-            runErrorMessage().length > 0
-              ? "error"
-              : model.agent.connectionStatus(),
+          connectionStatus: runErrorDetails()
+            ? "error"
+            : model.agent.connectionStatus(),
           backHref,
           backLabel,
           actions: [
@@ -1227,8 +1264,8 @@ const NewRunDetailScreen: Component = () => {
             }
           >
             <>
-              <Show when={runErrorMessage()}>
-                {(message) => (
+              <Show when={runErrorDetails()}>
+                {(details) => (
                   <section
                     class="run-detail-error-status"
                     role="status"
@@ -1241,9 +1278,14 @@ const NewRunDetailScreen: Component = () => {
                       !
                     </span>
                     <div class="run-detail-error-status__content">
-                      <p class="run-detail-error-status__label">Error in run</p>
+                      <p class="run-detail-error-status__label">Error</p>
+                      <Show when={details().name}>
+                        {(name) => (
+                          <p class="run-detail-error-status__name">{name()}</p>
+                        )}
+                      </Show>
                       <p class="run-detail-error-status__message">
-                        {message()}
+                        {details().message}
                       </p>
                     </div>
                   </section>
