@@ -12,6 +12,8 @@
   SPDX-License-Identifier: MIT OR Apache-2.0
 */
 
+@import "./milkdown/link-tooltip.css";
+
 :root {
   --bg: #0a0f14;
   --surface: #111823;
@@ -19,6 +21,7 @@
   --surface-hover: #212c3a;
   --border: #2a3647;
   --border-subtle: #1f2a37;
+  --popup-border: color-mix(in srgb, var(--border) 72%, var(--accent) 28%);
   --text: #d7e0ea;
   --text-muted: #93a3b8;
   --text-subtle: #6d7c90;
@@ -66,6 +69,24 @@ body {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.app-tooltip-surface {
+  position: fixed;
+  z-index: 1200;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--popup-border);
+  background: color-mix(in srgb, var(--surface-alt) 88%, var(--bg) 12%);
+  box-shadow:
+    var(--shadow-md),
+    0 8px 18px rgb(0 0 0 / 32%);
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.35;
+  pointer-events: none;
+  white-space: normal;
 }
 
 button:focus-visible,
@@ -1155,6 +1176,7 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
   border: 0;
   border-radius: 0;
   overflow: visible;
@@ -1164,6 +1186,8 @@ textarea::placeholder {
 .project-task-item {
   background: var(--surface-alt);
   border: 1px solid var(--border);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .board-task-card {
@@ -1184,6 +1208,8 @@ textarea::placeholder {
   align-items: stretch;
   justify-content: flex-start;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
   padding: 14px;
   color: inherit;
   text-decoration: none;
@@ -1205,6 +1231,7 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
   margin-bottom: 0;
   background: var(--surface);
   transition:
@@ -1247,9 +1274,20 @@ textarea::placeholder {
 
 .board-task-title-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   min-width: 0;
+  width: 100%;
+}
+
+.board-task-title-row > .project-task-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .board-task-key-tag {
@@ -1258,6 +1296,10 @@ textarea::placeholder {
   flex-shrink: 0;
   align-self: flex-end;
   margin-top: 0;
+  max-width: 40%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: right;
 }
 
 .board-task-run-details {
@@ -1266,6 +1308,8 @@ textarea::placeholder {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--surface);
+  min-width: 0;
+  max-width: calc(100% - 28px);
 }
 
 .board-task-run-details-link {
@@ -1305,6 +1349,8 @@ textarea::placeholder {
   font-weight: 600;
   color: var(--text);
   line-height: 1.3;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .board-task-run-meta {
@@ -1333,6 +1379,9 @@ textarea::placeholder {
   margin-top: 6px;
   font-size: 0.78rem;
   color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .board-task-run-state-row .run-inline-loader {
@@ -1451,6 +1500,8 @@ textarea::placeholder {
 
 .board-task-description {
   margin: 0;
+  min-width: 0;
+  max-width: 100%;
   color: var(--text-muted);
   font-size: 0.82rem;
   line-height: 1.4;
@@ -2161,7 +2212,7 @@ textarea::placeholder {
   max-width: min(560px, 92vw);
   max-height: 240px;
   overflow-y: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--popup-border);
   background: color-mix(in srgb, var(--surface) 85%, #000 15%);
   box-shadow: 0 10px 22px rgb(0 0 0 / 36%);
 }
@@ -2205,7 +2256,7 @@ textarea::placeholder {
   right: 0;
   max-height: 240px;
   overflow-y: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--popup-border);
   background: color-mix(in srgb, var(--surface) 85%, #000 15%);
   box-shadow: 0 10px 22px rgb(0 0 0 / 24%);
 }
@@ -2613,7 +2664,7 @@ textarea::placeholder {
   gap: 4px;
   padding: 6px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--popup-border);
   border-radius: 0;
   box-shadow: var(--shadow-md);
 }
@@ -2644,6 +2695,10 @@ textarea::placeholder {
   color: var(--text-subtle);
   font-size: 0.8rem;
   padding: 6px;
+}
+
+.run-source-branch-popover {
+  border-color: var(--popup-border);
 }
 
 .task-detail-definition-list {
@@ -3166,6 +3221,52 @@ textarea::placeholder {
   min-height: 0;
   flex: 1;
   overflow: hidden;
+}
+
+.run-detail-error-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 107, 107, 0.32);
+  background: var(--danger-subtle);
+  color: var(--text);
+}
+
+.run-detail-error-status__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 107, 107, 0.42);
+  color: var(--danger);
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.run-detail-error-status__content {
+  min-width: 0;
+}
+
+.run-detail-error-status__label {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.run-detail-error-status__message {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
 }
 
 .run-detail-card {
@@ -4659,6 +4760,14 @@ textarea::placeholder {
 .run-detail-topbar__status-dot[data-status="disconnected"] {
   background: #ff8f9f;
   color: #ff8f9f;
+}
+
+.run-detail-topbar__status-dot[data-status="error"] {
+  background: var(--danger);
+  color: var(--danger);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--danger) 32%, transparent),
+    0 0 10px color-mix(in srgb, var(--danger) 38%, transparent);
 }
 
 .run-chat-log-stream {

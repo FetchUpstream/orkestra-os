@@ -47,6 +47,85 @@ export type ProjectRunDefaultsResolution = {
 const normalize = (value: string | null | undefined): string =>
   value?.trim() || "";
 
+const RUN_MODEL_SELECTION_SEPARATOR = "::";
+
+export type RunModelSelectionIdentity = {
+  providerId: string;
+  modelId: string;
+};
+
+const decodeSelectionPart = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+export const encodeRunModelSelectionValue = (
+  providerId: string | null | undefined,
+  modelId: string | null | undefined,
+): string => {
+  const normalizedModelId = normalize(modelId);
+  if (!normalizedModelId) {
+    return "";
+  }
+
+  const encodedProviderId = encodeURIComponent(normalize(providerId));
+  const encodedModelId = encodeURIComponent(normalizedModelId);
+  return `${encodedProviderId}${RUN_MODEL_SELECTION_SEPARATOR}${encodedModelId}`;
+};
+
+export const decodeRunModelSelectionValue = (
+  value: string | null | undefined,
+): RunModelSelectionIdentity => {
+  const normalizedValue = normalize(value);
+  if (!normalizedValue) {
+    return { providerId: "", modelId: "" };
+  }
+
+  const separatorIndex = normalizedValue.indexOf(
+    RUN_MODEL_SELECTION_SEPARATOR,
+  );
+  if (separatorIndex < 0) {
+    return { providerId: "", modelId: normalizedValue };
+  }
+
+  return {
+    providerId: decodeSelectionPart(normalizedValue.slice(0, separatorIndex)),
+    modelId: decodeSelectionPart(
+      normalizedValue.slice(
+        separatorIndex + RUN_MODEL_SELECTION_SEPARATOR.length,
+      ),
+    ),
+  };
+};
+
+export const findRunModelForProvider = (
+  models: RunModelOption[],
+  providerId: string | null | undefined,
+  modelId: string | null | undefined,
+): RunModelOption | undefined => {
+  const normalizedModelId = normalize(modelId);
+  if (!normalizedModelId) {
+    return undefined;
+  }
+
+  const matchingModels = models.filter(
+    (option) => normalize(option.id) === normalizedModelId,
+  );
+  const normalizedProviderId = normalize(providerId);
+  if (!normalizedProviderId) {
+    return matchingModels[0];
+  }
+
+  return (
+    matchingModels.find(
+      (option) => normalize(option.providerId) === normalizedProviderId,
+    ) ?? matchingModels.find((option) => !normalize(option.providerId))
+  );
+};
+
 export const filterModelsForProvider = (
   models: RunModelOption[],
   providerId: string,
@@ -57,7 +136,8 @@ export const filterModelsForProvider = (
   }
   return models.filter(
     (option) =>
-      !option.providerId || option.providerId === normalizedProviderId,
+      !normalize(option.providerId) ||
+      normalize(option.providerId) === normalizedProviderId,
   );
 };
 
@@ -119,7 +199,7 @@ export const resolveProjectRunDefaults = (
   const providerExists = providers.some(
     (option) => option.id === requestedProviderId,
   );
-  const model = models.find((option) => option.id === requestedModelId);
+  const model = findRunModelForProvider(models, "", requestedModelId);
 
   let providerId = "";
   let reason: ProjectRunDefaultsResolution["reason"] = "valid";
@@ -155,15 +235,18 @@ export const resolveProjectRunDefaults = (
     };
   }
 
-  const modelBelongsToProvider =
-    !!model &&
-    (!model.providerId || normalize(model.providerId) === providerId);
+  const modelForProvider = findRunModelForProvider(
+    models,
+    providerId,
+    requestedModelId,
+  );
+  const modelBelongsToProvider = !!modelForProvider;
 
-  let modelId = "";
-  if (requestedModelId && modelBelongsToProvider) {
-    modelId = requestedModelId;
-  } else {
-    modelId = modelsForProvider[0]?.id || "";
+  const hasRequestedModelForProvider = requestedModelId && modelBelongsToProvider;
+  const modelId = hasRequestedModelForProvider
+    ? requestedModelId
+    : modelsForProvider[0]?.id || "";
+  if (!hasRequestedModelForProvider) {
     if (!requestedModelId) {
       reason = reason === "valid" ? "model_missing" : reason;
     } else if (!model) {

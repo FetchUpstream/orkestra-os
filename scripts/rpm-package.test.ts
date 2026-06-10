@@ -64,7 +64,7 @@ describe("rpm-package helpers", () => {
     const cargoText = `
 [package]
 name = "orkestraos"
-description = "Desktop app for orchestrating \"AI\" agents."
+description = "Desktop app for orchestrating "AI" agents."
 homepage = "https://example.com"
 repository = "https://example.com/repo"
 license = "MIT OR Apache-2.0"

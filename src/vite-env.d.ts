@@ -24,12 +24,17 @@ interface ImportMeta {
 
 
 declare module "markdown-it" {
+  type MarkdownToken = {
+    attrGet(name: string): string | null;
+    attrSet(name: string, value: string): void;
+  };
+
   type LinkOpenRule = (
-    tokens: any[],
+    tokens: MarkdownToken[],
     idx: number,
-    options: any,
-    env: any,
-    self: { renderToken(tokens: any[], idx: number, options: any): string },
+    options: unknown,
+    env: unknown,
+    self: { renderToken(tokens: MarkdownToken[], idx: number, options: unknown): string },
   ) => string;
 
   export default class MarkdownIt {

@@ -44,6 +44,8 @@ const {
   replyRunOpenCodePermissionMock,
   getRunGitMergeStatusMock,
   rebaseRunWorktreeOntoSourceMock,
+  continueRunWorktreeRebaseMock,
+  abortRunWorktreeRebaseMock,
   mergeRunWorktreeIntoSourceMock,
   listRunDiffFilesMock,
   getRunDiffFileMock,
@@ -75,6 +77,8 @@ const {
   replyRunOpenCodePermissionMock: vi.fn(),
   getRunGitMergeStatusMock: vi.fn(),
   rebaseRunWorktreeOntoSourceMock: vi.fn(),
+  continueRunWorktreeRebaseMock: vi.fn(),
+  abortRunWorktreeRebaseMock: vi.fn(),
   mergeRunWorktreeIntoSourceMock: vi.fn(),
   listRunDiffFilesMock: vi.fn(),
   getRunDiffFileMock: vi.fn(),
@@ -144,6 +148,8 @@ vi.mock("../../../../app/lib/runs", () => ({
   ],
   getRun: getRunMock,
   getRunGitMergeStatus: getRunGitMergeStatusMock,
+  continueRunWorktreeRebase: continueRunWorktreeRebaseMock,
+  abortRunWorktreeRebase: abortRunWorktreeRebaseMock,
   getRunDiffFile: getRunDiffFileMock,
   killRunTerminal: killRunTerminalMock,
   listRunDiffFiles: listRunDiffFilesMock,
@@ -220,6 +226,8 @@ describe("useRunDetailModel startup ownership", () => {
     replyRunOpenCodePermissionMock.mockReset();
     getRunGitMergeStatusMock.mockReset();
     rebaseRunWorktreeOntoSourceMock.mockReset();
+    continueRunWorktreeRebaseMock.mockReset();
+    abortRunWorktreeRebaseMock.mockReset();
     mergeRunWorktreeIntoSourceMock.mockReset();
     listRunDiffFilesMock.mockReset();
     getRunDiffFileMock.mockReset();
@@ -269,6 +277,8 @@ describe("useRunDetailModel startup ownership", () => {
       requiresRebase: false,
     });
     rebaseRunWorktreeOntoSourceMock.mockResolvedValue({ status: "accepted" });
+    continueRunWorktreeRebaseMock.mockResolvedValue({ status: "accepted" });
+    abortRunWorktreeRebaseMock.mockResolvedValue({ status: "accepted" });
     mergeRunWorktreeIntoSourceMock.mockResolvedValue({ status: "accepted" });
     killRunTerminalMock.mockResolvedValue(undefined);
     writeRunTerminalMock.mockResolvedValue(undefined);
@@ -381,7 +391,7 @@ describe("useRunDetailModel startup ownership", () => {
               sessionID: "session-1",
             },
           ],
-        }
+        },
       ],
       hasMore: false,
       nextCursor: undefined,
@@ -823,6 +833,80 @@ describe("useRunDetailModel startup ownership", () => {
       "Rebase failed after merged checks completed with unresolved conflicts.",
     );
     expect(modelRef!.git.lastActionMessage()).toBe("");
+  });
+
+  it("continues rebase through the backend and refreshes run details", async () => {
+    continueRunWorktreeRebaseMock.mockResolvedValueOnce({ status: "accepted" });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    await modelRef!.git.continueWorktreeRebase();
+
+    expect(continueRunWorktreeRebaseMock).toHaveBeenCalledWith("run-1");
+    expect(getRunGitMergeStatusMock).toHaveBeenCalled();
+    expect(getRunMock).toHaveBeenCalledWith("run-1");
+  });
+
+  it("sends a backend continue conflict prompt into chat", async () => {
+    continueRunWorktreeRebaseMock.mockResolvedValueOnce({
+      status: "conflict",
+      conflictSummary: "Resolve the next rebase conflict and stage it.",
+      conflictFingerprint: "continue-fp-1",
+    });
+    submitRunOpenCodePromptMock.mockResolvedValue({
+      status: "accepted",
+      queuedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    await modelRef!.git.continueWorktreeRebase();
+
+    expect(submitRunOpenCodePromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        prompt: "Resolve the next rebase conflict and stage it.",
+        clientRequestId: expect.any(String),
+      }),
+    );
+    expect(modelRef!.git.actionError()).toContain("Rebase still has conflicts");
+  });
+
+  it("aborts rebase through the backend and shows confirmation", async () => {
+    abortRunWorktreeRebaseMock.mockResolvedValueOnce({ status: "accepted" });
+
+    let modelRef: ReturnType<typeof useRunDetailModel> | undefined;
+    render(() => {
+      modelRef = useRunDetailModel();
+      return <div />;
+    });
+
+    await waitFor(() => {
+      expect(modelRef).toBeDefined();
+    });
+
+    await modelRef!.git.abortWorktreeRebase();
+
+    expect(abortRunWorktreeRebaseMock).toHaveBeenCalledWith("run-1");
+    expect(modelRef!.git.lastActionMessage()).toBe("Rebase aborted.");
+    expect(getRunGitMergeStatusMock).toHaveBeenCalled();
+    expect(getRunMock).toHaveBeenCalledWith("run-1");
   });
 
   it("falls back to generic message when merge throw has no message", async () => {

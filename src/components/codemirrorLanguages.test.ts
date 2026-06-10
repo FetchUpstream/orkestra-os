@@ -20,6 +20,9 @@ const {
   htmlMock,
   cssMock,
   yamlMock,
+  pythonMock,
+  goMock,
+  phpMock,
   rustMock,
   sqlMock,
   xmlMock,
@@ -35,6 +38,9 @@ const {
   const htmlMock = vi.fn(() => ({ extension: "html" }));
   const cssMock = vi.fn(() => ({ extension: "css" }));
   const yamlMock = vi.fn(() => ({ extension: "yaml" }));
+  const pythonMock = vi.fn(() => ({ extension: "python" }));
+  const goMock = vi.fn(() => ({ extension: "go" }));
+  const phpMock = vi.fn(() => ({ extension: "php" }));
   const rustMock = vi.fn(() => ({ extension: "rust" }));
   const sqlMock = vi.fn(() => ({ extension: "sql" }));
   const xmlMock = vi.fn(() => ({ extension: "xml" }));
@@ -54,6 +60,9 @@ const {
     htmlMock,
     cssMock,
     yamlMock,
+    pythonMock,
+    goMock,
+    phpMock,
     rustMock,
     sqlMock,
     xmlMock,
@@ -73,6 +82,9 @@ vi.mock("@codemirror/lang-markdown", () => ({ markdown: markdownMock }));
 vi.mock("@codemirror/lang-html", () => ({ html: htmlMock }));
 vi.mock("@codemirror/lang-css", () => ({ css: cssMock }));
 vi.mock("@codemirror/lang-yaml", () => ({ yaml: yamlMock }));
+vi.mock("@codemirror/lang-python", () => ({ python: pythonMock }));
+vi.mock("@codemirror/lang-go", () => ({ go: goMock }));
+vi.mock("@codemirror/lang-php", () => ({ php: phpMock }));
 vi.mock("@codemirror/lang-rust", () => ({ rust: rustMock }));
 vi.mock("@codemirror/lang-sql", () => ({ sql: sqlMock }));
 vi.mock("@codemirror/lang-xml", () => ({ xml: xmlMock }));
@@ -98,6 +110,9 @@ describe("resolveCodeMirrorLanguageExtension", () => {
     htmlMock.mockClear();
     cssMock.mockClear();
     yamlMock.mockClear();
+    pythonMock.mockClear();
+    goMock.mockClear();
+    phpMock.mockClear();
     rustMock.mockClear();
     sqlMock.mockClear();
     xmlMock.mockClear();
@@ -152,6 +167,48 @@ describe("resolveCodeMirrorLanguageExtension", () => {
 
     expect(htmlMock).toHaveBeenCalledTimes(1);
     expect(extension).toEqual({ extension: "html" });
+  });
+
+  it("supports Python backend labels and plaintext file extension fallback", () => {
+    expect(
+      resolveCodeMirrorLanguageExtension({ language: "python3" }),
+    ).toEqual({ extension: "python" });
+    expect(
+      resolveCodeMirrorLanguageExtension({
+        language: "plaintext",
+        filePath: "scripts/build.py",
+      }),
+    ).toEqual({ extension: "python" });
+
+    expect(pythonMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("supports Go backend labels and plaintext file extension fallback", () => {
+    expect(resolveCodeMirrorLanguageExtension({ language: "go" })).toEqual({
+      extension: "go",
+    });
+    expect(
+      resolveCodeMirrorLanguageExtension({
+        language: "plaintext",
+        filePath: "cmd/server/main.go",
+      }),
+    ).toEqual({ extension: "go" });
+
+    expect(goMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("supports PHP backend labels and plaintext file extension fallback", () => {
+    expect(
+      resolveCodeMirrorLanguageExtension({ language: "text/x-php" }),
+    ).toEqual({ extension: "php" });
+    expect(
+      resolveCodeMirrorLanguageExtension({
+        language: "plaintext",
+        filePath: "public/index.php",
+      }),
+    ).toEqual({ extension: "php" });
+
+    expect(phpMock).toHaveBeenCalledTimes(2);
   });
 
   it("returns null for unknown languages", () => {

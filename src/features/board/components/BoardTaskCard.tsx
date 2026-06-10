@@ -49,6 +49,8 @@ const BoardTaskCard: Component<Props> = (props) => {
   };
   const runStateIcon = (miniCard: BoardTaskRunMiniCard) => {
     switch (miniCard.state) {
+      case "error":
+        return <span class="text-error font-semibold">!</span>;
       case "ready_to_merge":
         return <span class="text-success font-semibold">✓</span>;
       case "question_pending":
@@ -172,7 +174,7 @@ const BoardTaskCard: Component<Props> = (props) => {
         }}
       >
         <div class="project-task-main gap-2">
-          <div class="flex items-start justify-between gap-3">
+          <div class="board-task-title-row flex items-start justify-between gap-3">
             <p class="project-task-title text-[13px] font-medium">
               {props.task.title}
             </p>

@@ -85,6 +85,7 @@ const createModelStub = (options?: {
     runNumber?: number | null;
     taskTitle?: string | null;
     runState?: string | null;
+    errorMessage?: string | null;
     status?:
       | "queued"
       | "preparing"
@@ -186,6 +187,7 @@ const createModelStub = (options?: {
         options?.run?.runNumber !== undefined ? options.run.runNumber : 123,
       taskTitle: options?.run?.taskTitle,
       runState: options?.run?.runState,
+      errorMessage: options?.run?.errorMessage,
     }),
     task: () => ({ title: options?.task?.title ?? "Ship redesign" }),
     backHref: () => "/tasks/task-1",
@@ -234,7 +236,13 @@ const createModelStub = (options?: {
       isMergePending: () => false,
       refreshStatus,
       rebaseWorktreeOntoSource: vi.fn(async () => undefined),
+      continueWorktreeRebase: vi.fn(async () => undefined),
+      abortWorktreeRebase: vi.fn(async () => undefined),
       mergeWorktreeIntoSource: vi.fn(async () => undefined),
+      requestMergeWorktreeIntoSource: vi.fn(async () => undefined),
+      cancelMergeWorktreeIntoSourceWarning: vi.fn(),
+      confirmMergeWorktreeIntoSourceWarning: vi.fn(async () => undefined),
+      isMergeWarningOpen: () => false,
     },
     terminal: {
       isStarting: () => false,
@@ -445,7 +453,7 @@ describe("NewRunDetailScreen git actions", () => {
     topbar.cleanup();
   });
 
-  it("suppresses commit flow and surfaces rebasing state when a rebase is already in progress", async () => {
+  it("shows continue and abort controls when a rebase is paused", async () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         gitStatus: {
@@ -465,12 +473,14 @@ describe("NewRunDetailScreen git actions", () => {
     await topbar.invokeAction("Git");
 
     await waitFor(() => {
-      expect(screen.getByText("Rebase in progress")).toBeTruthy();
+      expect(screen.getByText("Rebase paused on conflicts")).toBeTruthy();
       expect(
         screen.getByText(
-          "Normal commit actions are unavailable until the rebase is completed or aborted.",
+          "Resolve and stage the conflicted files, then click Continue Rebase. You can also abort the rebase from this drawer.",
         ),
       ).toBeTruthy();
+      expect(screen.getByText("Continue Rebase")).toBeTruthy();
+      expect(screen.getByText("Abort Rebase")).toBeTruthy();
       expect(screen.queryByText("Commit changes")).toBeNull();
       expect(screen.queryByText("Rebase onto main")).toBeNull();
       expect(screen.queryByText("Merge into main")).toBeNull();
@@ -478,13 +488,14 @@ describe("NewRunDetailScreen git actions", () => {
     topbar.cleanup();
   });
 
-  it("disables the primary action from run state while rebase resolution is active", async () => {
+  it("moves rebase resolution controls into the git drawer", async () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         run: {
           runState: "resolving_rebase_conflicts",
         },
         gitStatus: {
+          isRebaseInProgress: true,
           isWorktreeClean: false,
           isRebaseAllowed: true,
           isMergeAllowed: true,
@@ -499,13 +510,71 @@ describe("NewRunDetailScreen git actions", () => {
 
     await waitFor(() => {
       const button = screen.getByRole("button", {
-        name: "Rebase in progress",
+        name: "Continue Rebase",
       });
-      expect(button.hasAttribute("disabled")).toBe(true);
+      expect(button.hasAttribute("disabled")).toBe(false);
+      expect(screen.getByRole("button", { name: "Abort Rebase" })).toBeTruthy();
       expect(screen.queryByText("Commit changes")).toBeNull();
       expect(screen.queryByText("Rebase onto main")).toBeNull();
       expect(screen.queryByText("Merge into main")).toBeNull();
     });
+    topbar.cleanup();
+  });
+
+  it("does not show rebase controls from stale run state alone", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        run: {
+          runState: "resolving_rebase_conflicts",
+        },
+        gitStatus: {
+          isRebaseInProgress: false,
+          isWorktreeClean: false,
+          isRebaseAllowed: false,
+          isMergeAllowed: false,
+          requiresRebase: false,
+        },
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    await waitFor(() => {
+      expect(screen.queryByText("Continue Rebase")).toBeNull();
+      expect(screen.queryByText("Abort Rebase")).toBeNull();
+      expect(screen.getByText("Commit changes")).toBeTruthy();
+    });
+    topbar.cleanup();
+  });
+
+  it("routes rebase lifecycle controls through git drawer actions", async () => {
+    const model = createModelStub({
+      run: {
+        runState: "resolving_rebase_conflicts",
+      },
+      gitStatus: {
+        state: "conflicted",
+        isRebaseInProgress: true,
+        isRebaseAllowed: false,
+        isMergeAllowed: false,
+        requiresRebase: false,
+      },
+    });
+    modelFactoryMock.mockReturnValue(model);
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Git");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Continue Rebase" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Abort Rebase" }));
+
+    expect(model.git.continueWorktreeRebase).toHaveBeenCalledTimes(1);
+    expect(model.git.abortWorktreeRebase).toHaveBeenCalledTimes(1);
     topbar.cleanup();
   });
 
@@ -654,7 +723,7 @@ describe("NewRunDetailScreen git actions", () => {
     const textarea = await screen.findByLabelText("Commit request message");
     await waitFor(() => {
       expect((textarea as HTMLTextAreaElement).value).toContain(
-        "There are still uncommited changes, please attomically commit the following changes",
+        "There are still uncommited changes, please atomically commit the following changes",
       );
       expect((textarea as HTMLTextAreaElement).value).toContain(
         "- `src/foo.ts`",
@@ -1247,6 +1316,56 @@ describe("NewRunDetailScreen git actions", () => {
     window.removeEventListener("run-detail:topbar-config", onTopbarConfig);
   });
 
+  it("shows failed run error details and emits topbar error status", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        run: {
+          status: "failed",
+          errorMessage: "UnknownError: Provider returned error",
+        },
+        agent: { connectionStatus: "disconnected" },
+      }),
+    );
+
+    const topbarEvents: CustomEvent[] = [];
+    const onTopbarConfig = (event: Event) => {
+      topbarEvents.push(event as CustomEvent);
+    };
+    window.addEventListener("run-detail:topbar-config", onTopbarConfig);
+
+    render(() => <NewRunDetailScreen />);
+
+    await waitFor(() => {
+      const payload = topbarEvents[topbarEvents.length - 1]?.detail as {
+        connectionStatus: string;
+      };
+      expect(payload.connectionStatus).toBe("error");
+    });
+
+    expect(screen.getByText("Error in run")).toBeTruthy();
+    expect(
+      screen.getByText("UnknownError: Provider returned error"),
+    ).toBeTruthy();
+    expect(
+      document.querySelector(".run-detail-error-status__icon"),
+    ).toBeTruthy();
+
+    window.removeEventListener("run-detail:topbar-config", onTopbarConfig);
+  });
+
+  it("shows a useful fallback for failed runs without an error message", () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        run: { status: "failed", errorMessage: "" },
+      }),
+    );
+
+    render(() => <NewRunDetailScreen />);
+
+    expect(screen.getByText("Error in run")).toBeTruthy();
+    expect(screen.getByText("The provider returned an error.")).toBeTruthy();
+  });
+
   it("still renders run workspace content when warming and connecting", () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
@@ -1364,6 +1483,38 @@ describe("NewRunDetailScreen git actions", () => {
         regularMessageLine.closest(".run-chat-log-stream__line")?.className,
       ).not.toContain("run-chat-log-stream__line--completed");
     });
+    topbar.cleanup();
+  });
+
+  it("summarizes nested session.error payloads in logs", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        agentEvents: [
+          {
+            event: "session.error",
+            data: {
+              error: {
+                name: "UnknownError",
+                data: { message: "Provider returned error" },
+              },
+            },
+          },
+        ],
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Logs");
+
+    await waitFor(() => {
+      expect(screen.getByText(/session\.error/)).toBeTruthy();
+      expect(
+        screen.getByText("UnknownError: Provider returned error"),
+      ).toBeTruthy();
+      expect(screen.queryByText(/\{.*Provider returned error.*\}/)).toBeNull();
+    });
+
     topbar.cleanup();
   });
 

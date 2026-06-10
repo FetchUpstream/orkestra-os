@@ -16,8 +16,8 @@ use crate::app::runs::dto::{
     ReplyRunOpenCodeQuestionResponse, RunAgentsResponseDto, RunDiffFileDto, RunDiffFilePayloadDto,
     RunDto, RunMergeResponseDto, RunMergeStatusDto, RunOpenCodeQuestionRequestDto,
     RunOpenCodeSessionMessagesPageDto, RunOpenCodeSessionTodoDto, RunProvidersResponseDto,
-    RunRebaseResponseDto, StartRunOpenCodeResponse,
-    StopRunOpenCodeResponse, SubmitRunOpenCodePromptResponse,
+    RunRebaseResponseDto, StartRunOpenCodeResponse, StopRunOpenCodeResponse,
+    SubmitRunOpenCodePromptResponse,
 };
 use crate::app::state::AppState;
 use crate::app::{commands::context, commands::error_mapping::map_result};
@@ -179,6 +179,24 @@ pub async fn rebase_run_worktree_onto_source(
     run_id: String,
 ) -> Result<RunRebaseResponseDto, String> {
     rebase_run_worktree_branch(state, run_id).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn continue_run_worktree_rebase(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<RunRebaseResponseDto, String> {
+    let service = context::runs_merge_service(&state);
+    map_result(service.continue_worktree_rebase(&run_id).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn abort_run_worktree_rebase(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<RunRebaseResponseDto, String> {
+    let service = context::runs_merge_service(&state);
+    map_result(service.abort_worktree_rebase(&run_id).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]

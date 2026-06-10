@@ -1583,12 +1583,12 @@ const RunChatTranscript: Component<RunChatTranscriptProps> = (props) => {
   });
 
   createEffect(() => {
-    props.rows.length;
+    void props.rows.length;
     scheduleViewportSync();
   });
 
   createEffect(() => {
-    props.layoutToken;
+    void props.layoutToken;
     scheduleViewportSync();
   });
 

@@ -45,6 +45,7 @@ import AboutModal from "../../components/layout/AboutModal";
 import CloseWhileRunsActiveModal from "../../components/layout/CloseWhileRunsActiveModal";
 import LinuxPackageUpdateNotice from "../../components/layout/LinuxPackageUpdateNotice";
 import TauriAppUpdateNotice from "../../components/layout/TauriAppUpdateNotice";
+import AppTooltipLayer from "../../components/ui/AppTooltipLayer";
 import { AppIcon } from "../../components/ui/icons";
 import { formatStatus } from "../../features/tasks/utils/taskDetail";
 import {
@@ -93,7 +94,7 @@ type TaskDetailTopbarConfig =
 type RunDetailTopbarConfig = {
   title: string;
   subtitle: string;
-  connectionStatus: "warming" | "connected" | "idle" | "disconnected";
+  connectionStatus: "warming" | "connected" | "idle" | "disconnected" | "error";
   backHref: string;
   backLabel: string;
   actions: Array<{
@@ -134,6 +135,8 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   const openCodeDependency = useOpenCodeDependency();
   let mobileMenuButtonRef: HTMLButtonElement | undefined;
   let shellRootRef: HTMLDivElement | undefined;
+  let taskStatusTransitionMenuRef: HTMLDivElement | undefined;
+  let taskStatusTransitionMenuTriggerRef: HTMLButtonElement | undefined;
 
   const [isMobile, setIsMobile] = createSignal(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = createSignal(false);
@@ -163,6 +166,17 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   let appUpdateRequestId = 0;
 
   const isSidebarVisible = () => (isMobile() ? mobileSidebarOpen() : true);
+
+  const openTaskTransitionMenuConfig = () => {
+    const config = taskDetailTopbarConfig();
+    return config?.mode === "detail" && config.isTransitionMenuOpen
+      ? config
+      : null;
+  };
+
+  const closeTaskTransitionMenu = () => {
+    openTaskTransitionMenuConfig()?.onCloseTransitionMenu();
+  };
 
   const applyProjects = (nextProjects: Project[]) => {
     setProjects(nextProjects);
@@ -360,6 +374,42 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   });
 
   createEffect(() => {
+    if (!openTaskTransitionMenuConfig()) return;
+
+    const isWithinTransitionMenu = (target: EventTarget | null) =>
+      target instanceof Node && taskStatusTransitionMenuRef?.contains(target);
+    const closeIfOutside = (target: EventTarget | null) => {
+      if (!isWithinTransitionMenu(target)) {
+        closeTaskTransitionMenu();
+      }
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      closeIfOutside(event.target);
+    };
+    const handleFocusIn = (event: FocusEvent) => {
+      closeIfOutside(event.target);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeTaskTransitionMenu();
+        queueMicrotask(() => taskStatusTransitionMenuTriggerRef?.focus());
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("focusin", handleFocusIn);
+    document.addEventListener("keydown", handleKeyDown);
+
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("focusin", handleFocusIn);
+      document.removeEventListener("keydown", handleKeyDown);
+    });
+  });
+
+  createEffect(() => {
     if (!location.pathname.startsWith("/runs/")) {
       setRunDetailTopbarConfig(null);
     }
@@ -408,7 +458,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
 
   createEffect(() => {
     if (isMobile()) {
-      location.pathname;
+      void location.pathname;
       setMobileSidebarOpen(false);
     }
   });
@@ -629,6 +679,33 @@ const AppShellContent: Component<AppShellProps> = (props) => {
     return match?.[1] ?? "";
   };
 
+  const boardTopbarActions = (): JSX.Element | undefined => {
+    const projectId = boardProjectId();
+    if (!projectId) return undefined;
+
+    return (
+      <>
+        <button
+          type="button"
+          class="task-create-action-btn btn btn-sm rounded-none border px-4 text-xs font-semibold"
+          onClick={() => {
+            navigate(`/projects/${projectId}/tasks/new?origin=board`);
+          }}
+        >
+          New task
+        </button>
+        <a
+          href={`/projects/${projectId}`}
+          class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
+          aria-label="Project settings"
+          title="Project settings"
+        >
+          <AppIcon name="project.settings" size={16} stroke={1.75} />
+        </a>
+      </>
+    );
+  };
+
   const handleShellKeyDown: JSX.EventHandler<HTMLDivElement, KeyboardEvent> = (
     event,
   ) => {
@@ -783,8 +860,16 @@ const AppShellContent: Component<AppShellProps> = (props) => {
                       >
                         New Run
                       </button>
-                      <div class="relative flex items-center gap-2">
+                      <div
+                        ref={(element) => {
+                          taskStatusTransitionMenuRef = element;
+                        }}
+                        class="relative flex items-center gap-2"
+                      >
                         <button
+                          ref={(element) => {
+                            taskStatusTransitionMenuTriggerRef = element;
+                          }}
                           type="button"
                           class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content hover:bg-base-100 rounded-none border"
                           onClick={config.onToggleTransitionMenu}
@@ -950,36 +1035,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
                   );
                 })()
               ) : location.pathname === BOARD_ROUTE_PATH ? (
-                <>
-                  <button
-                    type="button"
-                    class="task-create-action-btn btn btn-sm rounded-none border px-4 text-xs font-semibold"
-                    onClick={() => {
-                      if (boardProjectId()) {
-                        navigate(
-                          `/projects/${boardProjectId()}/tasks/new?origin=board`,
-                        );
-                      }
-                    }}
-                    disabled={!boardProjectId()}
-                  >
-                    New task
-                  </button>
-                  {boardProjectId() ? (
-                    <a
-                      href={`/projects/${boardProjectId()}`}
-                      class="btn btn-sm btn-square border-base-content/15 bg-base-100 text-base-content/65 hover:bg-base-100 rounded-none border"
-                      aria-label="Project settings"
-                      title="Project settings"
-                    >
-                      <AppIcon
-                        name="project.settings"
-                        size={16}
-                        stroke={1.75}
-                      />
-                    </a>
-                  ) : null}
-                </>
+                boardTopbarActions()
               ) : undefined
             }
           />
@@ -1005,6 +1061,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
       <AlphaNoticeModal />
       <LinuxPackageUpdateNotice result={startupLinuxPackageUpdate} />
       <TauriAppUpdateNotice result={startupTauriAppUpdate} />
+      <AppTooltipLayer />
       <OpenCodeRequiredModal
         isOpen={() =>
           openCodeDependency.isModalVisible() || isStartupProjectSetupBlocked()

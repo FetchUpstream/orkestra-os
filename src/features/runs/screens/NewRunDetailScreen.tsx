@@ -21,7 +21,6 @@ import {
   onCleanup,
   type Component,
 } from "solid-js";
-import type { RunState } from "../../../app/lib/runs";
 import ActionWarningModal from "../../tasks/components/ActionWarningModal";
 import NewRunChatWorkspace from "../components/NewRunChatWorkspace";
 import RunDiffDrawerPanel from "../components/RunDiffDrawerPanel";
@@ -56,7 +55,6 @@ const LOG_NEAR_BOTTOM_THRESHOLD = 32;
 const LOG_NEW_ROW_HIGHLIGHT_MS = 1_000;
 const LOG_RENDER_CHUNK_SIZE = 100;
 const LOG_PREPEND_TRIGGER_THRESHOLD = 96;
-const REBASING_RUN_STATE: RunState = "resolving_rebase_conflicts";
 
 const INTERNAL_ID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
@@ -70,6 +68,9 @@ const normalizeLogText = (value: string): string =>
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 };
+
+const trimmedString = (value: unknown): string =>
+  typeof value === "string" ? value.trim() : "";
 
 const parseMaybeJson = (value: unknown): unknown => {
   if (typeof value !== "string") {
@@ -110,12 +111,43 @@ const isCompletedDebugEvent = (name: string, payload: unknown): boolean => {
   return time?.completed !== undefined;
 };
 
+const summarizeOpenCodeErrorPayload = (
+  record: Record<string, unknown>,
+): string => {
+  const propertiesRecord = isRecord(record.properties)
+    ? record.properties
+    : null;
+  const errorValue = isRecord(record.error)
+    ? record.error
+    : propertiesRecord?.error;
+  if (!isRecord(errorValue)) {
+    return "";
+  }
+
+  const errorName = trimmedString(errorValue.name);
+  const errorData = isRecord(errorValue.data) ? errorValue.data : null;
+  const errorMessage =
+    trimmedString(errorData?.message) || trimmedString(errorValue.message);
+
+  if (errorName && errorMessage) {
+    return normalizeLogText(`${errorName}: ${errorMessage}`);
+  }
+  if (errorMessage) {
+    return normalizeLogText(errorMessage);
+  }
+  return errorName ? normalizeLogText(errorName) : "";
+};
+
 const summarizeEventPayload = (payload: unknown): string => {
   if (payload === undefined || payload === null) {
     return "";
   }
 
   if (typeof payload === "string") {
+    const parsedPayload = parseMaybeJson(payload);
+    if (parsedPayload !== payload) {
+      return summarizeEventPayload(parsedPayload);
+    }
     return normalizeLogText(payload);
   }
 
@@ -125,6 +157,11 @@ const summarizeEventPayload = (payload: unknown): string => {
 
   if (typeof payload === "object") {
     const record = payload as Record<string, unknown>;
+    const errorSummary = summarizeOpenCodeErrorPayload(record);
+    if (errorSummary) {
+      return errorSummary;
+    }
+
     const summaryFields = [
       record.message,
       record.text,
@@ -151,6 +188,15 @@ const summarizeEventPayload = (payload: unknown): string => {
   }
 
   return normalizeLogText(String(payload));
+};
+
+const failedRunErrorMessage = (runValue: {
+  errorMessage?: string | null;
+}): string => {
+  const errorMessage = runValue.errorMessage;
+  return typeof errorMessage === "string" && errorMessage.trim().length > 0
+    ? redactInternalIds(errorMessage.trim())
+    : "The provider returned an error.";
 };
 
 const formatLogTimestamp = (ts: string | number | null): string => {
@@ -291,9 +337,10 @@ const NewRunDetailScreen: Component = () => {
 
     return "unknown";
   });
-  const isRunRebaseResolving = createMemo(
-    () => model.run()?.runState === REBASING_RUN_STATE,
-  );
+  const isRebaseLifecycleActive = createMemo(() => {
+    const status = gitStatus();
+    return status?.isRebaseInProgress === true;
+  });
   const baseBranchName = createMemo(() => {
     const status = gitStatus();
     const name = status?.sourceBranch.name?.trim();
@@ -320,11 +367,11 @@ const NewRunDetailScreen: Component = () => {
       };
     }
 
-    if (isRunRebaseResolving() || status.isRebaseInProgress) {
+    if (isRebaseLifecycleActive()) {
       return {
-        headline: "Rebase in progress",
+        headline: "Rebase paused on conflicts",
         support:
-          "Normal commit actions are unavailable until the rebase is completed or aborted.",
+          "Resolve and stage the conflicted files, then click Continue Rebase. You can also abort the rebase from this drawer.",
       };
     }
 
@@ -408,14 +455,14 @@ const NewRunDetailScreen: Component = () => {
   });
   const commitPromptPrefill = createMemo(() => {
     if (isCommitPrefillLoading() || model.isDiffFilesLoading()) {
-      return "There are still uncommited changes, please attomically commit the following changes\n- Loading changed files...";
+      return "There are still uncommited changes, please atomically commit the following changes\n- Loading changed files...";
     }
     const fileList = changedFilePaths();
     const renderedFiles =
       fileList.length > 0
         ? fileList.map((path) => `- \`${path}\``).join("\n")
         : "- (Unable to determine changed files)";
-    return `There are still uncommited changes, please attomically commit the following changes\n${renderedFiles}`;
+    return `There are still uncommited changes, please atomically commit the following changes\n${renderedFiles}`;
   });
   const isCommitDisabled = createMemo(() => model.agent.isSubmittingPrompt());
   const reviewSubmissionPlan = createMemo(() =>
@@ -438,6 +485,13 @@ const NewRunDetailScreen: Component = () => {
     const plan = reviewSubmissionPlan();
     return plan.eligibleCount + plan.ineligibleCount > 0;
   });
+  const runErrorMessage = createMemo(() => {
+    const runValue = model.run();
+    if (runValue?.status !== "failed") {
+      return "";
+    }
+    return failedRunErrorMessage(runValue);
+  });
   const mergeRequiresRebase = createMemo(() => {
     const status = gitStatus();
     return (
@@ -446,19 +500,15 @@ const NewRunDetailScreen: Component = () => {
     );
   });
   const primaryAction = createMemo<
-    "commit" | "rebase" | "merge" | "rebasing" | null
+    "commit" | "rebase" | "merge" | "rebase_controls" | null
   >(() => {
     const status = gitStatus();
     if (!status || isWorkflowFinalized()) {
       return null;
     }
 
-    if (isRunRebaseResolving()) {
-      return "rebasing";
-    }
-
-    if (status.isRebaseInProgress) {
-      return null;
+    if (isRebaseLifecycleActive()) {
+      return "rebase_controls";
     }
 
     if (workflowSyncCategory() === "finalizing_merge") {
@@ -540,6 +590,18 @@ const NewRunDetailScreen: Component = () => {
       return "";
     }
     return status.mergeDisabledReason || "Merge is currently unavailable.";
+  });
+  const isRebaseLifecycleActionDisabled = createMemo(
+    () => model.isRunCompleted() || model.git.isRebasePending(),
+  );
+  const rebaseLifecycleDisabledReason = createMemo(() => {
+    if (model.git.isRebasePending()) {
+      return "Rebase action already running.";
+    }
+    if (model.isRunCompleted()) {
+      return "Run already completed.";
+    }
+    return "";
   });
   const runTopbarTitle = createMemo(() => {
     const runValue = model.run();
@@ -811,7 +873,7 @@ const NewRunDetailScreen: Component = () => {
     }
 
     const loadingPrefill =
-      "There are still uncommited changes, please attomically commit the following changes\n- Loading changed files...";
+      "There are still uncommited changes, please atomically commit the following changes\n- Loading changed files...";
     setIsCommitPrefillLoading(true);
     setCommitPromptDraft(loadingPrefill);
     setIsCommitModalOpen(true);
@@ -1008,7 +1070,10 @@ const NewRunDetailScreen: Component = () => {
         detail: {
           title: runTopbarTitle(),
           subtitle: runTopbarSubtitle(),
-          connectionStatus: model.agent.connectionStatus(),
+          connectionStatus:
+            runErrorMessage().length > 0
+              ? "error"
+              : model.agent.connectionStatus(),
           backHref,
           backLabel,
           actions: [
@@ -1162,6 +1227,28 @@ const NewRunDetailScreen: Component = () => {
             }
           >
             <>
+              <Show when={runErrorMessage()}>
+                {(message) => (
+                  <section
+                    class="run-detail-error-status"
+                    role="status"
+                    aria-label="Error in run"
+                  >
+                    <span
+                      class="run-detail-error-status__icon"
+                      aria-hidden="true"
+                    >
+                      !
+                    </span>
+                    <div class="run-detail-error-status__content">
+                      <p class="run-detail-error-status__label">Error in run</p>
+                      <p class="run-detail-error-status__message">
+                        {message()}
+                      </p>
+                    </div>
+                  </section>
+                )}
+              </Show>
               <NewRunChatWorkspace
                 model={model}
                 hideTranscriptScrollbar={isDrawerOverlay()}
@@ -1515,15 +1602,46 @@ const NewRunDetailScreen: Component = () => {
                                     MERGED
                                   </p>
                                 </Show>
-                                <Show when={primaryAction() === "rebasing"}>
+                                <Show
+                                  when={primaryAction() === "rebase_controls"}
+                                >
                                   <button
                                     type="button"
                                     class="run-chat-git-drawer__button"
-                                    disabled
-                                    aria-live="polite"
+                                    disabled={isRebaseLifecycleActionDisabled()}
+                                    title={
+                                      rebaseLifecycleDisabledReason() ||
+                                      undefined
+                                    }
+                                    onClick={() => {
+                                      void model.git.continueWorktreeRebase();
+                                    }}
                                   >
-                                    Rebase in progress
+                                    Continue Rebase
                                   </button>
+                                  <button
+                                    type="button"
+                                    class="run-chat-git-drawer__button"
+                                    disabled={isRebaseLifecycleActionDisabled()}
+                                    title={
+                                      rebaseLifecycleDisabledReason() ||
+                                      undefined
+                                    }
+                                    onClick={() => {
+                                      void model.git.abortWorktreeRebase();
+                                    }}
+                                  >
+                                    Abort Rebase
+                                  </button>
+                                  <Show
+                                    when={
+                                      rebaseLifecycleDisabledReason().length > 0
+                                    }
+                                  >
+                                    <p class="project-placeholder-text">
+                                      {rebaseLifecycleDisabledReason()}
+                                    </p>
+                                  </Show>
                                 </Show>
                                 <Show when={primaryAction() === "rebase"}>
                                   <button

@@ -728,7 +728,9 @@ const persistSubagentSnapshots = (
       ),
       serializePersistedSubagentSnapshots(snapshots),
     );
-  } catch {}
+  } catch {
+    // Ignore storage failures; snapshots are an optional UI cache.
+  }
 };
 
 const mergePersistedSubagentSnapshots = (
@@ -2659,7 +2661,9 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
       if (typeof serialized === "string") {
         return serialized;
       }
-    } catch {}
+    } catch {
+      // Fall through to the string coercion fallback below.
+    }
 
     if (typeof payload === "string") {
       return payload.replace(INTERNAL_ID_PATTERN, "[internal-id]");

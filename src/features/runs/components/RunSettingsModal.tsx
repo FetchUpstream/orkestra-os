@@ -16,6 +16,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  createUniqueId,
   onCleanup,
   type Accessor,
   type Component,
@@ -65,6 +66,8 @@ const RunSourceBranchSelect: Component<{
   const [isOpen, setIsOpen] = createSignal(false);
   const [search, setSearch] = createSignal("");
   let containerRef: HTMLDivElement | undefined;
+  let triggerRef: HTMLButtonElement | undefined;
+  const listboxId = createUniqueId();
 
   const filteredOptions = createMemo(() => {
     const query = search().trim().toLowerCase();
@@ -107,8 +110,31 @@ const RunSourceBranchSelect: Component<{
   }
 
   return (
-    <div ref={containerRef} class="relative">
+    <div
+      ref={(element) => {
+        containerRef = element;
+      }}
+      class="relative"
+      onFocusOut={() => {
+        queueMicrotask(() => {
+          if (!containerRef?.contains(document.activeElement)) {
+            close();
+          }
+        });
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && isOpen()) {
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+          queueMicrotask(() => triggerRef?.focus());
+        }
+      }}
+    >
       <button
+        ref={(element) => {
+          triggerRef = element;
+        }}
         type="button"
         class="select select-sm border-base-content/15 bg-base-100 text-base-content flex h-10 min-h-10 w-full items-center justify-between rounded-none border px-3 pr-8 text-xs font-medium"
         onClick={() => {
@@ -118,6 +144,7 @@ const RunSourceBranchSelect: Component<{
         disabled={props.disabled()}
         aria-haspopup="listbox"
         aria-expanded={isOpen()}
+        aria-controls={listboxId}
       >
         <span class="truncate pr-3 text-left">
           {selectedOption()?.name ||
@@ -129,7 +156,7 @@ const RunSourceBranchSelect: Component<{
         </span>
       </button>
       <Show when={isOpen()}>
-        <div class="border-base-content/15 bg-base-100 absolute z-20 mt-1 w-full rounded-none border shadow-lg">
+        <div class="run-source-branch-popover border-base-content/15 bg-base-100 absolute z-20 mt-1 w-full rounded-none border shadow-lg">
           <div class="border-base-content/10 border-b p-2">
             <input
               type="search"
@@ -141,6 +168,7 @@ const RunSourceBranchSelect: Component<{
             />
           </div>
           <div
+            id={listboxId}
             class="max-h-64 overflow-y-auto py-1"
             role="listbox"
             aria-label="Source branches"
@@ -158,6 +186,8 @@ const RunSourceBranchSelect: Component<{
                   <button
                     type="button"
                     class="hover:bg-base-200 flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs"
+                    role="option"
+                    aria-selected={props.selectedValue().trim() === option.name}
                     onClick={() => {
                       props.onChange(option.name);
                       close();

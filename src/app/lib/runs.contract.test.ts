@@ -22,6 +22,8 @@ import {
   getRunOpenCodeSessionTodos,
   listActiveRuns,
   listTaskRuns,
+  abortRunWorktreeRebase,
+  continueRunWorktreeRebase,
   mergeRunWorktreeIntoSource,
   rebaseRunWorktreeOntoSource,
   submitRunOpenCodePrompt,
@@ -888,6 +890,7 @@ describe("runs contract", () => {
       },
       conflict: {
         chat_prompt: "Resolve conflicts in file A and B",
+        fingerprint: "rebase:main:0:file-a",
       },
     });
 
@@ -897,7 +900,7 @@ describe("runs contract", () => {
       status: "conflict",
       message: undefined,
       conflictSummary: "Resolve conflicts in file A and B",
-      conflictFingerprint: undefined,
+      conflictFingerprint: "rebase:main:0:file-a",
     });
   });
 
@@ -1018,14 +1021,18 @@ describe("runs contract", () => {
     );
   });
 
-  it("invokes canonical rebase and merge git commands", async () => {
+  it("invokes canonical rebase lifecycle and merge git commands", async () => {
     invokeMock.mockResolvedValueOnce({
       status: "conflict",
       conflict_summary: "x",
     });
+    invokeMock.mockResolvedValueOnce({ state: "mergeable" });
+    invokeMock.mockResolvedValueOnce({ state: "needs_rebase" });
     invokeMock.mockResolvedValueOnce({ status: "merged" });
 
     const rebase = await rebaseRunWorktreeOntoSource("run-1");
+    const continued = await continueRunWorktreeRebase("run-1");
+    const aborted = await abortRunWorktreeRebase("run-1");
     const merge = await mergeRunWorktreeIntoSource("run-1");
 
     expect(invokeMock).toHaveBeenNthCalledWith(
@@ -1037,6 +1044,16 @@ describe("runs contract", () => {
     );
     expect(invokeMock).toHaveBeenNthCalledWith(
       2,
+      "continue_run_worktree_rebase",
+      {
+        runId: "run-1",
+      },
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "abort_run_worktree_rebase", {
+      runId: "run-1",
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      4,
       "merge_run_into_source_branch",
       {
         runId: "run-1",
@@ -1044,6 +1061,8 @@ describe("runs contract", () => {
     );
     expect(rebase.status).toBe("conflict");
     expect(rebase.conflictSummary).toBe("x");
+    expect(continued.status).toBe("accepted");
+    expect(aborted.status).toBe("accepted");
     expect(merge.status).toBe("merged");
   });
 });

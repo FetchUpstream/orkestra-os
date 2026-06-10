@@ -11,10 +11,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { css } from "@codemirror/lang-css";
+import { go } from "@codemirror/lang-go";
 import { html } from "@codemirror/lang-html";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
+import { php } from "@codemirror/lang-php";
+import { python } from "@codemirror/lang-python";
 import { rust } from "@codemirror/lang-rust";
 import { sql } from "@codemirror/lang-sql";
 import { xml } from "@codemirror/lang-xml";
@@ -57,6 +60,21 @@ const firstPartyLanguageLoaders: Record<string, LanguageLoader> = {
   sass: () => css(),
   yaml: () => yaml(),
   yml: () => yaml(),
+  python: () => python(),
+  py: () => python(),
+  pyi: () => python(),
+  pyw: () => python(),
+  python3: () => python(),
+  "text/x-python": () => python(),
+  go: () => go(),
+  php: () => php(),
+  phtml: () => php(),
+  php3: () => php(),
+  php4: () => php(),
+  php5: () => php(),
+  phps: () => php(),
+  "text/x-php": () => php(),
+  "application/x-httpd-php": () => php(),
   rust: () => rust(),
   rs: () => rust(),
   sql: () => sql(),

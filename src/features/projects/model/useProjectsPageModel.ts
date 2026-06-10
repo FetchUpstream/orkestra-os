@@ -41,7 +41,9 @@ import {
   readRunSelectionOptionsCache,
 } from "../../../app/lib/runSelectionOptionsCache";
 import {
+  decodeRunModelSelectionValue,
   filterModelsForProvider,
+  findRunModelForProvider,
   resolveProjectRunDefaults,
 } from "../../../app/lib/projectRunDefaults";
 import {
@@ -90,10 +92,15 @@ export const useProjectsPageModel = () => {
   const [runDefaultsError, setRunDefaultsError] = createSignal("");
   const [isSubmitting, setIsSubmitting] = createSignal(false);
   const [isLoadingRunDefaults, setIsLoadingRunDefaults] = createSignal(false);
+  // Prevent the create form from rendering before provider discovery starts.
+  const [isRunSelectionOptionsLoading, setIsRunSelectionOptionsLoading] =
+    createSignal(true);
   const [runProviderOptions, setRunProviderOptions] = createSignal<
     RunSelectionOption[]
   >([]);
-  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>([]);
+  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>(
+    [],
+  );
   const [runModelOptions, setRunModelOptions] = createSignal<RunModelOption[]>(
     [],
   );
@@ -160,11 +167,7 @@ export const useProjectsPageModel = () => {
 
   const doesModelMatchProvider = (modelId: string, providerId: string) => {
     if (!modelId || !providerId) return true;
-    const selectedModel = runModelOptions().find(
-      (option) => option.id === modelId,
-    );
-    if (!selectedModel?.providerId) return true;
-    return selectedModel.providerId === providerId;
+    return !!findRunModelForProvider(runModelOptions(), providerId, modelId);
   };
 
   const hasRunSelectionOptions = createMemo(
@@ -187,8 +190,10 @@ export const useProjectsPageModel = () => {
     }
     if (!defaultRunModel().trim()) return "Default model is required.";
     if (
-      !visibleRunModelOptions().some(
-        (option) => option.id === defaultRunModel().trim(),
+      !findRunModelForProvider(
+        runModelOptions(),
+        defaultRunProvider().trim(),
+        defaultRunModel().trim(),
       )
     ) {
       return "Selected model is unavailable for the selected provider. Please reselect.";
@@ -196,14 +201,24 @@ export const useProjectsPageModel = () => {
     return "";
   });
 
-  const setDefaultRunModel = (modelId: string) => {
+  const setDefaultRunModel = (selectionValue: string) => {
+    const selectedIdentity = decodeRunModelSelectionValue(selectionValue);
+    const modelId = selectedIdentity.modelId.trim();
     setDefaultRunModelSignal(modelId);
     if (!modelId) return;
-    const selectedModel = runModelOptions().find(
-      (option) => option.id === modelId,
+    const currentProviderId = defaultRunProvider().trim();
+    const selectedProviderId = selectedIdentity.providerId.trim();
+    const selectedModel = findRunModelForProvider(
+      runModelOptions(),
+      currentProviderId || selectedProviderId,
+      modelId,
     );
-    const providerId = selectedModel?.providerId?.trim() || "";
-    if (providerId && providerId !== defaultRunProvider().trim()) {
+    const providerId =
+      currentProviderId ||
+      selectedProviderId ||
+      selectedModel?.providerId?.trim() ||
+      "";
+    if (!currentProviderId && providerId) {
       setDefaultRunProvider(providerId);
     }
   };
@@ -252,70 +267,75 @@ export const useProjectsPageModel = () => {
     const projectId = editingProjectId()?.trim() || "";
     const catalogProjectId = projectId;
     const requestVersion = ++runSelectionOptionsRequestVersion;
+    const isLatestRequest = () =>
+      requestVersion === runSelectionOptionsRequestVersion;
     const isCurrentRequest = () =>
-      requestVersion === runSelectionOptionsRequestVersion &&
-      (editingProjectId()?.trim() || "") === projectId;
+      isLatestRequest() && (editingProjectId()?.trim() || "") === projectId;
 
-    if (!projectId && openCodeDependency.state() !== "available") {
-      setIsLoadingRunDefaults(true);
-      setRunDefaultsError("");
-      const isAvailable =
-        await openCodeDependency.ensureAvailableForRequiredFlow();
-      if (!isCurrentRequest()) {
+    setIsRunSelectionOptionsLoading(true);
+
+    try {
+      if (!projectId && openCodeDependency.state() !== "available") {
+        setIsLoadingRunDefaults(true);
+        setRunDefaultsError("");
+        const isAvailable =
+          await openCodeDependency.ensureAvailableForRequiredFlow();
+        if (!isCurrentRequest()) {
+          return;
+        }
+        if (!isAvailable) {
+          setRunAgentOptions([]);
+          setRunProviderOptions([]);
+          setRunModelOptions([]);
+          return;
+        }
+      }
+
+      const cachedOptions = readRunSelectionOptionsCache(catalogProjectId);
+      if (cachedOptions) {
+        if (!isCurrentRequest()) {
+          return;
+        }
+        setRunProviderOptions(cachedOptions.providers);
+        setRunAgentOptions(cachedOptions.agents);
+        setRunModelOptions(cachedOptions.models);
+        applyResolvedRunDefaults({
+          agentId: defaultRunAgent(),
+          providerId: defaultRunProvider(),
+          modelId: defaultRunModel(),
+        });
+        setRunDefaultsError("");
         return;
       }
-      if (!isAvailable) {
+
+      setIsLoadingRunDefaults(true);
+      setRunDefaultsError("");
+      try {
+        const options = await getRunSelectionOptionsWithCache(catalogProjectId);
+        if (!isCurrentRequest()) {
+          return;
+        }
+        setRunProviderOptions(options.providers);
+        setRunAgentOptions(options.agents);
+        setRunModelOptions(options.models);
+        applyResolvedRunDefaults({
+          agentId: defaultRunAgent(),
+          providerId: defaultRunProvider(),
+          modelId: defaultRunModel(),
+        });
+      } catch {
+        if (!isCurrentRequest()) {
+          return;
+        }
         setRunAgentOptions([]);
         setRunProviderOptions([]);
         setRunModelOptions([]);
-        setIsLoadingRunDefaults(false);
-        return;
+        setRunDefaultsError("Failed to load run defaults.");
       }
-    }
-
-    const cachedOptions = readRunSelectionOptionsCache(catalogProjectId);
-    if (cachedOptions) {
-      if (!isCurrentRequest()) {
-        return;
-      }
-      setRunProviderOptions(cachedOptions.providers);
-      setRunAgentOptions(cachedOptions.agents);
-      setRunModelOptions(cachedOptions.models);
-      applyResolvedRunDefaults({
-        agentId: defaultRunAgent(),
-        providerId: defaultRunProvider(),
-        modelId: defaultRunModel(),
-      });
-      setRunDefaultsError("");
-      return;
-    }
-
-    setIsLoadingRunDefaults(true);
-    setRunDefaultsError("");
-    try {
-      const options = await getRunSelectionOptionsWithCache(catalogProjectId);
-      if (!isCurrentRequest()) {
-        return;
-      }
-      setRunProviderOptions(options.providers);
-      setRunAgentOptions(options.agents);
-      setRunModelOptions(options.models);
-      applyResolvedRunDefaults({
-        agentId: defaultRunAgent(),
-        providerId: defaultRunProvider(),
-        modelId: defaultRunModel(),
-      });
-    } catch {
-      if (!isCurrentRequest()) {
-        return;
-      }
-      setRunAgentOptions([]);
-      setRunProviderOptions([]);
-      setRunModelOptions([]);
-      setRunDefaultsError("Failed to load run defaults.");
     } finally {
-      if (isCurrentRequest()) {
+      if (isLatestRequest()) {
         setIsLoadingRunDefaults(false);
+        setIsRunSelectionOptionsLoading(false);
       }
     }
   };
@@ -863,7 +883,7 @@ export const useProjectsPageModel = () => {
         new CustomEvent("projects:updated", { detail: nextProjects }),
       );
       resetForm();
-      navigate(`/projects/${createdProject.id}`);
+      navigate(buildBoardHref(createdProject.id));
     } catch (submitError) {
       const backendMessage = getCreateProjectErrorMessage(submitError);
       const prefix = "Failed to create project.";
@@ -1089,6 +1109,7 @@ export const useProjectsPageModel = () => {
     runDefaultsError,
     isSubmitting,
     isLoadingRunDefaults,
+    isRunSelectionOptionsLoading,
     runProviderOptions,
     runAgentOptions,
     runModelOptions,

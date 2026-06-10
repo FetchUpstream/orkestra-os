@@ -45,6 +45,7 @@ export default [
     },
     rules: {
       "no-unused-vars": "off",
+      "no-unassigned-vars": "off",
       "@typescript-eslint/no-unused-vars": [
         "warn",
         { argsIgnorePattern: "^_" },

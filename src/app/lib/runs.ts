@@ -708,6 +708,11 @@ type RunGitMergeStatusResponse = {
   conflictSummary?: string | null;
   conflict_fingerprint?: string | null;
   conflictFingerprint?: string | null;
+  conflict?: {
+    fingerprint?: string | null;
+    conflict_fingerprint?: string | null;
+    conflictFingerprint?: string | null;
+  };
   status?: unknown;
   data?: unknown;
   payload?: unknown;
@@ -722,6 +727,9 @@ type RunGitActionResponse = {
   conflict?: {
     chat_prompt?: string | null;
     chatPrompt?: string | null;
+    fingerprint?: string | null;
+    conflict_fingerprint?: string | null;
+    conflictFingerprint?: string | null;
   };
   error?: string | null;
   message?: string | null;
@@ -1303,7 +1311,14 @@ const toRunGitMergeStatus = (response: unknown): RunGitMergeStatus => {
       pick(payload.conflict_summary, payload.conflictSummary),
     ),
     conflictFingerprint: toOptionalTrimmedString(
-      pick(payload.conflict_fingerprint, payload.conflictFingerprint),
+      pick(payload.conflict_fingerprint, payload.conflictFingerprint) ??
+        pick(
+          payload.conflict?.fingerprint,
+          pick(
+            payload.conflict?.conflict_fingerprint,
+            payload.conflict?.conflictFingerprint,
+          ),
+        ),
     ),
   };
 };
@@ -1378,6 +1393,10 @@ const toRunGitActionResult = (
     "rebasing",
     "rebase_in_progress",
     "rebase_succeeded",
+    "clean",
+    "needs_rebase",
+    "rebase_required",
+    "mergeable",
     "conflict",
     "rebase_conflict",
     "conflicted",
@@ -1404,7 +1423,14 @@ const toRunGitActionResult = (
         conflictMessage,
     ),
     conflictFingerprint: toOptionalTrimmedString(
-      pick(payload.conflict_fingerprint, payload.conflictFingerprint),
+      pick(payload.conflict_fingerprint, payload.conflictFingerprint) ??
+        pick(
+          payload.conflict?.fingerprint,
+          pick(
+            payload.conflict?.conflict_fingerprint,
+            payload.conflict?.conflictFingerprint,
+          ),
+        ),
     ),
   };
 };
@@ -1981,21 +2007,13 @@ export const getRunGitMergeStatus = async (
   return toRunGitMergeStatus(response);
 };
 
-export const rebaseRunWorktreeOntoSource = async (
-  runId: string,
-): Promise<RunGitRebaseResult> => {
-  const response = await invoke<unknown>("rebase_run_worktree_branch", {
-    runId,
-  });
+const toRunGitRebaseResult = (
+  response: unknown,
+  acceptedStates: ReadonlySet<string>,
+): RunGitRebaseResult => {
   const result = toRunGitActionResult(response);
 
-  if (
-    result.status === "accepted" ||
-    result.status === "ok" ||
-    result.status === "rebasing" ||
-    result.status === "rebase_in_progress" ||
-    result.status === "rebase_succeeded"
-  ) {
+  if (acceptedStates.has(result.status)) {
     return {
       status: "accepted",
       message: result.message,
@@ -2003,7 +2021,12 @@ export const rebaseRunWorktreeOntoSource = async (
       conflictFingerprint: result.conflictFingerprint,
     };
   }
-  if (result.status === "conflict" || result.status === "rebase_conflict") {
+
+  if (
+    result.status === "conflict" ||
+    result.status === "rebase_conflict" ||
+    result.status === "conflicted"
+  ) {
     return {
       status: "conflict",
       message: result.message,
@@ -2011,20 +2034,66 @@ export const rebaseRunWorktreeOntoSource = async (
       conflictFingerprint: result.conflictFingerprint,
     };
   }
-  if (result.status === "conflicted") {
-    return {
-      status: "conflict",
-      message: result.message,
-      conflictSummary: result.conflictSummary,
-      conflictFingerprint: result.conflictFingerprint,
-    };
-  }
+
   return {
     status: "failed",
     message: result.message,
     conflictSummary: result.conflictSummary,
     conflictFingerprint: result.conflictFingerprint,
   };
+};
+
+const rebaseStartAcceptedStates = new Set([
+  "accepted",
+  "ok",
+  "rebasing",
+  "rebase_in_progress",
+  "rebase_succeeded",
+  "mergeable",
+]);
+
+const rebaseContinueAcceptedStates = new Set([
+  ...rebaseStartAcceptedStates,
+  "clean",
+  "merged",
+  "needs_rebase",
+  "rebase_required",
+]);
+
+const rebaseAbortAcceptedStates = new Set([
+  "accepted",
+  "ok",
+  "clean",
+  "needs_rebase",
+  "rebase_required",
+  "mergeable",
+]);
+
+export const rebaseRunWorktreeOntoSource = async (
+  runId: string,
+): Promise<RunGitRebaseResult> => {
+  const response = await invoke<unknown>("rebase_run_worktree_branch", {
+    runId,
+  });
+  return toRunGitRebaseResult(response, rebaseStartAcceptedStates);
+};
+
+export const continueRunWorktreeRebase = async (
+  runId: string,
+): Promise<RunGitRebaseResult> => {
+  const response = await invoke<unknown>("continue_run_worktree_rebase", {
+    runId,
+  });
+  return toRunGitRebaseResult(response, rebaseContinueAcceptedStates);
+};
+
+export const abortRunWorktreeRebase = async (
+  runId: string,
+): Promise<RunGitRebaseResult> => {
+  const response = await invoke<unknown>("abort_run_worktree_rebase", {
+    runId,
+  });
+  return toRunGitRebaseResult(response, rebaseAbortAcceptedStates);
 };
 
 export const mergeRunWorktreeIntoSource = async (

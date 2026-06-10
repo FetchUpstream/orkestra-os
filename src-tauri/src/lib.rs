@@ -17,6 +17,23 @@ use tauri::Manager;
 use tauri::RunEvent;
 use tracing::warn;
 
+#[cfg(desktop)]
+const MAIN_WINDOW_LABEL: &str = "main";
+
+#[cfg(desktop)]
+fn maximize_main_window_on_desktop_startup(app: &tauri::App) {
+    if let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        if let Err(err) = main_window.maximize() {
+            warn!(
+                target: "app.startup",
+                marker = "main_window_maximize_failed",
+                error = %err,
+                "Failed to maximize main window on startup"
+            );
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -60,9 +77,8 @@ pub fn run() {
                 }
             });
 
-            if let Some(main_window) = app.get_webview_window("main") {
-                let _ = main_window.maximize();
-            }
+            #[cfg(desktop)]
+            maximize_main_window_on_desktop_startup(app);
 
             app.emit("app://runtime-status", "ready")?;
             Ok(())
@@ -92,6 +108,8 @@ pub fn run() {
             app::commands::runs::get_run_git_merge_status,
             app::commands::runs::rebase_run_worktree_branch,
             app::commands::runs::rebase_run_worktree_onto_source,
+            app::commands::runs::continue_run_worktree_rebase,
+            app::commands::runs::abort_run_worktree_rebase,
             app::commands::runs::merge_run_into_source_branch,
             app::commands::runs::merge_run_worktree_into_source,
             app::commands::runs::set_run_diff_watch,

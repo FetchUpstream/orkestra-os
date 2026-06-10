@@ -24,7 +24,6 @@ use git2::{
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::process::Command;
 
 #[derive(Clone, Debug)]
 pub struct RunsMergeService {
@@ -115,46 +114,7 @@ impl RunsMergeService {
                 .rebase(None, Some(&source_annotated), Some(&source_annotated), None)
                 .map_err(|err| AppError::validation(format!("failed to start rebase: {err}")))?;
 
-            let mut conflict_result = None;
-            loop {
-                let next = match rebase.next() {
-                    Some(Ok(op)) => Some(op),
-                    Some(Err(err)) => {
-                        return Err(AppError::validation(format!("rebase failed: {err}")));
-                    }
-                    None => None,
-                };
-                if next.is_none() {
-                    break;
-                }
-
-                let index = context.repo.index().map_err(|err| {
-                    AppError::validation(format!("failed to inspect rebase index: {err}"))
-                })?;
-                if index.has_conflicts() {
-                    Self::attach_head_to_worktree_branch(&context.repo, &context.worktree_branch)?;
-                    let conflict =
-                        Self::build_conflict_payload(&context.repo, &context.source_branch)?;
-                    let status = self.compute_status(&context)?;
-                    conflict_result = Some((conflict, status));
-                    break;
-                }
-
-                let signature = Self::signature(&context.repo)?;
-                rebase.commit(None, &signature, None).map_err(|err| {
-                    AppError::validation(format!("failed to commit rebase step: {err}"))
-                })?;
-            }
-
-            if conflict_result.is_none() {
-                let signature = Self::signature(&context.repo)?;
-                rebase.finish(Some(&signature)).map_err(|err| {
-                    AppError::validation(format!("failed to finish rebase: {err}"))
-                })?;
-                Self::reattach_head_to_branch_if_needed(&context.repo, &context.worktree_branch)?;
-            }
-
-            conflict_result
+            self.advance_rebase_to_completion(&context, &mut rebase)?
         };
 
         if let Some((conflict, status)) = rebase_conflict {
@@ -176,6 +136,87 @@ impl RunsMergeService {
                 .handle_waiting_for_input(run_id, "rebase_completed")
                 .await?;
         }
+        Ok(RunRebaseResponseDto {
+            state: status.state.clone(),
+            status,
+            conflict: None,
+        })
+    }
+
+    pub async fn continue_worktree_rebase(
+        &self,
+        run_id: &str,
+    ) -> Result<RunRebaseResponseDto, AppError> {
+        let context = self.load_context(run_id).await?;
+        Self::ensure_rebase_in_progress(&context.repo, "continue rebase")?;
+
+        let rebase_conflict = {
+            let mut rebase = context.repo.open_rebase(None).map_err(|err| {
+                AppError::validation(format!("failed to open active rebase: {err}"))
+            })?;
+
+            if Self::index_has_conflicts(&context.repo, "inspect rebase conflicts")? {
+                Some(self.build_rebase_conflict_result(&context)?)
+            } else {
+                let signature = Self::signature(&context.repo)?;
+                if rebase.operation_current().is_some() {
+                    rebase.commit(None, &signature, None).map_err(|err| {
+                        AppError::validation(format!(
+                            "failed to commit resolved rebase step: {err}"
+                        ))
+                    })?;
+                }
+                self.advance_rebase_to_completion(&context, &mut rebase)?
+            }
+        };
+
+        if let Some((conflict, status)) = rebase_conflict {
+            let _ = self
+                .run_state_service
+                .handle_rebase_conflicts_started(run_id)
+                .await?;
+            return Ok(RunRebaseResponseDto {
+                state: MergeState::Conflicted.as_str().to_string(),
+                status,
+                conflict: Some(conflict),
+            });
+        }
+
+        let status = self.compute_status(&context)?;
+        let _ = self
+            .run_state_service
+            .recompute_run_state(run_id, "rebase_completed")
+            .await?;
+        Ok(RunRebaseResponseDto {
+            state: status.state.clone(),
+            status,
+            conflict: None,
+        })
+    }
+
+    pub async fn abort_worktree_rebase(
+        &self,
+        run_id: &str,
+    ) -> Result<RunRebaseResponseDto, AppError> {
+        let context = self.load_context(run_id).await?;
+        Self::ensure_rebase_in_progress(&context.repo, "abort rebase")?;
+
+        {
+            let mut rebase = context.repo.open_rebase(None).map_err(|err| {
+                AppError::validation(format!("failed to open active rebase: {err}"))
+            })?;
+            rebase
+                .abort()
+                .map_err(|err| AppError::validation(format!("failed to abort rebase: {err}")))?;
+        }
+        Self::reattach_head_to_branch_if_needed(&context.repo, &context.worktree_branch)?;
+
+        let status = self.compute_status(&context)?;
+        let _ = self
+            .run_state_service
+            .recompute_run_state(run_id, "rebase_aborted")
+            .await?;
+
         Ok(RunRebaseResponseDto {
             state: status.state.clone(),
             status,
@@ -318,7 +359,9 @@ impl RunsMergeService {
         let dirty_disable_reason = Self::dirty_worktree_disable_reason(&context.repo)?;
         let is_worktree_clean = dirty_disable_reason.is_none();
 
-        let mut state = if is_rebase_in_progress {
+        let mut state = if is_rebase_in_progress && has_conflicts {
+            MergeState::Conflicted
+        } else if is_rebase_in_progress {
             MergeState::RebaseInProgress
         } else if context.run_status == "complete" {
             MergeState::Merged
@@ -377,6 +420,10 @@ impl RunsMergeService {
                 "repository has a rebase in progress; resolve it before rebasing or merging"
                     .to_string(),
             ),
+            MergeState::Conflicted if is_rebase_in_progress => Some(
+                "rebase is paused on conflicts; resolve and stage the conflicted files before continuing"
+                    .to_string(),
+            ),
             MergeState::Conflicted => Some("worktree branch has unresolved conflicts".to_string()),
             MergeState::Clean => Some("worktree branch has no commits to merge".to_string()),
             MergeState::Merged => Some("run has already been merged".to_string()),
@@ -410,6 +457,71 @@ impl RunsMergeService {
             can_merge,
             disable_reason,
         })
+    }
+
+    fn advance_rebase_to_completion(
+        &self,
+        context: &MergeContext,
+        rebase: &mut git2::Rebase<'_>,
+    ) -> Result<Option<(RunMergeConflictDto, RunMergeStatusDto)>, AppError> {
+        loop {
+            let next = match rebase.next() {
+                Some(Ok(op)) => Some(op),
+                Some(Err(err)) => {
+                    if Self::index_has_conflicts(&context.repo, "inspect rebase conflicts")? {
+                        return Ok(Some(self.build_rebase_conflict_result(context)?));
+                    }
+                    return Err(AppError::validation(format!("rebase failed: {err}")));
+                }
+                None => None,
+            };
+            if next.is_none() {
+                break;
+            }
+
+            if Self::index_has_conflicts(&context.repo, "inspect rebase index")? {
+                return Ok(Some(self.build_rebase_conflict_result(context)?));
+            }
+
+            let signature = Self::signature(&context.repo)?;
+            rebase.commit(None, &signature, None).map_err(|err| {
+                AppError::validation(format!("failed to commit rebase step: {err}"))
+            })?;
+        }
+
+        let signature = Self::signature(&context.repo)?;
+        rebase
+            .finish(Some(&signature))
+            .map_err(|err| AppError::validation(format!("failed to finish rebase: {err}")))?;
+        Self::reattach_head_to_branch_if_needed(&context.repo, &context.worktree_branch)?;
+
+        Ok(None)
+    }
+
+    fn build_rebase_conflict_result(
+        &self,
+        context: &MergeContext,
+    ) -> Result<(RunMergeConflictDto, RunMergeStatusDto), AppError> {
+        let conflict = Self::build_conflict_payload(&context.repo, &context.source_branch)?;
+        let status = self.compute_status(context)?;
+        Ok((conflict, status))
+    }
+
+    fn ensure_rebase_in_progress(repo: &Repository, action: &str) -> Result<(), AppError> {
+        if Self::is_rebase_in_progress(repo.state()) {
+            return Ok(());
+        }
+
+        Err(AppError::validation(format!(
+            "cannot {action}: no active rebase found for this worktree"
+        )))
+    }
+
+    fn index_has_conflicts(repo: &Repository, action: &str) -> Result<bool, AppError> {
+        Ok(repo
+            .index()
+            .map_err(|err| AppError::validation(format!("failed to {action}: {err}")))?
+            .has_conflicts())
     }
 
     fn source_annotated_commit<'repo>(
@@ -505,33 +617,17 @@ impl RunsMergeService {
         branch_name: &str,
         target_oid: git2::Oid,
     ) -> Result<(), AppError> {
+        Self::update_branch_reference(repo, branch_name, target_oid)?;
+
         if !Self::is_head_on_branch(repo, branch_name)? {
-            return Self::update_branch_reference(repo, branch_name, target_oid);
-        }
-
-        let workdir = repo.workdir().ok_or_else(|| {
-            AppError::validation("source repository has no working directory".to_string())
-        })?;
-        let target = target_oid.to_string();
-        let merge_status = Command::new("git")
-            .arg("merge")
-            .arg("--ff-only")
-            .arg(target)
-            .current_dir(workdir)
-            .status()
-            .map_err(|err| AppError::validation(format!("failed to execute git merge: {err}")))?;
-
-        if !merge_status.success() {
-            return Err(AppError::validation(format!(
-                "failed to fast-forward source branch '{branch_name}'"
-            )));
+            return Ok(());
         }
 
         let mut checkout = CheckoutBuilder::new();
-        checkout.safe();
+        checkout.force();
         repo.checkout_head(Some(&mut checkout)).map_err(|err| {
             AppError::validation(format!(
-                "failed to safely refresh source branch '{branch_name}' working tree: {err}"
+                "failed to refresh source branch '{branch_name}' working tree after fast-forward: {err}"
             ))
         })
     }
@@ -689,11 +785,57 @@ impl RunsMergeService {
             .map_err(|err| AppError::validation(format!("failed to resolve git signature: {err}")))
     }
 
+    fn build_rebase_conflict_prompt(source_branch: &str, conflicted_files: &str) -> String {
+        format!(
+            r#"A backend-owned rebase is paused on conflicts for this worktree. Resolve and stage the conflicts only; the backend and git drawer own rebase continuation and abort.
+
+Conflicting files:
+{conflicted_files}
+Rules:
+- This is a conflict-resolution task, not a normal commit task.
+- Do not create a standalone/manual commit.
+- Do not run rebase lifecycle commands. The backend will continue or abort the rebase from the git drawer.
+- Do not run `git status --short --branch` while the rebase is in progress. Use full `git status`.
+- First run `git status` and confirm:
+  - a rebase is in progress
+  - the current unmerged paths
+- Resolve only the conflict markers in the listed files.
+- Preserve both:
+  - the upstream/rebased branch’s intended changes
+  - this branch’s valid changes
+- Resolve only the listed conflict markers and preserve both `{source_branch}`-intended changes and this run's valid changes.
+- Do not change unrelated files.
+- Do not edit or repair anything inside `.git`, `rebase-merge`, `rebase-apply`, or `git-rebase-todo`.
+- Do not abort, skip, restart, continue, or repair the rebase yourself.
+
+Required flow:
+1. Run `git status`.
+2. Inspect and resolve only the listed conflicted files.
+3. Before staging, run:
+   `git diff --name-only --diff-filter=U`
+4. If any unmerged paths remain outside the listed files, stop and report them.
+5. Stage only the resolved conflicted files with `git add <files>`.
+6. Run `git status` again and confirm no unmerged paths remain.
+7. Stop. Do not continue or abort the rebase from the terminal.
+8. Tell the user to continue the rebase from the git drawer.
+
+After resolving and staging the conflicted files, stop and tell the user to continue the rebase from the git drawer.
+
+Output format:
+- Files resolved and staged.
+- Any files that still need user attention.
+- Final full `git status`.
+- Confirmation that the user should continue or abort from the git drawer.
+"#
+        )
+    }
+
     fn build_conflict_payload(
         repo: &Repository,
         source_branch: &str,
     ) -> Result<RunMergeConflictDto, AppError> {
         let mut files = BTreeSet::new();
+        let mut fingerprint_parts = BTreeSet::new();
         let index = repo.index().map_err(|err| {
             AppError::validation(format!("failed to inspect rebase conflicts: {err}"))
         })?;
@@ -707,6 +849,24 @@ impl RunsMergeService {
                     .and_then(|entry| std::str::from_utf8(&entry.path).ok())
                 {
                     files.insert(path.to_string());
+                    let ancestor_id = conflict
+                        .ancestor
+                        .as_ref()
+                        .map(|entry| entry.id.to_string())
+                        .unwrap_or_else(|| "-".to_string());
+                    let our_id = conflict
+                        .our
+                        .as_ref()
+                        .map(|entry| entry.id.to_string())
+                        .unwrap_or_else(|| "-".to_string());
+                    let their_id = conflict
+                        .their
+                        .as_ref()
+                        .map(|entry| entry.id.to_string())
+                        .unwrap_or_else(|| "-".to_string());
+                    fingerprint_parts.insert(format!(
+                        "{path}:{ancestor_id}:{our_id}:{their_id}"
+                    ));
                 }
             }
         }
@@ -721,13 +881,23 @@ impl RunsMergeService {
                 .collect::<String>()
         };
 
-        let prompt = format!(
-            "A rebase is already in progress for this worktree. Continue the existing rebase safely.\n\nConflicting files:\n{conflicted_files}\nRules:\n- This is a rebase-continuation task, not a normal commit task.\n- Do not create a standalone/manual commit unless `git rebase --continue` itself requires it.\n- Do not run `git status --short --branch` while the rebase is in progress. Use full `git status`.\n- First run `git status` and confirm:\n  - a rebase is in progress\n  - the current unmerged paths\n- Resolve only the conflict markers in the listed files.\n- Preserve both:\n  - the upstream/rebased branch’s intended changes\n  - this branch’s valid changes\n- Resolve only the listed conflict markers and preserve both `{source_branch}`-intended changes and this run's valid changes.\n- Do not change unrelated files.\n- Do not edit or repair anything inside `.git`, `rebase-merge`, `rebase-apply`, or `git-rebase-todo`.\n- Do not abort, skip, restart, or “repair” the rebase unless explicitly asked.\n- Never set `GIT_SEQUENCE_EDITOR` during normal conflict continuation.\n- Use plain `git rebase --continue`.\n- If a non-interactive shell requires suppressing the commit-message editor, use `GIT_EDITOR=true git rebase --continue`.\n- `GIT_SEQUENCE_EDITOR` is only for interactive todo editing (for example `git rebase --edit-todo`), not normal rebase continuation.\n\nRequired flow:\n1. Run `git status`.\n2. Inspect and resolve only the listed conflicted files.\n3. Before staging, run:\n   `git diff --name-only --diff-filter=U`\n4. If any unmerged paths remain outside the listed files, stop and report them.\n5. Stage only the resolved conflicted files with `git add <files>`.\n6. Continue with:\n   `git rebase --continue`\n   If that would block only because an editor cannot open in this environment, use:\n   `GIT_EDITOR=true git rebase --continue`\n7. Inspect the real stdout/stderr and exit result of `git rebase --continue`.\n8. If the rebase stops on new conflicts:\n   - run full `git status`\n   - report the new unmerged paths\n   - stop unless explicitly asked to continue through the next conflict set too\n9. If the rebase completes, then run:\n   `git status`\n   and report the final state.\n\nImportant failure handling:\n- If `git rebase --continue` fails with missing/corrupt rebase metadata (for example missing `rebase-merge/git-rebase-todo`), stop and report that exact error.\n- Do not try to recreate or hand-edit Git’s rebase metadata.\n- Do not assume success just because the command executed.\n\nOutput format:\n- Rebase status from initial `git status`\n- Files you resolved\n- Result of `git diff --name-only --diff-filter=U`\n- Exact result of `git rebase --continue`\n- Final full `git status`"
-        );
+        let prompt = Self::build_rebase_conflict_prompt(source_branch, &conflicted_files);
+        let fingerprint = if fingerprint_parts.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "rebase:{source_branch}:{}",
+                fingerprint_parts
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join("|")
+            ))
+        };
 
         Ok(RunMergeConflictDto {
             files,
             chat_prompt: prompt,
+            fingerprint,
         })
     }
 }
@@ -1023,14 +1193,25 @@ mod tests {
         assert_eq!(response.state, "conflicted");
         let conflict = response.conflict.expect("expected conflict payload");
         assert!(conflict.files.iter().any(|file| file == "README.md"));
+        assert!(conflict
+            .fingerprint
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("rebase:main:"));
         assert!(conflict.chat_prompt.contains("Conflicting files"));
         assert!(conflict
             .chat_prompt
-            .contains("A rebase is already in progress for this worktree. Continue the existing rebase safely."));
+            .contains("A backend-owned rebase is paused on conflicts for this worktree."));
         assert!(conflict.chat_prompt.contains("`git status`"));
         assert!(conflict.chat_prompt.contains(
             "Do not run `git status --short --branch` while the rebase is in progress. Use full `git status`."
         ));
+        assert!(conflict
+            .chat_prompt
+            .contains("Do not create a standalone/manual commit."));
+        assert!(conflict
+            .chat_prompt
+            .contains("Do not run rebase lifecycle commands."));
         assert!(conflict.chat_prompt.contains(&format!(
             "`{}`-intended changes",
             run.source_branch.clone().unwrap()
@@ -1043,36 +1224,200 @@ mod tests {
             .contains("Stage only the resolved conflicted files with `git add <files>`."));
         assert!(conflict
             .chat_prompt
-            .contains("Never set `GIT_SEQUENCE_EDITOR` during normal conflict continuation."));
-        assert!(conflict.chat_prompt.contains("`git rebase --continue`"));
+            .contains("After resolving and staging the conflicted files, stop and tell the user to continue the rebase from the git drawer."));
         assert!(conflict
             .chat_prompt
-            .contains("`GIT_EDITOR=true git rebase --continue`"));
-        assert!(conflict
-            .chat_prompt
-            .contains("`GIT_SEQUENCE_EDITOR` is only for interactive todo editing"));
-        assert!(conflict.chat_prompt.contains(
-            "Inspect the real stdout/stderr and exit result of `git rebase --continue`."
-        ));
-        assert!(conflict
-            .chat_prompt
-            .contains("Do not create a standalone/manual commit unless `git rebase --continue` itself requires it."));
+            .contains("Do not continue or abort the rebase from the terminal."));
+        let cli_continue = ["git rebase ", "continue"].join("--");
+        assert!(!conflict.chat_prompt.contains(&cli_continue));
+        assert!(!conflict.chat_prompt.contains("GIT_EDITOR=true"));
+        assert!(!conflict.chat_prompt.contains("GIT_SEQUENCE_EDITOR"));
         assert!(conflict.chat_prompt.contains("Do not edit or repair anything inside `.git`, `rebase-merge`, `rebase-apply`, or `git-rebase-todo`."));
         assert!(conflict
             .chat_prompt
-            .contains("Do not try to recreate or hand-edit Git’s rebase metadata."));
-        assert!(conflict
-            .chat_prompt
-            .contains("fails with missing/corrupt rebase metadata"));
+            .contains("Confirmation that the user should continue or abort from the git drawer."));
         assert!(conflict.chat_prompt.contains("Final full `git status`"));
 
         let repo = Repository::open(&worktree_path).unwrap();
+        assert!(RunsMergeService::is_rebase_in_progress(repo.state()));
+    }
+
+    #[tokio::test]
+    async fn continue_rebase_after_staged_resolution_finishes_with_backend() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None, None)
+            .await
+            .unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        append_commit(
+            &worktree_path,
+            "README.md",
+            "worktree-change\n",
+            "worktree change",
+        );
+        append_commit(&repo_path, "README.md", "main-change\n", "main change");
+
+        let response = merge_service.rebase_worktree_branch(&run.id).await.unwrap();
+        assert_eq!(response.state, "conflicted");
+
+        fs::write(
+            worktree_path.join("README.md"),
+            "main-change\nworktree-change\n",
+        )
+        .unwrap();
+        let repo = Repository::open(&worktree_path).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("README.md")).unwrap();
+        index.write().unwrap();
+
+        let response = merge_service
+            .continue_worktree_rebase(&run.id)
+            .await
+            .unwrap();
+        assert_eq!(response.state, "mergeable");
+        assert!(response.conflict.is_none());
+
+        let status = merge_service.get_merge_status(&run.id).await.unwrap();
+        assert_eq!(status.state, "mergeable");
+        assert!(!status.is_rebase_in_progress);
+
+        let repo = Repository::open(&worktree_path).unwrap();
+        assert_eq!(repo.state(), git2::RepositoryState::Clean);
         let head = repo.head().unwrap();
         assert!(head.is_branch());
         assert_eq!(
             head.shorthand().unwrap_or_default(),
             run.worktree_id.unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn continue_rebase_returns_conflict_when_unresolved_conflicts_remain() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None, None)
+            .await
+            .unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        append_commit(
+            &worktree_path,
+            "README.md",
+            "worktree-change\n",
+            "worktree change",
+        );
+        append_commit(&repo_path, "README.md", "main-change\n", "main change");
+
+        let response = merge_service.rebase_worktree_branch(&run.id).await.unwrap();
+        assert_eq!(response.state, "conflicted");
+
+        let response = merge_service
+            .continue_worktree_rebase(&run.id)
+            .await
+            .unwrap();
+        assert_eq!(response.state, "conflicted");
+        assert!(response.status.is_rebase_in_progress);
+        assert!(response
+            .conflict
+            .expect("expected conflict payload")
+            .files
+            .iter()
+            .any(|file| file == "README.md"));
+    }
+
+    #[tokio::test]
+    async fn abort_rebase_cleans_active_rebase_and_restores_worktree_branch() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None, None)
+            .await
+            .unwrap();
+        let worktree_path = temp_dir
+            .path()
+            .join("app-data")
+            .join("worktrees")
+            .join(run.worktree_id.clone().unwrap());
+
+        append_commit(
+            &worktree_path,
+            "README.md",
+            "worktree-change\n",
+            "worktree change",
+        );
+        append_commit(&repo_path, "README.md", "main-change\n", "main change");
+
+        let response = merge_service.rebase_worktree_branch(&run.id).await.unwrap();
+        assert_eq!(response.state, "conflicted");
+
+        let response = merge_service.abort_worktree_rebase(&run.id).await.unwrap();
+        assert_eq!(response.state, "needs_rebase");
+        assert!(response.conflict.is_none());
+
+        let status = merge_service.get_merge_status(&run.id).await.unwrap();
+        assert_eq!(status.state, "needs_rebase");
+        assert!(!status.is_rebase_in_progress);
+
+        let repo = Repository::open(&worktree_path).unwrap();
+        assert_eq!(repo.state(), git2::RepositoryState::Clean);
+        let head = repo.head().unwrap();
+        assert!(head.is_branch());
+        assert_eq!(
+            head.shorthand().unwrap_or_default(),
+            run.worktree_id.clone().unwrap()
+        );
+        assert_eq!(
+            fs::read_to_string(worktree_path.join("README.md")).unwrap(),
+            "worktree-change\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn continue_and_abort_error_without_active_rebase() {
+        let (runs_service, merge_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let run = runs_service
+            .create_run_with_defaults("task-1", None, None, None, None)
+            .await
+            .unwrap();
+
+        let continue_err = merge_service
+            .continue_worktree_rebase(&run.id)
+            .await
+            .unwrap_err();
+        let abort_err = merge_service
+            .abort_worktree_rebase(&run.id)
+            .await
+            .unwrap_err();
+
+        match continue_err {
+            AppError::Validation(message) => assert!(message.contains("no active rebase")),
+            _ => panic!("expected validation error"),
+        }
+        match abort_err {
+            AppError::Validation(message) => assert!(message.contains("no active rebase")),
+            _ => panic!("expected validation error"),
+        }
     }
 
     #[tokio::test]

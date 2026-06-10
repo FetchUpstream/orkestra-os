@@ -327,6 +327,16 @@ describe("useBoardModel run settings defaults", () => {
         triggeredBy: "user",
         createdAt: "2026-01-01T00:02:00.000Z",
       },
+      {
+        id: "run-4",
+        taskId: "task-1",
+        projectId: "project-1",
+        displayKey: "RUN-44",
+        status: "failed",
+        runState: null,
+        triggeredBy: "user",
+        createdAt: "2026-01-01T00:03:00.000Z",
+      },
     ]);
 
     const ref: { current: ReturnType<typeof useBoardModel> | null } = {
@@ -364,6 +374,16 @@ describe("useBoardModel run settings defaults", () => {
             label: "Warming Up",
             status: "queued",
             statusLabel: "Queued",
+            agentLabel: "Default agent",
+            modelLabel: "Default model",
+          }),
+          expect.objectContaining({
+            runId: "run-4",
+            identityLabel: "RUN-44",
+            label: "Error in run",
+            state: "error",
+            status: "failed",
+            statusLabel: "Error",
             agentLabel: "Default agent",
             modelLabel: "Default model",
           }),

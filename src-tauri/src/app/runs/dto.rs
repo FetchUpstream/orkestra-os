@@ -269,6 +269,7 @@ pub struct RunMergeStatusDto {
 pub struct RunMergeConflictDto {
     pub files: Vec<String>,
     pub chat_prompt: String,
+    pub fingerprint: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

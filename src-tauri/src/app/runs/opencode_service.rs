@@ -942,13 +942,30 @@ struct PromptSelection {
     model_id: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NormalizedOpenCodeEvent {
+    event_name: String,
+    payload: String,
+    directory: Option<String>,
+    session_id: Option<String>,
+    is_global_event: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct OpenCodeSessionErrorDetails {
+    name: Option<String>,
+    message: Option<String>,
+}
+
 const MAX_BUFFERED_EVENTS: usize = 500;
 const EVENT_BROADCAST_CAPACITY: usize = 512;
 const STREAM_RECONNECT_BASE_DELAY_MS: u64 = 250;
 const STREAM_RECONNECT_MAX_DELAY_MS: u64 = 8_000;
 const STREAM_MAX_RECONNECT_ATTEMPTS: u32 = 8;
+const STREAM_RECONNECT_STABLE_RESET_AFTER: Duration = Duration::from_secs(5);
 const RUN_SERVER_IDLE_GRACE_PERIOD: Duration = Duration::from_secs(5 * 60);
 const RUN_SERVER_CLEANUP_SUPERVISOR_INTERVAL: Duration = Duration::from_secs(60);
+const GENERIC_OPENCODE_SESSION_ERROR_MESSAGE: &str = "The provider returned an error.";
 
 #[derive(Clone)]
 pub struct RunsOpenCodeService {
@@ -1686,6 +1703,10 @@ impl RunsOpenCodeService {
         }
 
         let run = self.runs_service.get_run_model(run_id).await?;
+        if Self::is_terminal_run_status(run.status.as_str()) {
+            return Ok(());
+        }
+
         match run.cleanup_state.as_str() {
             "pending" => {
                 let context = self
@@ -1800,15 +1821,25 @@ impl RunsOpenCodeService {
         Ok(current.as_deref() == Some(session_id.trim()))
     }
 
-    fn parse_payload_property(payload: &str, keys: &[&str]) -> Option<String> {
-        let value: serde_json::Value = serde_json::from_str(payload).ok()?;
+    fn parse_payload_property_value(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
         let object = value.as_object()?;
         let properties = object.get("properties").and_then(|value| value.as_object());
         let message = object.get("message").and_then(|value| value.as_object());
         let message_properties = message
             .and_then(|value| value.get("properties"))
             .and_then(|value| value.as_object());
-        for source in [Some(object), properties, message, message_properties] {
+        let wrapped_payload = object.get("payload").and_then(|value| value.as_object());
+        let wrapped_properties = wrapped_payload
+            .and_then(|value| value.get("properties"))
+            .and_then(|value| value.as_object());
+        for source in [
+            Some(object),
+            properties,
+            message,
+            message_properties,
+            wrapped_payload,
+            wrapped_properties,
+        ] {
             let Some(source) = source else {
                 continue;
             };
@@ -1823,6 +1854,302 @@ impl RunsOpenCodeService {
             }
         }
         None
+    }
+
+    fn parse_payload_property(payload: &str, keys: &[&str]) -> Option<String> {
+        let value: serde_json::Value = serde_json::from_str(payload).ok()?;
+        Self::parse_payload_property_value(&value, keys)
+    }
+
+    fn trimmed_json_string(value: &serde_json::Value) -> Option<String> {
+        value
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    }
+
+    fn json_string_at_path(value: &serde_json::Value, path: &[&str]) -> Option<String> {
+        let mut current = value;
+        for segment in path {
+            current = current.as_object()?.get(*segment)?;
+        }
+        Self::trimmed_json_string(current)
+    }
+
+    fn push_unique_payload_candidate<'a>(
+        candidates: &mut Vec<&'a serde_json::Value>,
+        candidate: Option<&'a serde_json::Value>,
+    ) {
+        let Some(candidate) = candidate else {
+            return;
+        };
+        if candidates
+            .iter()
+            .any(|existing| std::ptr::eq(*existing, candidate))
+        {
+            return;
+        }
+        candidates.push(candidate);
+    }
+
+    fn runtime_event_payload_candidates<'a>(
+        value: &'a serde_json::Value,
+    ) -> Vec<&'a serde_json::Value> {
+        let mut candidates = Vec::new();
+        Self::push_unique_payload_candidate(&mut candidates, Some(value));
+        let Some(object) = value.as_object() else {
+            return candidates;
+        };
+
+        for key in ["properties", "message", "payload"] {
+            let child = object.get(key);
+            Self::push_unique_payload_candidate(&mut candidates, child);
+            if let Some(child_object) = child.and_then(|candidate| candidate.as_object()) {
+                Self::push_unique_payload_candidate(
+                    &mut candidates,
+                    child_object.get("properties"),
+                );
+                Self::push_unique_payload_candidate(&mut candidates, child_object.get("message"));
+                if let Some(message_object) = child_object
+                    .get("message")
+                    .and_then(|candidate| candidate.as_object())
+                {
+                    Self::push_unique_payload_candidate(
+                        &mut candidates,
+                        message_object.get("properties"),
+                    );
+                }
+            }
+        }
+
+        candidates
+    }
+
+    fn extract_opencode_error_name(error: &serde_json::Value) -> Option<String> {
+        Self::json_string_at_path(error, &["name"])
+            .or_else(|| Self::json_string_at_path(error, &["data", "name"]))
+    }
+
+    fn extract_opencode_error_message(error: &serde_json::Value) -> Option<String> {
+        Self::json_string_at_path(error, &["data", "message"])
+            .or_else(|| Self::json_string_at_path(error, &["message"]))
+            .or_else(|| Self::json_string_at_path(error, &["reason"]))
+            .or_else(|| Self::trimmed_json_string(error))
+    }
+
+    fn parse_opencode_session_error_details(payload: &str) -> OpenCodeSessionErrorDetails {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
+            return OpenCodeSessionErrorDetails::default();
+        };
+
+        let mut details = OpenCodeSessionErrorDetails::default();
+
+        for candidate in Self::runtime_event_payload_candidates(&value) {
+            if let Some(error) = candidate.as_object().and_then(|object| object.get("error")) {
+                if details.name.is_none() {
+                    details.name = Self::extract_opencode_error_name(error);
+                }
+                if details.message.is_none() {
+                    details.message = Self::extract_opencode_error_message(error);
+                }
+            }
+
+            if candidate
+                .as_object()
+                .is_some_and(|object| object.contains_key("name") || object.contains_key("data"))
+            {
+                if details.name.is_none() {
+                    details.name = Self::extract_opencode_error_name(candidate);
+                }
+                if details.message.is_none() {
+                    details.message = Self::extract_opencode_error_message(candidate);
+                }
+            }
+
+            if details.name.is_some() && details.message.is_some() {
+                break;
+            }
+        }
+
+        details
+    }
+
+    fn format_opencode_session_error_message(details: &OpenCodeSessionErrorDetails) -> String {
+        let name = details
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let message = details
+            .message
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+
+        match (name, message) {
+            (Some(name), Some(message)) if name == message => name.to_string(),
+            (Some(name), Some(message)) => format!("{name}: {message}"),
+            (Some(name), None) => name.to_string(),
+            (None, Some(message)) => message.to_string(),
+            (None, None) => GENERIC_OPENCODE_SESSION_ERROR_MESSAGE.to_string(),
+        }
+    }
+
+    fn normalize_runtime_event(event_name: Option<&str>, payload: &str) -> NormalizedOpenCodeEvent {
+        let fallback_event_name = event_name
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("message");
+
+        let parsed = serde_json::from_str::<serde_json::Value>(payload).ok();
+        if let Some(value) = parsed.as_ref() {
+            if let Some((inner_payload, inner_event_name)) = value
+                .get("payload")
+                .filter(|value| value.is_object())
+                .and_then(|inner_payload| {
+                    Self::parse_payload_property_value(inner_payload, &["type"])
+                        .map(|event_name| (inner_payload, event_name))
+                })
+            {
+                let directory = value
+                    .get("directory")
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string);
+                let payload = inner_payload.to_string();
+                let session_id =
+                    Self::parse_payload_property_value(inner_payload, &["sessionID", "sessionId"]);
+
+                return NormalizedOpenCodeEvent {
+                    event_name: inner_event_name,
+                    payload,
+                    directory,
+                    session_id,
+                    is_global_event: true,
+                };
+            }
+
+            let is_generic_event =
+                fallback_event_name == "message" || fallback_event_name == "unknown";
+            let direct_event_name = if is_generic_event {
+                Self::parse_payload_property_value(value, &["type"])
+                    .unwrap_or_else(|| fallback_event_name.to_string())
+            } else {
+                fallback_event_name.to_string()
+            };
+
+            return NormalizedOpenCodeEvent {
+                event_name: direct_event_name,
+                payload: payload.to_string(),
+                directory: None,
+                session_id: Self::parse_payload_property_value(value, &["sessionID", "sessionId"]),
+                is_global_event: false,
+            };
+        }
+
+        NormalizedOpenCodeEvent {
+            event_name: fallback_event_name.to_string(),
+            payload: payload.to_string(),
+            directory: None,
+            session_id: None,
+            is_global_event: false,
+        }
+    }
+
+    fn event_directory_matches_worktree(directory: &str, worktree_path: &Path) -> bool {
+        let directory = directory.trim();
+        if directory.is_empty() {
+            return false;
+        }
+
+        let event_path = Path::new(directory);
+        if event_path == worktree_path {
+            return true;
+        }
+
+        match (event_path.canonicalize(), worktree_path.canonicalize()) {
+            (Ok(event_path), Ok(worktree_path)) => event_path == worktree_path,
+            _ => false,
+        }
+    }
+
+    fn is_global_passthrough_event(event_name: &str) -> bool {
+        matches!(event_name, "server.connected" | "server.heartbeat")
+    }
+
+    fn normalized_event_matches_run(
+        event: &NormalizedOpenCodeEvent,
+        worktree_path: &Path,
+        current_session_id: Option<&str>,
+    ) -> bool {
+        if !event.is_global_event || Self::is_global_passthrough_event(&event.event_name) {
+            return true;
+        }
+
+        let directory_matches = event.directory.as_deref().is_some_and(|directory| {
+            Self::event_directory_matches_worktree(directory, worktree_path)
+        });
+        if directory_matches {
+            return true;
+        }
+
+        let Some(expected_session_id) = current_session_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return false;
+        };
+
+        event
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            == Some(expected_session_id)
+    }
+
+    fn is_meaningful_runtime_event(event_name: &str) -> bool {
+        matches!(
+            event_name,
+            "session.updated"
+                | "session.status"
+                | "session.idle"
+                | "session.error"
+                | "permission.asked"
+                | "message.created"
+                | "message.updated"
+        )
+    }
+
+    fn stream_has_proven_stable(elapsed: Duration, saw_meaningful_runtime_event: bool) -> bool {
+        saw_meaningful_runtime_event || elapsed >= STREAM_RECONNECT_STABLE_RESET_AFTER
+    }
+
+    fn reconnect_backoff_ms(attempt: u32) -> u64 {
+        if attempt == 0 {
+            return 0;
+        }
+
+        let exponent = attempt.saturating_sub(1).min(31);
+        STREAM_RECONNECT_BASE_DELAY_MS
+            .saturating_mul(1_u64 << exponent)
+            .min(STREAM_RECONNECT_MAX_DELAY_MS)
+    }
+
+    fn next_reconnect_attempt_after_stream_end(
+        current_attempt: u32,
+        elapsed: Duration,
+        saw_meaningful_runtime_event: bool,
+    ) -> u32 {
+        let base_attempt = if Self::stream_has_proven_stable(elapsed, saw_meaningful_runtime_event)
+        {
+            0
+        } else {
+            current_attempt
+        };
+        base_attempt.saturating_add(1)
     }
 
     fn parse_permission_request_id(payload: &str) -> Option<String> {
@@ -2085,6 +2412,8 @@ impl RunsOpenCodeService {
     /// session runtime state and triggering run/task state transitions as needed.
     ///
     /// Supported event effects:
+    /// - `session.error`: marks the run failed with the OpenCode error details and prevents
+    ///   later idle/end-of-stream events from making the run review-ready.
     /// - `session.status`: updates the last status hint and `idle_cleanup_ready`; when
     ///   the status becomes `idle` triggers idle cleanup handling.
     /// - `question.asked`: records a pending question and notifies the run state service
@@ -2133,6 +2462,35 @@ impl RunsOpenCodeService {
         };
 
         match runtime_event_name.as_str() {
+            "session.error" => {
+                if let Some(session_id) =
+                    Self::parse_payload_property(payload, &["sessionID", "sessionId"])
+                {
+                    if !self
+                        .event_matches_current_run_session(run_id, &session_id)
+                        .await?
+                    {
+                        return Ok(None);
+                    }
+                }
+
+                {
+                    let mut state = session_runtime_state
+                        .lock()
+                        .map_err(|_| lock_error("OpenCode session runtime state"))?;
+                    state.last_status_hint = Some("error".to_string());
+                    state.idle_cleanup_ready = false;
+                }
+
+                let details = Self::parse_opencode_session_error_details(payload);
+                let error_message = Self::format_opencode_session_error_message(&details);
+                let _ = self
+                    .run_status_transition_service
+                    .handle_run_failed(run_id, &error_message, "session.error")
+                    .await?;
+
+                Ok(None)
+            }
             "session.status" => {
                 let Some(session_id) =
                     Self::parse_payload_property(payload, &["sessionID", "sessionId"])
@@ -4540,9 +4898,11 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             run.id.clone(),
             generation,
             client,
+            worktree_path.clone(),
             event_tx,
             buffered_events,
             handle.session_runtime_state.clone(),
+            handle.session_id.clone(),
         );
         handle.register_event_stream_task()?;
         *handle.event_stream_task.lock().await = Some(event_stream_task);
@@ -5886,9 +6246,11 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         run_id: String,
         generation: u64,
         client: OpencodeClient,
+        worktree_path: PathBuf,
         event_tx: tokio::sync::broadcast::Sender<RawAgentEvent>,
         buffered_events: Arc<Mutex<VecDeque<RawAgentEvent>>>,
         session_runtime_state: Arc<Mutex<SessionRuntimeState>>,
+        current_session_id: Arc<Mutex<Option<String>>>,
     ) -> JoinHandle<()> {
         let handles = self.handles.clone();
         let runs_opencode_service = self.clone();
@@ -5913,24 +6275,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     break;
                 }
 
-                let mut stream = match client.event().subscribe(RequestOptions::default()).await {
-                    Ok(stream) => {
-                        if reconnect_attempt > 0 {
-                            RunsOpenCodeService::push_event(
-                                &event_tx,
-                                &buffered_events,
-                                "stream.reconnected",
-                                serde_json::json!({
-                                    "runId": run_id.as_str(),
-                                    "attempt": reconnect_attempt,
-                                })
-                                .to_string(),
-                                None,
-                            );
-                        }
-                        reconnect_attempt = 0;
-                        stream
-                    }
+                let mut stream = match client.global().event(RequestOptions::default()).await {
+                    Ok(stream) => stream,
                     Err(err) => {
                         let error_chain = format_error_chain(&err);
                         error!(
@@ -5941,7 +6287,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                             error_display = %err,
                             error_debug = ?err,
                             error_chain = error_chain.as_deref().unwrap_or("unavailable"),
-                            "OpenCode stream subscribe failed"
+                            "OpenCode global stream subscribe failed"
                         );
                         RunsOpenCodeService::push_event(
                             &event_tx,
@@ -5949,13 +6295,13 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                             "stream.disconnected",
                             serde_json::json!({
                                 "runId": run_id.as_str(),
-                                "error": "stream subscribe failed",
+                                "error": "global event stream subscribe failed",
                             })
                             .to_string(),
                             None,
                         );
 
-                        reconnect_attempt += 1;
+                        reconnect_attempt = reconnect_attempt.saturating_add(1);
                         if reconnect_attempt > STREAM_MAX_RECONNECT_ATTEMPTS {
                             RunsOpenCodeService::push_event(
                                 &event_tx,
@@ -5980,9 +6326,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                             return;
                         }
 
-                        let backoff_ms = (STREAM_RECONNECT_BASE_DELAY_MS
-                            .saturating_mul(1_u64 << (reconnect_attempt - 1)))
-                        .min(STREAM_RECONNECT_MAX_DELAY_MS);
+                        let backoff_ms =
+                            RunsOpenCodeService::reconnect_backoff_ms(reconnect_attempt);
 
                         RunsOpenCodeService::push_event(
                             &event_tx,
@@ -6002,7 +6347,65 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     }
                 };
 
-                while let Some(frame) = stream.next().await {
+                let stream_started_at = Instant::now();
+                let mut saw_meaningful_runtime_event = false;
+                let mut pending_reconnected_attempt =
+                    (reconnect_attempt > 0).then_some(reconnect_attempt);
+
+                loop {
+                    let frame = if let Some(attempt) = pending_reconnected_attempt {
+                        let elapsed = stream_started_at.elapsed();
+                        if elapsed >= STREAM_RECONNECT_STABLE_RESET_AFTER {
+                            RunsOpenCodeService::push_event(
+                                &event_tx,
+                                &buffered_events,
+                                "stream.reconnected",
+                                serde_json::json!({
+                                    "runId": run_id.as_str(),
+                                    "attempt": attempt,
+                                    "stableAfterMs": elapsed.as_millis() as u64,
+                                })
+                                .to_string(),
+                                None,
+                            );
+                            reconnect_attempt = 0;
+                            pending_reconnected_attempt = None;
+                            continue;
+                        }
+
+                        match tokio::time::timeout(
+                            STREAM_RECONNECT_STABLE_RESET_AFTER - elapsed,
+                            stream.next(),
+                        )
+                        .await
+                        {
+                            Ok(frame) => frame,
+                            Err(_) => {
+                                RunsOpenCodeService::push_event(
+                                    &event_tx,
+                                    &buffered_events,
+                                    "stream.reconnected",
+                                    serde_json::json!({
+                                        "runId": run_id.as_str(),
+                                        "attempt": attempt,
+                                        "stableAfterMs": STREAM_RECONNECT_STABLE_RESET_AFTER.as_millis() as u64,
+                                    })
+                                    .to_string(),
+                                    None,
+                                );
+                                reconnect_attempt = 0;
+                                pending_reconnected_attempt = None;
+                                continue;
+                            }
+                        }
+                    } else {
+                        stream.next().await
+                    };
+
+                    let Some(frame) = frame else {
+                        break;
+                    };
+
                     let sse = match frame {
                         Ok(event) => event,
                         Err(err) => {
@@ -6015,18 +6418,53 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                                 error_display = %err,
                                 error_debug = ?err,
                                 error_chain = error_chain.as_deref().unwrap_or("unavailable"),
-                                "OpenCode stream frame decode failed"
+                                "OpenCode global stream frame decode failed"
                             );
                             break;
                         }
                     };
 
-                    let event_name = sse.event.unwrap_or_else(|| "message".to_string());
+                    let normalized = RunsOpenCodeService::normalize_runtime_event(
+                        sse.event.as_deref(),
+                        &sse.data,
+                    );
+                    let session_id = current_session_id
+                        .lock()
+                        .ok()
+                        .and_then(|session_id| session_id.clone());
+                    if !RunsOpenCodeService::normalized_event_matches_run(
+                        &normalized,
+                        &worktree_path,
+                        session_id.as_deref(),
+                    ) {
+                        continue;
+                    }
+
+                    if RunsOpenCodeService::is_meaningful_runtime_event(&normalized.event_name) {
+                        saw_meaningful_runtime_event = true;
+                        if let Some(attempt) = pending_reconnected_attempt.take() {
+                            RunsOpenCodeService::push_event(
+                                &event_tx,
+                                &buffered_events,
+                                "stream.reconnected",
+                                serde_json::json!({
+                                    "runId": run_id.as_str(),
+                                    "attempt": attempt,
+                                    "stableAfterMs": stream_started_at.elapsed().as_millis() as u64,
+                                    "reason": "runtime_event",
+                                })
+                                .to_string(),
+                                None,
+                            );
+                            reconnect_attempt = 0;
+                        }
+                    }
+
                     let runtime_run_state = match runs_opencode_service
                         .process_runtime_event(
                             &run_id,
-                            &event_name,
-                            &sse.data,
+                            &normalized.event_name,
+                            &normalized.payload,
                             &session_runtime_state,
                         )
                         .await
@@ -6037,7 +6475,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                                 target: "opencode.runtime",
                                 marker = "runtime_event_processing_failed",
                                 run_id = run_id.as_str(),
-                                event_name = event_name.as_str(),
+                                event_name = normalized.event_name.as_str(),
                                 error = %err,
                                 "OpenCode runtime event processing failed"
                             );
@@ -6047,8 +6485,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     RunsOpenCodeService::push_event(
                         &event_tx,
                         &buffered_events,
-                        event_name,
-                        sse.data,
+                        normalized.event_name,
+                        normalized.payload,
                         runtime_run_state,
                     );
                 }
@@ -6059,13 +6497,17 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     "stream.disconnected",
                     serde_json::json!({
                         "runId": run_id.as_str(),
-                        "error": "event stream ended",
+                        "error": "global event stream ended",
                     })
                     .to_string(),
                     None,
                 );
 
-                reconnect_attempt += 1;
+                reconnect_attempt = RunsOpenCodeService::next_reconnect_attempt_after_stream_end(
+                    reconnect_attempt,
+                    stream_started_at.elapsed(),
+                    saw_meaningful_runtime_event,
+                );
                 if reconnect_attempt > STREAM_MAX_RECONNECT_ATTEMPTS {
                     RunsOpenCodeService::push_event(
                         &event_tx,
@@ -6090,9 +6532,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     return;
                 }
 
-                let backoff_ms = (STREAM_RECONNECT_BASE_DELAY_MS
-                    .saturating_mul(1_u64 << (reconnect_attempt - 1)))
-                .min(STREAM_RECONNECT_MAX_DELAY_MS);
+                let backoff_ms = RunsOpenCodeService::reconnect_backoff_ms(reconnect_attempt);
 
                 RunsOpenCodeService::push_event(
                     &event_tx,
@@ -6142,7 +6582,8 @@ mod tests {
     use crate::app::worktrees::service::WorktreesService;
     use chrono::{Duration as ChronoDuration, Utc};
     use opencode::{
-        create_opencode_client, create_opencode_server, OpencodeClientConfig, OpencodeServerOptions,
+        create_opencode_client, create_opencode_server, OpencodeClientConfig,
+        OpencodeServerOptions, RequestOptions,
     };
     use sqlx::SqlitePool;
     use std::collections::{HashMap, VecDeque};
@@ -6150,6 +6591,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicU64;
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
     use tauri::ipc::Channel;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -6270,6 +6712,216 @@ mod tests {
     }
 
     #[test]
+    fn normalize_runtime_event_unwraps_global_payload() {
+        let normalized = RunsOpenCodeService::normalize_runtime_event(
+            Some("message"),
+            r#"{"directory":"/repo/worktree","project":"example","payload":{"type":"session.updated","properties":{"sessionID":"abc123"}}}"#,
+        );
+
+        assert_eq!(normalized.event_name, "session.updated");
+        assert_eq!(normalized.directory.as_deref(), Some("/repo/worktree"));
+        assert_eq!(normalized.session_id.as_deref(), Some("abc123"));
+        assert!(normalized.is_global_event);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&normalized.payload).unwrap(),
+            serde_json::json!({
+                "type": "session.updated",
+                "properties": {
+                    "sessionID": "abc123",
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn normalize_runtime_event_keeps_legacy_direct_payload() {
+        let normalized = RunsOpenCodeService::normalize_runtime_event(
+            Some("message"),
+            r#"{"type":"session.updated","properties":{"sessionID":"abc123"}}"#,
+        );
+
+        assert_eq!(normalized.event_name, "session.updated");
+        assert_eq!(normalized.directory, None);
+        assert_eq!(normalized.session_id.as_deref(), Some("abc123"));
+        assert!(!normalized.is_global_event);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&normalized.payload).unwrap(),
+            serde_json::json!({
+                "type": "session.updated",
+                "properties": {
+                    "sessionID": "abc123",
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn global_event_filter_keeps_matching_worktree_directory() {
+        let normalized = RunsOpenCodeService::normalize_runtime_event(
+            Some("message"),
+            r#"{"directory":"/repo/worktree","payload":{"type":"message.updated","properties":{"sessionID":"other"}}}"#,
+        );
+
+        assert!(RunsOpenCodeService::normalized_event_matches_run(
+            &normalized,
+            Path::new("/repo/worktree"),
+            Some("abc123"),
+        ));
+    }
+
+    #[test]
+    fn global_event_filter_drops_non_matching_worktree_directory() {
+        let normalized = RunsOpenCodeService::normalize_runtime_event(
+            Some("message"),
+            r#"{"directory":"/repo/other","payload":{"type":"message.updated","properties":{"sessionID":"other"}}}"#,
+        );
+
+        assert!(!RunsOpenCodeService::normalized_event_matches_run(
+            &normalized,
+            Path::new("/repo/worktree"),
+            Some("abc123"),
+        ));
+    }
+
+    #[test]
+    fn global_event_filter_keeps_matching_session_id_variants() {
+        let session_id_event = RunsOpenCodeService::normalize_runtime_event(
+            Some("message"),
+            r#"{"directory":"/repo/other","payload":{"type":"message.updated","properties":{"sessionID":"abc123"}}}"#,
+        );
+        let session_id_camel_event = RunsOpenCodeService::normalize_runtime_event(
+            Some("message"),
+            r#"{"directory":"/repo/other","payload":{"type":"message.updated","properties":{"sessionId":"abc123"}}}"#,
+        );
+
+        assert!(RunsOpenCodeService::normalized_event_matches_run(
+            &session_id_event,
+            Path::new("/repo/worktree"),
+            Some("abc123"),
+        ));
+        assert!(RunsOpenCodeService::normalized_event_matches_run(
+            &session_id_camel_event,
+            Path::new("/repo/worktree"),
+            Some("abc123"),
+        ));
+    }
+
+    #[test]
+    fn global_event_filter_drops_unrelated_session_id() {
+        let normalized = RunsOpenCodeService::normalize_runtime_event(
+            Some("message"),
+            r#"{"directory":"/repo/other","payload":{"type":"message.updated","properties":{"sessionID":"other"}}}"#,
+        );
+
+        assert!(!RunsOpenCodeService::normalized_event_matches_run(
+            &normalized,
+            Path::new("/repo/worktree"),
+            Some("abc123"),
+        ));
+    }
+
+    #[test]
+    fn global_event_filter_keeps_server_connection_events() {
+        let connected = RunsOpenCodeService::normalize_runtime_event(
+            Some("message"),
+            r#"{"directory":"/repo/other","payload":{"type":"server.connected","properties":{}}}"#,
+        );
+        let heartbeat = RunsOpenCodeService::normalize_runtime_event(
+            Some("message"),
+            r#"{"directory":"/repo/other","payload":{"type":"server.heartbeat","properties":{}}}"#,
+        );
+
+        assert!(RunsOpenCodeService::normalized_event_matches_run(
+            &connected,
+            Path::new("/repo/worktree"),
+            None,
+        ));
+        assert!(RunsOpenCodeService::normalized_event_matches_run(
+            &heartbeat,
+            Path::new("/repo/worktree"),
+            None,
+        ));
+    }
+
+    #[test]
+    fn quick_connection_event_then_eof_does_not_reset_reconnect_attempt() {
+        let next_attempt = RunsOpenCodeService::next_reconnect_attempt_after_stream_end(
+            1,
+            Duration::from_secs(1),
+            false,
+        );
+
+        assert_eq!(next_attempt, 2);
+        assert_eq!(RunsOpenCodeService::reconnect_backoff_ms(next_attempt), 500);
+        assert!(!RunsOpenCodeService::stream_has_proven_stable(
+            Duration::from_secs(1),
+            false,
+        ));
+    }
+
+    #[test]
+    fn stable_stream_or_meaningful_event_resets_reconnect_attempt() {
+        let stable_next_attempt = RunsOpenCodeService::next_reconnect_attempt_after_stream_end(
+            4,
+            super::STREAM_RECONNECT_STABLE_RESET_AFTER,
+            false,
+        );
+        let meaningful_next_attempt = RunsOpenCodeService::next_reconnect_attempt_after_stream_end(
+            4,
+            Duration::from_secs(1),
+            true,
+        );
+
+        assert_eq!(stable_next_attempt, 1);
+        assert_eq!(meaningful_next_attempt, 1);
+        assert!(RunsOpenCodeService::stream_has_proven_stable(
+            super::STREAM_RECONNECT_STABLE_RESET_AFTER,
+            false,
+        ));
+        assert!(RunsOpenCodeService::stream_has_proven_stable(
+            Duration::from_secs(1),
+            true,
+        ));
+    }
+
+    #[test]
+    fn reconnect_backoff_increases_and_caps() {
+        assert_eq!(RunsOpenCodeService::reconnect_backoff_ms(1), 250);
+        assert_eq!(RunsOpenCodeService::reconnect_backoff_ms(2), 500);
+        assert_eq!(RunsOpenCodeService::reconnect_backoff_ms(3), 1_000);
+        assert_eq!(RunsOpenCodeService::reconnect_backoff_ms(4), 2_000);
+        assert_eq!(RunsOpenCodeService::reconnect_backoff_ms(8), 8_000);
+        assert_eq!(RunsOpenCodeService::reconnect_backoff_ms(20), 8_000);
+    }
+
+    #[tokio::test]
+    async fn opencode_client_global_event_uses_global_event_endpoint() {
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: text/event-stream\r\n",
+            "Connection: close\r\n",
+            "\r\n",
+            "data: {\"type\":\"server.connected\"}\n\n",
+        );
+        let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+        let client = create_opencode_client(Some(OpencodeClientConfig {
+            base_url,
+            ..Default::default()
+        }))
+        .unwrap();
+
+        let _stream = client
+            .global()
+            .event(RequestOptions::default())
+            .await
+            .unwrap();
+        let request = request_rx.await.expect("request capture");
+
+        assert!(request.contains("GET /global/event "));
+        assert!(!request.contains("GET /event "));
+    }
+
+    #[test]
     fn compute_stream_connected_reads_server_connected_from_message_payload() {
         let buffered = vec![raw_agent_event(
             "message",
@@ -6291,6 +6943,32 @@ mod tests {
         )];
 
         assert!(!RunsOpenCodeService::compute_stream_connected(&buffered));
+    }
+
+    #[test]
+    fn opencode_session_error_details_extract_name_and_data_message() {
+        let details = RunsOpenCodeService::parse_opencode_session_error_details(
+            r#"{"type":"session.error","properties":{"error":{"name":"UnknownError","data":{"message":"Provider returned error"}}}}"#,
+        );
+
+        assert_eq!(details.name.as_deref(), Some("UnknownError"));
+        assert_eq!(details.message.as_deref(), Some("Provider returned error"));
+        assert_eq!(
+            RunsOpenCodeService::format_opencode_session_error_message(&details),
+            "UnknownError: Provider returned error"
+        );
+    }
+
+    #[test]
+    fn opencode_session_error_message_uses_generic_fallback_when_empty() {
+        let details = RunsOpenCodeService::parse_opencode_session_error_details(
+            r#"{"type":"session.error","error":{"name":"","data":{"message":""}}}"#,
+        );
+
+        assert_eq!(
+            RunsOpenCodeService::format_opencode_session_error_message(&details),
+            super::GENERIC_OPENCODE_SESSION_ERROR_MESSAGE
+        );
     }
 
     async fn setup_services() -> (RunsService, RunsOpenCodeService, SqlitePool, TempDir) {
@@ -7822,6 +8500,14 @@ mod tests {
             .unwrap()
     }
 
+    async fn fetch_run_error_message(pool: &SqlitePool, run_id: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT error_message FROM runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
     async fn set_run_state(pool: &SqlitePool, run_id: &str, run_state: Option<&str>) {
         sqlx::query("UPDATE runs SET run_state = ? WHERE id = ?")
             .bind(run_state)
@@ -7888,6 +8574,87 @@ mod tests {
             .unwrap();
 
         assert_eq!(fetch_task_status(&pool, "task-1").await, "review");
+    }
+
+    #[tokio::test]
+    async fn session_error_marks_run_failed_and_blocks_later_idle_review_transition() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+        set_task_status(&pool, "task-1", "doing").await;
+        set_run_state(&pool, "run-1", Some("busy_coding")).await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.error",
+                r#"{"sessionID":"session-1","error":{"name":"UnknownError","data":{"message":"Provider returned error"}}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_run_status(&pool, "run-1").await, "failed");
+        assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
+        assert_eq!(fetch_run_state(&pool, "run-1").await, None);
+        assert_eq!(
+            fetch_run_error_message(&pool, "run-1").await.as_deref(),
+            Some("UnknownError: Provider returned error")
+        );
+
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "session.idle",
+                r#"{"sessionID":"session-1"}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+        opencode_service
+            .process_runtime_event("run-1", "stream.terminated", r#"{"reason":"eof"}"#, &state)
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_run_status(&pool, "run-1").await, "failed");
+        assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
+        assert_eq!(
+            fetch_run_error_message(&pool, "run-1").await.as_deref(),
+            Some("UnknownError: Provider returned error")
+        );
+    }
+
+    #[tokio::test]
+    async fn session_error_with_empty_message_stores_useful_fallback() {
+        let (_runs_service, opencode_service, pool, temp_dir) = setup_services().await;
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        seed_task(&pool, "task-1", &repo_path).await;
+        seed_run(&pool, "run-1", "task-1", "running").await;
+        set_run_session_id(&pool, "run-1", "session-1").await;
+        set_task_status(&pool, "task-1", "doing").await;
+
+        let state = Arc::new(Mutex::new(super::SessionRuntimeState::default()));
+        opencode_service
+            .process_runtime_event(
+                "run-1",
+                "message",
+                r#"{"type":"session.error","properties":{"sessionID":"session-1","error":{"name":"","data":{"message":""}}}}"#,
+                &state,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_run_status(&pool, "run-1").await, "failed");
+        assert_eq!(
+            fetch_run_error_message(&pool, "run-1").await.as_deref(),
+            Some(super::GENERIC_OPENCODE_SESSION_ERROR_MESSAGE)
+        );
+        assert_eq!(fetch_task_status(&pool, "task-1").await, "doing");
     }
 
     #[tokio::test]
