@@ -52,4 +52,13 @@ describe("source branch helpers", () => {
       "Branch name is not valid.",
     );
   });
+
+  it("rejects branch names that Git rejects as branch shorthands", () => {
+    expect(validateNewRunSourceBranchName("HEAD", branches)).toBe(
+      "Branch name is not valid.",
+    );
+    expect(validateNewRunSourceBranchName("-feature", branches)).toBe(
+      "Branch name is not valid.",
+    );
+  });
 });

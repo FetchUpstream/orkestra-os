@@ -804,7 +804,8 @@ export const useTaskDetailModel = () => {
       if (!isRunSourceBranchAvailable(currentSelection, branches)) {
         setSelectedRunSourceBranch(defaultSourceBranch);
       }
-      if (!newSourceBranchBaseBranch().trim()) {
+      const currentBaseBranch = newSourceBranchBaseBranch();
+      if (!isRunSourceBranchAvailable(currentBaseBranch, branches)) {
         setNewSourceBranchBaseBranch(defaultSourceBranch);
       }
     } catch {

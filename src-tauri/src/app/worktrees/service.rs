@@ -537,7 +537,9 @@ fn normalize_existing_base_branch_name(branch_name: &str) -> Result<String, Work
 }
 
 fn is_valid_local_branch_name(branch_name: &str) -> bool {
-    !branch_name.starts_with('/')
+    branch_name != "HEAD"
+        && !branch_name.starts_with('-')
+        && !branch_name.starts_with('/')
         && !branch_name.ends_with('/')
         && !branch_name.contains("..")
         && !branch_name.contains("@{")
@@ -1238,6 +1240,14 @@ mod tests {
         assert!(!worktree_path.exists());
 
         let _ = fs::remove_dir_all(&temp_root);
+    }
+
+    #[test]
+    fn source_branch_names_follow_git_branch_shorthand_rules() {
+        assert!(is_valid_local_branch_name("feature/source"));
+        assert!(is_valid_local_branch_name("feature/-source"));
+        assert!(!is_valid_local_branch_name("HEAD"));
+        assert!(!is_valid_local_branch_name("-feature"));
     }
 
     #[test]

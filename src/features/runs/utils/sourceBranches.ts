@@ -48,6 +48,8 @@ export const validateNewRunSourceBranchName = (
   }
 
   if (
+    normalizedBranchName === "HEAD" ||
+    normalizedBranchName.startsWith("-") ||
     normalizedBranchName.startsWith("/") ||
     normalizedBranchName.endsWith("/") ||
     normalizedBranchName.endsWith(".") ||

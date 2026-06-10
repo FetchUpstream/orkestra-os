@@ -120,6 +120,38 @@ describe("runs contract", () => {
     });
   });
 
+  it("passes create source branch into create_run request when provided", async () => {
+    invokeMock.mockResolvedValue({
+      id: "run-4",
+      task_id: "task-4",
+      project_id: "project-1",
+      status: "queued" satisfies RunStatus,
+      triggered_by: "user",
+      created_at: "2026-01-01T00:00:00.000Z",
+    });
+
+    await createRun("task-4", {
+      createSourceBranch: {
+        name: "feature/new",
+        baseBranch: "main",
+      },
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("create_run", {
+      request: {
+        taskId: "task-4",
+        agentId: undefined,
+        providerId: undefined,
+        modelId: undefined,
+        sourceBranch: undefined,
+        createSourceBranch: {
+          name: "feature/new",
+          baseBranch: "main",
+        },
+      },
+    });
+  });
+
   it("normalizes run source branch list payload", async () => {
     invokeMock.mockResolvedValueOnce([
       { name: "feature/a", is_checked_out: false },

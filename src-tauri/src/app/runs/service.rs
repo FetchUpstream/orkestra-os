@@ -150,9 +150,31 @@ impl RunsService {
                     "Run creation failed; cleaning up worktree"
                 );
                 let _ = self.worktrees_service.remove(RemoveWorktreeRequest {
-                    repo_path,
+                    repo_path: repo_path.clone(),
                     worktree_id: worktree.worktree_id.clone(),
                 });
+                if let Some(branch_name) = created_source_branch_name.as_deref() {
+                    warn!(
+                        subsystem = "runs",
+                        operation = "create_with_defaults",
+                        task_id = task_id,
+                        branch_name = branch_name,
+                        "Run persistence failed after creating source branch; attempting cleanup"
+                    );
+                    if let Err(cleanup_error) = self
+                        .worktrees_service
+                        .delete_local_branch_if_unchecked_out(&repo_path, branch_name)
+                    {
+                        warn!(
+                            subsystem = "runs",
+                            operation = "create_with_defaults",
+                            task_id = task_id,
+                            branch_name = branch_name,
+                            error = cleanup_error.to_string(),
+                            "Failed to clean up newly created source branch"
+                        );
+                    }
+                }
             })?;
 
         info!(

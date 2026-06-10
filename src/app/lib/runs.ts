@@ -1490,16 +1490,26 @@ export const createRun = async (
     createSourceBranch?: CreateSourceBranchRequest;
   },
 ): Promise<Run> => {
-  const response = await invoke<RunResponse>("create_run", {
-    request: {
-      taskId,
-      agentId: defaults?.agentId,
-      providerId: defaults?.providerId,
-      modelId: defaults?.modelId,
-      sourceBranch: defaults?.sourceBranch,
-      createSourceBranch: defaults?.createSourceBranch,
-    },
-  });
+  const request: {
+    taskId: string;
+    agentId?: string;
+    providerId?: string;
+    modelId?: string;
+    sourceBranch?: string;
+    createSourceBranch?: CreateSourceBranchRequest;
+  } = {
+    taskId,
+    agentId: defaults?.agentId,
+    providerId: defaults?.providerId,
+    modelId: defaults?.modelId,
+    sourceBranch: defaults?.sourceBranch,
+  };
+
+  if (defaults?.createSourceBranch !== undefined) {
+    request.createSourceBranch = defaults.createSourceBranch;
+  }
+
+  const response = await invoke<RunResponse>("create_run", { request });
   return toRun(response);
 };
 
