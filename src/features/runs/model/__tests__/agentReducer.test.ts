@@ -357,6 +357,91 @@ describe("agentReducer text/reasoning lifecycle", () => {
     });
   });
 
+  it("normalizes command permission display from exact command", () => {
+    const next = reduceOpenCodeEvent(createEmptyAgentStore("session-1"), {
+      type: "permission.asked",
+      properties: {
+        id: "perm-cmd-1",
+        sessionID: "session-1",
+        permission: "bash",
+        metadata: {
+          command: "git status",
+        },
+      },
+    });
+
+    expect(next.pendingPermissionsById["perm-cmd-1"]).toMatchObject({
+      requestId: "perm-cmd-1",
+      kind: "bash",
+      command: "git status",
+      displayTitle: "Allow command",
+      displayDescription: "git status",
+    });
+  });
+
+  it("normalizes file permission display from macOS filepath metadata", () => {
+    const next = reduceOpenCodeEvent(createEmptyAgentStore("session-1"), {
+      type: "permission.asked",
+      properties: {
+        id: "perm-file-1",
+        sessionID: "session-1",
+        permission: "external_directory",
+        patterns: ["/Users/alex/project/*"],
+        metadata: {
+          filepath: "/Users/alex/project/src/App.tsx",
+        },
+      },
+    });
+
+    expect(next.pendingPermissionsById["perm-file-1"]).toMatchObject({
+      requestId: "perm-file-1",
+      kind: "external_directory",
+      filePath: "/Users/alex/project/src/App.tsx",
+      displayTitle: "Allow file edit",
+      displayDescription: "/Users/alex/project/src/App.tsx",
+      pathPatterns: ["/Users/alex/project/*"],
+    });
+  });
+
+  it("normalizes tool permission display from tool metadata", () => {
+    const next = reduceOpenCodeEvent(createEmptyAgentStore("session-1"), {
+      type: "permission.asked",
+      properties: {
+        id: "perm-tool-1",
+        sessionID: "session-1",
+        kind: "tool",
+        metadata: {
+          tool: "shell",
+        },
+        description: "bash command in project worktree",
+      },
+    });
+
+    expect(next.pendingPermissionsById["perm-tool-1"]).toMatchObject({
+      requestId: "perm-tool-1",
+      toolName: "shell",
+      actionDescription: "bash command in project worktree",
+      displayTitle: "Allow tool action",
+      displayDescription: "shell: bash command in project worktree",
+    });
+  });
+
+  it("normalizes missing permission details to a safe fallback", () => {
+    const next = reduceOpenCodeEvent(createEmptyAgentStore("session-1"), {
+      type: "permission.asked",
+      properties: {
+        id: "perm-empty-1",
+        sessionID: "session-1",
+      },
+    });
+
+    expect(next.pendingPermissionsById["perm-empty-1"]).toMatchObject({
+      requestId: "perm-empty-1",
+      displayTitle: "Permission request",
+      displayDescription: "No detailed permission information was provided.",
+    });
+  });
+
   it("clears normalized permission requests on permission.replied", () => {
     const withPermission = reduceOpenCodeEvent(
       createEmptyAgentStore("session-1"),

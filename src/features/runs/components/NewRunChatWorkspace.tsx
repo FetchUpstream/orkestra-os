@@ -1434,6 +1434,11 @@ const parsePermissionCardData = (
   sourceLabel: string;
   sourceKind: "main" | "subagent";
   pathPatterns: string[];
+  title: string;
+  description: string;
+  command: string;
+  filePath: string;
+  toolName: string;
   metadata: Array<{ key: string; value: string }>;
   failureMessage: string;
 } => {
@@ -1455,6 +1460,34 @@ const parsePermissionCardData = (
     pathPatternsFromState.length > 0
       ? pathPatternsFromState
       : pathPatternsFromRaw;
+  const command =
+    toSingleLine(permission.command, 240) ||
+    toSingleLine(raw.command ?? raw.cmd ?? raw.bash ?? raw.script, 240) ||
+    "";
+  const filePath =
+    toSingleLine(permission.filePath, 240) ||
+    toSingleLine(raw.filePath ?? raw.filepath ?? raw.path ?? raw.filename, 240) ||
+    pathPatterns[0] ||
+    "";
+  const toolName =
+    toSingleLine(permission.toolName, 120) ||
+    toSingleLine(raw.toolName ?? raw.permissionTool, 120) ||
+    "";
+  const title =
+    toSingleLine(permission.displayTitle, 80) ||
+    (command
+      ? "Allow command"
+      : filePath
+        ? "Allow file edit"
+        : toolName
+          ? "Allow tool action"
+          : "Permission request");
+  const description =
+    toSingleLine(permission.displayDescription, 300) ||
+    command ||
+    filePath ||
+    toolName ||
+    "No detailed permission information was provided.";
   const metadata: Array<{ key: string; value: string }> = [
     ...Object.entries(metadataRecord)
       .map(([key, value]) => ({ key, value: toSingleLine(value, 120) || "" }))
@@ -1496,6 +1529,11 @@ const parsePermissionCardData = (
   return {
     requestId: permission.requestId,
     kind,
+    title,
+    description,
+    command,
+    filePath,
+    toolName,
     sourceLabel:
       toSingleLine(permission.sourceLabel, 80) ||
       (permission.sourceKind === "subagent" ? "Subagent" : "Main agent"),
@@ -3073,6 +3111,11 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         kind: "pending-permission",
         requestId: card.requestId,
         permissionKind: card.kind,
+        title: card.title,
+        description: card.description,
+        command: card.command,
+        filePath: card.filePath,
+        toolName: card.toolName,
         sourceLabel: card.sourceLabel,
         pathPatterns: card.pathPatterns,
         metadata: card.metadata,
@@ -3095,6 +3138,8 @@ const NewRunChatWorkspace: Component<NewRunChatWorkspaceProps> = (props) => {
         key: `failed-permission:${card.requestId}`,
         kind: "failed-permission",
         permissionKind: card.kind,
+        title: card.title,
+        description: card.description,
         sourceLabel: card.sourceLabel,
         pathPatterns: card.pathPatterns,
         failureMessage: card.failureMessage,

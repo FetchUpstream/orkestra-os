@@ -92,6 +92,11 @@ export type RunChatTranscriptPendingPermissionRow = {
   kind: "pending-permission";
   requestId: string;
   permissionKind: string;
+  title: string;
+  description: string;
+  command: string;
+  filePath: string;
+  toolName: string;
   sourceLabel: string;
   pathPatterns: readonly string[];
   metadata: readonly RunChatTranscriptMetadataEntry[];
@@ -105,6 +110,8 @@ export type RunChatTranscriptFailedPermissionRow = {
   key: string;
   kind: "failed-permission";
   permissionKind: string;
+  title: string;
+  description: string;
   sourceLabel: string;
   pathPatterns: readonly string[];
   failureMessage: string;
@@ -699,20 +706,28 @@ const PendingPermissionTranscriptRowContent: Component<{
               <li class="run-chat-tool-rail__item run-chat-tool-rail__item--running">
                 <div class="run-chat-tool-rail__row">
                   <span class="run-chat-tool-rail__line">
-                    Permission required: {props.row().permissionKind}
+                    {props.row().title}: {props.row().description}
                   </span>
                 </div>
                 <p class="run-chat-tool-rail__details">
                   <strong>Source:</strong> {props.row().sourceLabel}
                 </p>
-                <Show
-                  when={props.row().pathPatterns.length > 0}
-                  fallback={
-                    <p class="run-chat-tool-rail__details">
-                      <strong>Paths:</strong> Any path
-                    </p>
-                  }
-                >
+                <Show when={props.row().command.length > 0}>
+                  <p class="run-chat-tool-rail__details">
+                    <strong>Command:</strong> <code>{props.row().command}</code>
+                  </p>
+                </Show>
+                <Show when={props.row().filePath.length > 0}>
+                  <p class="run-chat-tool-rail__details">
+                    <strong>File:</strong> {props.row().filePath}
+                  </p>
+                </Show>
+                <Show when={props.row().toolName.length > 0}>
+                  <p class="run-chat-tool-rail__details">
+                    <strong>Tool:</strong> {props.row().toolName}
+                  </p>
+                </Show>
+                <Show when={props.row().pathPatterns.length > 0}>
                   <div class="run-chat-tool-rail__details">
                     <strong>Paths:</strong>
                     <ul class="list-disc pl-5">
@@ -769,7 +784,15 @@ const PendingPermissionTranscriptRowContent: Component<{
                     disabled={props.row().isReplying}
                     onClick={() => props.row().onDecision("always")}
                   >
-                    {props.row().isReplying ? "Sending..." : "Allow"}
+                    {props.row().isReplying
+                      ? "Sending..."
+                      : props.row().command.length > 0
+                        ? "Allow command"
+                        : props.row().filePath.length > 0
+                          ? "Allow file edit"
+                          : props.row().toolName.length > 0
+                            ? "Allow tool action"
+                            : "Approve request"}
                   </button>
                 </div>
               </li>
@@ -794,7 +817,7 @@ const FailedPermissionTranscriptRowContent: Component<{
           <li class="run-chat-tool-rail__item run-chat-tool-rail__item--failed">
             <div class="run-chat-tool-rail__row">
               <span class="run-chat-tool-rail__line">
-                Permission required: {props.row().permissionKind}
+                {props.row().title}: {props.row().description}
               </span>
               <span class="run-chat-tool-rail__status">
                 <span

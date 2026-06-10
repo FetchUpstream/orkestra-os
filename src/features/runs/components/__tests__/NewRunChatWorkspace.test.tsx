@@ -485,7 +485,7 @@ describe("NewRunChatWorkspace", () => {
         .getByLabelText("Permission request tool item")
         .classList.contains("run-chat-tool-rail"),
     ).toBe(true);
-    expect(screen.getByText(/Permission required:\s*write/i)).toBeTruthy();
+    expect(screen.getByText(/Allow file edit:\s*src\/\*\*\/\*\.ts/i)).toBeTruthy();
     expect(screen.getByText("src/**/*.ts")).toBeTruthy();
 
     const textbox = screen.getByLabelText("Message agent");
@@ -509,8 +509,63 @@ describe("NewRunChatWorkspace", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
     expect(replyPermissionMock).toHaveBeenCalledWith("perm-1", "once");
 
-    await fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Allow file edit" }));
     expect(replyPermissionMock).toHaveBeenCalledWith("perm-1", "always");
+  });
+
+  it("renders narrow command and fallback permission prompts", () => {
+    const { model: commandModel } = createModelStub(
+      "running",
+      false,
+      {},
+      "interactive",
+      {
+        pendingPermissionsById: {
+          "perm-command": {
+            requestId: "perm-command",
+            sessionId: "session-1",
+            kind: "bash",
+            displayTitle: "Allow command",
+            displayDescription: "git status",
+            command: "git status",
+          },
+        },
+      },
+    );
+
+    const { unmount } = render(() => <NewRunChatWorkspace model={commandModel} />);
+
+    expect(screen.getByText(/Allow command:\s*git status/i)).toBeTruthy();
+    expect(screen.getByText("git status")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Allow command" })).toBeTruthy();
+    expect(screen.queryByText(/allow all|allow everything|approve all/i)).toBeNull();
+
+    unmount();
+
+    const { model: fallbackModel } = createModelStub(
+      "running",
+      false,
+      {},
+      "interactive",
+      {
+        pendingPermissionsById: {
+          "perm-fallback": {
+            requestId: "perm-fallback",
+            sessionId: "session-1",
+          },
+        },
+      },
+    );
+
+    render(() => <NewRunChatWorkspace model={fallbackModel} />);
+
+    expect(
+      screen.getByText(
+        /Permission request:\s*No detailed permission information was provided\./i,
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Approve request" })).toBeTruthy();
+    expect(screen.queryByText(/allow all|allow everything|approve all/i)).toBeNull();
   });
 
   it("shows in-flight and error state in permission transcript item", () => {
@@ -1089,7 +1144,7 @@ describe("NewRunChatWorkspace", () => {
     render(() => <NewRunChatWorkspace model={model} />);
 
     expect(screen.getAllByLabelText("Permission request")).toHaveLength(1);
-    expect(screen.getByText(/Permission required:\s*write/i)).toBeTruthy();
+    expect(screen.getByText(/Allow file edit:\s*src\/\*\*\/\*\.ts/i)).toBeTruthy();
     expect(
       screen.getByText(
         "1 more permission request queued. They will appear after this one is resolved.",
@@ -1104,8 +1159,8 @@ describe("NewRunChatWorkspace", () => {
     }));
 
     expect(screen.getAllByLabelText("Permission request")).toHaveLength(1);
-    expect(screen.queryByText(/Permission required:\s*write/i)).toBeNull();
-    expect(screen.getByText(/Permission required:\s*bash/i)).toBeTruthy();
+    expect(screen.queryByText(/Allow file edit:\s*src\/\*\*\/\*\.ts/i)).toBeNull();
+    expect(screen.getByText(/Permission request:\s*No detailed permission information was provided\./i)).toBeTruthy();
     expect(screen.queryByText(/more permission request queued/i)).toBeNull();
 
     setStore((current) => ({
@@ -1136,7 +1191,7 @@ describe("NewRunChatWorkspace", () => {
     expect(
       screen.getByText("Permission request expired before response."),
     ).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve request" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Deny" })).toBeNull();
     expect(screen.getByLabelText("Message agent")).toBeTruthy();

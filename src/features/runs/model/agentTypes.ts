@@ -172,6 +172,13 @@ export type UiPermissionRequest = {
   sourceKind?: "main" | "subagent";
   sourceLabel?: string;
   kind?: string;
+  displayTitle?: string;
+  displayDescription?: string;
+  command?: string;
+  filePath?: string;
+  toolName?: string;
+  actionDescription?: string;
+  permissionPattern?: string;
   pathPatterns?: string[];
   metadata?: Record<string, string>;
   status?: "pending" | "replied" | "rejected" | "failed";

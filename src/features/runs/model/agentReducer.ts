@@ -44,6 +44,128 @@ const asArray = (value: unknown): unknown[] => {
   return Array.isArray(value) ? value : [];
 };
 
+const asTrimmedString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const pickFirstString = (
+  record: Record<string, unknown> | null | undefined,
+  ...keys: string[]
+): string | undefined => {
+  if (!record) {
+    return undefined;
+  }
+  for (const key of keys) {
+    const direct = asTrimmedString(record[key]);
+    if (direct) {
+      return direct;
+    }
+  }
+  return undefined;
+};
+
+const findFirstNestedStringByKey = (
+  value: unknown,
+  keys: readonly string[],
+  maxDepth = 4,
+): string | undefined => {
+  const keySet = new Set(keys);
+  const queue: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  const seen = new Set<Record<string, unknown>>();
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || current.depth > maxDepth) {
+      continue;
+    }
+    if (Array.isArray(current.value)) {
+      for (const item of current.value) {
+        queue.push({ value: item, depth: current.depth + 1 });
+      }
+      continue;
+    }
+    if (!isRecord(current.value) || seen.has(current.value)) {
+      continue;
+    }
+    seen.add(current.value);
+
+    for (const [key, nestedValue] of Object.entries(current.value)) {
+      if (keySet.has(key)) {
+        const normalized = asTrimmedString(nestedValue);
+        if (normalized) {
+          return normalized;
+        }
+      }
+    }
+
+    for (const nestedValue of Object.values(current.value)) {
+      if (isRecord(nestedValue) || Array.isArray(nestedValue)) {
+        queue.push({ value: nestedValue, depth: current.depth + 1 });
+      }
+    }
+  }
+
+  return undefined;
+};
+
+const formatPermissionKindLabel = (value: string | undefined): string => {
+  const normalized = value?.replace(/[-_]+/g, " ").trim();
+  if (!normalized) {
+    return "action";
+  }
+  return normalized;
+};
+
+const buildPermissionDisplay = (input: {
+  kind?: string;
+  command?: string;
+  filePath?: string;
+  toolName?: string;
+  actionDescription?: string;
+  permissionPattern?: string;
+}): { displayTitle: string; displayDescription: string } => {
+  if (input.command) {
+    return {
+      displayTitle: "Allow command",
+      displayDescription: input.command,
+    };
+  }
+  if (input.filePath) {
+    return {
+      displayTitle: "Allow file edit",
+      displayDescription: input.filePath,
+    };
+  }
+  if (input.toolName) {
+    return {
+      displayTitle: "Allow tool action",
+      displayDescription: input.actionDescription
+        ? `${input.toolName}: ${input.actionDescription}`
+        : input.toolName,
+    };
+  }
+  if (input.actionDescription) {
+    return {
+      displayTitle: `Allow ${formatPermissionKindLabel(input.kind)}`,
+      displayDescription: input.actionDescription,
+    };
+  }
+  if (input.permissionPattern) {
+    return {
+      displayTitle: "Allow scoped permission",
+      displayDescription: input.permissionPattern,
+    };
+  }
+  return {
+    displayTitle: "Permission request",
+    displayDescription: "No detailed permission information was provided.",
+  };
+};
+
 const pickRecordValue = (
   record: Record<string, unknown>,
   ...keys: string[]
@@ -531,20 +653,22 @@ const normalizePermission = (
     return null;
   }
 
-  const kind = asString(
-    pickRecordValue(value, "kind", "tool", "action") ??
-      (nested
-        ? pickRecordValue(nested, "kind", "permission", "tool", "action")
-        : undefined),
-  );
+  const kind =
+    pickFirstString(value, "kind", "permission", "action") ??
+    (nested
+      ? pickFirstString(nested, "kind", "permission", "action")
+      : undefined) ??
+    findFirstNestedStringByKey(value, ["permissionType", "type"], 2);
   const rawPatterns =
     pickRecordValue(
       value,
       "pathPatterns",
       "paths",
       "patterns",
+      "always",
       "path_pattern",
       "pathPattern",
+      "pattern",
     ) ??
     (nested
       ? pickRecordValue(
@@ -552,12 +676,14 @@ const normalizePermission = (
           "pathPatterns",
           "paths",
           "patterns",
+          "always",
           "path_pattern",
           "pathPattern",
+          "pattern",
         )
       : undefined);
-  const pathPatterns = asArray(rawPatterns)
-    .map((item) => asString(item))
+  const pathPatterns = (Array.isArray(rawPatterns) ? rawPatterns : [rawPatterns])
+    .map((item) => asTrimmedString(item))
     .filter(
       (item): item is string => typeof item === "string" && item.length > 0,
     );
@@ -567,7 +693,7 @@ const normalizePermission = (
   const metadata = isRecord(metadataSource)
     ? Object.entries(metadataSource).reduce<Record<string, string>>(
         (acc, [metaKey, metaValue]) => {
-          const normalizedValue = asString(metaValue);
+          const normalizedValue = asTrimmedString(metaValue);
           if (normalizedValue) {
             acc[metaKey] = normalizedValue;
           }
@@ -577,10 +703,58 @@ const normalizePermission = (
       )
     : undefined;
 
+  const command =
+    findFirstNestedStringByKey(value, ["command", "cmd", "bash", "script"], 4) ??
+    (metadata
+      ? pickFirstString(metadata, "command", "cmd", "bash", "script")
+      : undefined);
+  const filePath =
+    findFirstNestedStringByKey(value, [
+      "filePath",
+      "filepath",
+      "file_path",
+      "path",
+      "filename",
+      "parentDir",
+    ]) ?? pathPatterns[0];
+  const toolName =
+    pickFirstString(value, "toolName", "permissionTool") ??
+    (nested ? pickFirstString(nested, "toolName", "permissionTool") : undefined) ??
+    (metadata ? pickFirstString(metadata, "tool", "toolName", "name") : undefined) ??
+    findFirstNestedStringByKey(value, ["toolName", "tool", "name"], 4);
+  const actionDescription =
+    findFirstNestedStringByKey(value, [
+      "description",
+      "reason",
+      "prompt",
+      "message",
+      "title",
+      "operation",
+      "op",
+    ]) ??
+    pickFirstString(value, "action") ??
+    (nested ? pickFirstString(nested, "action") : undefined);
+  const permissionPattern = pathPatterns[0] ?? pickFirstString(value, "pattern");
+  const display = buildPermissionDisplay({
+    kind,
+    command,
+    filePath,
+    toolName,
+    actionDescription,
+    permissionPattern,
+  });
+
   const normalized: UiPermissionRequest = {
     requestId,
     sessionId,
     kind,
+    displayTitle: display.displayTitle,
+    displayDescription: display.displayDescription,
+    command,
+    filePath,
+    toolName,
+    actionDescription,
+    permissionPattern,
     pathPatterns,
     metadata,
     status: "pending",
@@ -593,7 +767,10 @@ const normalizePermission = (
     requestId: normalized.requestId,
     sessionId: normalized.sessionId,
     permissionType: normalized.kind ?? null,
+    displayTitle: normalized.displayTitle ?? null,
+    displayDescription: normalized.displayDescription ?? null,
     pathPatternCount: normalized.pathPatterns?.length ?? 0,
+    rawPayload: normalized.raw,
   });
 
   return normalized;
