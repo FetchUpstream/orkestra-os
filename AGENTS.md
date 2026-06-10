@@ -10,5 +10,5 @@
 * Keep changes narrowly scoped to the task. Do not refactor unrelated code or create parallel systems when an existing pattern can be reused.
 * Validate changes with the smallest relevant Bun command(s) for the area you changed, and report what you ran. Do not claim success without validation or an explicit reason it could not be run.
 * Check `git status` before and after your work. Do not amend existing commits, rewrite history, or create/switch branches unless explicitly instructed.
+* Use the GitHub CLI (`gh`) for GitHub-facing repository operations whenever possible, including PRs, issues, checks, releases, workflow runs, remote repo inspection, and other GitHub API tasks. Use `git` for local repository inspection, staging, commits, and other local-only operations that `gh` does not cover.
 * Prefer repo-relative file paths in notes, reports, and implementation explanations.
-
