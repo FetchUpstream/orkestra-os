@@ -72,6 +72,7 @@ import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyC
 import {
   getDefaultRunSourceBranch,
   isRunSourceBranchAvailable,
+  validateNewRunSourceBranchName,
 } from "../../runs/utils/sourceBranches";
 import {
   dependencyBadgeState,
@@ -163,7 +164,9 @@ export const useTaskDetailModel = () => {
     createSignal(false);
   const [deletingRunId, setDeletingRunId] = createSignal("");
   const [startingRunId, setStartingRunId] = createSignal("");
-  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>([]);
+  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>(
+    [],
+  );
   const [runProviderOptions, setRunProviderOptions] = createSignal<
     RunSelectionOption[]
   >([]);
@@ -193,6 +196,12 @@ export const useTaskDetailModel = () => {
     createSignal("");
   const [selectedRunModelId, setSelectedRunModelIdSignal] = createSignal("");
   const [selectedRunSourceBranch, setSelectedRunSourceBranch] =
+    createSignal("");
+  const [sourceBranchMode, setSourceBranchMode] = createSignal<
+    "existing" | "create"
+  >("existing");
+  const [newSourceBranchName, setNewSourceBranchName] = createSignal("");
+  const [newSourceBranchBaseBranch, setNewSourceBranchBaseBranch] =
     createSignal("");
   const [
     pendingRunSettingsDefaultsInitialization,
@@ -682,7 +691,8 @@ export const useTaskDetailModel = () => {
       return next;
     });
     setWarmingRunIds((current) => {
-      if (!Object.prototype.hasOwnProperty.call(current, normalizedRunId)) return current;
+      if (!Object.prototype.hasOwnProperty.call(current, normalizedRunId))
+        return current;
       const next = { ...current };
       delete next[normalizedRunId];
       return next;
@@ -789,9 +799,14 @@ export const useTaskDetailModel = () => {
         return;
       }
 
+      const defaultSourceBranch = getDefaultRunSourceBranch(branches);
       const currentSelection = selectedRunSourceBranch();
       if (!isRunSourceBranchAvailable(currentSelection, branches)) {
-        setSelectedRunSourceBranch(getDefaultRunSourceBranch(branches));
+        setSelectedRunSourceBranch(defaultSourceBranch);
+      }
+      const currentBaseBranch = newSourceBranchBaseBranch();
+      if (!isRunSourceBranchAvailable(currentBaseBranch, branches)) {
+        setNewSourceBranchBaseBranch(defaultSourceBranch);
       }
     } catch {
       if (requestVersion !== runSourceBranchesRequestVersion) {
@@ -1263,6 +1278,28 @@ export const useTaskDetailModel = () => {
       return null;
     }
 
+    const createSourceBranch =
+      sourceBranchMode() === "create"
+        ? {
+            name: newSourceBranchName().trim(),
+            baseBranch: newSourceBranchBaseBranch().trim(),
+          }
+        : undefined;
+    if (createSourceBranch) {
+      const validationMessage = validateNewRunSourceBranchName(
+        createSourceBranch.name,
+        runSourceBranchOptions(),
+      );
+      if (validationMessage) {
+        setActionError(validationMessage);
+        return null;
+      }
+      if (!createSourceBranch.baseBranch) {
+        setActionError("Select a base branch.");
+        return null;
+      }
+    }
+
     setActionError("");
     setIsCreatingRun(true);
     try {
@@ -1276,7 +1313,11 @@ export const useTaskDetailModel = () => {
           selectedRunModelId().trim() ||
           resolvedSelections.modelId ||
           undefined,
-        sourceBranch: selectedRunSourceBranch().trim() || undefined,
+        sourceBranch:
+          sourceBranchMode() === "existing"
+            ? selectedRunSourceBranch().trim() || undefined
+            : undefined,
+        createSourceBranch,
       });
       await refreshRuns(taskValue.id);
       return createdRun;
@@ -1303,15 +1344,20 @@ export const useTaskDetailModel = () => {
       setActionError("");
       setPendingRunSettingsDefaultsInitialization(!hasRunSelectionOptions());
       initializeRunSettingsSelectionsFromProjectDefaults();
+      setSourceBranchMode("existing");
+      setNewSourceBranchName("");
+      setNewSourceBranchBaseBranch(
+        selectedRunSourceBranch().trim() ||
+          getDefaultRunSourceBranch(runSourceBranchOptions()),
+      );
       setIsRunSettingsModalOpen(true);
       void refreshRunSourceBranches(activeTaskId);
     };
 
     const verifyTaskCanStart = async () => {
       try {
-        const { isBlockedNow } = await revalidateBlockingParentTasks(
-          activeTaskId,
-        );
+        const { isBlockedNow } =
+          await revalidateBlockingParentTasks(activeTaskId);
         if (isBlockedNow) {
           showBlockedTaskModal(activeTaskId);
           return false;
@@ -1506,6 +1552,9 @@ export const useTaskDetailModel = () => {
     selectedRunProviderId,
     selectedRunModelId,
     selectedRunSourceBranch,
+    sourceBranchMode,
+    newSourceBranchName,
+    newSourceBranchBaseBranch,
     removingDependencyKey,
     editTitle,
     editDescription,
@@ -1544,6 +1593,9 @@ export const useTaskDetailModel = () => {
     setSelectedRunProviderId,
     setSelectedRunModelId,
     setSelectedRunSourceBranch,
+    setSourceBranchMode,
+    setNewSourceBranchName,
+    setNewSourceBranchBaseBranch,
     setEditImplementationGuide,
     onEditTitleInput,
     onEditDescriptionInput,

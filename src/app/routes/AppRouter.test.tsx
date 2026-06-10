@@ -4367,7 +4367,7 @@ describe("app routing and shell", () => {
     renderAt("/runs/run-456");
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Logs" })).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Back to task" })).toBeTruthy();
     });
 
     await fireEvent.click(screen.getByRole("link", { name: "Back to task" }));
@@ -6570,7 +6570,7 @@ describe("app routing and shell", () => {
             name: savedProjectName,
             key: "ALP",
             description: "Original description",
-            default_run_agent: null,
+            default_run_agent: "agent-a",
             default_run_provider: "provider-a",
             default_run_model: "model-a",
           },
@@ -6652,6 +6652,7 @@ describe("app routing and shell", () => {
             name: "Alpha Updated Again",
             key: "ALP",
             description: "Original description",
+            default_run_agent: "agent-a",
             default_run_provider: "provider-a",
             default_run_model: "model-a",
             repositories: [

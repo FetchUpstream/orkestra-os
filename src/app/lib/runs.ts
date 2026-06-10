@@ -208,6 +208,11 @@ export type RunSourceBranchOption = {
   isCheckedOut: boolean;
 };
 
+export type CreateSourceBranchRequest = {
+  name: string;
+  baseBranch: string;
+};
+
 export type RunSelectionOptions = {
   agents: RunAgentOption[];
   providers: RunSelectionOption[];
@@ -1482,17 +1487,29 @@ export const createRun = async (
     providerId?: string;
     modelId?: string;
     sourceBranch?: string;
+    createSourceBranch?: CreateSourceBranchRequest;
   },
 ): Promise<Run> => {
-  const response = await invoke<RunResponse>("create_run", {
-    request: {
-      taskId,
-      agentId: defaults?.agentId,
-      providerId: defaults?.providerId,
-      modelId: defaults?.modelId,
-      sourceBranch: defaults?.sourceBranch,
-    },
-  });
+  const request: {
+    taskId: string;
+    agentId?: string;
+    providerId?: string;
+    modelId?: string;
+    sourceBranch?: string;
+    createSourceBranch?: CreateSourceBranchRequest;
+  } = {
+    taskId,
+    agentId: defaults?.agentId,
+    providerId: defaults?.providerId,
+    modelId: defaults?.modelId,
+    sourceBranch: defaults?.sourceBranch,
+  };
+
+  if (defaults?.createSourceBranch !== undefined) {
+    request.createSourceBranch = defaults.createSourceBranch;
+  }
+
+  const response = await invoke<RunResponse>("create_run", { request });
   return toRun(response);
 };
 

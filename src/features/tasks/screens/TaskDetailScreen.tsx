@@ -106,6 +106,9 @@ const TaskDetailScreen: Component = () => {
     selectedRunProviderId,
     selectedRunModelId,
     selectedRunSourceBranch,
+    sourceBranchMode,
+    newSourceBranchName,
+    newSourceBranchBaseBranch,
     openCodeDependencyReason,
     removingDependencyKey,
     autosaveState,
@@ -155,6 +158,9 @@ const TaskDetailScreen: Component = () => {
     setShowDoneLinkCandidates,
     onSetLinkDependencyDirection,
     setIsBlockedRunWarningOpen,
+    setSourceBranchMode,
+    setNewSourceBranchName,
+    setNewSourceBranchBaseBranch,
     onOpenCreateDependencyModal,
     onCancelCreateDependency,
     onSubmitCreateDependency,
@@ -755,10 +761,16 @@ const TaskDetailScreen: Component = () => {
         selectedRunProviderId={selectedRunProviderId}
         selectedRunModelId={selectedRunModelId}
         selectedRunSourceBranch={selectedRunSourceBranch}
+        sourceBranchMode={sourceBranchMode}
+        newSourceBranchName={newSourceBranchName}
+        newSourceBranchBaseBranch={newSourceBranchBaseBranch}
         setSelectedRunAgentId={setSelectedRunAgentId}
         setSelectedRunProviderId={setSelectedRunProviderId}
         setSelectedRunModelId={setSelectedRunModelId}
         setSelectedRunSourceBranch={setSelectedRunSourceBranch}
+        setSourceBranchMode={setSourceBranchMode}
+        setNewSourceBranchName={setNewSourceBranchName}
+        setNewSourceBranchBaseBranch={setNewSourceBranchBaseBranch}
         onCancel={onCancelRunSettingsModal}
         onConfirm={onConfirmCreateRun}
       />

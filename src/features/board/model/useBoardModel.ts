@@ -74,6 +74,7 @@ import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyC
 import {
   getDefaultRunSourceBranch,
   isRunSourceBranchAvailable,
+  validateNewRunSourceBranchName,
 } from "../../runs/utils/sourceBranches";
 import {
   canTransitionStatus,
@@ -511,7 +512,9 @@ export const useBoardModel = () => {
   const [pendingDoneTaskId, setPendingDoneTaskId] = createSignal("");
   const [pendingInProgressTaskId, setPendingInProgressTaskId] =
     createSignal("");
-  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>([]);
+  const [runAgentOptions, setRunAgentOptions] = createSignal<RunAgentOption[]>(
+    [],
+  );
   const [runProviderOptions, setRunProviderOptions] = createSignal<
     RunSelectionOption[]
   >([]);
@@ -533,6 +536,12 @@ export const useBoardModel = () => {
     createSignal("");
   const [selectedRunModelId, setSelectedRunModelIdSignal] = createSignal("");
   const [selectedRunSourceBranch, setSelectedRunSourceBranch] =
+    createSignal("");
+  const [sourceBranchMode, setSourceBranchMode] = createSignal<
+    "existing" | "create"
+  >("existing");
+  const [newSourceBranchName, setNewSourceBranchName] = createSignal("");
+  const [newSourceBranchBaseBranch, setNewSourceBranchBaseBranch] =
     createSignal("");
   const [projectDefaultRunAgentId, setProjectDefaultRunAgentId] =
     createSignal("");
@@ -583,7 +592,10 @@ export const useBoardModel = () => {
     const currentVersion =
       taskStatusPropagationGenerationByTask.get(normalizedTaskId) ?? 0;
     if (requestVersion > currentVersion) {
-      taskStatusPropagationGenerationByTask.set(normalizedTaskId, requestVersion);
+      taskStatusPropagationGenerationByTask.set(
+        normalizedTaskId,
+        requestVersion,
+      );
     }
 
     return requestVersion;
@@ -1115,9 +1127,14 @@ export const useBoardModel = () => {
         return;
       }
 
+      const defaultSourceBranch = getDefaultRunSourceBranch(branches);
       const currentSelection = selectedRunSourceBranch();
       if (!isRunSourceBranchAvailable(currentSelection, branches)) {
-        setSelectedRunSourceBranch(getDefaultRunSourceBranch(branches));
+        setSelectedRunSourceBranch(defaultSourceBranch);
+      }
+      const currentBaseBranch = newSourceBranchBaseBranch();
+      if (!isRunSourceBranchAvailable(currentBaseBranch, branches)) {
+        setNewSourceBranchBaseBranch(defaultSourceBranch);
       }
     } catch {
       if (requestVersion !== runSourceBranchesRequestVersion) {
@@ -1586,6 +1603,12 @@ export const useBoardModel = () => {
       void hydrateRunDefaultsFromSelectedProject();
       initializePendingRunSettingsDefaultsIfReady();
       setError("");
+      setSourceBranchMode("existing");
+      setNewSourceBranchName("");
+      setNewSourceBranchBaseBranch(
+        selectedRunSourceBranch().trim() ||
+          getDefaultRunSourceBranch(runSourceBranchOptions()),
+      );
       setPendingInProgressTaskId(taskId);
       setIsRunSettingsModalOpen(true);
       void refreshRunSelectionOptions();
@@ -1686,12 +1709,37 @@ export const useBoardModel = () => {
           );
           return;
         }
+        const createSourceBranch =
+          sourceBranchMode() === "create"
+            ? {
+                name: newSourceBranchName().trim(),
+                baseBranch: newSourceBranchBaseBranch().trim(),
+              }
+            : undefined;
+        if (createSourceBranch) {
+          const validationMessage = validateNewRunSourceBranchName(
+            createSourceBranch.name,
+            runSourceBranchOptions(),
+          );
+          if (validationMessage) {
+            setError(validationMessage);
+            return;
+          }
+          if (!createSourceBranch.baseBranch) {
+            setError("Select a base branch.");
+            return;
+          }
+        }
         const createdRun = await createRun(taskId, {
           agentId: selectedRunAgentId().trim() || undefined,
           providerId:
             selectedRunProviderId().trim() || resolved.providerId || undefined,
           modelId: selectedRunModelId().trim() || resolved.modelId || undefined,
-          sourceBranch: selectedRunSourceBranch().trim() || undefined,
+          sourceBranch:
+            sourceBranchMode() === "existing"
+              ? selectedRunSourceBranch().trim() || undefined
+              : undefined,
+          createSourceBranch,
         });
         const createdRunMiniCard = runToBoardTaskRunMiniCard(
           createdRun,
@@ -1913,6 +1961,9 @@ export const useBoardModel = () => {
     selectedRunProviderId,
     selectedRunModelId,
     selectedRunSourceBranch,
+    sourceBranchMode,
+    newSourceBranchName,
+    newSourceBranchBaseBranch,
     onProjectChange,
     refreshSelectedProjectTasks,
     isTaskStatusUpdating,
@@ -1923,6 +1974,9 @@ export const useBoardModel = () => {
     setSelectedRunProviderId,
     setSelectedRunModelId,
     setSelectedRunSourceBranch,
+    setSourceBranchMode,
+    setNewSourceBranchName,
+    setNewSourceBranchBaseBranch,
     onRequestMoveTaskToInProgress,
     onCancelMoveTaskToInProgress,
     onCloseBlockedTaskModal,
