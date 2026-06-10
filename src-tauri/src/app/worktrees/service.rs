@@ -12,13 +12,16 @@
 
 use crate::app::errors::AppError;
 use crate::app::worktrees::dto::{
-    CreateWorktreeRequest, CreateWorktreeResponse, LocalBranchDto, RemoveWorktreeRequest,
+    CreateSourceBranchRequest, CreateWorktreeRequest, CreateWorktreeResponse, LocalBranchDto,
+    RemoveWorktreeRequest,
 };
 use crate::app::worktrees::error::WorktreesServiceError;
 use crate::app::worktrees::pathing::{
     choose_unique_worktree_id, parse_worktree_id_typed, validate_project_key_segment_typed,
 };
-use git2::{BranchType, Error, ErrorCode, Repository, WorktreeAddOptions, WorktreePruneOptions};
+use git2::{
+    BranchType, Error, ErrorCode, Reference, Repository, WorktreeAddOptions, WorktreePruneOptions,
+};
 use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
@@ -42,6 +45,94 @@ impl WorktreesService {
 
     pub fn create(&self, input: CreateWorktreeRequest) -> Result<CreateWorktreeResponse, AppError> {
         self.create_typed(input).map_err(|err| err.to_app_error())
+    }
+
+    pub fn create_source_branch(
+        &self,
+        repo_path: &str,
+        input: CreateSourceBranchRequest,
+    ) -> Result<String, AppError> {
+        self.create_source_branch_typed(repo_path, input)
+            .map_err(|err| err.to_app_error())
+    }
+
+    fn create_source_branch_typed(
+        &self,
+        repo_path: &str,
+        input: CreateSourceBranchRequest,
+    ) -> Result<String, WorktreesServiceError> {
+        let repo_path = repo_path.trim();
+        if repo_path.is_empty() {
+            return Err(WorktreesServiceError::RepoPathRequired);
+        }
+        let branch_name = normalize_new_source_branch_name(&input.name)?;
+        let base_branch_name = normalize_existing_base_branch_name(&input.base_branch)?;
+
+        let repo = Repository::open(repo_path).map_err(|source| {
+            WorktreesServiceError::OpenRepository {
+                repo_path: repo_path.to_string(),
+                source,
+            }
+        })?;
+        if repo.is_bare() {
+            return Err(WorktreesServiceError::BareRepository);
+        }
+        if repo.find_branch(&branch_name, BranchType::Local).is_ok() {
+            return Err(WorktreesServiceError::SourceBranchAlreadyExists { branch_name });
+        }
+
+        let base_branch = repo
+            .find_branch(&base_branch_name, BranchType::Local)
+            .map_err(|source| {
+                if source.code() == ErrorCode::NotFound {
+                    WorktreesServiceError::BaseBranchNotFound {
+                        branch_name: base_branch_name.clone(),
+                    }
+                } else {
+                    WorktreesServiceError::ResolveSourceBranch {
+                        branch_name: base_branch_name.clone(),
+                        source,
+                    }
+                }
+            })?;
+        let base_commit = base_branch.get().peel_to_commit().map_err(|source| {
+            WorktreesServiceError::ResolveSourceBranchCommit {
+                branch_name: base_branch_name.clone(),
+                source,
+            }
+        })?;
+        repo.branch(&branch_name, &base_commit, false)
+            .map_err(|source| WorktreesServiceError::CreateSourceBranch {
+                branch_name: branch_name.clone(),
+                source,
+            })?;
+
+        Ok(branch_name)
+    }
+
+    pub fn delete_local_branch_if_unchecked_out(
+        &self,
+        repo_path: &str,
+        branch_name: &str,
+    ) -> Result<(), AppError> {
+        let repo_path = repo_path.trim();
+        if repo_path.is_empty() {
+            return Err(AppError::validation("repo_path is required"));
+        }
+        let branch_name = branch_name.trim();
+        let repo = Repository::open(repo_path)
+            .map_err(|error| AppError::validation(format!("failed to open repository: {error}")))?;
+        let mut branch = repo
+            .find_branch(branch_name, BranchType::Local)
+            .map_err(|error| AppError::validation(format!("failed to find branch: {error}")))?;
+        if branch.is_head() {
+            return Err(AppError::validation(
+                "newly created source branch is currently checked out",
+            ));
+        }
+        branch
+            .delete()
+            .map_err(|error| AppError::validation(format!("failed to delete branch: {error}")))
     }
 
     fn create_typed(
@@ -423,6 +514,36 @@ impl WorktreesService {
     pub fn base_root_for_tests(&self) -> &PathBuf {
         &self.base_root
     }
+}
+
+fn normalize_new_source_branch_name(branch_name: &str) -> Result<String, WorktreesServiceError> {
+    let branch_name = branch_name.trim();
+    if branch_name.is_empty() || !is_valid_local_branch_name(branch_name) {
+        return Err(WorktreesServiceError::InvalidSourceBranchName {
+            branch_name: branch_name.to_string(),
+        });
+    }
+    Ok(branch_name.to_string())
+}
+
+fn normalize_existing_base_branch_name(branch_name: &str) -> Result<String, WorktreesServiceError> {
+    let branch_name = branch_name.trim();
+    if branch_name.is_empty() || !is_valid_local_branch_name(branch_name) {
+        return Err(WorktreesServiceError::InvalidSourceBranchName {
+            branch_name: branch_name.to_string(),
+        });
+    }
+    Ok(branch_name.to_string())
+}
+
+fn is_valid_local_branch_name(branch_name: &str) -> bool {
+    !branch_name.starts_with('/')
+        && !branch_name.ends_with('/')
+        && !branch_name.contains("..")
+        && !branch_name.contains("@{")
+        && !branch_name.ends_with('.')
+        && !branch_name.ends_with(".lock")
+        && Reference::is_valid_name(&format!("refs/heads/{branch_name}"))
 }
 
 fn resolve_source_branch(
@@ -895,7 +1016,7 @@ fn rollback_failed_worktree_add_attempt(
 mod tests {
     use super::WorktreesService;
     use crate::app::errors::AppError;
-    use crate::app::worktrees::dto::CreateWorktreeRequest;
+    use crate::app::worktrees::dto::{CreateSourceBranchRequest, CreateWorktreeRequest};
     use crate::app::worktrees::pathing::{
         build_branch_segment, compose_worktree_id, sanitize_branch_segment,
     };

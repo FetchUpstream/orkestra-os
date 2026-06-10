@@ -40,3 +40,9 @@ pub struct LocalBranchDto {
     pub name: String,
     pub is_checked_out: bool,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreateSourceBranchRequest {
+    pub name: String,
+    pub base_branch: String,
+}

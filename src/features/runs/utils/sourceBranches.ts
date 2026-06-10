@@ -33,3 +33,36 @@ export const isRunSourceBranchAvailable = (
 
   return branches.some((branch) => branch.name === normalizedBranchName);
 };
+
+export const validateNewRunSourceBranchName = (
+  branchName: string,
+  branches: RunSourceBranchOption[],
+): string => {
+  const normalizedBranchName = branchName.trim();
+  if (!normalizedBranchName) {
+    return "Enter a branch name.";
+  }
+
+  if (isRunSourceBranchAvailable(normalizedBranchName, branches)) {
+    return "A local branch with this name already exists. Select it from the list instead.";
+  }
+
+  if (
+    normalizedBranchName.startsWith("/") ||
+    normalizedBranchName.endsWith("/") ||
+    normalizedBranchName.endsWith(".") ||
+    normalizedBranchName.includes("..") ||
+    normalizedBranchName.includes("//") ||
+    normalizedBranchName.includes("@{") ||
+    /\s/.test(normalizedBranchName) ||
+    ["~", "^", ":", "?", "*", "[", "]", "\\"].some((character) =>
+      normalizedBranchName.includes(character),
+    ) ||
+    /(^|\/)\.(\.?)(\/|$)/.test(normalizedBranchName) ||
+    /(^|\/)lock($|\/)/.test(normalizedBranchName)
+  ) {
+    return "Branch name is not valid.";
+  }
+
+  return "";
+};

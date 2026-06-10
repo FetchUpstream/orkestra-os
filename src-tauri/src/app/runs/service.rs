@@ -15,7 +15,9 @@ use crate::app::errors::AppError;
 use crate::app::runs::dto::RunDto;
 use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext};
 use crate::app::tasks::dto::TaskStatusChangedEventDto;
-use crate::app::worktrees::dto::{CreateWorktreeRequest, LocalBranchDto, RemoveWorktreeRequest};
+use crate::app::worktrees::dto::{
+    CreateSourceBranchRequest, CreateWorktreeRequest, LocalBranchDto, RemoveWorktreeRequest,
+};
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
 use sqlx::Error as SqlxError;
@@ -46,6 +48,7 @@ impl RunsService {
         provider_id: Option<&str>,
         model_id: Option<&str>,
         source_branch: Option<&str>,
+        create_source_branch: Option<CreateSourceBranchRequest>,
     ) -> Result<RunDto, AppError> {
         let task_id = task_id.trim();
         if task_id.is_empty() {
@@ -62,7 +65,6 @@ impl RunsService {
         let selected_agent_id = normalize_optional_nonempty(agent_id);
         let selected_provider_id = normalize_optional_nonempty(provider_id);
         let selected_model_id = normalize_optional_nonempty(model_id);
-        let selected_source_branch = normalize_optional_nonempty(source_branch);
         let (provider_id, model_id) = match (selected_provider_id, selected_model_id) {
             (Some(provider_id), Some(model_id)) => (Some(provider_id), Some(model_id)),
             _ => (None, None),
@@ -74,15 +76,58 @@ impl RunsService {
             .await?
             .ok_or_else(|| AppError::not_found("task not found"))?;
 
+        let created_source_branch_name = if let Some(request) = create_source_branch.as_ref() {
+            if normalize_optional_nonempty(source_branch).is_some() {
+                return Err(AppError::validation(
+                    "source_branch must not be set when create_source_branch is provided",
+                ));
+            }
+            Some(
+                self.worktrees_service
+                    .create_source_branch(&task_context.repository_path, request.clone())?,
+            )
+        } else {
+            None
+        };
+        let selected_source_branch = created_source_branch_name
+            .clone()
+            .or_else(|| normalize_optional_nonempty(source_branch));
+
         let repo_path = task_context.repository_path.clone();
         let run_id = Uuid::new_v4().to_string();
-        let worktree = self.worktrees_service.create(CreateWorktreeRequest {
-            project_key: task_context.project_key.clone(),
-            repo_path: repo_path.clone(),
-            branch_title: task_context.branch_title.clone(),
-            unique_suffix_seed: Some(run_id.clone()),
-            source_branch: selected_source_branch,
-        })?;
+        let worktree = self
+            .worktrees_service
+            .create(CreateWorktreeRequest {
+                project_key: task_context.project_key.clone(),
+                repo_path: repo_path.clone(),
+                branch_title: task_context.branch_title.clone(),
+                unique_suffix_seed: Some(run_id.clone()),
+                source_branch: selected_source_branch,
+            })
+            .inspect_err(|_| {
+                if let Some(branch_name) = created_source_branch_name.as_deref() {
+                    warn!(
+                        subsystem = "runs",
+                        operation = "create_with_defaults",
+                        task_id = task_id,
+                        branch_name = branch_name,
+                        "Run worktree creation failed after creating source branch; attempting cleanup"
+                    );
+                    if let Err(cleanup_error) = self
+                        .worktrees_service
+                        .delete_local_branch_if_unchecked_out(&repo_path, branch_name)
+                    {
+                        warn!(
+                            subsystem = "runs",
+                            operation = "create_with_defaults",
+                            task_id = task_id,
+                            branch_name = branch_name,
+                            error = cleanup_error.to_string(),
+                            "Failed to clean up newly created source branch"
+                        );
+                    }
+                }
+            })?;
 
         let created = self
             .create_persisted_run(
@@ -130,7 +175,7 @@ impl RunsService {
         provider_id: Option<&str>,
         model_id: Option<&str>,
     ) -> Result<RunDto, AppError> {
-        self.create_run_with_defaults(task_id, agent_id, provider_id, model_id, None)
+        self.create_run_with_defaults(task_id, agent_id, provider_id, model_id, None, None)
             .await
     }
 
@@ -393,7 +438,9 @@ impl RunsService {
 
         let stale_opencode_session_id = stale_opencode_session_id.trim();
         if stale_opencode_session_id.is_empty() {
-            return Err(AppError::validation("stale_opencode_session_id is required"));
+            return Err(AppError::validation(
+                "stale_opencode_session_id is required",
+            ));
         }
 
         let opencode_session_id = opencode_session_id.trim();
@@ -867,7 +914,7 @@ mod tests {
         seed_task(&pool, "task-1", &repo_path).await;
 
         let run = service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
 
@@ -893,6 +940,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_run_with_new_source_branch_persists_new_branch_and_separate_worktree_branch() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+
+        let run = service
+            .create_run_with_defaults(
+                "task-1",
+                None,
+                None,
+                None,
+                None,
+                Some(CreateSourceBranchRequest {
+                    name: "feature/new-settings-flow".to_string(),
+                    base_branch: "master".to_string(),
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            run.source_branch.as_deref(),
+            Some("feature/new-settings-flow")
+        );
+        assert_ne!(
+            run.worktree_id.as_deref(),
+            Some("feature/new-settings-flow")
+        );
+        let repo = Repository::open(&repo_path).unwrap();
+        assert!(repo
+            .find_branch("feature/new-settings-flow", git2::BranchType::Local)
+            .is_ok());
+        assert!(repo
+            .find_branch(run.worktree_id.as_deref().unwrap(), git2::BranchType::Local)
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn create_run_with_new_source_branch_rejects_duplicate_missing_base_and_invalid() {
+        let (service, pool, temp_dir) = setup_service().await;
+        let repo_path = temp_dir.path().join("repo");
+        init_git_repo(&repo_path);
+        seed_task(&pool, "task-1", &repo_path).await;
+        let repo = Repository::open(&repo_path).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("feature/existing", &head, false).unwrap();
+
+        for request in [
+            CreateSourceBranchRequest {
+                name: "feature/existing".to_string(),
+                base_branch: "master".to_string(),
+            },
+            CreateSourceBranchRequest {
+                name: "feature/missing-base".to_string(),
+                base_branch: "missing".to_string(),
+            },
+            CreateSourceBranchRequest {
+                name: "feature/..".to_string(),
+                base_branch: "master".to_string(),
+            },
+        ] {
+            assert!(service
+                .create_run_with_defaults("task-1", None, None, None, None, Some(request))
+                .await
+                .is_err());
+        }
+    }
+
+    #[tokio::test]
     async fn create_run_with_defaults_persists_agent_and_model_pair() {
         let (service, pool, temp_dir) = setup_service().await;
         let repo_path = temp_dir.path().join("repo");
@@ -905,6 +1022,7 @@ mod tests {
                 Some("build"),
                 Some("provider-a"),
                 Some("model-a"),
+                None,
                 None,
             )
             .await
@@ -923,11 +1041,11 @@ mod tests {
         seed_task(&pool, "task-1", &repo_path).await;
 
         let first_run = service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let second_run = service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
 
@@ -945,7 +1063,14 @@ mod tests {
         seed_task(&pool, "task-1", &repo_path).await;
 
         let run = service
-            .create_run_with_defaults("task-1", Some("build"), Some("provider-a"), None, None)
+            .create_run_with_defaults(
+                "task-1",
+                Some("build"),
+                Some("provider-a"),
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -959,7 +1084,7 @@ mod tests {
         let (service, _, _) = setup_service().await;
 
         let result = service
-            .create_run_with_defaults("missing-task", None, None, None, None)
+            .create_run_with_defaults("missing-task", None, None, None, None, None)
             .await;
 
         match result {
@@ -973,7 +1098,7 @@ mod tests {
         let (service, _, _) = setup_service().await;
 
         let result = service
-            .create_run_with_defaults("   ", None, None, None, None)
+            .create_run_with_defaults("   ", None, None, None, None, None)
             .await;
 
         match result {
@@ -991,7 +1116,7 @@ mod tests {
         seed_run_with_status(&pool, "run-active", "task-1", "in_progress").await;
 
         let result = service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         assert_eq!(result.run_number, 2);

@@ -28,6 +28,10 @@ import type {
   RunSourceBranchOption,
 } from "../../../app/lib/runs";
 import { useOpenCodeDependency } from "../../../app/contexts/OpenCodeDependencyContext";
+import {
+  getDefaultRunSourceBranch,
+  validateNewRunSourceBranchName,
+} from "../utils/sourceBranches";
 import RunAgentSelectOptions from "./RunAgentSelectOptions";
 
 type RunSettingsModalProps = {
@@ -47,10 +51,16 @@ type RunSettingsModalProps = {
   selectedRunProviderId: Accessor<string>;
   selectedRunModelId: Accessor<string>;
   selectedRunSourceBranch: Accessor<string>;
+  sourceBranchMode: Accessor<"existing" | "create">;
+  newSourceBranchName: Accessor<string>;
+  newSourceBranchBaseBranch: Accessor<string>;
   setSelectedRunAgentId: (value: string) => void;
   setSelectedRunProviderId: (value: string) => void;
   setSelectedRunModelId: (value: string) => void;
   setSelectedRunSourceBranch: (value: string) => void;
+  setSourceBranchMode: (value: "existing" | "create") => void;
+  setNewSourceBranchName: (value: string) => void;
+  setNewSourceBranchBaseBranch: (value: string) => void;
   isOpenCodeMissing?: Accessor<boolean>;
   openCodeDependencyReason?: Accessor<string>;
   onCancel: () => void;
@@ -62,6 +72,7 @@ const RunSourceBranchSelect: Component<{
   selectedValue: Accessor<string>;
   disabled: Accessor<boolean>;
   onChange: (value: string) => void;
+  onCreate: (branchName: string) => void;
 }> = (props) => {
   const [isOpen, setIsOpen] = createSignal(false);
   const [search, setSearch] = createSignal("");
@@ -79,6 +90,15 @@ const RunSourceBranchSelect: Component<{
       .options()
       .filter((option) => option.name.toLowerCase().includes(query));
   });
+
+  const trimmedSearch = createMemo(() => search().trim());
+  const hasExactMatch = createMemo(() => {
+    const query = trimmedSearch();
+    return props.options().some((option) => option.name === query);
+  });
+  const showCreateAction = createMemo(
+    () => trimmedSearch().length > 0 && !hasExactMatch(),
+  );
 
   const selectedOption = createMemo(() => {
     const selectedValue = props.selectedValue().trim();
@@ -173,6 +193,20 @@ const RunSourceBranchSelect: Component<{
             role="listbox"
             aria-label="Source branches"
           >
+            <Show when={showCreateAction()}>
+              <button
+                type="button"
+                class="hover:bg-base-200 text-primary flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs font-semibold"
+                onClick={() => {
+                  props.onCreate(trimmedSearch());
+                  setSearch("");
+                }}
+              >
+                <span class="min-w-0 flex-1 truncate">
+                  Create branch "{trimmedSearch()}"...
+                </span>
+              </button>
+            </Show>
             <Show
               when={filteredOptions().length > 0}
               fallback={
@@ -221,6 +255,20 @@ const RunSourceBranchSelect: Component<{
 
 const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
   const openCodeDependency = useOpenCodeDependency();
+
+  const newSourceBranchValidationMessage = createMemo(() => {
+    if (props.sourceBranchMode() !== "create") return "";
+    return validateNewRunSourceBranchName(
+      props.newSourceBranchName(),
+      props.runSourceBranchOptions(),
+    );
+  });
+
+  const hasCreateSourceBranchError = createMemo(
+    () =>
+      props.sourceBranchMode() === "create" &&
+      !!newSourceBranchValidationMessage(),
+  );
 
   createEffect(() => {
     if (props.isOpen() && props.isOpenCodeMissing?.()) {
@@ -317,21 +365,89 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
                 </label>
               </div>
             </Show>
-            <label class="projects-field task-runs-default-field">
-              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+            <div class="projects-field task-runs-default-field">
+              <div class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
                 <span class="field-label-text">Source branch</span>
-              </span>
-              <RunSourceBranchSelect
-                options={props.runSourceBranchOptions}
-                selectedValue={props.selectedRunSourceBranch}
-                onChange={props.setSelectedRunSourceBranch}
-                disabled={() =>
-                  props.isSubmitting() ||
-                  props.isLoadingRunSourceBranches() ||
-                  props.runSourceBranchOptions().length === 0
+              </div>
+              <Show
+                when={props.sourceBranchMode() === "create"}
+                fallback={
+                  <RunSourceBranchSelect
+                    options={props.runSourceBranchOptions}
+                    selectedValue={props.selectedRunSourceBranch}
+                    onChange={props.setSelectedRunSourceBranch}
+                    onCreate={(branchName) => {
+                      props.setSourceBranchMode("create");
+                      props.setNewSourceBranchName(branchName);
+                      props.setNewSourceBranchBaseBranch(
+                        props.selectedRunSourceBranch().trim() ||
+                          getDefaultRunSourceBranch(
+                            props.runSourceBranchOptions(),
+                          ),
+                      );
+                    }}
+                    disabled={() =>
+                      props.isSubmitting() ||
+                      props.isLoadingRunSourceBranches() ||
+                      props.runSourceBranchOptions().length === 0
+                    }
+                  />
                 }
-              />
-            </label>
+              >
+                <div class="border-base-content/15 bg-base-100 flex flex-col gap-3 border p-3">
+                  <label class="projects-field">
+                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                      <span class="field-label-text">New branch name</span>
+                    </span>
+                    <input
+                      class="input input-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none border px-3 text-xs"
+                      value={props.newSourceBranchName()}
+                      onInput={(event) =>
+                        props.setNewSourceBranchName(event.currentTarget.value)
+                      }
+                      disabled={props.isSubmitting()}
+                      aria-invalid={hasCreateSourceBranchError()}
+                      placeholder="feature/example"
+                    />
+                  </label>
+                  <label class="projects-field">
+                    <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                      <span class="field-label-text">Base branch</span>
+                    </span>
+                    <select
+                      class="select select-sm border-base-content/15 bg-base-100 text-base-content h-10 min-h-10 rounded-none px-3 text-xs font-medium"
+                      value={props.newSourceBranchBaseBranch()}
+                      onChange={(event) =>
+                        props.setNewSourceBranchBaseBranch(
+                          event.currentTarget.value,
+                        )
+                      }
+                      disabled={props.isSubmitting()}
+                      aria-label="New source branch base branch"
+                    >
+                      <For each={props.runSourceBranchOptions()}>
+                        {(option) => (
+                          <option value={option.name}>{option.name}</option>
+                        )}
+                      </For>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-xs self-start rounded-none"
+                    disabled={props.isSubmitting()}
+                    onClick={() => props.setSourceBranchMode("existing")}
+                  >
+                    Select existing branch instead
+                  </button>
+                </div>
+              </Show>
+              <Show when={newSourceBranchValidationMessage()}>
+                <span class="text-error mt-1 text-[11px]">
+                  {newSourceBranchValidationMessage()}
+                </span>
+              </Show>
+            </div>
             <Show
               when={
                 !props.hasRunSelectionOptions() &&
@@ -414,7 +530,10 @@ const RunSettingsModal: Component<RunSettingsModalProps> = (props) => {
                   props.isSubmitting() ||
                   !!props.isOpenCodeMissing?.() ||
                   props.isLoadingRunSourceBranches() ||
-                  !!props.runSourceBranchError()
+                  !!props.runSourceBranchError() ||
+                  hasCreateSourceBranchError() ||
+                  (props.sourceBranchMode() === "create" &&
+                    !props.newSourceBranchBaseBranch().trim())
                 }
               >
                 {props.isSubmitting() ? "Starting..." : "Create run"}
