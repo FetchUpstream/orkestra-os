@@ -719,7 +719,19 @@ export const useProjectsPageModel = () => {
           const currentSignature = currentPayload
             ? draftSignature(currentPayload)
             : null;
-          if (currentSignature === persistedSignature) {
+          // Prefer the nextSignature the user submitted so backend normalization
+          // does not leave the UI showing unsaved changes; this can make
+          // lastPersistedDraftSignature differ from persistedSignature and may
+          // cause a rare extra autosave if the user later matches backend state.
+          if (currentSignature === nextSignature) {
+            lastPersistedDraftSignature = nextSignature;
+            setHasPendingProjectChanges(false);
+            if (shouldSkipAutosaveSignalUpdates(requestVersion)) return false;
+            setAutosaveState("saved");
+          } else if (currentSignature === persistedSignature) {
+            // Fallback for forms already reconciled to the backend response;
+            // keep the same shouldSkipAutosaveSignalUpdates/setAutosaveState
+            // flow while comparing currentSignature to persistedSignature.
             if (shouldSkipAutosaveSignalUpdates(requestVersion)) return false;
             setAutosaveState("saved");
           }

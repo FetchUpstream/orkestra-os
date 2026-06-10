@@ -1132,6 +1132,11 @@ const NewRunDetailScreen: Component = () => {
   });
 
   createEffect(() => {
+    if (model.isLoading() && !model.run()) {
+      window.dispatchEvent(new CustomEvent("run-detail:topbar-clear"));
+      return;
+    }
+
     const backHref = model.backHref();
     const backLabel = model.backLabel();
     const isLogsOpen = overlayState() === "drawer-logs";

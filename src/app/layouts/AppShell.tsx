@@ -323,6 +323,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
     });
 
     let unlistenCloseRequested: (() => void) | null = null;
+
     onCleanup(() => {
       unlistenCloseRequested?.();
       unlistenCloseRequested = null;

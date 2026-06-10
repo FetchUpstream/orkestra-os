@@ -6127,6 +6127,33 @@ textarea::placeholder {
   line-height: 1.5;
 }
 
+.run-chat-composer__rich-input {
+  resize: none;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.run-chat-composer__rich-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-subtle);
+  pointer-events: none;
+}
+
+.run-chat-composer__paste-token {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(251, 146, 60, 0.48);
+  border-radius: 999px;
+  background: rgba(251, 146, 60, 0.14);
+  color: #fb923c;
+  padding: 1px 7px;
+  font-size: 0.82em;
+  font-weight: 700;
+  line-height: 1.5;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
 .run-chat-composer__input::placeholder,
 .run-chat-composer__textarea::placeholder {
   color: var(--text-subtle);
