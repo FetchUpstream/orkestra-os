@@ -3159,11 +3159,6 @@ textarea::placeholder {
   font-family: var(--font-mono);
 }
 
-.task-runs-timing-copy {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-}
-
 .task-runs-repo-tag {
   display: inline-flex;
   align-items: center;
