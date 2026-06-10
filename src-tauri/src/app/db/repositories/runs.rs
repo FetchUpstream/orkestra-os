@@ -623,6 +623,28 @@ impl RunsRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn replace_opencode_session_id(
+        &self,
+        run_id: &str,
+        stale_opencode_session_id: &str,
+        opencode_session_id: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE runs
+             SET opencode_session_id = ?
+             WHERE id = ?
+               AND opencode_session_id = ?",
+        )
+        .bind(opencode_session_id)
+        .bind(run_id)
+        .bind(stale_opencode_session_id)
+        .execute(&self.pool)
+        .await
+        .runs_db("replacing opencode session id")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn claim_initial_prompt_send_if_unset(
         &self,
         run_id: &str,

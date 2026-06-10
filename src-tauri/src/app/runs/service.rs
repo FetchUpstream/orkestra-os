@@ -380,6 +380,32 @@ impl RunsService {
             .await
     }
 
+    pub async fn replace_run_opencode_session_id(
+        &self,
+        run_id: &str,
+        stale_opencode_session_id: &str,
+        opencode_session_id: &str,
+    ) -> Result<bool, AppError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(AppError::validation("run_id is required"));
+        }
+
+        let stale_opencode_session_id = stale_opencode_session_id.trim();
+        if stale_opencode_session_id.is_empty() {
+            return Err(AppError::validation("stale_opencode_session_id is required"));
+        }
+
+        let opencode_session_id = opencode_session_id.trim();
+        if opencode_session_id.is_empty() {
+            return Err(AppError::validation("opencode_session_id is required"));
+        }
+
+        self.repository
+            .replace_opencode_session_id(run_id, stale_opencode_session_id, opencode_session_id)
+            .await
+    }
+
     pub async fn claim_initial_prompt_send_if_unset(
         &self,
         run_id: &str,
