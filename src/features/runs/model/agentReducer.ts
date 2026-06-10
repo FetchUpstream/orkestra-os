@@ -672,9 +672,9 @@ const normalizePermission = (
   }
 
   const kind =
-    pickFirstString(value, "kind", "permission", "action") ??
+    pickFirstString(value, "kind", "permission", "tool", "action") ??
     (nested
-      ? pickFirstString(nested, "kind", "permission", "action")
+      ? pickFirstString(nested, "kind", "permission", "tool", "action")
       : undefined) ??
     findFirstNestedStringByKey(value, ["permissionType", "type"], 2);
   const rawPatterns =
@@ -700,7 +700,9 @@ const normalizePermission = (
           "pattern",
         )
       : undefined);
-  const pathPatterns = (Array.isArray(rawPatterns) ? rawPatterns : [rawPatterns])
+  const pathPatterns = (
+    Array.isArray(rawPatterns) ? rawPatterns : [rawPatterns]
+  )
     .map((item) => asTrimmedString(item))
     .filter(
       (item): item is string => typeof item === "string" && item.length > 0,
@@ -722,7 +724,11 @@ const normalizePermission = (
     : undefined;
 
   const command =
-    findFirstNestedStringByKey(value, ["command", "cmd", "bash", "script"], 4) ??
+    findFirstNestedStringByKey(
+      value,
+      ["command", "cmd", "bash", "script"],
+      4,
+    ) ??
     (metadata
       ? pickFirstString(metadata, "command", "cmd", "bash", "script")
       : undefined);
@@ -732,15 +738,21 @@ const normalizePermission = (
     "file_path",
     "path",
     "filename",
-    "parentDir",
   ]);
+  const parentDirectoryPath = findFirstNestedStringByKey(value, ["parentDir"]);
   const filePath =
     explicitFilePath ??
-    (isFilePermissionKind(kind) ? pathPatterns[0] : undefined);
+    (isFilePermissionKind(kind)
+      ? (parentDirectoryPath ?? pathPatterns[0])
+      : undefined);
   const toolName =
     pickFirstString(value, "toolName", "permissionTool") ??
-    (nested ? pickFirstString(nested, "toolName", "permissionTool") : undefined) ??
-    (metadata ? pickFirstString(metadata, "tool", "toolName", "name") : undefined) ??
+    (nested
+      ? pickFirstString(nested, "toolName", "permissionTool")
+      : undefined) ??
+    (metadata
+      ? pickFirstString(metadata, "tool", "toolName", "name")
+      : undefined) ??
     findFirstNestedStringByKey(value, ["toolName", "tool", "name"], 4);
   const actionDescription =
     findFirstNestedStringByKey(value, [
@@ -754,7 +766,8 @@ const normalizePermission = (
     ]) ??
     pickFirstString(value, "action") ??
     (nested ? pickFirstString(nested, "action") : undefined);
-  const permissionPattern = pathPatterns[0] ?? pickFirstString(value, "pattern");
+  const permissionPattern =
+    pathPatterns[0] ?? pickFirstString(value, "pattern");
   const display = buildPermissionDisplay({
     kind,
     command,

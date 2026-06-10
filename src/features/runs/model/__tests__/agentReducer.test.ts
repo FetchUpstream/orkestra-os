@@ -427,6 +427,49 @@ describe("agentReducer text/reasoning lifecycle", () => {
     ).toBeUndefined();
   });
 
+  it("uses top-level tool as file permission kind for scoped file edits", () => {
+    const next = reduceOpenCodeEvent(createEmptyAgentStore("session-1"), {
+      type: "permission.asked",
+      properties: {
+        id: "perm-tool-file-1",
+        sessionID: "session-1",
+        tool: "write",
+        pathPatterns: ["src/App.tsx"],
+      },
+    });
+
+    expect(next.pendingPermissionsById["perm-tool-file-1"]).toMatchObject({
+      requestId: "perm-tool-file-1",
+      kind: "write",
+      filePath: "src/App.tsx",
+      displayTitle: "Allow file edit",
+      displayDescription: "src/App.tsx",
+      pathPatterns: ["src/App.tsx"],
+    });
+  });
+
+  it("prefers exact nested filepath over parent directory metadata", () => {
+    const next = reduceOpenCodeEvent(createEmptyAgentStore("session-1"), {
+      type: "permission.asked",
+      properties: {
+        id: "perm-parent-file-1",
+        sessionID: "session-1",
+        permission: "external_directory",
+        metadata: {
+          parentDir: "/Users/alex/project",
+          filepath: "/Users/alex/project/src/App.tsx",
+        },
+      },
+    });
+
+    expect(next.pendingPermissionsById["perm-parent-file-1"]).toMatchObject({
+      requestId: "perm-parent-file-1",
+      filePath: "/Users/alex/project/src/App.tsx",
+      displayTitle: "Allow file edit",
+      displayDescription: "/Users/alex/project/src/App.tsx",
+    });
+  });
+
   it("normalizes tool permission display from tool metadata", () => {
     const next = reduceOpenCodeEvent(createEmptyAgentStore("session-1"), {
       type: "permission.asked",
@@ -587,6 +630,5 @@ describe("agentReducer text/reasoning lifecycle", () => {
     });
 
     expect(idle.status).toBe("idle");
-});
-
+  });
 });
