@@ -250,6 +250,15 @@ describe("BoardTaskCard", () => {
     expect(screen.queryByText(description)).toBeNull();
   });
 
+  it("does not split emoji surrogate pairs at the truncation boundary", () => {
+    const description = `${"a".repeat(999)}🙂b`;
+
+    renderBoardTaskCard(description);
+
+    expect(screen.getByText(`${"a".repeat(999)}🙂…`)).toBeTruthy();
+    expect(screen.queryByText(`${"a".repeat(999)}�…`)).toBeNull();
+  });
+
   it("does not mutate the underlying task description after render", () => {
     const description = "a".repeat(1001);
     const task = {

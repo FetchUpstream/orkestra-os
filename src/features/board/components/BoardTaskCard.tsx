@@ -34,11 +34,16 @@ type Props = {
 const BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH = 1000;
 
 function boardTaskDescriptionPreview(text: string): string {
-  if (text.length <= BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH) {
+  const characters = Array.from(text);
+
+  if (characters.length <= BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH) {
     return text;
   }
 
-  return `${text.slice(0, BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH).trimEnd()}…`;
+  return `${characters
+    .slice(0, BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH)
+    .join("")
+    .trimEnd()}…`;
 }
 
 const BoardTaskCard: Component<Props> = (props) => {
