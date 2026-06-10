@@ -224,7 +224,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
     return result;
   };
 
-  onMount(async () => {
+  onMount(() => {
     const mediaQuery = window.matchMedia("(max-width: 900px)");
     const updateMobileMode = (matches: boolean) => {
       setIsMobile(matches);
@@ -244,20 +244,6 @@ const AppShellContent: Component<AppShellProps> = (props) => {
     onCleanup(() => {
       mediaQuery.removeEventListener("change", handleMediaChange);
     });
-
-    try {
-      await refreshProjects();
-      const projectIdToPrime = boardProjectId() || projects()[0]?.id;
-      if (projectIdToPrime) {
-        primeRunSelectionOptionsCache(projectIdToPrime);
-      }
-    } catch (error) {
-      console.warn("Failed to load projects during startup", error);
-    } finally {
-      setHasLoadedProjects(true);
-    }
-
-    void runAppUpdateCheck({ silent: true });
 
     const onTaskDetailTopbarConfig = (event: Event) => {
       const customEvent = event as CustomEvent<TaskDetailTopbarConfig>;
@@ -336,40 +322,65 @@ const AppShellContent: Component<AppShellProps> = (props) => {
       window.removeEventListener("projects:updated", onProjectsUpdated);
     });
 
-    try {
-      const appWindow = getCurrentWindow();
-      const unlistenCloseRequested = await appWindow.onCloseRequested(
-        async (event) => {
-          if (confirmedCloseInProgress()) {
-            return;
-          }
+    let unlistenCloseRequested: (() => void) | null = null;
+    onCleanup(() => {
+      unlistenCloseRequested?.();
+      unlistenCloseRequested = null;
+    });
 
-          try {
-            const activeRuns = await listActiveRuns();
-            if (activeRuns.length === 0) {
+    void (async () => {
+      try {
+        await refreshProjects();
+        const projectIdToPrime = boardProjectId() || projects()[0]?.id;
+        if (projectIdToPrime) {
+          primeRunSelectionOptionsCache(projectIdToPrime);
+        }
+      } catch (error) {
+        console.warn("Failed to load projects during startup", error);
+      } finally {
+        setHasLoadedProjects(true);
+      }
+
+      void runAppUpdateCheck({ silent: true });
+
+      try {
+        const appWindow = getCurrentWindow();
+        unlistenCloseRequested = await appWindow.onCloseRequested(
+          async (event) => {
+            if (confirmedCloseInProgress()) {
               return;
             }
 
-            event.preventDefault();
-            setCloseWarningRunCount(activeRuns.length);
-            setCloseWarningOpen(true);
-          } catch (error) {
-            console.warn("Failed to check active runs before close", error);
-          }
-        },
-      );
+            try {
+              const activeRuns = await listActiveRuns();
+              if (activeRuns.length === 0) {
+                return;
+              }
 
-      onCleanup(() => {
-        unlistenCloseRequested();
-      });
-    } catch (error) {
-      console.warn("Failed to register app close interceptor", error);
-    }
+              event.preventDefault();
+              setCloseWarningRunCount(activeRuns.length);
+              setCloseWarningOpen(true);
+            } catch (error) {
+              console.warn("Failed to check active runs before close", error);
+            }
+          },
+        );
+      } catch (error) {
+        console.warn("Failed to register app close interceptor", error);
+      }
+    })();
   });
 
   createEffect(() => {
-    if (!location.pathname.includes("/tasks/")) {
+    const pathname = location.pathname;
+    if (!pathname.includes("/tasks/")) {
       setTaskDetailTopbarConfig(null);
+    }
+    if (!pathname.startsWith("/runs/")) {
+      setRunDetailTopbarConfig(null);
+    }
+    if (!settingsProjectId()) {
+      setProjectSettingsTopbarConfig(null);
     }
   });
 
