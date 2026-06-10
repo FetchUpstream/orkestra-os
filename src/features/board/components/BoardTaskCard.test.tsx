@@ -17,6 +17,35 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Route, Router } from "@solidjs/router";
 import BoardTaskCard from "./BoardTaskCard";
 
+const renderBoardTaskCard = (description: string) => {
+  render(() => (
+    <Router>
+      <Route
+        path="/board"
+        component={() => (
+          <ul>
+            <BoardTaskCard
+              task={{
+                id: "task-1",
+                title: "Task with description",
+                status: "todo",
+                projectId: "project-1",
+                description,
+              }}
+              project={{
+                id: "project-1",
+                name: "Project",
+                key: "PRJ",
+                repositories: [],
+              }}
+            />
+          </ul>
+        )}
+      />
+    </Router>
+  ));
+};
+
 describe("BoardTaskCard", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/board");
@@ -194,5 +223,65 @@ describe("BoardTaskCard", () => {
     expect(screen.getByText("GPT-5")).toBeTruthy();
     expect(screen.getByText("Waiting for Input")).toBeTruthy();
     expect(screen.queryByText("Run Details")).toBeNull();
+  });
+
+  it("renders descriptions shorter than 1000 characters unchanged", () => {
+    const description = "a".repeat(999);
+
+    renderBoardTaskCard(description);
+
+    expect(screen.getByText(description)).toBeTruthy();
+  });
+
+  it("renders descriptions exactly 1000 characters unchanged", () => {
+    const description = "a".repeat(1000);
+
+    renderBoardTaskCard(description);
+
+    expect(screen.getByText(description)).toBeTruthy();
+  });
+
+  it("truncates descriptions longer than 1000 characters with an ellipsis", () => {
+    const description = "a".repeat(1001);
+
+    renderBoardTaskCard(description);
+
+    expect(screen.getByText(`${"a".repeat(1000)}…`)).toBeTruthy();
+    expect(screen.queryByText(description)).toBeNull();
+  });
+
+  it("does not mutate the underlying task description after render", () => {
+    const description = "a".repeat(1001);
+    const task = {
+      id: "task-1",
+      title: "Task with description",
+      status: "todo" as const,
+      projectId: "project-1",
+      description,
+    };
+
+    render(() => (
+      <Router>
+        <Route
+          path="/board"
+          component={() => (
+            <ul>
+              <BoardTaskCard
+                task={task}
+                project={{
+                  id: "project-1",
+                  name: "Project",
+                  key: "PRJ",
+                  repositories: [],
+                }}
+              />
+            </ul>
+          )}
+        />
+      </Router>
+    ));
+
+    expect(screen.getByText(`${"a".repeat(1000)}…`)).toBeTruthy();
+    expect(task.description).toBe(description);
   });
 });

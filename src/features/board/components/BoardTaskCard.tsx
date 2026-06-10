@@ -31,6 +31,16 @@ type Props = {
   onDragEnd?: () => void;
 };
 
+const BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH = 1000;
+
+function boardTaskDescriptionPreview(text: string): string {
+  if (text.length <= BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH) {
+    return text;
+  }
+
+  return `${text.slice(0, BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH).trimEnd()}…`;
+}
+
 const BoardTaskCard: Component<Props> = (props) => {
   const [dragJustEnded, setDragJustEnded] = createSignal(false);
   const dependencyState = () => dependencyBadgeState(props.task);
@@ -38,6 +48,15 @@ const BoardTaskCard: Component<Props> = (props) => {
     props.task.status === "todo" && dependencyState() !== "none";
   const showRunMiniCard = () =>
     props.task.status !== "done" && (props.runMiniCards?.length ?? 0) > 0;
+  const taskDescriptionPreview = () => {
+    const description = props.task.description;
+
+    if (!description?.trim()) {
+      return "";
+    }
+
+    return boardTaskDescriptionPreview(description);
+  };
   const isRunStateActive = (miniCard: BoardTaskRunMiniCard) => {
     const state = miniCard.state;
     return (
@@ -194,9 +213,9 @@ const BoardTaskCard: Component<Props> = (props) => {
             </span>
           </Show>
           <div class="board-task-title-separator" aria-hidden="true" />
-          <Show when={props.task.description?.trim()}>
+          <Show when={taskDescriptionPreview()}>
             <p class="board-task-description text-base-content/65 text-xs">
-              {props.task.description}
+              {taskDescriptionPreview()}
             </p>
           </Show>
         </div>
