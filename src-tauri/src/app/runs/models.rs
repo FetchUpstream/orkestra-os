@@ -77,6 +77,7 @@ pub struct RunInitialPromptContext {
     pub task_title: String,
     pub task_description: Option<String>,
     pub task_implementation_guide: Option<String>,
+    pub project_run_prepend_instructions: Option<String>,
     pub setup_script: Option<String>,
     pub cleanup_script: Option<String>,
 }

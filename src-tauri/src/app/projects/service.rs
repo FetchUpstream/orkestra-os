@@ -27,6 +27,28 @@ use git2::Repository;
 use std::collections::HashMap;
 use std::path::Path;
 
+const RUN_PREPEND_INSTRUCTIONS_MAX_LENGTH: usize = 10_000;
+
+fn normalize_run_prepend_instructions(
+    value: Option<String>,
+) -> Result<Option<String>, ProjectsServiceError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    let normalized = value.trim().replace("\r\n", "\n").replace('\r', "\n");
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+    if normalized.chars().count() > RUN_PREPEND_INSTRUCTIONS_MAX_LENGTH {
+        return Err(ProjectsServiceError::Validation(
+            "custom prepend instructions must be 10000 characters or fewer",
+        ));
+    }
+
+    Ok(Some(normalized))
+}
+
 #[derive(Clone, Debug)]
 pub struct ProjectsService {
     repository: ProjectsRepository,
@@ -120,6 +142,7 @@ impl ProjectsService {
                 default_run_provider: project.default_run_provider,
                 default_run_model: project.default_run_model,
                 env_vars: project.env_vars,
+                run_prepend_instructions: project.run_prepend_instructions,
                 created_at: project.created_at,
                 updated_at: project.updated_at,
             })
@@ -146,6 +169,7 @@ impl ProjectsService {
                 default_run_provider: details.project.default_run_provider,
                 default_run_model: details.project.default_run_model,
                 env_vars: details.project.env_vars,
+                run_prepend_instructions: details.project.run_prepend_instructions,
                 created_at: details.project.created_at,
                 updated_at: details.project.updated_at,
             },
@@ -180,6 +204,8 @@ impl ProjectsService {
         input.default_run_model = input.default_run_model.trim().to_string();
         let normalized_env_vars = normalize_project_env_vars(input.env_vars.as_deref())
             .map_err(ProjectsServiceError::Validation)?;
+        let normalized_run_prepend_instructions =
+            normalize_run_prepend_instructions(input.run_prepend_instructions.take())?;
         self.validate_key(&input.key).map_err(AppError::from)?;
         self.validate_repositories(&input.repositories)
             .map_err(AppError::from)?;
@@ -211,6 +237,7 @@ impl ProjectsService {
             default_run_provider: Some(input.default_run_provider),
             default_run_model: Some(input.default_run_model),
             env_vars: (!normalized_env_vars.is_empty()).then_some(normalized_env_vars),
+            run_prepend_instructions: normalized_run_prepend_instructions,
             created_at: now.clone(),
             updated_at: now,
             repositories: input
@@ -250,6 +277,7 @@ impl ProjectsService {
                 default_run_provider: created.project.default_run_provider,
                 default_run_model: created.project.default_run_model,
                 env_vars: created.project.env_vars,
+                run_prepend_instructions: created.project.run_prepend_instructions,
                 created_at: created.project.created_at,
                 updated_at: created.project.updated_at,
             },
@@ -285,6 +313,8 @@ impl ProjectsService {
         input.default_run_model = input.default_run_model.trim().to_string();
         let normalized_env_vars = normalize_project_env_vars(input.env_vars.as_deref())
             .map_err(ProjectsServiceError::Validation)?;
+        let normalized_run_prepend_instructions =
+            normalize_run_prepend_instructions(input.run_prepend_instructions.take())?;
         self.validate_key(&input.key).map_err(AppError::from)?;
         self.validate_repositories(&input.repositories)
             .map_err(AppError::from)?;
@@ -338,6 +368,7 @@ impl ProjectsService {
                 &input.default_run_provider,
                 &input.default_run_model,
                 &(!normalized_env_vars.is_empty()).then_some(normalized_env_vars),
+                &normalized_run_prepend_instructions,
                 &now,
                 &normalized_repositories,
             )
@@ -357,6 +388,7 @@ impl ProjectsService {
                 default_run_provider: updated.project.default_run_provider,
                 default_run_model: updated.project.default_run_model,
                 env_vars: updated.project.env_vars,
+                run_prepend_instructions: updated.project.run_prepend_instructions,
                 created_at: updated.project.created_at,
                 updated_at: updated.project.updated_at,
             },
@@ -452,6 +484,7 @@ impl ProjectsService {
                 default_run_provider: cloned.project.default_run_provider,
                 default_run_model: cloned.project.default_run_model,
                 env_vars: cloned.project.env_vars,
+                run_prepend_instructions: cloned.project.run_prepend_instructions,
                 created_at: cloned.project.created_at,
                 updated_at: cloned.project.updated_at,
             },
@@ -673,6 +706,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_and_update_project_persist_run_prepend_instructions() {
+        let service = setup_service().await;
+        let repo_path = make_git_repository("prepend-main");
+
+        let created = service
+            .create_project(CreateProjectRequest {
+                name: "Prepend".to_string(),
+                description: None,
+                key: "PRE".to_string(),
+                default_run_agent: None,
+                default_run_provider: "provider-a".to_string(),
+                default_run_model: "model-a".to_string(),
+                env_vars: None,
+                run_prepend_instructions: Some("  Use Bun.\nDo not use npm.  ".to_string()),
+                repositories: vec![make_repository_request("Main", repo_path.clone(), true)],
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            created.project.run_prepend_instructions.as_deref(),
+            Some("Use Bun.\nDo not use npm.")
+        );
+
+        let updated = service
+            .update_project(
+                &created.project.id,
+                UpdateProjectRequest {
+                    name: "Prepend".to_string(),
+                    description: None,
+                    key: "PRE".to_string(),
+                    default_run_agent: None,
+                    default_run_provider: "provider-a".to_string(),
+                    default_run_model: "model-a".to_string(),
+                    env_vars: None,
+                    run_prepend_instructions: Some("   ".to_string()),
+                    repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
+                        id: Some(created.repositories[0].id.clone()),
+                        name: "Main".to_string(),
+                        repo_path,
+                        is_default: true,
+                        setup_script: None,
+                        cleanup_script: None,
+                    }],
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.project.run_prepend_instructions, None);
+    }
+
+    #[tokio::test]
     async fn clone_project_rejects_multi_repository_source() {
         let service = setup_service().await;
         let main_repo_path = make_git_repository("clone-multi-main");
@@ -687,6 +773,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
+                run_prepend_instructions: None,
                 repositories: vec![
                     make_repository_request("Main", main_repo_path, true),
                     make_repository_request("Docs", docs_repo_path, false),
@@ -727,6 +814,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
+                run_prepend_instructions: None,
                 repositories: vec![make_repository_request("Main", repo_path, true)],
             })
             .await
@@ -782,6 +870,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
+                run_prepend_instructions: None,
                 repositories: vec![make_repository_request("Main", repo_path, true)],
             })
             .await
@@ -816,6 +905,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
+                run_prepend_instructions: None,
                 repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
                     id: None,
                     name: "Main".to_string(),
@@ -862,6 +952,7 @@ mod tests {
                         value: "".to_string(),
                     },
                 ]),
+                run_prepend_instructions: None,
                 repositories: vec![make_repository_request("Main", repo_path, true)],
             })
             .await
@@ -900,6 +991,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
+                run_prepend_instructions: None,
                 repositories: vec![make_repository_request("Main", repo_path, true)],
             })
             .await
@@ -991,6 +1083,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
+                run_prepend_instructions: None,
                 repositories: vec![make_repository_request("Main", repo_path.clone(), true)],
             })
             .await
@@ -1007,6 +1100,7 @@ mod tests {
                     default_run_provider: "provider-a".to_string(),
                     default_run_model: "model-a".to_string(),
                     env_vars: None,
+                    run_prepend_instructions: None,
                     repositories: vec![crate::app::projects::dto::CreateProjectRepositoryRequest {
                         id: Some(created.repositories[0].id.clone()),
                         name: "Main".to_string(),
@@ -1088,6 +1182,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
+                run_prepend_instructions: None,
                 repositories: vec![make_repository_request("Main", first_repo_path, true)],
             })
             .await
@@ -1102,6 +1197,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
+                run_prepend_instructions: None,
                 repositories: vec![make_repository_request("Main", second_repo_path, true)],
             })
             .await
@@ -1136,6 +1232,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
+                run_prepend_instructions: None,
                 repositories: vec![make_repository_request(
                     "Main",
                     "/tmp/definitely-missing-repo".to_string(),
@@ -1166,6 +1263,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
+                run_prepend_instructions: None,
                 repositories: vec![make_repository_request(
                     "Main",
                     plain_dir.to_string_lossy().to_string(),

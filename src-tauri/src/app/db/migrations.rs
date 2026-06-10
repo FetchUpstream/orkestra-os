@@ -38,6 +38,8 @@ const MIGRATION_0019: &str =
 const MIGRATION_0020: &str = include_str!("../../../migrations/0020_add_project_env_vars.sql");
 const MIGRATION_0021: &str = include_str!("../../../migrations/0021_allow_rejected_run_status.sql");
 const MIGRATION_0022: &str = include_str!("../../../migrations/0022_add_run_identifiers.sql");
+const MIGRATION_0023: &str =
+    include_str!("../../../migrations/0023_add_project_run_prepend_instructions.sql");
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(MIGRATION_0001).execute(pool).await?;
@@ -187,6 +189,9 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     let has_env_vars_json = project_columns
         .iter()
         .any(|row| row.get::<String, _>("name") == "env_vars_json");
+    let has_run_prepend_instructions = project_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "run_prepend_instructions");
 
     if !has_default_run_agent {
         sqlx::query("ALTER TABLE projects ADD COLUMN default_run_agent TEXT")
@@ -205,6 +210,9 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     }
     if !has_env_vars_json {
         sqlx::query(MIGRATION_0020).execute(pool).await?;
+    }
+    if !has_run_prepend_instructions {
+        sqlx::query(MIGRATION_0023).execute(pool).await?;
     }
 
     let run_columns = sqlx::query("PRAGMA table_info(runs)")
@@ -931,7 +939,10 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(active_ids, vec!["run-old".to_string(), "run-new".to_string()]);
+        assert_eq!(
+            active_ids,
+            vec!["run-old".to_string(), "run-new".to_string()]
+        );
 
         let index_exists: Option<i64> = sqlx::query_scalar(
             "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_single_active_per_task' LIMIT 1",
