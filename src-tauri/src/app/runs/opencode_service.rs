@@ -6929,11 +6929,9 @@ mod tests {
         assert_eq!(options.cwd, Some(cwd));
         assert_eq!(options.port, 0);
         assert_eq!(options.env.get("API_TOKEN"), Some(&"secret".to_string()));
-        assert_ne!(options.env.get("PATH"), Some(&"/bad/bin".to_string()));
-        assert!(options
-            .env
-            .get("PATH")
-            .is_some_and(|value| !value.trim().is_empty()));
+        assert!(options.env.get("PATH").is_some_and(|value| {
+            !value.trim().is_empty() && value.split(':').all(|segment| segment != "/bad/bin")
+        }));
         assert!(options
             .env
             .get("TERM")

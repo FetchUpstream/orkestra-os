@@ -35,9 +35,30 @@ describe("projectForm environment variables", () => {
 
   it("rejects reserved runtime keys before save", () => {
     expect(isReservedProjectEnvVarKey("PATH")).toBe(true);
+    expect(isReservedProjectEnvVarKey("path")).toBe(true);
+    expect(isReservedProjectEnvVarKey("PaTh")).toBe(true);
     expect(getProjectEnvVarError([{ key: "PATH", value: "" }])).toContain(
       "managed by Orkestra",
     );
+    expect(getProjectEnvVarError([{ key: "path", value: "" }])).toContain(
+      "managed by Orkestra",
+    );
+    expect(getProjectEnvVarError([{ key: "PaTh", value: "" }])).toContain(
+      "managed by Orkestra",
+    );
+  });
+
+  it("allows unchanged legacy reserved runtime keys while editing", () => {
+    expect(
+      getProjectEnvVarError([{ key: "path", value: "/legacy/bin" }], {
+        allowedReservedEnvVars: [{ key: "PATH", value: "/legacy/bin" }],
+      }),
+    ).toBe("");
+    expect(
+      getProjectEnvVarError([{ key: "PATH", value: "/changed/bin" }], {
+        allowedReservedEnvVars: [{ key: "PATH", value: "/legacy/bin" }],
+      }),
+    ).toContain("managed by Orkestra");
   });
 
   it("allows normal empty values", () => {

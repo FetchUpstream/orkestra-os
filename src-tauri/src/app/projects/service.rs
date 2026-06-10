@@ -17,7 +17,9 @@ use crate::app::projects::dto::{
     CloneProjectRequest, CreateProjectRequest, LocalDirectorySearchResultDto, ProjectDetailsDto,
     ProjectDto, ProjectRepositoryDto, UpdateProjectRequest,
 };
-use crate::app::projects::env::{normalize_project_env_vars, runtime_project_env_var_map};
+use crate::app::projects::env::{
+    normalize_project_env_vars, normalize_project_env_vars_for_update, runtime_project_env_var_map,
+};
 use crate::app::projects::errors::ProjectsServiceError;
 use crate::app::projects::models::{NewProject, NewProjectRepository, UpsertProjectRepository};
 use crate::app::projects::search_service::ProjectFileSearchService;
@@ -283,8 +285,18 @@ impl ProjectsService {
             .filter(|agent| !agent.is_empty());
         input.default_run_provider = input.default_run_provider.trim().to_string();
         input.default_run_model = input.default_run_model.trim().to_string();
-        let normalized_env_vars = normalize_project_env_vars(input.env_vars.as_deref())
-            .map_err(ProjectsServiceError::Validation)?;
+        let existing_details = self
+            .repository
+            .get_project(id)
+            .await
+            .map_err(|source| ProjectsServiceError::QueryProjectData { source })
+            .map_err(AppError::from)?
+            .ok_or_else(|| AppError::from(ProjectsServiceError::NotFound("project not found")))?;
+        let normalized_env_vars = normalize_project_env_vars_for_update(
+            input.env_vars.as_deref(),
+            existing_details.project.env_vars.as_deref(),
+        )
+        .map_err(ProjectsServiceError::Validation)?;
         self.validate_key(&input.key).map_err(AppError::from)?;
         self.validate_repositories(&input.repositories)
             .map_err(AppError::from)?;
@@ -672,6 +684,24 @@ mod tests {
         }
     }
 
+    fn make_repository_update_requests(
+        repositories: &[ProjectRepositoryDto],
+    ) -> Vec<crate::app::projects::dto::CreateProjectRepositoryRequest> {
+        repositories
+            .iter()
+            .map(
+                |repository| crate::app::projects::dto::CreateProjectRepositoryRequest {
+                    id: Some(repository.id.clone()),
+                    name: repository.name.clone(),
+                    repo_path: repository.repo_path.clone(),
+                    is_default: repository.is_default,
+                    setup_script: repository.setup_script.clone(),
+                    cleanup_script: repository.cleanup_script.clone(),
+                },
+            )
+            .collect()
+    }
+
     #[tokio::test]
     async fn clone_project_rejects_multi_repository_source() {
         let service = setup_service().await;
@@ -884,6 +914,140 @@ mod tests {
             .unwrap();
         assert_eq!(resolved.get("API_TOKEN"), Some(&"secret".to_string()));
         assert_eq!(resolved.get("EMPTY_OK"), Some(&"".to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_project_env_vars_preserves_legacy_reserved_keys() {
+        let service = setup_service().await;
+        let repo_path = make_git_repository("legacy-env-main");
+
+        let created = service
+            .create_project(CreateProjectRequest {
+                name: "Legacy Env".to_string(),
+                description: None,
+                key: "LEG".to_string(),
+                default_run_agent: None,
+                default_run_provider: "provider-a".to_string(),
+                default_run_model: "model-a".to_string(),
+                env_vars: None,
+                repositories: vec![make_repository_request("Main", repo_path, true)],
+            })
+            .await
+            .unwrap();
+
+        service
+            .repository
+            .update_project(
+                &created.project.id,
+                &created.project.name,
+                &created.project.key,
+                &created.project.description,
+                &created.project.default_run_agent,
+                created
+                    .project
+                    .default_run_provider
+                    .as_deref()
+                    .unwrap_or(""),
+                created.project.default_run_model.as_deref().unwrap_or(""),
+                &Some(vec![crate::app::projects::env::ProjectEnvVar {
+                    key: "PATH".to_string(),
+                    value: "/legacy/bin".to_string(),
+                }]),
+                "2024-01-02T00:00:00Z",
+                &created
+                    .repositories
+                    .iter()
+                    .map(|repository| UpsertProjectRepository {
+                        id: Some(repository.id.clone()),
+                        name: repository.name.clone(),
+                        repo_path: repository.repo_path.clone(),
+                        is_default: repository.is_default,
+                        setup_script: repository.setup_script.clone(),
+                        cleanup_script: repository.cleanup_script.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        let resolved = service
+            .resolve_project_env_vars(&created.project.id)
+            .await
+            .unwrap();
+
+        assert_eq!(resolved.get("PATH"), Some(&"/legacy/bin".to_string()));
+
+        let updated = service
+            .update_project(
+                &created.project.id,
+                UpdateProjectRequest {
+                    name: "Legacy Env Updated".to_string(),
+                    description: Some("Unrelated edit".to_string()),
+                    key: created.project.key.clone(),
+                    default_run_agent: created.project.default_run_agent.clone(),
+                    default_run_provider: created
+                        .project
+                        .default_run_provider
+                        .clone()
+                        .unwrap_or_default(),
+                    default_run_model: created
+                        .project
+                        .default_run_model
+                        .clone()
+                        .unwrap_or_default(),
+                    env_vars: Some(vec![crate::app::projects::env::ProjectEnvVar {
+                        key: "PATH".to_string(),
+                        value: "/legacy/bin".to_string(),
+                    }]),
+                    repositories: make_repository_update_requests(&created.repositories),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.project.name, "Legacy Env Updated");
+        assert_eq!(
+            updated
+                .project
+                .env_vars
+                .as_ref()
+                .and_then(|entries| entries.first())
+                .map(|entry| entry.value.as_str()),
+            Some("/legacy/bin")
+        );
+
+        let changed_reserved = service
+            .update_project(
+                &created.project.id,
+                UpdateProjectRequest {
+                    name: "Legacy Env Updated".to_string(),
+                    description: Some("Unrelated edit".to_string()),
+                    key: created.project.key.clone(),
+                    default_run_agent: created.project.default_run_agent.clone(),
+                    default_run_provider: created
+                        .project
+                        .default_run_provider
+                        .clone()
+                        .unwrap_or_default(),
+                    default_run_model: created
+                        .project
+                        .default_run_model
+                        .clone()
+                        .unwrap_or_default(),
+                    env_vars: Some(vec![crate::app::projects::env::ProjectEnvVar {
+                        key: "PATH".to_string(),
+                        value: "/changed/bin".to_string(),
+                    }]),
+                    repositories: make_repository_update_requests(&updated.repositories),
+                },
+            )
+            .await;
+
+        assert!(changed_reserved
+            .unwrap_err()
+            .to_string()
+            .contains("managed by Orkestra"));
     }
 
     #[tokio::test]

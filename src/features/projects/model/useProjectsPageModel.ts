@@ -79,6 +79,9 @@ export const useProjectsPageModel = () => {
   const [key, setKey] = createSignal("");
   const [description, setDescription] = createSignal("");
   const [envVars, setEnvVars] = createSignal<EnvVarInput[]>([]);
+  const [allowedLegacyEnvVars, setAllowedLegacyEnvVars] = createSignal<
+    EnvVarInput[]
+  >([]);
   const [repositories, setRepositories] = createSignal<RepoInput[]>([
     emptyRepo(),
   ]);
@@ -362,7 +365,11 @@ export const useProjectsPageModel = () => {
     return index < 0 || index >= repositories().length;
   });
 
-  const projectEnvVarError = createMemo(() => getProjectEnvVarError(envVars()));
+  const projectEnvVarError = createMemo(() =>
+    getProjectEnvVarError(envVars(), {
+      allowedReservedEnvVars: mode() === "edit" ? allowedLegacyEnvVars() : [],
+    }),
+  );
 
   const isDeleteConfirmationEnabled = createMemo(() => {
     const projectId = deleteProjectId()?.trim() ?? "";
@@ -390,6 +397,7 @@ export const useProjectsPageModel = () => {
     setKey("");
     setDescription("");
     setEnvVars([]);
+    setAllowedLegacyEnvVars([]);
     setRepositories([emptyRepo()]);
     setDefaultRepoIndex(0);
     setDefaultRunProvider("");
@@ -478,6 +486,7 @@ export const useProjectsPageModel = () => {
     setKey(project.key);
     setDescription(project.description ?? "");
     setEnvVars(project.envVars ?? []);
+    setAllowedLegacyEnvVars(project.envVars ?? []);
     setRepositories(
       nextRepositories.length > 0 ? nextRepositories : [emptyRepo()],
     );
@@ -502,6 +511,9 @@ export const useProjectsPageModel = () => {
     );
     lastPersistedDraftSignature = persistedSignature;
     setLoadedProjectName(project.name);
+    if (mode() === "edit" && editingProjectId() === project.id) {
+      setAllowedLegacyEnvVars(project.envVars ?? []);
+    }
     setError("");
     setProjects((currentProjects) => {
       let found = false;

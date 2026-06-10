@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -150,6 +150,55 @@ pub fn normalize_project_env_vars(
     Ok(normalized)
 }
 
+pub fn normalize_project_env_vars_for_update(
+    entries: Option<&[ProjectEnvVar]>,
+    existing_entries: Option<&[ProjectEnvVar]>,
+) -> Result<Vec<ProjectEnvVar>, &'static str> {
+    let allowed_legacy_reserved_env_vars = existing_entries
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|entry| {
+            let key = entry.key.trim();
+            (is_reserved_project_env_var_key(key) && is_valid_env_var_key(key))
+                .then(|| (key.to_ascii_uppercase(), entry.value.clone()))
+        })
+        .collect::<HashSet<_>>();
+    let mut normalized = Vec::new();
+
+    for entry in entries.unwrap_or_default() {
+        let key = entry.key.trim();
+        let value_is_empty = entry.value.trim().is_empty();
+
+        if key.is_empty() && value_is_empty {
+            continue;
+        }
+
+        if key.is_empty() {
+            return Err("environment variable keys are required");
+        }
+
+        if !is_valid_env_var_key(key) {
+            return Err(
+                "environment variable keys must start with a letter or underscore and contain only letters, numbers, and underscores",
+            );
+        }
+
+        if is_reserved_project_env_var_key(key)
+            && !allowed_legacy_reserved_env_vars
+                .contains(&(key.to_ascii_uppercase(), entry.value.clone()))
+        {
+            return Err(reserved_project_env_var_error());
+        }
+
+        normalized.push(ProjectEnvVar {
+            key: key.to_string(),
+            value: entry.value.clone(),
+        });
+    }
+
+    Ok(normalized)
+}
+
 pub fn project_env_var_map(
     entries: Option<&[ProjectEnvVar]>,
 ) -> Result<HashMap<String, String>, &'static str> {
@@ -202,8 +251,9 @@ fn is_valid_env_var_key(key: &str) -> bool {
 mod tests {
     use super::{
         apply_safe_project_env_to_btree, build_safe_process_env, ensure_hash_env_value,
-        normalize_project_env_vars, project_env_var_map, runtime_project_env_var_map,
-        ProjectEnvVar, DEFAULT_RUNTIME_LANG, DEFAULT_RUNTIME_PATH, DEFAULT_RUNTIME_TERM,
+        normalize_project_env_vars, normalize_project_env_vars_for_update, project_env_var_map,
+        runtime_project_env_var_map, ProjectEnvVar, DEFAULT_RUNTIME_LANG, DEFAULT_RUNTIME_PATH,
+        DEFAULT_RUNTIME_TERM,
     };
     use std::collections::{BTreeMap, HashMap};
 
@@ -250,6 +300,46 @@ mod tests {
             key: "PATH".to_string(),
             value: "/bad/bin".to_string(),
         }]))
+        .unwrap_err();
+
+        assert!(err.contains("managed by Orkestra"));
+    }
+
+    #[test]
+    fn update_normalization_allows_unchanged_legacy_reserved_runtime_keys() {
+        let normalized = normalize_project_env_vars_for_update(
+            Some(&[ProjectEnvVar {
+                key: " path ".to_string(),
+                value: "/legacy/bin".to_string(),
+            }]),
+            Some(&[ProjectEnvVar {
+                key: "PATH".to_string(),
+                value: "/legacy/bin".to_string(),
+            }]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            normalized,
+            vec![ProjectEnvVar {
+                key: "path".to_string(),
+                value: "/legacy/bin".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn update_normalization_rejects_changed_legacy_reserved_runtime_keys() {
+        let err = normalize_project_env_vars_for_update(
+            Some(&[ProjectEnvVar {
+                key: "PATH".to_string(),
+                value: "/changed/bin".to_string(),
+            }]),
+            Some(&[ProjectEnvVar {
+                key: "PATH".to_string(),
+                value: "/legacy/bin".to_string(),
+            }]),
+        )
         .unwrap_err();
 
         assert!(err.contains("managed by Orkestra"));
