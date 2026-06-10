@@ -19,6 +19,11 @@ import {
   type JSX,
 } from "solid-js";
 
+type PastedBlock = {
+  text: string;
+  lineCount: number;
+};
+
 type RunChatComposerProps = {
   value: string;
   onInput: (value: string) => void;
@@ -33,17 +38,151 @@ type RunChatComposerProps = {
   class?: string;
 };
 
+const pastedTokenPrefix = "run-chat-paste-";
+
+const normalizeLineEndings = (value: string) =>
+  value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+const countMeaningfulLines = (value: string) => {
+  const normalized = normalizeLineEndings(value);
+  const withoutSingleTrailingNewline = normalized.endsWith("\n")
+    ? normalized.slice(0, -1)
+    : normalized;
+
+  if (!withoutSingleTrailingNewline) {
+    return 1;
+  }
+
+  return withoutSingleTrailingNewline.split("\n").length;
+};
+
+const nodeText = (
+  node: Node,
+  pastedBlocks: Map<string, PastedBlock>,
+): string => {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent ?? "";
+  }
+
+  if (node.nodeName === "BR") {
+    return "\n";
+  }
+
+  if (!(node instanceof HTMLElement)) {
+    return "";
+  }
+
+  const pasteId = node.dataset.pasteId;
+  if (pasteId) {
+    return pastedBlocks.get(pasteId)?.text ?? "";
+  }
+
+  let text = "";
+  node.childNodes.forEach((child) => {
+    text += nodeText(child, pastedBlocks);
+  });
+
+  if (node.tagName === "DIV" || node.tagName === "P") {
+    text += "\n";
+  }
+
+  return text;
+};
+
+const serializeComposer = (
+  editor: HTMLElement | undefined,
+  pastedBlocks: Map<string, PastedBlock>,
+) => {
+  if (!editor) return "";
+
+  let text = "";
+  editor.childNodes.forEach((child) => {
+    text += nodeText(child, pastedBlocks);
+  });
+
+  return text;
+};
+
+const insertNodesAtSelection = (editor: HTMLElement, nodes: Node[]) => {
+  const selection = window.getSelection();
+  if (!selection) return;
+
+  let range: Range;
+  if (selection.rangeCount === 0 || !editor.contains(selection.anchorNode)) {
+    range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+  } else {
+    range = selection.getRangeAt(0);
+  }
+
+  range.deleteContents();
+
+  const fragment = document.createDocumentFragment();
+  nodes.forEach((node) => fragment.append(node));
+  range.insertNode(fragment);
+
+  const nextRange = document.createRange();
+  const lastNode = nodes.at(-1);
+  if (lastNode) {
+    nextRange.setStartAfter(lastNode);
+  } else {
+    nextRange.selectNodeContents(editor);
+    nextRange.collapse(false);
+  }
+  nextRange.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(nextRange);
+};
+
+const createPastedToken = (id: string, lineCount: number) => {
+  const token = document.createElement("span");
+  token.className = "run-chat-composer__paste-token";
+  token.contentEditable = "false";
+  token.dataset.pasteId = id;
+  token.textContent = `[Pasted ${lineCount} Lines]`;
+  token.setAttribute("role", "img");
+  token.setAttribute("aria-label", `Pasted ${lineCount} Lines`);
+  return token;
+};
+
+const textToNodes = (text: string): Node[] => {
+  const normalized = normalizeLineEndings(text);
+  const nodes: Node[] = [];
+  const lines = normalized.split("\n");
+
+  lines.forEach((line, index) => {
+    if (index > 0) {
+      nodes.push(document.createElement("br"));
+    }
+    if (line) {
+      nodes.push(document.createTextNode(line));
+    }
+  });
+
+  return nodes;
+};
+
 const RunChatComposer: Component<RunChatComposerProps> = (props) => {
-  let textareaRef: HTMLTextAreaElement | undefined;
+  let editorRef: HTMLDivElement | undefined;
+  const pastedBlocks = new Map<string, PastedBlock>();
+  let pastedBlockIndex = 0;
+  const [currentValue, setCurrentValue] = createSignal(props.value);
   const [isComposing, setIsComposing] = createSignal(false);
-  const textareaId = createUniqueId();
+  const editorId = createUniqueId();
 
   const minRows = () => props.minRows ?? 1;
   const maxRows = () => props.maxRows ?? 8;
 
-  const resizeTextarea = () => {
-    if (!textareaRef) return;
-    const styles = getComputedStyle(textareaRef);
+  const syncValueFromEditor = () => {
+    const value = serializeComposer(editorRef, pastedBlocks);
+    setCurrentValue(value);
+    props.onInput(value);
+  };
+
+  const resizeEditor = () => {
+    if (!editorRef) return;
+    const styles = getComputedStyle(editorRef);
     const lineHeight = Number.parseFloat(styles.lineHeight) || 20;
     const borderHeight =
       Number.parseFloat(styles.borderTopWidth) +
@@ -51,31 +190,71 @@ const RunChatComposer: Component<RunChatComposerProps> = (props) => {
     const minHeight = lineHeight * minRows() + borderHeight;
     const maxHeight = lineHeight * maxRows() + borderHeight;
 
-    textareaRef.style.height = "auto";
+    editorRef.style.height = "auto";
     const nextHeight = Math.min(
-      Math.max(textareaRef.scrollHeight, minHeight),
+      Math.max(editorRef.scrollHeight, minHeight),
       maxHeight,
     );
-    textareaRef.style.height = `${nextHeight}px`;
-    textareaRef.style.overflowY =
-      textareaRef.scrollHeight > maxHeight ? "auto" : "hidden";
+    editorRef.style.height = `${nextHeight}px`;
+    editorRef.style.overflowY =
+      editorRef.scrollHeight > maxHeight ? "auto" : "hidden";
   };
 
-  createEffect(on(() => props.value, resizeTextarea));
+  createEffect(on(currentValue, resizeEditor));
+
+  createEffect(
+    on(
+      () => props.value,
+      (value) => {
+        if (value !== "" || currentValue() === "" || !editorRef) return;
+        pastedBlocks.clear();
+        editorRef.replaceChildren();
+        setCurrentValue("");
+        resizeEditor();
+      },
+    ),
+  );
 
   const submit = () => {
-    const value = props.value.trim();
+    const value = serializeComposer(editorRef, pastedBlocks).trim();
     if (!value || props.disabled || props.submitting) return;
     props.onSubmit(value);
   };
 
-  const onKeyDown: JSX.EventHandler<HTMLTextAreaElement, KeyboardEvent> = (
-    event,
-  ) => {
-    if (event.key !== "Enter" || event.shiftKey) return;
+  const onKeyDown: JSX.EventHandler<HTMLDivElement, KeyboardEvent> = (event) => {
+    if (event.key !== "Enter") return;
     if (isComposing() || event.isComposing) return;
+
     event.preventDefault();
+
+    if (event.shiftKey) {
+      if (!editorRef) return;
+      insertNodesAtSelection(editorRef, [document.createElement("br")]);
+      syncValueFromEditor();
+      return;
+    }
+
     submit();
+  };
+
+  const onPaste: JSX.EventHandler<HTMLDivElement, ClipboardEvent> = (event) => {
+    const pastedText = event.clipboardData?.getData("text/plain") ?? "";
+    if (!pastedText || !editorRef) return;
+
+    event.preventDefault();
+    const lineCount = countMeaningfulLines(pastedText);
+
+    if (lineCount < 2) {
+      insertNodesAtSelection(editorRef, textToNodes(pastedText));
+      syncValueFromEditor();
+      return;
+    }
+
+    pastedBlockIndex += 1;
+    const id = `${pastedTokenPrefix}${pastedBlockIndex}`;
+    pastedBlocks.set(id, { text: pastedText, lineCount });
+    insertNodesAtSelection(editorRef, [createPastedToken(id, lineCount)]);
+    syncValueFromEditor();
   };
 
   return (
@@ -87,19 +266,21 @@ const RunChatComposer: Component<RunChatComposerProps> = (props) => {
       }}
       aria-label="Chat composer"
     >
-      <label class="run-chat-composer__label sr-only" for={textareaId}>
+      <label class="run-chat-composer__label sr-only" for={editorId}>
         {props.textareaLabel ?? "Message"}
       </label>
-      <textarea
-        id={textareaId}
-        ref={textareaRef}
-        class="run-chat-composer__textarea"
-        value={props.value}
-        rows={minRows()}
-        placeholder={props.placeholder ?? "Ask anything"}
-        disabled={props.disabled || props.submitting}
+      <div
+        id={editorId}
+        ref={editorRef}
+        class="run-chat-composer__textarea run-chat-composer__rich-input"
+        role="textbox"
+        contentEditable={!props.disabled && !props.submitting}
+        aria-disabled={props.disabled || props.submitting ? "true" : undefined}
         aria-label={props.textareaLabel ?? "Message"}
-        onInput={(event) => props.onInput(event.currentTarget.value)}
+        aria-multiline="true"
+        data-placeholder={props.placeholder ?? "Ask anything"}
+        onInput={syncValueFromEditor}
+        onPaste={onPaste}
         onKeyDown={onKeyDown}
         onCompositionStart={() => setIsComposing(true)}
         onCompositionEnd={() => setIsComposing(false)}
@@ -108,7 +289,9 @@ const RunChatComposer: Component<RunChatComposerProps> = (props) => {
         type="submit"
         class="run-chat-composer__button"
         disabled={
-          props.disabled || props.submitting || props.value.trim().length === 0
+          props.disabled ||
+          props.submitting ||
+          currentValue().trim().length === 0
         }
         aria-label={props.submitLabel ?? "Send message"}
       >
