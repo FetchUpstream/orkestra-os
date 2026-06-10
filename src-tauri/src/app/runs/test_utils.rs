@@ -11,10 +11,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 pub(crate) fn should_skip_ci_missing_opencode_cli() -> bool {
-    if std::env::var_os("CI").is_none() {
-        return false;
-    }
-
     let is_available = std::process::Command::new("opencode")
         .arg("--help")
         .stdout(std::process::Stdio::null())
@@ -26,6 +22,6 @@ pub(crate) fn should_skip_ci_missing_opencode_cli() -> bool {
         return false;
     }
 
-    eprintln!("skipping OpenCode CLI-dependent test in CI because 'opencode' is unavailable");
+    eprintln!("skipping OpenCode CLI-dependent test because 'opencode' is unavailable");
     true
 }
