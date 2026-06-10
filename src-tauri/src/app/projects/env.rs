@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +18,78 @@ use serde::{Deserialize, Serialize};
 pub struct ProjectEnvVar {
     pub key: String,
     pub value: String,
+}
+
+pub const DEFAULT_RUNTIME_PATH: &str =
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+pub const DEFAULT_RUNTIME_TERM: &str = "xterm-256color";
+pub const DEFAULT_RUNTIME_COLORTERM: &str = "truecolor";
+pub const DEFAULT_RUNTIME_LANG: &str = "C.UTF-8";
+
+const RESERVED_PROJECT_ENV_VAR_KEYS: [&str; 14] = [
+    "PATH",
+    "SHELL",
+    "HOME",
+    "TERM",
+    "COLORTERM",
+    "LANG",
+    "USER",
+    "PWD",
+    "OLDPWD",
+    "TMPDIR",
+    "XDG_RUNTIME_DIR",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+];
+
+pub fn is_reserved_project_env_var_key(key: &str) -> bool {
+    RESERVED_PROJECT_ENV_VAR_KEYS
+        .iter()
+        .any(|reserved_key| reserved_key.eq_ignore_ascii_case(key))
+}
+
+pub fn reserved_project_env_var_error() -> &'static str {
+    "environment variable keys PATH, SHELL, HOME, TERM, COLORTERM, LANG, USER, PWD, OLDPWD, TMPDIR, XDG_RUNTIME_DIR, XDG_CONFIG_HOME, XDG_DATA_HOME, and XDG_CACHE_HOME are managed by Orkestra and cannot be configured as project environment variables"
+}
+
+pub fn apply_safe_project_env_to_btree(
+    env: &mut BTreeMap<String, String>,
+    project_env: &HashMap<String, String>,
+) {
+    for (key, value) in project_env {
+        if !is_reserved_project_env_var_key(key) {
+            env.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+pub fn build_safe_process_env(project_env: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut env: HashMap<String, String> = std::env::vars().collect();
+
+    ensure_hash_env_value(&mut env, "PATH", DEFAULT_RUNTIME_PATH);
+    ensure_hash_env_value(&mut env, "TERM", DEFAULT_RUNTIME_TERM);
+    ensure_hash_env_value(&mut env, "COLORTERM", DEFAULT_RUNTIME_COLORTERM);
+    ensure_hash_env_value(&mut env, "LANG", DEFAULT_RUNTIME_LANG);
+
+    for (key, value) in project_env {
+        if !is_reserved_project_env_var_key(key) {
+            env.insert(key.clone(), value.clone());
+        }
+    }
+
+    env
+}
+
+fn ensure_hash_env_value(env: &mut HashMap<String, String>, key: &str, default: &str) {
+    let needs_default = env
+        .get(key)
+        .map(|value| value.trim().is_empty())
+        .unwrap_or(true);
+
+    if needs_default {
+        env.insert(key.to_string(), default.to_string());
+    }
 }
 
 pub fn normalize_project_env_vars(
@@ -41,6 +113,10 @@ pub fn normalize_project_env_vars(
             return Err(
                 "environment variable keys must start with a letter or underscore and contain only letters, numbers, and underscores",
             );
+        }
+
+        if is_reserved_project_env_var_key(key) {
+            return Err(reserved_project_env_var_error());
         }
 
         normalized.push(ProjectEnvVar {
@@ -73,7 +149,12 @@ fn is_valid_env_var_key(key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_project_env_vars, project_env_var_map, ProjectEnvVar};
+    use super::{
+        apply_safe_project_env_to_btree, build_safe_process_env, normalize_project_env_vars,
+        project_env_var_map, ProjectEnvVar, DEFAULT_RUNTIME_LANG, DEFAULT_RUNTIME_PATH,
+        DEFAULT_RUNTIME_TERM,
+    };
+    use std::collections::{BTreeMap, HashMap};
 
     #[test]
     fn normalization_drops_fully_empty_rows_and_trims_keys() {
@@ -109,6 +190,70 @@ mod tests {
         assert_eq!(
             err,
             "environment variable keys must start with a letter or underscore and contain only letters, numbers, and underscores"
+        );
+    }
+
+    #[test]
+    fn normalization_rejects_reserved_runtime_keys() {
+        let err = normalize_project_env_vars(Some(&[ProjectEnvVar {
+            key: "PATH".to_string(),
+            value: "/bad/bin".to_string(),
+        }]))
+        .unwrap_err();
+
+        assert!(err.contains("managed by Orkestra"));
+    }
+
+    #[test]
+    fn safe_btree_overlay_skips_reserved_keys_and_keeps_normal_empty_values() {
+        let mut env = BTreeMap::from([
+            ("PATH".to_string(), "/base/bin".to_string()),
+            ("SHELL".to_string(), "/bin/bash".to_string()),
+        ]);
+        let project = HashMap::from([
+            ("API_TOKEN".to_string(), "secret".to_string()),
+            ("EMPTY_OK".to_string(), "".to_string()),
+            ("PATH".to_string(), "".to_string()),
+            ("SHELL".to_string(), "".to_string()),
+        ]);
+
+        apply_safe_project_env_to_btree(&mut env, &project);
+
+        assert_eq!(env.get("API_TOKEN"), Some(&"secret".to_string()));
+        assert_eq!(env.get("EMPTY_OK"), Some(&"".to_string()));
+        assert_eq!(env.get("PATH"), Some(&"/base/bin".to_string()));
+        assert_eq!(env.get("SHELL"), Some(&"/bin/bash".to_string()));
+    }
+
+    #[test]
+    fn safe_process_env_contains_base_values_and_skips_reserved_overrides() {
+        let project = HashMap::from([
+            ("API_TOKEN".to_string(), "secret".to_string()),
+            ("PATH".to_string(), "/bad/bin".to_string()),
+            ("TERM".to_string(), "".to_string()),
+            ("LANG".to_string(), "".to_string()),
+        ]);
+
+        let env = build_safe_process_env(&project);
+
+        assert_eq!(env.get("API_TOKEN"), Some(&"secret".to_string()));
+        assert_ne!(env.get("PATH"), Some(&"/bad/bin".to_string()));
+        assert_ne!(env.get("TERM"), Some(&"".to_string()));
+        assert_ne!(env.get("LANG"), Some(&"".to_string()));
+        assert!(env
+            .get("PATH")
+            .is_some_and(|value| !value.trim().is_empty()));
+        assert!(env
+            .get("TERM")
+            .is_some_and(|value| !value.trim().is_empty()));
+        assert!(env
+            .get("LANG")
+            .is_some_and(|value| !value.trim().is_empty()));
+
+        let _ = (
+            DEFAULT_RUNTIME_PATH,
+            DEFAULT_RUNTIME_TERM,
+            DEFAULT_RUNTIME_LANG,
         );
     }
 
