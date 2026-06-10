@@ -17,7 +17,7 @@ use crate::app::projects::dto::{
     CloneProjectRequest, CreateProjectRequest, LocalDirectorySearchResultDto, ProjectDetailsDto,
     ProjectDto, ProjectRepositoryDto, UpdateProjectRequest,
 };
-use crate::app::projects::env::{normalize_project_env_vars, project_env_var_map};
+use crate::app::projects::env::{normalize_project_env_vars, runtime_project_env_var_map};
 use crate::app::projects::errors::ProjectsServiceError;
 use crate::app::projects::models::{NewProject, NewProjectRepository, UpsertProjectRepository};
 use crate::app::projects::search_service::ProjectFileSearchService;
@@ -622,7 +622,7 @@ impl ProjectsService {
             .map_err(AppError::from)?
             .ok_or_else(|| AppError::from(ProjectsServiceError::NotFound("project not found")))?;
 
-        project_env_var_map(details.project.env_vars.as_deref())
+        runtime_project_env_var_map(details.project.env_vars.as_deref())
             .map_err(ProjectsServiceError::Validation)
             .map_err(AppError::from)
     }

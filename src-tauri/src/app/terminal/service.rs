@@ -512,14 +512,30 @@ impl TerminalService {
     }
 
     fn ensure_env_value(env: &mut BTreeMap<String, String>, key: &str, default: &str) {
-        let needs_default = env
-            .get(key)
-            .map(|value| value.trim().is_empty())
-            .unwrap_or(true);
+        let matching_keys: Vec<String> = env
+            .keys()
+            .filter(|existing_key| existing_key.eq_ignore_ascii_case(key))
+            .cloned()
+            .collect();
 
-        if needs_default {
+        if matching_keys.is_empty() {
             env.insert(key.to_string(), default.to_string());
+            return;
         }
+
+        if matching_keys.iter().any(|existing_key| {
+            env.get(existing_key)
+                .is_some_and(|value| !value.trim().is_empty())
+        }) {
+            return;
+        }
+
+        let target_key = matching_keys
+            .iter()
+            .find(|existing_key| existing_key.as_str() == key)
+            .unwrap_or(&matching_keys[0])
+            .clone();
+        env.insert(target_key, default.to_string());
     }
 
     fn read_env_var(key: &str) -> Option<String> {
@@ -687,6 +703,16 @@ mod tests {
         );
         assert_eq!(env.get("PATH"), Some(&DEFAULT_RUNTIME_PATH.to_string()));
         assert_eq!(env.get("LANG"), Some(&DEFAULT_RUNTIME_LANG.to_string()));
+    }
+
+    #[test]
+    fn terminal_env_preserves_case_insensitive_existing_path() {
+        let inherited = BTreeMap::from([("Path".to_string(), "C:\\Windows\\System32".to_string())]);
+
+        let env = TerminalService::build_terminal_env("pwsh", &inherited, &HashMap::new());
+
+        assert_eq!(env.get("Path"), Some(&"C:\\Windows\\System32".to_string()));
+        assert!(!env.contains_key("PATH"));
     }
 
     #[test]
