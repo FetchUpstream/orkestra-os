@@ -309,6 +309,7 @@ impl LocalDirectorySearchService {
                 "src",
                 "dev",
                 "development",
+                "Developer",
                 "projects",
                 "repos",
                 "repositories",
@@ -514,6 +515,7 @@ mod tests {
             });
 
         assert!(roots.contains(&PathBuf::from("/Users/orkestra/projects")));
+        assert!(roots.contains(&PathBuf::from("/Users/orkestra/Developer")));
         assert!(!roots.contains(&PathBuf::from("/Users/orkestra")));
         assert!(!roots.contains(&PathBuf::from("/Users/orkestra/Desktop")));
         assert!(!roots.contains(&PathBuf::from("/Users/orkestra/Documents")));
