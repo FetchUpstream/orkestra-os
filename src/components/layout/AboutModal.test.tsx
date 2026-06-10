@@ -178,13 +178,13 @@ describe("AboutModal", () => {
       bundleType: "deb" as const,
       currentVersion: "0.0.1+2",
       availableVersion: "0.0.2-RC.1",
-      command: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+      command: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
       metadata: {
         version: "0.0.2-RC.1",
         releasedAt: "2026-04-17T12:00:00Z",
         notes: ["Sidebar polish"],
         commands: {
-          deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+          deb: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
           rpm: "sudo dnf upgrade orkestraos",
         },
       },
@@ -210,7 +210,7 @@ describe("AboutModal", () => {
 
     const writeText = navigator.clipboard.writeText as ReturnType<typeof vi.fn>;
     expect(writeText).toHaveBeenCalledWith(
-      "sudo apt update && sudo apt install --only-upgrade orkestraos",
+      "sudo apt update && sudo apt install --only-upgrade orkestra-os",
     );
   });
 

@@ -233,7 +233,7 @@ jobs:
 
           for f in "${files[@]}"; do
             echo "Uploading $f"
-            cloudsmith push deb "${{ steps.cloudsmith-target.outputs.repo }}/ubuntu/any-version" "$f"
+            cloudsmith push deb "${{ steps.cloudsmith-target.outputs.repo }}/any-distro/any-version" "$f"
           done
 
       - name: Push RPM packages to Cloudsmith

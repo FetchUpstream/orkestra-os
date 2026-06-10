@@ -4,7 +4,7 @@ Orkestra OS is a desktop app for orchestrating AI coding agents across real soft
 
 It gives you a structured workspace for managing projects, planning tasks, running agents, reviewing changes, and shipping work — all from a local desktop app built around repeatable agent workflows.
 
-> Official support is currently limited to **Ubuntu 24.04 LTS**. It may work on newer Ubuntu releases, but compatibility outside Ubuntu 24.04 should still be considered experimental.
+> Linux packages are published for compatible Debian-based distributions through Cloudsmith's generic `any-distro`/`any-version` target. They are intended for Ubuntu, Debian, Linux Mint, Pop!\_OS, Zorin, KDE Neon, and similar distributions where Orkestra OS dependencies are available.
 
 > [!WARNING]
 > **Alpha software:** Orkestra OS is under active development and is provided as-is. Features, workflows, data formats, and integrations may change without notice. Expect rough edges, incomplete areas, and breaking changes while the product matures.
@@ -61,7 +61,8 @@ curl -1sLf \
   'https://dl.cloudsmith.io/public/fetchupstream/orkestra-os/setup.deb.sh' \
   | sudo -E bash
 
-sudo apt-get install orkestra-os
+sudo apt update
+sudo apt install orkestra-os
 ```
 
 ## Prerequisites

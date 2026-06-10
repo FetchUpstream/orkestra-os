@@ -54,13 +54,13 @@ describe("appUpdates", () => {
       bundleType: "deb",
       currentVersion: "0.0.2-RC.1",
       availableVersion: "0.0.2",
-      command: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+      command: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
       metadata: {
         version: "0.0.2",
         releasedAt: "2026-04-17T12:00:00Z",
         notes: ["Release note"],
         commands: {
-          deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+          deb: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
           rpm: "sudo dnf upgrade orkestraos",
         },
       },
