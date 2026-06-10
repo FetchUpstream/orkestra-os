@@ -174,10 +174,40 @@ const RunChatComposer: Component<RunChatComposerProps> = (props) => {
   const minRows = () => props.minRows ?? 1;
   const maxRows = () => props.maxRows ?? 8;
 
+  const replaceEditorText = (value: string) => {
+    if (!editorRef) return;
+    pastedBlocks.clear();
+    editorRef.replaceChildren(...textToNodes(value));
+  };
+
   const syncValueFromEditor = () => {
     const value = serializeComposer(editorRef, pastedBlocks);
     setCurrentValue(value);
     props.onInput(value);
+  };
+
+  const installTextareaLikeEditorProperties = (editor: HTMLDivElement) => {
+    if (Object.prototype.hasOwnProperty.call(editor, "value")) return;
+
+    Object.defineProperties(editor, {
+      value: {
+        configurable: true,
+        get: () => serializeComposer(editor, pastedBlocks),
+        set: (value: string) => {
+          pastedBlocks.clear();
+          editor.replaceChildren(...textToNodes(String(value)));
+        },
+      },
+      disabled: {
+        configurable: true,
+        get: () => Boolean(props.disabled || props.submitting),
+      },
+    });
+  };
+
+  const setEditorRef = (editor: HTMLDivElement) => {
+    editorRef = editor;
+    installTextareaLikeEditorProperties(editor);
   };
 
   const resizeEditor = () => {
@@ -207,13 +237,21 @@ const RunChatComposer: Component<RunChatComposerProps> = (props) => {
       () => props.value,
       (value) => {
         if (value !== "" || currentValue() === "" || !editorRef) return;
-        pastedBlocks.clear();
-        editorRef.replaceChildren();
+        replaceEditorText("");
         setCurrentValue("");
         resizeEditor();
       },
     ),
   );
+
+  createEffect(() => {
+    if (!editorRef) return;
+    if (props.disabled || props.submitting) {
+      editorRef.setAttribute("disabled", "");
+    } else {
+      editorRef.removeAttribute("disabled");
+    }
+  });
 
   const submit = () => {
     const value = serializeComposer(editorRef, pastedBlocks).trim();
@@ -271,7 +309,7 @@ const RunChatComposer: Component<RunChatComposerProps> = (props) => {
       </label>
       <div
         id={editorId}
-        ref={editorRef}
+        ref={setEditorRef}
         class="run-chat-composer__textarea run-chat-composer__rich-input"
         role="textbox"
         contentEditable={!props.disabled && !props.submitting}
