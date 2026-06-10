@@ -13,13 +13,46 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen } from "@solidjs/testing-library";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Route, Router } from "@solidjs/router";
 import BoardTaskCard from "./BoardTaskCard";
+
+const renderBoardTaskCard = (description: string) => {
+  render(() => (
+    <Router>
+      <Route
+        path="/board"
+        component={() => (
+          <ul>
+            <BoardTaskCard
+              task={{
+                id: "task-1",
+                title: "Task with description",
+                status: "todo",
+                projectId: "project-1",
+                description,
+              }}
+              project={{
+                id: "project-1",
+                name: "Project",
+                key: "PRJ",
+                repositories: [],
+              }}
+            />
+          </ul>
+        )}
+      />
+    </Router>
+  ));
+};
 
 describe("BoardTaskCard", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/board");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("starts task drag from a run mini-card link", async () => {
@@ -194,5 +227,125 @@ describe("BoardTaskCard", () => {
     expect(screen.getByText("GPT-5")).toBeTruthy();
     expect(screen.getByText("Waiting for Input")).toBeTruthy();
     expect(screen.queryByText("Run Details")).toBeNull();
+  });
+
+  it("renders descriptions shorter than 1000 characters unchanged", () => {
+    const description = "a".repeat(999);
+
+    renderBoardTaskCard(description);
+
+    expect(screen.getByText(description)).toBeTruthy();
+  });
+
+  it("renders descriptions exactly 1000 characters unchanged", () => {
+    const description = "a".repeat(1000);
+
+    renderBoardTaskCard(description);
+
+    expect(screen.getByText(description)).toBeTruthy();
+  });
+
+  it("truncates descriptions longer than 1000 characters with an ellipsis", () => {
+    const description = "a".repeat(1001);
+
+    renderBoardTaskCard(description);
+
+    expect(screen.getByText(`${"a".repeat(1000)}…`)).toBeTruthy();
+    expect(screen.queryByText(description)).toBeNull();
+  });
+
+  it("expands and collapses truncated descriptions", async () => {
+    const description = "a".repeat(1001);
+
+    renderBoardTaskCard(description);
+
+    expect(screen.getByText(`${"a".repeat(1000)}…`)).toBeTruthy();
+    expect(screen.queryByText(description)).toBeNull();
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Show full description" }),
+    );
+
+    expect(screen.getByText(description)).toBeTruthy();
+    expect(screen.queryByText(`${"a".repeat(1000)}…`)).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+
+    expect(screen.getByText(`${"a".repeat(1000)}…`)).toBeTruthy();
+    expect(screen.queryByText(description)).toBeNull();
+  });
+
+  it("does not split emoji surrogate pairs at the truncation boundary", () => {
+    const description = `${"a".repeat(999)}🙂b`;
+
+    renderBoardTaskCard(description);
+
+    expect(screen.getByText(`${"a".repeat(999)}🙂…`)).toBeTruthy();
+    expect(screen.queryByText(`${"a".repeat(999)}�…`)).toBeNull();
+  });
+
+  it("does not split grapheme clusters at the truncation boundary", () => {
+    const description = `${"a".repeat(999)}👍🏽b`;
+
+    renderBoardTaskCard(description);
+
+    expect(screen.getByText(`${"a".repeat(999)}👍🏽…`)).toBeTruthy();
+    expect(screen.queryByText(`${"a".repeat(999)}👍…`)).toBeNull();
+  });
+
+  it("stops segmenting after the preview limit plus one grapheme", () => {
+    let segmentedCount = 0;
+
+    vi.stubGlobal("Intl", {
+      ...Intl,
+      Segmenter: class {
+        *segment(text: string) {
+          for (const segment of text) {
+            segmentedCount += 1;
+            yield { segment };
+          }
+        }
+      },
+    });
+
+    renderBoardTaskCard("a".repeat(5000));
+
+    expect(screen.getByText(`${"a".repeat(1000)}…`)).toBeTruthy();
+    expect(segmentedCount).toBe(1001);
+  });
+
+  it("does not mutate the underlying task description after render", () => {
+    const description = "a".repeat(1001);
+    const task = {
+      id: "task-1",
+      title: "Task with description",
+      status: "todo" as const,
+      projectId: "project-1",
+      description,
+    };
+
+    render(() => (
+      <Router>
+        <Route
+          path="/board"
+          component={() => (
+            <ul>
+              <BoardTaskCard
+                task={task}
+                project={{
+                  id: "project-1",
+                  name: "Project",
+                  key: "PRJ",
+                  repositories: [],
+                }}
+              />
+            </ul>
+          )}
+        />
+      </Router>
+    ));
+
+    expect(screen.getByText(`${"a".repeat(1000)}…`)).toBeTruthy();
+    expect(task.description).toBe(description);
   });
 });
