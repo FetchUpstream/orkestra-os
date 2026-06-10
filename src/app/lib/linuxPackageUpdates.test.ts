@@ -25,7 +25,7 @@ describe("linuxPackageUpdates", () => {
         releasedAt: "2026-04-17T12:00:00Z",
         notes: ["Fixes and polish"],
         commands: {
-          deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+          deb: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
           rpm: "sudo dnf upgrade orkestraos",
         },
       }),
@@ -41,7 +41,7 @@ describe("linuxPackageUpdates", () => {
         version: "0.0.2-RC.1",
         releasedAt: "2026-04-17T12:00:00Z",
         commands: {
-          deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+          deb: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
           rpm: "sudo dnf upgrade orkestraos",
         },
       }),
@@ -56,7 +56,7 @@ describe("linuxPackageUpdates", () => {
         releasedAt: "2026-04-17T12:00:00Z",
         notes: [],
         commands: {
-          deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+          deb: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
           rpm: "sudo dnf upgrade orkestraos",
         },
       }),
@@ -83,7 +83,7 @@ describe("linuxPackageUpdates", () => {
           releasedAt: "2026-04-17T12:00:00Z",
           notes: ["Run chat transcript UX fixes"],
           commands: {
-            deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+            deb: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
             rpm: "sudo dnf upgrade orkestraos",
           },
         }),
@@ -95,7 +95,7 @@ describe("linuxPackageUpdates", () => {
       status: "update-available",
       bundleType: "deb",
       availableVersion: "0.0.2-RC.1",
-      command: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+      command: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
     });
   });
 
@@ -112,7 +112,7 @@ describe("linuxPackageUpdates", () => {
           releasedAt: "2026-04-17T12:00:00Z",
           notes: [],
           commands: {
-            deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+            deb: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
             rpm: "sudo dnf upgrade orkestraos",
           },
         }),
@@ -140,7 +140,7 @@ describe("linuxPackageUpdates", () => {
           releasedAt: "2026-04-17T12:00:00Z",
           notes: [],
           commands: {
-            deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+            deb: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
             rpm: "sudo dnf upgrade orkestraos",
           },
         }),
@@ -169,7 +169,7 @@ describe("linuxPackageUpdates", () => {
           releasedAt: "2026-04-17T12:00:00Z",
           notes: [],
           commands: {
-            deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+            deb: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
             rpm: "sudo dnf upgrade orkestraos",
           },
         }),
@@ -197,7 +197,7 @@ describe("linuxPackageUpdates", () => {
           releasedAt: "2026-04-17T12:00:00Z",
           notes: [],
           commands: {
-            deb: "sudo apt update && sudo apt install --only-upgrade orkestraos",
+            deb: "sudo apt update && sudo apt install --only-upgrade orkestra-os",
             rpm: "sudo dnf upgrade orkestraos",
           },
         }),

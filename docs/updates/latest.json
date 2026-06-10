@@ -10,7 +10,7 @@
     "Diff and editor interactions are smoother, with Python, Go, and PHP syntax highlighting plus more reliable tooltip, status-menu, and source-branch dropdown dismissal."
   ],
   "commands": {
-    "deb": "sudo apt update && sudo apt install --only-upgrade orkestraos",
+    "deb": "sudo apt update && sudo apt install --only-upgrade orkestra-os",
     "rpm": "sudo dnf upgrade orkestraos"
   }
 }
