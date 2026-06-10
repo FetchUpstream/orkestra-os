@@ -168,6 +168,32 @@ where
     Some(chain.join(": "))
 }
 
+fn is_opencode_api_not_found(err: &opencode::Error, markers: &[&str]) -> bool {
+    let opencode::Error::Api(api_error) = err else {
+        return false;
+    };
+    if api_error.status != 404 {
+        return false;
+    }
+
+    let body = api_error.body.to_ascii_lowercase();
+    markers
+        .iter()
+        .any(|marker| body.contains(&marker.to_ascii_lowercase()))
+}
+
+fn is_opencode_permission_not_found(err: &opencode::Error) -> bool {
+    is_opencode_api_not_found(err, &["PermissionNotFound", "permission not found"])
+}
+
+fn is_opencode_question_not_found(err: &opencode::Error) -> bool {
+    is_opencode_api_not_found(err, &["QuestionNotFound", "question not found"])
+}
+
+fn is_opencode_session_not_found(err: &opencode::Error) -> bool {
+    is_opencode_api_not_found(err, &["SessionNotFound", "session not found"])
+}
+
 fn app_error_from_anyhow(err: AnyhowError) -> AppError {
     let chain = err
         .chain()
@@ -2354,6 +2380,54 @@ impl RunsOpenCodeService {
         }
     }
 
+    async fn clear_stale_pending_permission(
+        &self,
+        run_id: &str,
+        session_runtime_state: &Arc<Mutex<SessionRuntimeState>>,
+        request_id: &str,
+    ) -> Result<bool, AppError> {
+        let removed = {
+            let mut state = session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_permissions.remove(request_id)
+        };
+
+        if removed {
+            let _ = self
+                .apply_run_state_for_current_blockers(
+                    run_id,
+                    session_runtime_state,
+                    "permission_resolved",
+                )
+                .await?;
+        }
+
+        Ok(removed)
+    }
+
+    async fn clear_stale_pending_question(
+        &self,
+        run_id: &str,
+        session_runtime_state: &Arc<Mutex<SessionRuntimeState>>,
+        request_id: &str,
+    ) -> Result<(bool, Option<String>), AppError> {
+        let removed = {
+            let mut state = session_runtime_state
+                .lock()
+                .map_err(|_| lock_error("OpenCode session runtime state"))?;
+            state.pending_questions.remove(request_id)
+        };
+
+        if removed {
+            self.apply_run_state_for_current_blockers(run_id, session_runtime_state, "user_reply")
+                .await
+                .map(|run_state| (true, run_state))
+        } else {
+            Ok((false, None))
+        }
+    }
+
     /// Extracts a non-empty, trimmed status hint from a JSON payload.
     ///
     /// The function looks for a `status` field at the top level and then inside an optional
@@ -3138,7 +3212,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                 .session_id
                 .lock()
                 .map_err(|_| lock_error("OpenCode session id"))?;
-            if session_guard.is_none() {
+            if session_guard.as_deref() != Some(existing.as_str()) {
                 *session_guard = Some(existing.clone());
             }
             return Ok(existing);
@@ -3195,12 +3269,144 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             .session_id
             .lock()
             .map_err(|_| lock_error("OpenCode session id"))?;
-        if let Some(existing) = session_guard.as_ref() {
-            Ok(existing.clone())
-        } else {
-            *session_guard = Some(canonical_session_id.clone());
-            Ok(canonical_session_id)
+        *session_guard = Some(canonical_session_id.clone());
+        Ok(canonical_session_id)
+    }
+
+    async fn create_replacement_session_id(
+        &self,
+        run_id: &str,
+        handle: &RunOpenCodeHandle,
+        stale_session_id: &str,
+    ) -> Result<String, AppError> {
+        let _session_guard = handle.session_init_lock.lock().await;
+
+        let run = self.runs_service.get_run_model(run_id).await?;
+        let persisted_session_id = run
+            .opencode_session_id
+            .filter(|id| !id.trim().is_empty());
+        if let Some(current_session_id) = persisted_session_id.as_ref() {
+            if current_session_id != stale_session_id {
+                let mut session_guard = handle
+                    .session_id
+                    .lock()
+                    .map_err(|_| lock_error("OpenCode session id"))?;
+                *session_guard = Some(current_session_id.clone());
+                return Ok(current_session_id.clone());
+            }
         }
+
+        let in_memory_session_id = handle
+            .session_id
+            .lock()
+            .map_err(|_| lock_error("OpenCode session id"))?
+            .clone()
+            .filter(|id| !id.trim().is_empty());
+        if let Some(current_session_id) = in_memory_session_id {
+            if persisted_session_id.is_none() && current_session_id != stale_session_id {
+                let persisted = self
+                    .runs_service
+                    .set_run_opencode_session_id_if_unset(run_id, &current_session_id)
+                    .await?;
+                if persisted {
+                    return Ok(current_session_id);
+                }
+
+                let canonical_run = self.runs_service.get_run_model(run_id).await?;
+                if let Some(canonical_session_id) = canonical_run
+                    .opencode_session_id
+                    .filter(|session_id| !session_id.trim().is_empty())
+                {
+                    let mut session_guard = handle
+                        .session_id
+                        .lock()
+                        .map_err(|_| lock_error("OpenCode session id"))?;
+                    *session_guard = Some(canonical_session_id.clone());
+                    return Ok(canonical_session_id);
+                }
+
+                return Err(AppError::conflict(
+                    "OpenCode session changed while recovering from a stale session",
+                ));
+            }
+        }
+
+        let create_start = Instant::now();
+        handle.touch_interaction("session_recreate")?;
+        let created = handle
+            .client
+            .session()
+            .create(RequestOptions::default())
+            .await
+            .map_err(|source| OpenCodeServiceError::SessionCreate { source })
+            .with_context(|| format!("while recreating OpenCode session for run '{run_id}'"))
+            .map_err(app_error_from_anyhow)?;
+        let id = created
+            .data
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .ok_or_else(|| {
+                app_error_from_anyhow(AnyhowError::new(
+                    OpenCodeServiceError::MissingSessionIdField,
+                ))
+            })?;
+        info!(
+            target: "opencode.runtime",
+            marker = "session_recreate",
+            run_id = run_id,
+            latency_ms = create_start.elapsed().as_millis() as u64,
+            "OpenCode replacement session created"
+        );
+
+        let persisted = self
+            .runs_service
+            .replace_run_opencode_session_id(run_id, stale_session_id, &id)
+            .await?;
+        if !persisted {
+            let canonical_run = self.runs_service.get_run_model(run_id).await?;
+            if let Some(current_session_id) = canonical_run
+                .opencode_session_id
+                .filter(|session_id| !session_id.trim().is_empty())
+            {
+                let mut session_guard = handle
+                    .session_id
+                    .lock()
+                    .map_err(|_| lock_error("OpenCode session id"))?;
+                *session_guard = Some(current_session_id.clone());
+                return Ok(current_session_id);
+            }
+
+            let inserted = self
+                .runs_service
+                .set_run_opencode_session_id_if_unset(run_id, &id)
+                .await?;
+            if !inserted {
+                let canonical_run = self.runs_service.get_run_model(run_id).await?;
+                if let Some(current_session_id) = canonical_run
+                    .opencode_session_id
+                    .filter(|session_id| !session_id.trim().is_empty())
+                {
+                    let mut session_guard = handle
+                        .session_id
+                        .lock()
+                        .map_err(|_| lock_error("OpenCode session id"))?;
+                    *session_guard = Some(current_session_id.clone());
+                    return Ok(current_session_id);
+                }
+
+                return Err(AppError::conflict(
+                    "OpenCode session changed while recovering from a stale session",
+                ));
+            }
+        }
+
+        let mut session_guard = handle
+            .session_id
+            .lock()
+            .map_err(|_| lock_error("OpenCode session id"))?;
+        *session_guard = Some(id.clone());
+        Ok(id)
     }
 
     async fn release_initial_seed_claim_if_claimant(
@@ -5015,7 +5221,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         };
         let _operation_guard = handle.acquire_active_operation_guard("submit_prompt")?;
 
-        let session_id = match self.get_or_create_session_id(run_id, handle.clone()).await {
+        let mut session_id = match self.get_or_create_session_id(run_id, handle.clone()).await {
             Ok(session_id) => session_id,
             Err(err) => {
                 self.release_initial_seed_claim_if_claimant(
@@ -5047,7 +5253,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             }
         };
 
-        let mut request = RequestOptions::default().with_path("id", session_id);
+        let mut request = RequestOptions::default().with_path("id", session_id.clone());
         if let Some(request_id) = client_request_id.as_ref() {
             request = request.with_header("x-request-id", request_id.clone());
         }
@@ -5072,7 +5278,37 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             runtime_state.idle_cleanup_ready = false;
         }
 
-        let send_result = handle.client.session().prompt_async(request).await;
+        let mut send_result = handle.client.session().prompt_async(request.clone()).await;
+
+        if let Err(err) = &send_result {
+            if is_opencode_session_not_found(err) {
+                {
+                    let mut session_guard = handle
+                        .session_id
+                        .lock()
+                        .map_err(|_| lock_error("OpenCode session id"))?;
+                    if session_guard.as_deref() == Some(session_id.as_str()) {
+                        *session_guard = None;
+                    }
+                }
+                session_id = match self
+                    .create_replacement_session_id(run_id, &handle, &session_id)
+                    .await
+                {
+                    Ok(session_id) => session_id,
+                    Err(err) => {
+                        self.release_initial_seed_claim_if_claimant(
+                            run_id,
+                            claimed_initial_seed_request_id,
+                        )
+                        .await?;
+                        return Err(err);
+                    }
+                };
+                request.path.insert("id".to_string(), session_id.clone());
+                send_result = handle.client.session().prompt_async(request).await;
+            }
+        }
 
         if let Err(err) = send_result {
             self.release_initial_seed_claim_if_claimant(run_id, claimed_initial_seed_request_id)
@@ -5305,6 +5541,32 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         let response = match response_result {
             Ok(response) => response,
             Err(source) => {
+                if is_opencode_permission_not_found(&source) {
+                    let removed = self
+                        .clear_stale_pending_permission(
+                            run_id,
+                            &handle.session_runtime_state,
+                            request_id,
+                        )
+                        .await?;
+                    if removed {
+                        info!(
+                            target: "opencode.runtime",
+                            marker = "permission_reply_stale",
+                            run_id = run_id,
+                            request_id = request_id,
+                            session_id = session_id,
+                            reply = opencode_reply,
+                            latency_ms = reply_start.elapsed().as_millis() as u64,
+                            "Accepted stale permission reply after OpenCode reported request missing"
+                        );
+                        return Ok(ReplyRunOpenCodePermissionResponse {
+                            state: "accepted".to_string(),
+                            reason: Some("stale_permission_request".to_string()),
+                            replied_at: Utc::now().to_rfc3339(),
+                        });
+                    }
+                }
                 let permission_reply_error = OpenCodeServiceError::PermissionReply {
                     request_id: request_id.to_string(),
                     source,
@@ -5499,7 +5761,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             }
         }
 
-        let response = handle
+        let response_result = handle
             .client
             .call_operation(
                 "question.reply",
@@ -5507,13 +5769,37 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
                     .with_path("requestID", request_id.to_string())
                     .with_body(build_question_reply_body(answers)),
             )
-            .await
-            .map_err(|source| OpenCodeServiceError::QuestionReply {
-                request_id: request_id.to_string(),
-                source,
-            })
-            .context("while forwarding question answer to OpenCode")
-            .map_err(app_error_from_anyhow)?;
+            .await;
+
+        let response = match response_result {
+            Ok(response) => response,
+            Err(source) => {
+                if is_opencode_question_not_found(&source) {
+                    let (removed, run_state) = self
+                        .clear_stale_pending_question(
+                            run_id,
+                            &handle.session_runtime_state,
+                            request_id,
+                        )
+                        .await?;
+                    if removed {
+                        return Ok(ReplyRunOpenCodeQuestionResponse {
+                            state: "accepted".to_string(),
+                            reason: Some("stale_question_request".to_string()),
+                            replied_at: Utc::now().to_rfc3339(),
+                            run_state,
+                        });
+                    }
+                }
+                return Err(app_error_from_anyhow(
+                    AnyhowError::new(OpenCodeServiceError::QuestionReply {
+                        request_id: request_id.to_string(),
+                        source,
+                    })
+                    .context("while forwarding question answer to OpenCode"),
+                ));
+            }
+        };
 
         let response_state = response
             .data
@@ -5616,19 +5902,43 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             }
         }
 
-        let response = handle
+        let response_result = handle
             .client
             .call_operation(
                 "question.reject",
                 RequestOptions::default().with_path("requestID", request_id.to_string()),
             )
-            .await
-            .map_err(|source| OpenCodeServiceError::QuestionReject {
-                request_id: request_id.to_string(),
-                source,
-            })
-            .context("while rejecting question request in OpenCode")
-            .map_err(app_error_from_anyhow)?;
+            .await;
+
+        let response = match response_result {
+            Ok(response) => response,
+            Err(source) => {
+                if is_opencode_question_not_found(&source) {
+                    let (removed, run_state) = self
+                        .clear_stale_pending_question(
+                            run_id,
+                            &handle.session_runtime_state,
+                            request_id,
+                        )
+                        .await?;
+                    if removed {
+                        return Ok(RejectRunOpenCodeQuestionResponse {
+                            state: "accepted".to_string(),
+                            reason: Some("stale_question_request".to_string()),
+                            rejected_at: Utc::now().to_rfc3339(),
+                            run_state,
+                        });
+                    }
+                }
+                return Err(app_error_from_anyhow(
+                    AnyhowError::new(OpenCodeServiceError::QuestionReject {
+                        request_id: request_id.to_string(),
+                        source,
+                    })
+                    .context("while rejecting question request in OpenCode"),
+                ));
+            }
+        };
 
         let response_state = response
             .data
@@ -8366,11 +8676,18 @@ mod tests {
         assert_eq!(response.run_state, None);
         assert_eq!(fetch_run_state(&pool, "run-1").await, None);
 
+        let current_session_id = handle
+            .session_id
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("submit should recover with an active session id");
+
         let runtime_run_state = opencode_service
             .process_runtime_event(
                 "run-1",
                 "session.status",
-                r#"{"sessionID":"session-1","status":"busy"}"#,
+                &format!(r#"{{"sessionID":"{current_session_id}","status":"busy"}}"#),
                 &handle.session_runtime_state,
             )
             .await
