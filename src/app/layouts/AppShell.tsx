@@ -322,10 +322,11 @@ const AppShellContent: Component<AppShellProps> = (props) => {
       window.removeEventListener("projects:updated", onProjectsUpdated);
     });
 
-    let unlistenCloseRequested: (() => void) | undefined;
+    let unlistenCloseRequested: (() => void) | null = null;
 
     onCleanup(() => {
       unlistenCloseRequested?.();
+      unlistenCloseRequested = null;
     });
 
     void (async () => {
@@ -372,8 +373,15 @@ const AppShellContent: Component<AppShellProps> = (props) => {
   });
 
   createEffect(() => {
-    if (!location.pathname.includes("/tasks/")) {
+    const pathname = location.pathname;
+    if (!pathname.includes("/tasks/")) {
       setTaskDetailTopbarConfig(null);
+    }
+    if (!pathname.startsWith("/runs/")) {
+      setRunDetailTopbarConfig(null);
+    }
+    if (!settingsProjectId()) {
+      setProjectSettingsTopbarConfig(null);
     }
   });
 
