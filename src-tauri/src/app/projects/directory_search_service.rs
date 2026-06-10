@@ -285,26 +285,56 @@ impl LocalDirectorySearchService {
     }
 
     fn default_roots() -> Vec<PathBuf> {
+        Self::default_roots_for_platform(cfg!(target_os = "macos"), cfg!(windows), |key| {
+            std::env::var_os(key)
+        })
+    }
+
+    fn default_roots_for_platform<F>(is_macos: bool, is_windows: bool, get_env: F) -> Vec<PathBuf>
+    where
+        F: FnMut(&str) -> Option<std::ffi::OsString>,
+    {
         let mut roots = Vec::new();
-        let Some(home_dir) = Self::resolve_home_dir() else {
+        let Some(home_dir) = Self::resolve_home_dir_for_platform(is_windows, get_env) else {
             return roots;
         };
 
-        for relative in [
-            "code",
-            "src",
-            "dev",
-            "development",
-            "projects",
-            "repos",
-            "repositories",
-            "workspace",
-            "workspaces",
-            "git",
-            "Documents",
-            "Desktop",
-            "",
-        ] {
+        let relative_roots: &[&str] = if is_macos {
+            // Avoid proactively traversing macOS TCC-protected locations such as
+            // the home, Desktop, Documents, and Downloads folders. Users can
+            // still paste a repository path from any folder, and normal project
+            // workflows only touch the selected repository plus app-owned paths.
+            &[
+                "code",
+                "src",
+                "dev",
+                "development",
+                "projects",
+                "repos",
+                "repositories",
+                "workspace",
+                "workspaces",
+                "git",
+            ]
+        } else {
+            &[
+                "code",
+                "src",
+                "dev",
+                "development",
+                "projects",
+                "repos",
+                "repositories",
+                "workspace",
+                "workspaces",
+                "git",
+                "Documents",
+                "Desktop",
+                "",
+            ]
+        };
+
+        for relative in relative_roots {
             let candidate = if relative.is_empty() {
                 home_dir.clone()
             } else {
@@ -316,10 +346,6 @@ impl LocalDirectorySearchService {
         }
 
         roots
-    }
-
-    fn resolve_home_dir() -> Option<PathBuf> {
-        Self::resolve_home_dir_for_platform(cfg!(windows), |key| std::env::var_os(key))
     }
 
     fn resolve_home_dir_for_platform<F>(is_windows: bool, mut get_env: F) -> Option<PathBuf>
@@ -477,6 +503,38 @@ mod tests {
             });
 
         assert_eq!(home_dir, Some(PathBuf::from(r"C:\Users\orkestra")));
+    }
+
+    #[test]
+    fn macos_default_roots_avoid_tcc_protected_home_locations() {
+        let roots =
+            LocalDirectorySearchService::default_roots_for_platform(true, false, |key| match key {
+                "HOME" => Some("/Users/orkestra".into()),
+                _ => None,
+            });
+
+        assert!(roots.contains(&PathBuf::from("/Users/orkestra/projects")));
+        assert!(!roots.contains(&PathBuf::from("/Users/orkestra")));
+        assert!(!roots.contains(&PathBuf::from("/Users/orkestra/Desktop")));
+        assert!(!roots.contains(&PathBuf::from("/Users/orkestra/Documents")));
+        assert!(!roots.contains(&PathBuf::from("/Users/orkestra/Downloads")));
+    }
+
+    #[test]
+    fn non_macos_default_roots_keep_legacy_home_and_document_locations() {
+        let roots =
+            LocalDirectorySearchService::default_roots_for_platform(
+                false,
+                false,
+                |key| match key {
+                    "HOME" => Some("/home/orkestra".into()),
+                    _ => None,
+                },
+            );
+
+        assert!(roots.contains(&PathBuf::from("/home/orkestra")));
+        assert!(roots.contains(&PathBuf::from("/home/orkestra/Desktop")));
+        assert!(roots.contains(&PathBuf::from("/home/orkestra/Documents")));
     }
 
     #[test]
