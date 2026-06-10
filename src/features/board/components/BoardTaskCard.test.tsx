@@ -250,6 +250,27 @@ describe("BoardTaskCard", () => {
     expect(screen.queryByText(description)).toBeNull();
   });
 
+  it("expands and collapses truncated descriptions", async () => {
+    const description = "a".repeat(1001);
+
+    renderBoardTaskCard(description);
+
+    expect(screen.getByText(`${"a".repeat(1000)}…`)).toBeTruthy();
+    expect(screen.queryByText(description)).toBeNull();
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Show full description" }),
+    );
+
+    expect(screen.getByText(description)).toBeTruthy();
+    expect(screen.queryByText(`${"a".repeat(1000)}…`)).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+
+    expect(screen.getByText(`${"a".repeat(1000)}…`)).toBeTruthy();
+    expect(screen.queryByText(description)).toBeNull();
+  });
+
   it("does not split emoji surrogate pairs at the truncation boundary", () => {
     const description = `${"a".repeat(999)}🙂b`;
 
@@ -257,6 +278,15 @@ describe("BoardTaskCard", () => {
 
     expect(screen.getByText(`${"a".repeat(999)}🙂…`)).toBeTruthy();
     expect(screen.queryByText(`${"a".repeat(999)}�…`)).toBeNull();
+  });
+
+  it("does not split grapheme clusters at the truncation boundary", () => {
+    const description = `${"a".repeat(999)}👍🏽b`;
+
+    renderBoardTaskCard(description);
+
+    expect(screen.getByText(`${"a".repeat(999)}👍🏽…`)).toBeTruthy();
+    expect(screen.queryByText(`${"a".repeat(999)}👍…`)).toBeNull();
   });
 
   it("does not mutate the underlying task description after render", () => {

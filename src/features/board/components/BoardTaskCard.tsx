@@ -11,7 +11,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { A } from "@solidjs/router";
-import { For, Show, createSignal, type Component } from "solid-js";
+import { For, Show, createMemo, createSignal, type Component } from "solid-js";
 import type { Project } from "../../../app/lib/projects";
 import type { Task } from "../../../app/lib/tasks";
 import RunInlineLoader from "../../../components/ui/RunInlineLoader";
@@ -33,34 +33,87 @@ type Props = {
 
 const BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH = 1000;
 
-function boardTaskDescriptionPreview(text: string): string {
-  const characters = Array.from(text);
+type GraphemeSegmenter = {
+  segment(text: string): Iterable<{ segment: string }>;
+};
 
-  if (characters.length <= BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH) {
-    return text;
+type GraphemeSegmenterConstructor = new (
+  locales?: Intl.LocalesArgument,
+  options?: { granularity: "grapheme" },
+) => GraphemeSegmenter;
+
+type BoardTaskDescriptionPreview = {
+  text: string;
+  isTruncated: boolean;
+};
+
+function boardTaskDescriptionGraphemes(text: string): string[] {
+  const Segmenter = (
+    Intl as typeof Intl & {
+      Segmenter?: GraphemeSegmenterConstructor;
+    }
+  ).Segmenter;
+
+  if (!Segmenter) {
+    return Array.from(text);
   }
 
-  return `${characters
-    .slice(0, BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH)
-    .join("")
-    .trimEnd()}…`;
+  const segmenter = new Segmenter(undefined, { granularity: "grapheme" });
+
+  return Array.from(segmenter.segment(text), ({ segment }) => segment);
+}
+
+function boardTaskDescriptionPreview(
+  text: string,
+): BoardTaskDescriptionPreview {
+  const graphemes = boardTaskDescriptionGraphemes(text);
+
+  if (graphemes.length <= BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH) {
+    return { text, isTruncated: false };
+  }
+
+  return {
+    text: `${graphemes
+      .slice(0, BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH)
+      .join("")
+      .trimEnd()}…`,
+    isTruncated: true,
+  };
 }
 
 const BoardTaskCard: Component<Props> = (props) => {
   const [dragJustEnded, setDragJustEnded] = createSignal(false);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = createSignal(false);
   const dependencyState = () => dependencyBadgeState(props.task);
   const showDependencyBadge = () =>
     props.task.status === "todo" && dependencyState() !== "none";
   const showRunMiniCard = () =>
     props.task.status !== "done" && (props.runMiniCards?.length ?? 0) > 0;
-  const taskDescriptionPreview = () => {
+  const taskDescription = createMemo(() => {
     const description = props.task.description;
 
     if (!description?.trim()) {
+      return null;
+    }
+
+    const preview = boardTaskDescriptionPreview(description);
+
+    return {
+      fullText: description,
+      previewText: preview.text,
+      isTruncated: preview.isTruncated,
+    };
+  });
+  const visibleTaskDescription = () => {
+    const description = taskDescription();
+
+    if (!description) {
       return "";
     }
 
-    return boardTaskDescriptionPreview(description);
+    return description.isTruncated && !isDescriptionExpanded()
+      ? description.previewText
+      : description.fullText;
   };
   const isRunStateActive = (miniCard: BoardTaskRunMiniCard) => {
     const state = miniCard.state;
@@ -218,13 +271,28 @@ const BoardTaskCard: Component<Props> = (props) => {
             </span>
           </Show>
           <div class="board-task-title-separator" aria-hidden="true" />
-          <Show when={taskDescriptionPreview()}>
+          <Show when={taskDescription()}>
             <p class="board-task-description text-base-content/65 text-xs">
-              {taskDescriptionPreview()}
+              {visibleTaskDescription()}
             </p>
           </Show>
         </div>
       </A>
+      <Show when={taskDescription()?.isTruncated}>
+        <button
+          type="button"
+          class="text-primary hover:text-primary-focus mx-3 -mt-2 mb-3 w-fit text-xs font-medium"
+          aria-expanded={isDescriptionExpanded()}
+          draggable={false}
+          onClick={(event) => {
+            event.stopPropagation();
+            setIsDescriptionExpanded((expanded) => !expanded);
+          }}
+          onDragStart={suppressChildLinkDrag}
+        >
+          {isDescriptionExpanded() ? "Show less" : "Show full description"}
+        </button>
+      </Show>
       <Show when={showRunMiniCard() && props.runMiniCards}>
         {(miniCards) => (
           <div class="mt-1 flex flex-col gap-1">
