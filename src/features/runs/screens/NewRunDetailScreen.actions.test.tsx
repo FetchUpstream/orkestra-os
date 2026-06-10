@@ -1254,6 +1254,25 @@ describe("NewRunDetailScreen git actions", () => {
     window.removeEventListener("run-detail:topbar-config", onTopbarConfig);
   });
 
+  it("clears the run topbar while loading without a run", async () => {
+    modelFactoryMock.mockReturnValue({
+      ...createModelStub(),
+      isLoading: () => true,
+      run: () => null,
+    });
+
+    const onTopbarClear = vi.fn();
+    window.addEventListener("run-detail:topbar-clear", onTopbarClear);
+
+    render(() => <NewRunDetailScreen />);
+
+    await waitFor(() => {
+      expect(onTopbarClear).toHaveBeenCalled();
+    });
+
+    window.removeEventListener("run-detail:topbar-clear", onTopbarClear);
+  });
+
   it("uses fallback title when task title is unavailable", async () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({

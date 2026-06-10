@@ -1133,6 +1133,7 @@ const NewRunDetailScreen: Component = () => {
 
   createEffect(() => {
     if (model.isLoading() && !model.run()) {
+      window.dispatchEvent(new CustomEvent("run-detail:topbar-clear"));
       return;
     }
 

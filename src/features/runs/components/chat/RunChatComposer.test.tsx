@@ -56,6 +56,67 @@ const renderComposer = (onSubmit = vi.fn()) => {
 };
 
 describe("RunChatComposer", () => {
+  it("renders an initial controlled value in the rich editor", () => {
+    const onSubmit = vi.fn();
+    const Harness = () => {
+      const [value, setValue] = createSignal("Restored draft");
+      return (
+        <RunChatComposer
+          value={value()}
+          onInput={setValue}
+          onSubmit={onSubmit}
+          textareaLabel="Message agent"
+        />
+      );
+    };
+    render(() => <Harness />);
+    const editor = screen.getByRole("textbox", { name: "Message agent" });
+
+    expect(editor.textContent).toBe("Restored draft");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onSubmit).toHaveBeenCalledWith("Restored draft");
+  });
+
+  it("updates the rich editor when the controlled value changes", () => {
+    const onSubmit = vi.fn();
+    const Harness = () => {
+      const [value, setValue] = createSignal("");
+      return (
+        <>
+          <button type="button" onClick={() => setValue("Programmatic draft")}>
+            Restore draft
+          </button>
+          <RunChatComposer
+            value={value()}
+            onInput={setValue}
+            onSubmit={onSubmit}
+            textareaLabel="Message agent"
+          />
+        </>
+      );
+    };
+    render(() => <Harness />);
+    const editor = screen.getByRole("textbox", { name: "Message agent" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore draft" }));
+
+    expect(editor.textContent).toBe("Programmatic draft");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(onSubmit).toHaveBeenCalledWith("Programmatic draft");
+  });
+
+  it("inserts a newline without submitting on Shift+Enter", () => {
+    const onSubmit = vi.fn();
+    const editor = renderComposer(onSubmit);
+
+    typeText(editor, "first line");
+    fireEvent.keyDown(editor, { key: "Enter", shiftKey: true });
+
+    expect(editor.querySelector("br")).toBeTruthy();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("inserts a one-line paste as normal text", () => {
     const editor = renderComposer();
 

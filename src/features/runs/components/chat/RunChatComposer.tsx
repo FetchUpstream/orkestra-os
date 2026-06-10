@@ -170,6 +170,7 @@ const RunChatComposer: Component<RunChatComposerProps> = (props) => {
   const [currentValue, setCurrentValue] = createSignal(props.value);
   const [isComposing, setIsComposing] = createSignal(false);
   const editorId = createUniqueId();
+  const labelId = `${editorId}-label`;
 
   const minRows = () => props.minRows ?? 1;
   const maxRows = () => props.maxRows ?? 8;
@@ -236,9 +237,11 @@ const RunChatComposer: Component<RunChatComposerProps> = (props) => {
     on(
       () => props.value,
       (value) => {
-        if (value !== "" || currentValue() === "" || !editorRef) return;
-        replaceEditorText("");
-        setCurrentValue("");
+        if (!editorRef) return;
+        const editorValue = serializeComposer(editorRef, pastedBlocks);
+        if (value === editorValue && value === currentValue()) return;
+        replaceEditorText(value);
+        setCurrentValue(value);
         resizeEditor();
       },
     ),
@@ -304,7 +307,7 @@ const RunChatComposer: Component<RunChatComposerProps> = (props) => {
       }}
       aria-label="Chat composer"
     >
-      <label class="run-chat-composer__label sr-only" for={editorId}>
+      <label id={labelId} class="run-chat-composer__label sr-only">
         {props.textareaLabel ?? "Message"}
       </label>
       <div
@@ -314,7 +317,7 @@ const RunChatComposer: Component<RunChatComposerProps> = (props) => {
         role="textbox"
         contentEditable={!props.disabled && !props.submitting}
         aria-disabled={props.disabled || props.submitting ? "true" : undefined}
-        aria-label={props.textareaLabel ?? "Message"}
+        aria-labelledby={labelId}
         aria-multiline="true"
         data-placeholder={props.placeholder ?? "Ask anything"}
         onInput={syncValueFromEditor}
