@@ -40,12 +40,20 @@ pub struct SubmitRunOpenCodePromptRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CreateSourceBranchRequest {
+    pub name: String,
+    pub base_branch: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateRunRequest {
     pub task_id: String,
     pub agent_id: Option<String>,
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
     pub source_branch: Option<String>,
+    pub create_source_branch: Option<CreateSourceBranchRequest>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,6 +95,12 @@ pub async fn create_run(
                 request.provider_id.as_deref(),
                 request.model_id.as_deref(),
                 request.source_branch.as_deref(),
+                request.create_source_branch.as_ref().map(|source_branch| {
+                    crate::app::worktrees::dto::CreateSourceBranchRequest {
+                        name: source_branch.name.clone(),
+                        base_branch: source_branch.base_branch.clone(),
+                    }
+                }),
             )
             .await,
     )

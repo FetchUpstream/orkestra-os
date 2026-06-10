@@ -11,6 +11,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::app::errors::AppError;
+use crate::app::projects::env::{
+    apply_safe_project_env_to_btree, DEFAULT_RUNTIME_COLORTERM, DEFAULT_RUNTIME_LANG,
+    DEFAULT_RUNTIME_PATH, DEFAULT_RUNTIME_TERM,
+};
 use crate::app::projects::service::ProjectsService;
 use crate::app::runs::dto::RunDto;
 use crate::app::runs::service::RunsService;
@@ -27,10 +31,6 @@ use tauri::ipc::Channel;
 use tracing::{info, warn};
 
 const TERMINAL_ENV_KEYS: [&str; 7] = ["SHELL", "HOME", "PATH", "TERM", "COLORTERM", "LANG", "USER"];
-const DEFAULT_TERM: &str = "xterm-256color";
-const DEFAULT_COLORTERM: &str = "truecolor";
-const DEFAULT_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-const DEFAULT_LANG: &str = "C.UTF-8";
 
 #[derive(Clone)]
 pub struct TerminalService {
@@ -501,27 +501,41 @@ impl TerminalService {
         let mut env = inherited_env.clone();
 
         env.insert("SHELL".to_string(), shell.to_string());
-        env.insert("TERM".to_string(), DEFAULT_TERM.to_string());
-        Self::ensure_env_value(&mut env, "COLORTERM", DEFAULT_COLORTERM);
-        Self::ensure_env_value(&mut env, "PATH", DEFAULT_PATH);
-        Self::ensure_env_value(&mut env, "LANG", DEFAULT_LANG);
+        env.insert("TERM".to_string(), DEFAULT_RUNTIME_TERM.to_string());
+        Self::ensure_env_value(&mut env, "COLORTERM", DEFAULT_RUNTIME_COLORTERM);
+        Self::ensure_env_value(&mut env, "PATH", DEFAULT_RUNTIME_PATH);
+        Self::ensure_env_value(&mut env, "LANG", DEFAULT_RUNTIME_LANG);
 
-        for (key, value) in project_env {
-            env.insert(key.clone(), value.clone());
-        }
+        apply_safe_project_env_to_btree(&mut env, project_env);
 
         env
     }
 
     fn ensure_env_value(env: &mut BTreeMap<String, String>, key: &str, default: &str) {
-        let needs_default = env
-            .get(key)
-            .map(|value| value.trim().is_empty())
-            .unwrap_or(true);
+        let matching_keys: Vec<String> = env
+            .keys()
+            .filter(|existing_key| existing_key.eq_ignore_ascii_case(key))
+            .cloned()
+            .collect();
 
-        if needs_default {
+        if matching_keys.is_empty() {
             env.insert(key.to_string(), default.to_string());
+            return;
         }
+
+        if matching_keys.iter().any(|existing_key| {
+            env.get(existing_key)
+                .is_some_and(|value| !value.trim().is_empty())
+        }) {
+            return;
+        }
+
+        let target_key = matching_keys
+            .iter()
+            .find(|existing_key| existing_key.as_str() == key)
+            .unwrap_or(&matching_keys[0])
+            .clone();
+        env.insert(target_key, default.to_string());
     }
 
     fn read_env_var(key: &str) -> Option<String> {
@@ -639,7 +653,10 @@ impl TerminalService {
 
 #[cfg(test)]
 mod tests {
-    use super::{TerminalService, DEFAULT_COLORTERM, DEFAULT_LANG, DEFAULT_PATH, DEFAULT_TERM};
+    use super::TerminalService;
+    use crate::app::projects::env::{
+        DEFAULT_RUNTIME_COLORTERM, DEFAULT_RUNTIME_LANG, DEFAULT_RUNTIME_PATH, DEFAULT_RUNTIME_TERM,
+    };
     use std::collections::{BTreeMap, HashMap};
 
     #[test]
@@ -664,8 +681,11 @@ mod tests {
         let env = TerminalService::build_terminal_env("/bin/bash", &inherited, &HashMap::new());
 
         assert_eq!(env.get("SHELL"), Some(&"/bin/bash".to_string()));
-        assert_eq!(env.get("TERM"), Some(&DEFAULT_TERM.to_string()));
-        assert_eq!(env.get("COLORTERM"), Some(&DEFAULT_COLORTERM.to_string()));
+        assert_eq!(env.get("TERM"), Some(&DEFAULT_RUNTIME_TERM.to_string()));
+        assert_eq!(
+            env.get("COLORTERM"),
+            Some(&DEFAULT_RUNTIME_COLORTERM.to_string())
+        );
         assert_eq!(env.get("PATH"), Some(&"/custom/bin".to_string()));
         assert_eq!(env.get("HOME"), Some(&"/home/louis".to_string()));
     }
@@ -676,14 +696,27 @@ mod tests {
             TerminalService::build_terminal_env("/bin/bash", &BTreeMap::new(), &HashMap::new());
 
         assert_eq!(env.get("SHELL"), Some(&"/bin/bash".to_string()));
-        assert_eq!(env.get("TERM"), Some(&DEFAULT_TERM.to_string()));
-        assert_eq!(env.get("COLORTERM"), Some(&DEFAULT_COLORTERM.to_string()));
-        assert_eq!(env.get("PATH"), Some(&DEFAULT_PATH.to_string()));
-        assert_eq!(env.get("LANG"), Some(&DEFAULT_LANG.to_string()));
+        assert_eq!(env.get("TERM"), Some(&DEFAULT_RUNTIME_TERM.to_string()));
+        assert_eq!(
+            env.get("COLORTERM"),
+            Some(&DEFAULT_RUNTIME_COLORTERM.to_string())
+        );
+        assert_eq!(env.get("PATH"), Some(&DEFAULT_RUNTIME_PATH.to_string()));
+        assert_eq!(env.get("LANG"), Some(&DEFAULT_RUNTIME_LANG.to_string()));
     }
 
     #[test]
-    fn terminal_env_applies_project_overrides() {
+    fn terminal_env_preserves_case_insensitive_existing_path() {
+        let inherited = BTreeMap::from([("Path".to_string(), "C:\\Windows\\System32".to_string())]);
+
+        let env = TerminalService::build_terminal_env("pwsh", &inherited, &HashMap::new());
+
+        assert_eq!(env.get("Path"), Some(&"C:\\Windows\\System32".to_string()));
+        assert!(!env.contains_key("PATH"));
+    }
+
+    #[test]
+    fn terminal_env_applies_safe_project_env_without_reserved_overrides() {
         let inherited = BTreeMap::from([("PATH".to_string(), "/base/bin".to_string())]);
         let project = HashMap::from([
             ("API_TOKEN".to_string(), "secret".to_string()),
@@ -693,6 +726,6 @@ mod tests {
         let env = TerminalService::build_terminal_env("/bin/bash", &inherited, &project);
 
         assert_eq!(env.get("API_TOKEN"), Some(&"secret".to_string()));
-        assert_eq!(env.get("PATH"), Some(&"/project/bin".to_string()));
+        assert_eq!(env.get("PATH"), Some(&"/base/bin".to_string()));
     }
 }

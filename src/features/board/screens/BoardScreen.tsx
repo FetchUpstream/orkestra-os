@@ -330,10 +330,16 @@ const BoardScreen: Component = () => {
         selectedRunProviderId={model.selectedRunProviderId}
         selectedRunModelId={model.selectedRunModelId}
         selectedRunSourceBranch={model.selectedRunSourceBranch}
+        sourceBranchMode={model.sourceBranchMode}
+        newSourceBranchName={model.newSourceBranchName}
+        newSourceBranchBaseBranch={model.newSourceBranchBaseBranch}
         setSelectedRunAgentId={model.setSelectedRunAgentId}
         setSelectedRunProviderId={model.setSelectedRunProviderId}
         setSelectedRunModelId={model.setSelectedRunModelId}
         setSelectedRunSourceBranch={model.setSelectedRunSourceBranch}
+        setSourceBranchMode={model.setSourceBranchMode}
+        setNewSourceBranchName={model.setNewSourceBranchName}
+        setNewSourceBranchBaseBranch={model.setNewSourceBranchBaseBranch}
         onCancel={model.onCancelMoveTaskToInProgress}
         onConfirm={model.onConfirmMoveTaskToInProgress}
       />

@@ -11,7 +11,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { A } from "@solidjs/router";
-import { For, Show, createSignal, type Component } from "solid-js";
+import { For, Show, createMemo, createSignal, type Component } from "solid-js";
 import type { Project } from "../../../app/lib/projects";
 import type { Task } from "../../../app/lib/tasks";
 import RunInlineLoader from "../../../components/ui/RunInlineLoader";
@@ -31,13 +31,101 @@ type Props = {
   onDragEnd?: () => void;
 };
 
+const BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH = 1000;
+
+type GraphemeSegmenter = {
+  segment(text: string): Iterable<{ segment: string }>;
+};
+
+type GraphemeSegmenterConstructor = new (
+  locales?: Intl.LocalesArgument,
+  options?: { granularity: "grapheme" },
+) => GraphemeSegmenter;
+
+type BoardTaskDescriptionPreview = {
+  text: string;
+  isTruncated: boolean;
+};
+
+function* boardTaskDescriptionGraphemes(text: string): Iterable<string> {
+  const Segmenter = (
+    Intl as typeof Intl & {
+      Segmenter?: GraphemeSegmenterConstructor;
+    }
+  ).Segmenter;
+
+  if (!Segmenter) {
+    yield* text;
+    return;
+  }
+
+  const segmenter = new Segmenter(undefined, { granularity: "grapheme" });
+
+  for (const { segment } of segmenter.segment(text)) {
+    yield segment;
+  }
+}
+
+function boardTaskDescriptionPreview(
+  text: string,
+): BoardTaskDescriptionPreview {
+  const previewGraphemes: string[] = [];
+
+  for (const grapheme of boardTaskDescriptionGraphemes(text)) {
+    previewGraphemes.push(grapheme);
+
+    if (previewGraphemes.length > BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH) {
+      break;
+    }
+  }
+
+  if (previewGraphemes.length <= BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH) {
+    return { text, isTruncated: false };
+  }
+
+  return {
+    text: `${previewGraphemes
+      .slice(0, BOARD_TASK_DESCRIPTION_PREVIEW_MAX_LENGTH)
+      .join("")
+      .trimEnd()}…`,
+    isTruncated: true,
+  };
+}
+
 const BoardTaskCard: Component<Props> = (props) => {
   const [dragJustEnded, setDragJustEnded] = createSignal(false);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = createSignal(false);
   const dependencyState = () => dependencyBadgeState(props.task);
   const showDependencyBadge = () =>
     props.task.status === "todo" && dependencyState() !== "none";
   const showRunMiniCard = () =>
     props.task.status !== "done" && (props.runMiniCards?.length ?? 0) > 0;
+  const taskDescription = createMemo(() => {
+    const description = props.task.description;
+
+    if (!description?.trim()) {
+      return null;
+    }
+
+    const preview = boardTaskDescriptionPreview(description);
+
+    return {
+      fullText: description,
+      previewText: preview.text,
+      isTruncated: preview.isTruncated,
+    };
+  });
+  const visibleTaskDescription = () => {
+    const description = taskDescription();
+
+    if (!description) {
+      return "";
+    }
+
+    return description.isTruncated && !isDescriptionExpanded()
+      ? description.previewText
+      : description.fullText;
+  };
   const isRunStateActive = (miniCard: BoardTaskRunMiniCard) => {
     const state = miniCard.state;
     return (
@@ -194,13 +282,28 @@ const BoardTaskCard: Component<Props> = (props) => {
             </span>
           </Show>
           <div class="board-task-title-separator" aria-hidden="true" />
-          <Show when={props.task.description?.trim()}>
+          <Show when={taskDescription()}>
             <p class="board-task-description text-base-content/65 text-xs">
-              {props.task.description}
+              {visibleTaskDescription()}
             </p>
           </Show>
         </div>
       </A>
+      <Show when={taskDescription()?.isTruncated}>
+        <button
+          type="button"
+          class="text-primary hover:text-primary-focus mx-3 -mt-2 mb-3 w-fit text-xs font-medium"
+          aria-expanded={isDescriptionExpanded()}
+          draggable={false}
+          onClick={(event) => {
+            event.stopPropagation();
+            setIsDescriptionExpanded((expanded) => !expanded);
+          }}
+          onDragStart={suppressChildLinkDrag}
+        >
+          {isDescriptionExpanded() ? "Show less" : "Show full description"}
+        </button>
+      </Show>
       <Show when={showRunMiniCard() && props.runMiniCards}>
         {(miniCards) => (
           <div class="mt-1 flex flex-col gap-1">

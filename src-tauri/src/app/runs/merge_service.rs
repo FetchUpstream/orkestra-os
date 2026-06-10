@@ -864,9 +864,7 @@ Output format:
                         .as_ref()
                         .map(|entry| entry.id.to_string())
                         .unwrap_or_else(|| "-".to_string());
-                    fingerprint_parts.insert(format!(
-                        "{path}:{ancestor_id}:{our_id}:{their_id}"
-                    ));
+                    fingerprint_parts.insert(format!("{path}:{ancestor_id}:{our_id}:{their_id}"));
                 }
             }
         }
@@ -887,10 +885,7 @@ Output format:
         } else {
             Some(format!(
                 "rebase:{source_branch}:{}",
-                fingerprint_parts
-                    .into_iter()
-                    .collect::<Vec<_>>()
-                    .join("|")
+                fingerprint_parts.into_iter().collect::<Vec<_>>().join("|")
             ))
         };
 
@@ -1151,7 +1146,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
 
@@ -1171,7 +1166,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1249,7 +1244,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1307,7 +1302,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1348,7 +1343,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1397,7 +1392,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
 
@@ -1427,7 +1422,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1463,7 +1458,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
 
@@ -1498,7 +1493,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
 
@@ -1536,7 +1531,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1565,7 +1560,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1596,7 +1591,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1632,7 +1627,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1668,7 +1663,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1699,7 +1694,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1759,7 +1754,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, Some("main"))
+            .create_run_with_defaults("task-1", None, None, None, Some("main"), None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1795,7 +1790,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, Some("main"))
+            .create_run_with_defaults("task-1", None, None, None, Some("main"), None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1850,7 +1845,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1886,7 +1881,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -1922,7 +1917,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
 
@@ -1951,7 +1946,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir
@@ -2009,7 +2004,7 @@ mod tests {
         init_git_repo(&repo_path);
         seed_task(&pool, "task-1", &repo_path).await;
         let run = runs_service
-            .create_run_with_defaults("task-1", None, None, None, None)
+            .create_run_with_defaults("task-1", None, None, None, None, None)
             .await
             .unwrap();
         let worktree_path = temp_dir

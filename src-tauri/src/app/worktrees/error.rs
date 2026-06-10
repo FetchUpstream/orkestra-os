@@ -96,6 +96,12 @@ pub enum WorktreesServiceError {
     },
     #[error("source branch '{branch_name}' does not exist")]
     SourceBranchNotFound { branch_name: String },
+    #[error("base branch '{branch_name}' does not exist")]
+    BaseBranchNotFound { branch_name: String },
+    #[error("a branch named '{branch_name}' already exists; select it from the list instead")]
+    SourceBranchAlreadyExists { branch_name: String },
+    #[error("branch name '{branch_name}' is not valid")]
+    InvalidSourceBranchName { branch_name: String },
     #[error("failed to resolve source branch '{branch_name}'")]
     ResolveSourceBranch {
         branch_name: String,
@@ -129,6 +135,12 @@ pub enum WorktreesServiceError {
     #[allow(dead_code)]
     #[error("failed to create branch '{branch_name}'")]
     CreateBranch {
+        branch_name: String,
+        #[source]
+        source: git2::Error,
+    },
+    #[error("failed to create source branch '{branch_name}'")]
+    CreateSourceBranch {
         branch_name: String,
         #[source]
         source: git2::Error,
@@ -189,6 +201,10 @@ impl WorktreesServiceError {
                 AppError::not_found(format!("{self}: {}", root_source(self)))
             }
             Self::Pathing(pathing) => pathing.to_app_error(),
+            Self::BaseBranchNotFound { .. }
+            | Self::SourceBranchAlreadyExists { .. }
+            | Self::InvalidSourceBranchName { .. }
+            | Self::SourceBranchNotFound { .. } => AppError::validation(self.to_string()),
             _ => AppError::validation(format!("{self}: {}", root_source(self))),
         }
     }

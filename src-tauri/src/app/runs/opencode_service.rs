@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::app::errors::AppError;
+use crate::app::projects::env::build_safe_process_env;
 use crate::app::projects::service::ProjectsService;
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, OpenCodeDependencyStatusDto,
@@ -37,6 +38,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(test)]
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
@@ -344,7 +347,7 @@ fn build_opencode_server_options(
     };
     options.port = 0;
     options.config = Some(serde_json::json!({}));
-    options.env = project_env;
+    options.env = build_safe_process_env(&project_env);
     options
 }
 
@@ -991,6 +994,36 @@ const STREAM_MAX_RECONNECT_ATTEMPTS: u32 = 8;
 const STREAM_RECONNECT_STABLE_RESET_AFTER: Duration = Duration::from_secs(5);
 const RUN_SERVER_IDLE_GRACE_PERIOD: Duration = Duration::from_secs(5 * 60);
 const RUN_SERVER_CLEANUP_SUPERVISOR_INTERVAL: Duration = Duration::from_secs(60);
+
+#[cfg(test)]
+static TEST_PROXY_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(test)]
+fn create_local_test_opencode_client(
+    config: Option<OpencodeClientConfig>,
+) -> opencode::Result<OpencodeClient> {
+    let _guard = TEST_PROXY_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("proxy env lock");
+    let previous_no_proxy = std::env::var_os("NO_PROXY");
+    let previous_lower_no_proxy = std::env::var_os("no_proxy");
+
+    std::env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
+    std::env::set_var("no_proxy", "localhost,127.0.0.1,::1");
+    let client = create_opencode_client(config);
+
+    match previous_no_proxy {
+        Some(value) => std::env::set_var("NO_PROXY", value),
+        None => std::env::remove_var("NO_PROXY"),
+    }
+    match previous_lower_no_proxy {
+        Some(value) => std::env::set_var("no_proxy", value),
+        None => std::env::remove_var("no_proxy"),
+    }
+
+    client
+}
 const GENERIC_OPENCODE_SESSION_ERROR_NAME: &str = "UnknownError";
 const OPENCODE_SESSION_ERROR_NO_MESSAGE: &str = "No error message provided.";
 const OPENCODE_SESSION_ERROR_NO_DETAILS: &str = "No error details provided.";
@@ -4421,7 +4454,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
         .await
         .unwrap();
 
-        let client = create_opencode_client(Some(OpencodeClientConfig {
+        let client = create_local_test_opencode_client(Some(OpencodeClientConfig {
             base_url: server.url.clone(),
             directory: Some(repo_path.to_string_lossy().to_string()),
             ..Default::default()
@@ -6892,8 +6925,8 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
 #[cfg(test)]
 mod tests {
     use super::{
-        build_opencode_server_options, resolve_requested_session_id, RawAgentEvent,
-        RunsOpenCodeService, SubscriberTaskEntry,
+        build_opencode_server_options, create_local_test_opencode_client,
+        resolve_requested_session_id, RawAgentEvent, RunsOpenCodeService, SubscriberTaskEntry,
     };
     use crate::app::db::migrations::run_migrations;
     use crate::app::db::repositories::projects::ProjectsRepository;
@@ -6909,8 +6942,7 @@ mod tests {
     use crate::app::worktrees::service::WorktreesService;
     use chrono::{Duration as ChronoDuration, Utc};
     use opencode::{
-        create_opencode_client, create_opencode_server, OpencodeClientConfig,
-        OpencodeServerOptions, RequestOptions,
+        create_opencode_server, OpencodeClientConfig, OpencodeServerOptions, RequestOptions,
     };
     use sqlx::SqlitePool;
     use std::collections::{HashMap, VecDeque};
@@ -6926,15 +6958,29 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn build_opencode_server_options_applies_project_env() {
+    fn build_opencode_server_options_applies_project_env_to_safe_runtime_env() {
         let cwd = PathBuf::from("/tmp/project");
-        let env = HashMap::from([("API_TOKEN".to_string(), "secret".to_string())]);
+        let env = HashMap::from([
+            ("API_TOKEN".to_string(), "secret".to_string()),
+            ("PATH".to_string(), "/bad/bin".to_string()),
+        ]);
 
-        let options = build_opencode_server_options(cwd.clone(), env.clone());
+        let options = build_opencode_server_options(cwd.clone(), env);
 
         assert_eq!(options.cwd, Some(cwd));
         assert_eq!(options.port, 0);
-        assert_eq!(options.env, env);
+        assert_eq!(options.env.get("API_TOKEN"), Some(&"secret".to_string()));
+        assert!(options.env.get("PATH").is_some_and(|value| {
+            !value.trim().is_empty() && value.split(':').all(|segment| segment != "/bad/bin")
+        }));
+        assert!(options
+            .env
+            .get("TERM")
+            .is_some_and(|value| !value.trim().is_empty()));
+        assert!(options
+            .env
+            .get("LANG")
+            .is_some_and(|value| !value.trim().is_empty()));
         assert_eq!(options.config, Some(serde_json::json!({})));
     }
 
@@ -7231,7 +7277,7 @@ mod tests {
             "data: {\"type\":\"server.connected\"}\n\n",
         );
         let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
-        let client = create_opencode_client(Some(OpencodeClientConfig {
+        let client = create_local_test_opencode_client(Some(OpencodeClientConfig {
             base_url,
             ..Default::default()
         }))
@@ -7443,7 +7489,7 @@ mod tests {
         .await
         .unwrap();
 
-        let client = create_opencode_client(Some(OpencodeClientConfig {
+        let client = create_local_test_opencode_client(Some(OpencodeClientConfig {
             base_url: client_base_url.unwrap_or_else(|| server.url.clone()),
             directory: Some(repo_path.to_string_lossy().to_string()),
             ..Default::default()
@@ -8351,7 +8397,7 @@ mod tests {
         .await
         .unwrap();
 
-        let client = create_opencode_client(Some(OpencodeClientConfig {
+        let client = create_local_test_opencode_client(Some(OpencodeClientConfig {
             base_url: server.url.clone(),
             directory: Some(repo_path.to_string_lossy().to_string()),
             ..Default::default()
@@ -8548,7 +8594,7 @@ mod tests {
         .await
         .unwrap();
 
-        let invalid_client = create_opencode_client(Some(OpencodeClientConfig {
+        let invalid_client = create_local_test_opencode_client(Some(OpencodeClientConfig {
             base_url: "http://127.0.0.1:1".to_string(),
             directory: Some(repo_path.to_string_lossy().to_string()),
             ..Default::default()
