@@ -459,6 +459,24 @@ const toSingleLine = (value: unknown, maxLength = 140): string | null => {
 const toSingleLineWithoutTruncation = (value: unknown): string | null =>
   normalizeToSingleLine(value);
 
+const isFilePermissionKind = (value: string | null | undefined): boolean => {
+  const normalized = value?.replace(/[-_]+/g, " ").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return [
+    "write",
+    "edit",
+    "file",
+    "file edit",
+    "filesystem",
+    "fs",
+    "directory",
+    "external directory",
+  ].includes(normalized);
+};
+
 const getNestedValueByKeys = (
   value: unknown,
   keys: readonly string[],
@@ -1461,14 +1479,19 @@ const parsePermissionCardData = (
       ? pathPatternsFromState
       : pathPatternsFromRaw;
   const command =
-    toSingleLine(permission.command, 240) ||
-    toSingleLine(raw.command ?? raw.cmd ?? raw.bash ?? raw.script, 240) ||
+    toSingleLineWithoutTruncation(permission.command) ||
+    toSingleLineWithoutTruncation(
+      raw.command ?? raw.cmd ?? raw.bash ?? raw.script,
+    ) ||
     "";
+  const explicitFilePath =
+    toSingleLineWithoutTruncation(permission.filePath) ||
+    toSingleLineWithoutTruncation(
+      raw.filePath ?? raw.filepath ?? raw.path ?? raw.filename,
+    );
   const filePath =
-    toSingleLine(permission.filePath, 240) ||
-    toSingleLine(raw.filePath ?? raw.filepath ?? raw.path ?? raw.filename, 240) ||
-    pathPatterns[0] ||
-    "";
+    explicitFilePath ||
+    (isFilePermissionKind(kind) ? pathPatterns[0] || "" : "");
   const toolName =
     toSingleLine(permission.toolName, 120) ||
     toSingleLine(raw.toolName ?? raw.permissionTool, 120) ||
@@ -1483,7 +1506,7 @@ const parsePermissionCardData = (
           ? "Allow tool action"
           : "Permission request");
   const description =
-    toSingleLine(permission.displayDescription, 300) ||
+    toSingleLineWithoutTruncation(permission.displayDescription) ||
     command ||
     filePath ||
     toolName ||

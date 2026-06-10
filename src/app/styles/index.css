@@ -5791,6 +5791,7 @@ textarea::placeholder {
   color: var(--text-subtle);
   font-size: 0.76rem;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .run-chat-tool-rail__subagents {

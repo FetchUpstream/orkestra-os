@@ -568,6 +568,69 @@ describe("NewRunChatWorkspace", () => {
     expect(screen.queryByText(/allow all|allow everything|approve all/i)).toBeNull();
   });
 
+  it("shows full permission targets and does not treat command scopes as file edits", () => {
+    const longCommand = `node -e "${"safe();".repeat(45)} dangerousSuffix()"`;
+    const { model: commandModel } = createModelStub(
+      "running",
+      false,
+      {},
+      "interactive",
+      {
+        pendingPermissionsById: {
+          "perm-long-command": {
+            requestId: "perm-long-command",
+            sessionId: "session-1",
+            kind: "bash",
+            displayTitle: "Allow command",
+            displayDescription: longCommand,
+            command: longCommand,
+          },
+        },
+      },
+    );
+
+    const { unmount } = render(() => (
+      <NewRunChatWorkspace model={commandModel} />
+    ));
+
+    expect(screen.getAllByText(longCommand).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/dangerousSuffix\(\)/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(`${longCommand.slice(0, 237)}...`)).toBeNull();
+
+    unmount();
+
+    const { model: scopedCommandModel } = createModelStub(
+      "running",
+      false,
+      {},
+      "interactive",
+      {
+        pendingPermissionsById: {
+          "perm-scoped-command": {
+            requestId: "perm-scoped-command",
+            sessionId: "session-1",
+            kind: "bash",
+            displayTitle: "Allow scoped permission",
+            displayDescription: "scripts/*.sh",
+            permissionPattern: "scripts/*.sh",
+            pathPatterns: ["scripts/*.sh"],
+          },
+        },
+      },
+    );
+
+    render(() => <NewRunChatWorkspace model={scopedCommandModel} />);
+
+    expect(
+      screen.getByText(/Allow scoped permission:\s*scripts\/\*\.sh/i),
+    ).toBeTruthy();
+    expect(screen.getByText("scripts/*.sh")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Allow file edit" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Approve request" })).toBeTruthy();
+  });
+
   it("shows in-flight and error state in permission transcript item", () => {
     const { model } = createModelStub("running", true, {}, "interactive", {
       isReplyingPermission: true,

@@ -403,6 +403,30 @@ describe("agentReducer text/reasoning lifecycle", () => {
     });
   });
 
+  it("keeps path-only command scopes separate from file edits", () => {
+    const next = reduceOpenCodeEvent(createEmptyAgentStore("session-1"), {
+      type: "permission.asked",
+      properties: {
+        id: "perm-bash-scope-1",
+        sessionID: "session-1",
+        kind: "bash",
+        pathPatterns: ["scripts/*.sh"],
+      },
+    });
+
+    expect(next.pendingPermissionsById["perm-bash-scope-1"]).toMatchObject({
+      requestId: "perm-bash-scope-1",
+      kind: "bash",
+      permissionPattern: "scripts/*.sh",
+      displayTitle: "Allow scoped permission",
+      displayDescription: "scripts/*.sh",
+      pathPatterns: ["scripts/*.sh"],
+    });
+    expect(
+      next.pendingPermissionsById["perm-bash-scope-1"]?.filePath,
+    ).toBeUndefined();
+  });
+
   it("normalizes tool permission display from tool metadata", () => {
     const next = reduceOpenCodeEvent(createEmptyAgentStore("session-1"), {
       type: "permission.asked",

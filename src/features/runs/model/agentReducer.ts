@@ -120,6 +120,24 @@ const formatPermissionKindLabel = (value: string | undefined): string => {
   return normalized;
 };
 
+const isFilePermissionKind = (value: string | undefined): boolean => {
+  const normalized = value?.replace(/[-_]+/g, " ").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return [
+    "write",
+    "edit",
+    "file",
+    "file edit",
+    "filesystem",
+    "fs",
+    "directory",
+    "external directory",
+  ].includes(normalized);
+};
+
 const buildPermissionDisplay = (input: {
   kind?: string;
   command?: string;
@@ -708,15 +726,17 @@ const normalizePermission = (
     (metadata
       ? pickFirstString(metadata, "command", "cmd", "bash", "script")
       : undefined);
+  const explicitFilePath = findFirstNestedStringByKey(value, [
+    "filePath",
+    "filepath",
+    "file_path",
+    "path",
+    "filename",
+    "parentDir",
+  ]);
   const filePath =
-    findFirstNestedStringByKey(value, [
-      "filePath",
-      "filepath",
-      "file_path",
-      "path",
-      "filename",
-      "parentDir",
-    ]) ?? pathPatterns[0];
+    explicitFilePath ??
+    (isFilePermissionKind(kind) ? pathPatterns[0] : undefined);
   const toolName =
     pickFirstString(value, "toolName", "permissionTool") ??
     (nested ? pickFirstString(nested, "toolName", "permissionTool") : undefined) ??
