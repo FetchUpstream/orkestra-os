@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::app::db::repositories::runs::{is_active_run_status, RunsRepository};
+use crate::app::db::repositories::runs::{RunsRepository, is_active_run_status};
 use crate::app::errors::AppError;
 use crate::app::runs::dto::RunDto;
 use crate::app::runs::models::{NewRun, Run, RunInitialPromptContext};
@@ -21,7 +21,7 @@ use crate::app::worktrees::dto::{
 use crate::app::worktrees::service::WorktreesService;
 use chrono::Utc;
 use sqlx::Error as SqlxError;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -771,7 +771,7 @@ mod tests {
     use super::*;
     use crate::app::db::migrations::run_migrations;
     use crate::app::worktrees::service::WorktreesService;
-    use git2::{Repository, Signature};
+    use git2::{Repository, RepositoryInitOptions, Signature};
     use sqlx::SqlitePool;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -857,7 +857,9 @@ mod tests {
 
     fn init_git_repo(path: &Path) {
         fs::create_dir_all(path).unwrap();
-        let repo = Repository::init(path).unwrap();
+        let mut init_options = RepositoryInitOptions::new();
+        init_options.initial_head("master");
+        let repo = Repository::init_opts(path, &init_options).unwrap();
         let readme_path = path.join("README.md");
         fs::write(&readme_path, "seed\n").unwrap();
 
@@ -954,9 +956,11 @@ mod tests {
         let branch_segment = segments.next().unwrap_or_default();
         assert_eq!(project_segment, "ALP");
         assert!(!branch_segment.is_empty());
-        assert!(branch_segment
-            .chars()
-            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-'));
+        assert!(
+            branch_segment
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+        );
         assert!(segments.next().is_none());
         assert!(run.source_branch.is_some());
     }
@@ -992,12 +996,14 @@ mod tests {
             Some("feature/new-settings-flow")
         );
         let repo = Repository::open(&repo_path).unwrap();
-        assert!(repo
-            .find_branch("feature/new-settings-flow", git2::BranchType::Local)
-            .is_ok());
-        assert!(repo
-            .find_branch(run.worktree_id.as_deref().unwrap(), git2::BranchType::Local)
-            .is_ok());
+        assert!(
+            repo.find_branch("feature/new-settings-flow", git2::BranchType::Local)
+                .is_ok()
+        );
+        assert!(
+            repo.find_branch(run.worktree_id.as_deref().unwrap(), git2::BranchType::Local)
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -1024,10 +1030,12 @@ mod tests {
                 base_branch: "master".to_string(),
             },
         ] {
-            assert!(service
-                .create_run_with_defaults("task-1", None, None, None, None, Some(request))
-                .await
-                .is_err());
+            assert!(
+                service
+                    .create_run_with_defaults("task-1", None, None, None, None, Some(request))
+                    .await
+                    .is_err()
+            );
         }
     }
 
