@@ -224,7 +224,7 @@ const AppShellContent: Component<AppShellProps> = (props) => {
     return result;
   };
 
-  onMount(async () => {
+  onMount(() => {
     const mediaQuery = window.matchMedia("(max-width: 900px)");
     const updateMobileMode = (matches: boolean) => {
       setIsMobile(matches);
@@ -322,49 +322,53 @@ const AppShellContent: Component<AppShellProps> = (props) => {
       window.removeEventListener("projects:updated", onProjectsUpdated);
     });
 
-    try {
-      await refreshProjects();
-      const projectIdToPrime = boardProjectId() || projects()[0]?.id;
-      if (projectIdToPrime) {
-        primeRunSelectionOptionsCache(projectIdToPrime);
+    let unlistenCloseRequested: (() => void) | undefined;
+
+    onCleanup(() => {
+      unlistenCloseRequested?.();
+    });
+
+    void (async () => {
+      try {
+        await refreshProjects();
+        const projectIdToPrime = boardProjectId() || projects()[0]?.id;
+        if (projectIdToPrime) {
+          primeRunSelectionOptionsCache(projectIdToPrime);
+        }
+      } catch (error) {
+        console.warn("Failed to load projects during startup", error);
+      } finally {
+        setHasLoadedProjects(true);
       }
-    } catch (error) {
-      console.warn("Failed to load projects during startup", error);
-    } finally {
-      setHasLoadedProjects(true);
-    }
 
-    void runAppUpdateCheck({ silent: true });
+      void runAppUpdateCheck({ silent: true });
 
-    try {
-      const appWindow = getCurrentWindow();
-      const unlistenCloseRequested = await appWindow.onCloseRequested(
-        async (event) => {
-          if (confirmedCloseInProgress()) {
-            return;
-          }
-
-          try {
-            const activeRuns = await listActiveRuns();
-            if (activeRuns.length === 0) {
+      try {
+        const appWindow = getCurrentWindow();
+        unlistenCloseRequested = await appWindow.onCloseRequested(
+          async (event) => {
+            if (confirmedCloseInProgress()) {
               return;
             }
 
-            event.preventDefault();
-            setCloseWarningRunCount(activeRuns.length);
-            setCloseWarningOpen(true);
-          } catch (error) {
-            console.warn("Failed to check active runs before close", error);
-          }
-        },
-      );
+            try {
+              const activeRuns = await listActiveRuns();
+              if (activeRuns.length === 0) {
+                return;
+              }
 
-      onCleanup(() => {
-        unlistenCloseRequested();
-      });
-    } catch (error) {
-      console.warn("Failed to register app close interceptor", error);
-    }
+              event.preventDefault();
+              setCloseWarningRunCount(activeRuns.length);
+              setCloseWarningOpen(true);
+            } catch (error) {
+              console.warn("Failed to check active runs before close", error);
+            }
+          },
+        );
+      } catch (error) {
+        console.warn("Failed to register app close interceptor", error);
+      }
+    })();
   });
 
   createEffect(() => {
