@@ -1018,7 +1018,7 @@ fn rollback_failed_worktree_add_attempt(
 mod tests {
     use super::WorktreesService;
     use crate::app::errors::AppError;
-    use crate::app::worktrees::dto::{CreateSourceBranchRequest, CreateWorktreeRequest};
+    use crate::app::worktrees::dto::CreateWorktreeRequest;
     use crate::app::worktrees::pathing::{
         build_branch_segment, compose_worktree_id, sanitize_branch_segment,
     };
@@ -1244,10 +1244,10 @@ mod tests {
 
     #[test]
     fn source_branch_names_follow_git_branch_shorthand_rules() {
-        assert!(is_valid_local_branch_name("feature/source"));
-        assert!(is_valid_local_branch_name("feature/-source"));
-        assert!(!is_valid_local_branch_name("HEAD"));
-        assert!(!is_valid_local_branch_name("-feature"));
+        assert!(super::is_valid_local_branch_name("feature/source"));
+        assert!(super::is_valid_local_branch_name("feature/-source"));
+        assert!(!super::is_valid_local_branch_name("HEAD"));
+        assert!(!super::is_valid_local_branch_name("-feature"));
     }
 
     #[test]

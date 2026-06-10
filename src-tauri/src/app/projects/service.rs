@@ -861,6 +861,7 @@ mod tests {
                 source.project.default_run_provider.as_deref().unwrap_or(""),
                 source.project.default_run_model.as_deref().unwrap_or(""),
                 &source.project.env_vars,
+                &source.project.run_prepend_instructions,
                 "2024-01-02T00:00:00Z",
                 &[],
             )
@@ -1021,6 +1022,7 @@ mod tests {
                 default_run_provider: "provider-a".to_string(),
                 default_run_model: "model-a".to_string(),
                 env_vars: None,
+                run_prepend_instructions: None,
                 repositories: vec![make_repository_request("Main", repo_path, true)],
             })
             .await
@@ -1044,6 +1046,7 @@ mod tests {
                     key: "PATH".to_string(),
                     value: "/legacy/bin".to_string(),
                 }]),
+                &created.project.run_prepend_instructions,
                 "2024-01-02T00:00:00Z",
                 &created
                     .repositories
@@ -1091,6 +1094,7 @@ mod tests {
                         key: "PATH".to_string(),
                         value: "/legacy/bin".to_string(),
                     }]),
+                    run_prepend_instructions: created.project.run_prepend_instructions.clone(),
                     repositories: make_repository_update_requests(&created.repositories),
                 },
             )
@@ -1130,6 +1134,7 @@ mod tests {
                         key: "PATH".to_string(),
                         value: "/changed/bin".to_string(),
                     }]),
+                    run_prepend_instructions: updated.project.run_prepend_instructions.clone(),
                     repositories: make_repository_update_requests(&updated.repositories),
                 },
             )
