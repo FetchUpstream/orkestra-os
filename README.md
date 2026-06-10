@@ -57,9 +57,9 @@ Support for additional harnesses is planned later. Right now, **OpenCode is requ
 Install from Cloudsmith:
 
 ```bash
-curl -sLf \
-  'https://dl.cloudsmith.io/public/fetchupstream/orkestra/cfg/setup/bash.deb.sh' \
-  | sudo distro=any-distro codename=any-version bash
+curl -1sLf \
+  'https://dl.cloudsmith.io/public/fetchupstream/orkestra-os/setup.deb.sh' \
+  | sudo -E bash
 
 sudo apt update
 sudo apt install orkestra-os
