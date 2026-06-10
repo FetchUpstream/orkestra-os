@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::app::errors::AppError;
+use crate::app::projects::env::build_safe_process_env;
 use crate::app::projects::service::ProjectsService;
 use crate::app::runs::dto::{
     BootstrapRunOpenCodeResponse, EnsureRunOpenCodeResponse, OpenCodeDependencyStatusDto,
@@ -344,7 +345,7 @@ fn build_opencode_server_options(
     };
     options.port = 0;
     options.config = Some(serde_json::json!({}));
-    options.env = project_env;
+    options.env = build_safe_process_env(&project_env);
     options
 }
 
@@ -6926,15 +6927,29 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn build_opencode_server_options_applies_project_env() {
+    fn build_opencode_server_options_applies_project_env_to_safe_runtime_env() {
         let cwd = PathBuf::from("/tmp/project");
-        let env = HashMap::from([("API_TOKEN".to_string(), "secret".to_string())]);
+        let env = HashMap::from([
+            ("API_TOKEN".to_string(), "secret".to_string()),
+            ("PATH".to_string(), "/bad/bin".to_string()),
+        ]);
 
-        let options = build_opencode_server_options(cwd.clone(), env.clone());
+        let options = build_opencode_server_options(cwd.clone(), env);
 
         assert_eq!(options.cwd, Some(cwd));
         assert_eq!(options.port, 0);
-        assert_eq!(options.env, env);
+        assert_eq!(options.env.get("API_TOKEN"), Some(&"secret".to_string()));
+        assert!(options.env.get("PATH").is_some_and(|value| {
+            !value.trim().is_empty() && value.split(':').all(|segment| segment != "/bad/bin")
+        }));
+        assert!(options
+            .env
+            .get("TERM")
+            .is_some_and(|value| !value.trim().is_empty()));
+        assert!(options
+            .env
+            .get("LANG")
+            .is_some_and(|value| !value.trim().is_empty()));
         assert_eq!(options.config, Some(serde_json::json!({})));
     }
 
