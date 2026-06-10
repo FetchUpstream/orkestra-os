@@ -2312,31 +2312,6 @@ export const useRunDetailModel = () => {
     return `${repository} / ${branch} / ${worktree}`;
   });
 
-  const durationLabel = createMemo(() => {
-    const runValue = run();
-    if (!runValue?.startedAt) return "Not started";
-
-    const started = Date.parse(runValue.startedAt);
-    const finished = runValue.finishedAt
-      ? Date.parse(runValue.finishedAt)
-      : Date.now();
-    if (Number.isNaN(started) || Number.isNaN(finished) || finished < started) {
-      return "Unavailable";
-    }
-
-    const totalSeconds = Math.floor((finished - started) / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    const hours = Math.floor(minutes / 60);
-    const minutePart = minutes % 60;
-
-    if (hours > 0) {
-      return `${hours}h ${minutePart}m`;
-    }
-
-    return `${minutes}m ${seconds}s`;
-  });
-
   const isRunCompleted = createMemo(() => hasCompletedRunStatus(run()?.status));
   const runDefaultProviderId = createMemo(
     () => run()?.providerId?.trim() || "",
@@ -4712,7 +4687,6 @@ export const useRunDetailModel = () => {
     backLabel,
     runLabel,
     repositorySummary,
-    durationLabel,
     isDiffTabActive,
     setIsDiffTabActive,
     diffFiles,

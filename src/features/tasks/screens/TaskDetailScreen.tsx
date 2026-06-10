@@ -35,47 +35,6 @@ import {
   repositoryLabel,
 } from "../utils/taskDetail";
 
-const formatRunDuration = (milliseconds: number) => {
-  if (milliseconds <= 0) return "<1s";
-  const totalSeconds = Math.floor(milliseconds / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
-  }
-  return `${seconds}s`;
-};
-
-const getRunTimingCopy = (runItem: {
-  createdAt: string;
-  startedAt?: string | null;
-  finishedAt?: string | null;
-  status: string;
-}) => {
-  if (runItem.status === "queued") {
-    return null;
-  }
-  const startedAt = runItem.startedAt ? new Date(runItem.startedAt) : null;
-  const finishedAt = runItem.finishedAt ? new Date(runItem.finishedAt) : null;
-  if (
-    startedAt &&
-    finishedAt &&
-    !Number.isNaN(startedAt.getTime()) &&
-    !Number.isNaN(finishedAt.getTime())
-  ) {
-    return `Duration ${formatRunDuration(finishedAt.getTime() - startedAt.getTime())}`;
-  }
-  if (startedAt && !Number.isNaN(startedAt.getTime())) {
-    return `Elapsed ${formatRunDuration(Date.now() - startedAt.getTime())}`;
-  }
-  return null;
-};
-
 const getRunSummaryFallback = (status: string) => {
   if (status === "queued") {
     return "Waiting for an available runner to start execution.";
@@ -510,17 +469,6 @@ const TaskDetailScreen: Component = () => {
                                                     runItem.createdAt,
                                                   )}
                                                 </span>
-                                                <Show
-                                                  when={getRunTimingCopy(
-                                                    runItem,
-                                                  )}
-                                                >
-                                                  {(timingCopy) => (
-                                                    <span class="task-runs-timing-copy">
-                                                      {timingCopy()}
-                                                    </span>
-                                                  )}
-                                                </Show>
                                               </div>
                                               <p class="task-runs-summary-row">
                                                 {(
