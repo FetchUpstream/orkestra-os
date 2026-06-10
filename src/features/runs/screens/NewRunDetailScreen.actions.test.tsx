@@ -1469,8 +1469,12 @@ describe("NewRunDetailScreen git actions", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Agent Logs" })).toBeTruthy();
-      const idleLine = screen.getByText(/session\.idle/);
-      const regularMessageLine = screen.getAllByText(/message\.updated/)[1];
+      const idleLine = screen.getByText("session.idle", {
+        selector: ".run-chat-log-stream__event",
+      });
+      const regularMessageLine = screen.getAllByText("message.updated", {
+        selector: ".run-chat-log-stream__event",
+      })[1];
       const completedRows = document.querySelectorAll(
         ".run-chat-log-stream__line--completed",
       );
@@ -1486,7 +1490,7 @@ describe("NewRunDetailScreen git actions", () => {
     topbar.cleanup();
   });
 
-  it("summarizes nested session.error payloads in logs", async () => {
+  it("renders nested session.error payloads as JSON in logs", async () => {
     modelFactoryMock.mockReturnValue(
       createModelStub({
         agentEvents: [
@@ -1508,11 +1512,150 @@ describe("NewRunDetailScreen git actions", () => {
     await topbar.invokeAction("Logs");
 
     await waitFor(() => {
-      expect(screen.getByText(/session\.error/)).toBeTruthy();
       expect(
-        screen.getByText("UnknownError: Provider returned error"),
+        screen.getByText("session.error", {
+          selector: ".run-chat-log-stream__event",
+        }),
       ).toBeTruthy();
-      expect(screen.queryByText(/\{.*Provider returned error.*\}/)).toBeNull();
+      expect(screen.getByText(/"type": "session\.error"/)).toBeTruthy();
+      expect(screen.getByText(/"name": "UnknownError"/)).toBeTruthy();
+      expect(
+        screen.getByText(/"message": "Provider returned error"/),
+      ).toBeTruthy();
+    });
+
+    const searchInput = await screen.findByPlaceholderText("Find in logs");
+    fireEvent.input(searchInput, {
+      target: { value: "Provider returned error" },
+    });
+
+    await waitFor(() => {
+      expect(
+        screen
+          .getByText(/"message": "Provider returned error"/)
+          .closest(".run-chat-log-stream__line")?.className,
+      ).toContain("run-chat-log-stream__line--match");
+    });
+
+    topbar.cleanup();
+  });
+
+  it("renders message.part.delta payload JSON without type-only duplicate body", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        agentEvents: [
+          {
+            event: "message.part.delta",
+            data: {
+              type: "message.part.delta",
+              properties: {
+                sessionID: "session-delta-1",
+                delta: "Hello from the assistant",
+              },
+            },
+          },
+        ],
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Logs");
+
+    await waitFor(() => {
+      const eventLabel = screen.getByText("message.part.delta");
+      const row = eventLabel.closest(".run-chat-log-stream__line");
+      const message = row?.querySelector(".run-chat-log-stream__message");
+
+      expect(message?.textContent).not.toBe("message.part.delta");
+      expect(message?.textContent).toContain('"type": "message.part.delta"');
+      expect(message?.textContent).toContain(
+        '"delta": "Hello from the assistant"',
+      );
+    });
+
+    topbar.cleanup();
+  });
+
+  it("uses a payload fallback instead of repeating type-only string bodies", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        agentEvents: [
+          {
+            event: "message.part.delta",
+            data: "message.part.delta",
+          },
+        ],
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Logs");
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("message.part.delta", {
+          selector: ".run-chat-log-stream__event",
+        }),
+      ).toBeTruthy();
+      expect(screen.getByText("No event payload available")).toBeTruthy();
+    });
+
+    topbar.cleanup();
+  });
+
+  it("matches Find in logs against JSON payload text", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        agentEvents: [
+          {
+            event: "session.updated",
+            data: {
+              sessionID: "session-search-1",
+              status: "ready",
+            },
+          },
+        ],
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Logs");
+
+    const searchInput = await screen.findByPlaceholderText("Find in logs");
+    fireEvent.input(searchInput, { target: { value: "session-search-1" } });
+
+    await waitFor(() => {
+      const matchingText = screen.getByText(/"sessionID": "session-search-1"/);
+      expect(
+        matchingText.closest(".run-chat-log-stream__line")?.className,
+      ).toContain("run-chat-log-stream__line--match");
+    });
+
+    topbar.cleanup();
+  });
+
+  it("renders events without properties without crashing", async () => {
+    modelFactoryMock.mockReturnValue(
+      createModelStub({
+        agentEvents: [
+          {
+            event: "session.started",
+            data: {},
+          },
+        ],
+      }),
+    );
+    const topbar = bindRunTopbarActions();
+
+    render(() => <NewRunDetailScreen />);
+    await topbar.invokeAction("Logs");
+
+    await waitFor(() => {
+      expect(screen.getByText("session.started")).toBeTruthy();
+      expect(screen.getByText(/"properties": \{\}/)).toBeTruthy();
     });
 
     topbar.cleanup();

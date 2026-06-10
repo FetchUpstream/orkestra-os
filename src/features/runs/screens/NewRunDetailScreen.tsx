@@ -65,12 +65,11 @@ const redactInternalIds = (value: string): string =>
 const normalizeLogText = (value: string): string =>
   redactInternalIds(value).replace(/\r\n|\r|\n/g, "\\n");
 
+const NO_EVENT_PAYLOAD_MESSAGE = "No event payload available";
+
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 };
-
-const trimmedString = (value: unknown): string =>
-  typeof value === "string" ? value.trim() : "";
 
 const parseMaybeJson = (value: unknown): unknown => {
   if (typeof value !== "string") {
@@ -111,83 +110,121 @@ const isCompletedDebugEvent = (name: string, payload: unknown): boolean => {
   return time?.completed !== undefined;
 };
 
-const summarizeOpenCodeErrorPayload = (
-  record: Record<string, unknown>,
-): string => {
-  const propertiesRecord = isRecord(record.properties)
-    ? record.properties
-    : null;
-  const errorValue = isRecord(record.error)
-    ? record.error
-    : propertiesRecord?.error;
-  if (!isRecord(errorValue)) {
+const stringifyLogJson = (payload: unknown): string => {
+  try {
+    const serialized = JSON.stringify(payload, null, 2);
+    return typeof serialized === "string" ? redactInternalIds(serialized) : "";
+  } catch {
     return "";
   }
-
-  const errorName = trimmedString(errorValue.name);
-  const errorData = isRecord(errorValue.data) ? errorValue.data : null;
-  const errorMessage =
-    trimmedString(errorData?.message) || trimmedString(errorValue.message);
-
-  if (errorName && errorMessage) {
-    return normalizeLogText(`${errorName}: ${errorMessage}`);
-  }
-  if (errorMessage) {
-    return normalizeLogText(errorMessage);
-  }
-  return errorName ? normalizeLogText(errorName) : "";
 };
 
-const summarizeEventPayload = (payload: unknown): string => {
+const hasOwnPayloadField = (
+  record: Record<string, unknown>,
+  key: string,
+): boolean => Object.prototype.hasOwnProperty.call(record, key);
+
+const sanitizeLogPayload = (payload: unknown, key?: string): unknown => {
+  const parsedPayload =
+    key === "payload" || key === "part" || key === "properties"
+      ? parseMaybeJson(payload)
+      : payload;
+
+  if (Array.isArray(parsedPayload)) {
+    return parsedPayload.map((item) => sanitizeLogPayload(item));
+  }
+
+  if (!isRecord(parsedPayload)) {
+    return parsedPayload;
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [entryKey, entryValue] of Object.entries(parsedPayload)) {
+    if (entryKey === "runId" || entryKey === "run_id") {
+      continue;
+    }
+    sanitized[entryKey] = sanitizeLogPayload(entryValue, entryKey);
+  }
+  return sanitized;
+};
+
+const explicitLogPayloadMessage = (record: Record<string, unknown>): string => {
+  const fields = [record.message, record.text, record.error, record.reason];
+  for (const field of fields) {
+    if (typeof field === "string" && field.trim().length > 0) {
+      return normalizeLogText(field.trim());
+    }
+  }
+  return "";
+};
+
+const formatStructuredEventPayload = (
+  eventName: string,
+  record: Record<string, unknown>,
+): string => {
+  const payloadRecord = sanitizeLogPayload(record) as Record<string, unknown>;
+  const hasEventShape =
+    hasOwnPayloadField(payloadRecord, "type") ||
+    hasOwnPayloadField(payloadRecord, "properties");
+  const formattedPayload = hasEventShape
+    ? payloadRecord
+    : { type: eventName, properties: payloadRecord };
+
+  const rawJson = stringifyLogJson(formattedPayload);
+  if (rawJson && rawJson.trim() !== eventName) {
+    return rawJson;
+  }
+
+  const properties = hasOwnPayloadField(payloadRecord, "properties")
+    ? payloadRecord.properties
+    : undefined;
+  const propertiesJson = stringifyLogJson(properties);
+  if (propertiesJson && propertiesJson.trim() !== eventName) {
+    return propertiesJson;
+  }
+
+  const message = explicitLogPayloadMessage(payloadRecord);
+  return message && message !== eventName ? message : NO_EVENT_PAYLOAD_MESSAGE;
+};
+
+const formatParsedLogPayload = (
+  payload: unknown,
+  eventName: string,
+): string => {
   if (payload === undefined || payload === null) {
-    return "";
+    return NO_EVENT_PAYLOAD_MESSAGE;
   }
 
   if (typeof payload === "string") {
-    const parsedPayload = parseMaybeJson(payload);
-    if (parsedPayload !== payload) {
-      return summarizeEventPayload(parsedPayload);
-    }
-    return normalizeLogText(payload);
+    const text = normalizeLogText(payload.trim());
+    return text && text !== eventName ? text : NO_EVENT_PAYLOAD_MESSAGE;
   }
 
   if (typeof payload === "number" || typeof payload === "boolean") {
     return String(payload);
   }
 
-  if (typeof payload === "object") {
-    const record = payload as Record<string, unknown>;
-    const errorSummary = summarizeOpenCodeErrorPayload(record);
-    if (errorSummary) {
-      return errorSummary;
-    }
-
-    const summaryFields = [
-      record.message,
-      record.text,
-      record.error,
-      record.status,
-      record.type,
-      record.reason,
-    ];
-
-    for (const field of summaryFields) {
-      if (typeof field === "string" && field.trim().length > 0) {
-        return normalizeLogText(field.trim());
-      }
-    }
+  if (isRecord(payload)) {
+    return formatStructuredEventPayload(eventName, payload);
   }
 
-  try {
-    const serialized = JSON.stringify(payload);
-    if (typeof serialized === "string") {
-      return normalizeLogText(serialized);
-    }
-  } catch {
-    return normalizeLogText(String(payload));
-  }
+  const serialized = stringifyLogJson(sanitizeLogPayload(payload));
+  return serialized && serialized.trim() !== eventName
+    ? serialized
+    : NO_EVENT_PAYLOAD_MESSAGE;
+};
 
-  return normalizeLogText(String(payload));
+const formatLogEventPayload = (
+  payload: unknown,
+  eventName = "event",
+): string => {
+  if (typeof payload === "string") {
+    const parsedPayload = parseMaybeJson(payload);
+    if (parsedPayload !== payload) {
+      return formatParsedLogPayload(parsedPayload, eventName);
+    }
+  }
+  return formatParsedLogPayload(payload, eventName);
 };
 
 const failedRunErrorMessage = (runValue: {
@@ -676,7 +713,7 @@ const NewRunDetailScreen: Component = () => {
     return events.map((event, index) => {
       const compactTs = formatCompactLogTimestamp(event.ts);
       const name = event.event?.trim() || "event";
-      const payload = summarizeEventPayload(event.data);
+      const payload = formatLogEventPayload(event.data, name);
       const parts = [compactTs, name, payload].filter(
         (part) => part.length > 0,
       );
