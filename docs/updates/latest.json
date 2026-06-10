@@ -1,13 +1,13 @@
 {
-  "version": "0.0.3",
-  "releasedAt": "2026-05-15T08:04:05Z",
+  "version": "0.0.4",
+  "releasedAt": "2026-06-10T14:22:46Z",
   "notes": [
-    "Runs now surface OpenCode session failures clearly instead of leaving work looking stuck, with failed runs shown in the board and run details.",
-    "Merge and rebase flows are more reliable: conflict pauses are detected from the real Git state, and Continue Rebase or Abort Rebase actions stay available when you need them.",
-    "Project and task creation flows land in the right place faster: new projects and new tasks take you back to the board, and project setup waits for run providers and models before showing defaults.",
-    "Default run model selection is more accurate when providers expose overlapping model names, keeping the chosen model tied to the selected provider.",
-    "The app shell is more polished: the desktop window opens maximized, long board card titles wrap better, the new-task action hides until a project is selected, and the quit warning counts active runs correctly.",
-    "Diff and editor interactions are smoother, with Python, Go, and PHP syntax highlighting plus more reliable tooltip, status-menu, and source-branch dropdown dismissal."
+    "Projects can now save optional run instructions that are automatically prepended when you start new work, helping every run follow your project-specific guidance.",
+    "New runs can create their source branch for you directly from the run settings, so you can start from the right branch without switching to Git manually.",
+    "The run chat composer is easier to use with large pasted content: multi-line pastes are collapsed into compact tokens that keep the prompt readable while preserving the full text.",
+    "Board cards handle long task descriptions more cleanly, keeping the board scannable while preserving the full description when you open the task.",
+    "On macOS, project discovery now focuses on the folders most likely to contain code, including Developer, reducing unnecessary permission prompts while still finding local projects.",
+    "Bug fixes and improvements."
   ],
   "commands": {
     "deb": "sudo apt update && sudo apt install --only-upgrade orkestra-os",
