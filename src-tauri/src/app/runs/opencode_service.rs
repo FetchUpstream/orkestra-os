@@ -3022,10 +3022,13 @@ impl RunsOpenCodeService {
         task_title: &str,
         description: Option<&str>,
         implementation_guide: Option<&str>,
+        project_run_prepend_instructions: Option<&str>,
     ) -> String {
         let title = Self::normalize_initial_prompt_field(Some(task_title));
         let description = Self::normalize_initial_prompt_field(description);
         let implementation_guide = Self::normalize_initial_prompt_field(implementation_guide);
+        let project_run_prepend_instructions =
+            Self::normalize_initial_prompt_field(project_run_prepend_instructions);
 
         let mut sections: Vec<String> = Vec::new();
         if !title.is_empty() {
@@ -3038,11 +3041,17 @@ impl RunsOpenCodeService {
             sections.push(format!("Implementation guide:\n{}", implementation_guide));
         }
 
-        if sections.is_empty() {
-            return "Please continue with the current task.".to_string();
+        let task_prompt = if sections.is_empty() {
+            "Please continue with the current task.".to_string()
+        } else {
+            sections.join("\n\n")
+        };
+
+        if project_run_prepend_instructions.is_empty() {
+            return task_prompt;
         }
 
-        sections.join("\n\n")
+        format!("{project_run_prepend_instructions}\n\n---\n\nTask:\n{task_prompt}")
     }
 
     async fn run_lifecycle_script_in_worktree(
@@ -6087,6 +6096,7 @@ trap 'status=$?; command=${{BASH_COMMAND:-}}; if [ "$status" -ne 0 ] && [ -n "$c
             &context.task_title,
             context.task_description.as_deref(),
             context.task_implementation_guide.as_deref(),
+            context.project_run_prepend_instructions.as_deref(),
         );
         let client_request_id = Self::initial_seed_request_id_for_run(&context.run_id);
 
@@ -7555,11 +7565,50 @@ mod tests {
             "Ship release notes",
             Some("\n\nDraft changelog\n\n\n\nVerify links\n"),
             Some("\n\nUse release template\n"),
+            None,
         );
 
         assert_eq!(
             prompt,
             "Ship release notes\n\nDraft changelog\n\nVerify links\n\nImplementation guide:\nUse release template"
+        );
+    }
+
+    #[test]
+    fn compose_initial_prompt_inserts_project_prepend_above_task_context() {
+        let prompt = RunsOpenCodeService::compose_initial_prompt(
+            "Ship release notes",
+            Some("Draft changelog"),
+            Some("Use release template"),
+            Some("Use Bun.\nDo not use npm."),
+        );
+
+        assert_eq!(
+            prompt,
+            "Use Bun.\nDo not use npm.\n\n---\n\nTask:\nShip release notes\n\nDraft changelog\n\nImplementation guide:\nUse release template"
+        );
+    }
+
+    #[test]
+    fn compose_initial_prompt_ignores_blank_project_prepend() {
+        let prompt = RunsOpenCodeService::compose_initial_prompt(
+            "Ship release notes",
+            Some("Draft changelog"),
+            None,
+            Some("  \n\t  "),
+        );
+
+        assert_eq!(prompt, "Ship release notes\n\nDraft changelog");
+    }
+
+    #[test]
+    fn compose_initial_prompt_uses_fallback_task_with_project_prepend() {
+        let prompt =
+            RunsOpenCodeService::compose_initial_prompt(" ", Some("  "), None, Some("Use Bun."));
+
+        assert_eq!(
+            prompt,
+            "Use Bun.\n\n---\n\nTask:\nPlease continue with the current task."
         );
     }
 

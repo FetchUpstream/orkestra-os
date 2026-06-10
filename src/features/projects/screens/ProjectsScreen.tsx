@@ -108,6 +108,7 @@ const ProjectsScreen: Component = () => {
             name={model.name}
             keyValue={model.key}
             description={model.description}
+            runPrependInstructions={model.runPrependInstructions}
             envVars={model.envVars}
             repositories={model.repositories}
             defaultRepoIndex={model.defaultRepoIndex}
@@ -127,7 +128,9 @@ const ProjectsScreen: Component = () => {
             visibleRunModelOptions={model.visibleRunModelOptions}
             runDefaultsValidationError={model.runDefaultsValidationError}
             projectEnvVarError={model.projectEnvVarError}
+            runPrependInstructionsError={model.runPrependInstructionsError}
             setDescription={model.setDescription}
+            setRunPrependInstructions={model.setRunPrependInstructions}
             setTouched={model.setTouched}
             setDefaultRepoIndex={model.setDefaultRepoIndex}
             setDefaultRunProvider={model.setDefaultRunProvider}

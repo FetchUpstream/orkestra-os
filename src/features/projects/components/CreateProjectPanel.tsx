@@ -27,6 +27,7 @@ type Props = {
   name: () => string;
   keyValue: () => string;
   description: () => string;
+  runPrependInstructions: () => string;
   envVars: () => EnvVarInput[];
   repositories: () => RepoInput[];
   defaultRepoIndex: () => number;
@@ -46,7 +47,9 @@ type Props = {
   visibleRunModelOptions: () => RunModelOption[];
   runDefaultsValidationError: () => string;
   projectEnvVarError: () => string;
+  runPrependInstructionsError: () => string;
   setDescription: (value: string) => void;
+  setRunPrependInstructions: (value: string) => void;
   setTouched: (
     next: (prev: Record<string, boolean>) => Record<string, boolean>,
   ) => void;
@@ -190,6 +193,42 @@ const CreateProjectPanel: Component<Props> = (props) =>
                 OpenCode.
               </p>
             </div>
+            <label class="projects-field">
+              <span class="field-label text-base-content/55 text-[11px] tracking-[0.18em] uppercase">
+                <span class="field-label-text">Custom Prepend Instructions</span>
+                <span class="field-optional">optional</span>
+              </span>
+              <textarea
+                value={props.runPrependInstructions()}
+                onInput={(event) =>
+                  props.setRunPrependInstructions(event.currentTarget.value)
+                }
+                onBlur={() => void props.flushAutosave()}
+                placeholder="Use Bun for all frontend commands.\nDo not use npm.\nKeep changes narrowly scoped."
+                rows={6}
+                maxlength={10000}
+                aria-invalid={!!props.runPrependInstructionsError()}
+                aria-describedby={
+                  props.runPrependInstructionsError()
+                    ? "run-prepend-instructions-error"
+                    : "run-prepend-instructions-help"
+                }
+                disabled={isFormDisabled()}
+              />
+              <Show
+                when={props.runPrependInstructionsError()}
+                fallback={
+                  <p id="run-prepend-instructions-help" class="field-help">
+                    These instructions are inserted above the task text in every
+                    new run for this project.
+                  </p>
+                }
+              >
+                <p id="run-prepend-instructions-error" class="field-error">
+                  {props.runPrependInstructionsError()}
+                </p>
+              </Show>
+            </label>
             <div class="projects-repos-block border-base-content/15 bg-base-100 rounded-none border">
               <div class="projects-repos-head">
                 <div>

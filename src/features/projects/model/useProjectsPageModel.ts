@@ -64,6 +64,7 @@ import {
 export const useProjectsPageModel = () => {
   const AUTOSAVE_DEBOUNCE_MS = 900;
   const AUTOSAVE_MAX_WAIT_MS = 5000;
+  const RUN_PREPEND_INSTRUCTIONS_MAX_LENGTH = 10_000;
   const navigate = useNavigate();
   const openCodeDependency = useOpenCodeDependency();
   let runSelectionOptionsRequestVersion = 0;
@@ -78,6 +79,7 @@ export const useProjectsPageModel = () => {
   const [name, setName] = createSignal("");
   const [key, setKey] = createSignal("");
   const [description, setDescription] = createSignal("");
+  const [runPrependInstructions, setRunPrependInstructions] = createSignal("");
   const [envVars, setEnvVars] = createSignal<EnvVarInput[]>([]);
   const [allowedLegacyEnvVars, setAllowedLegacyEnvVars] = createSignal<
     EnvVarInput[]
@@ -371,6 +373,13 @@ export const useProjectsPageModel = () => {
     }),
   );
 
+  const runPrependInstructionsError = createMemo(() => {
+    if (runPrependInstructions().length <= RUN_PREPEND_INSTRUCTIONS_MAX_LENGTH) {
+      return "";
+    }
+    return "Custom prepend instructions must be 10000 characters or fewer.";
+  });
+
   const isDeleteConfirmationEnabled = createMemo(() => {
     const projectId = deleteProjectId()?.trim() ?? "";
     if (!projectId) return false;
@@ -396,6 +405,7 @@ export const useProjectsPageModel = () => {
     setName("");
     setKey("");
     setDescription("");
+    setRunPrependInstructions("");
     setEnvVars([]);
     setAllowedLegacyEnvVars([]);
     setRepositories([emptyRepo()]);
@@ -433,6 +443,9 @@ export const useProjectsPageModel = () => {
       name: project.name.trim(),
       key: normalizeProjectKey(project.key),
       description: normalizeOptionalValue(project.description),
+      runPrependInstructions: normalizeOptionalValue(
+        project.runPrependInstructions,
+      ),
       defaultRunProvider: project.defaultRunProvider?.trim() || "",
       defaultRunModel: project.defaultRunModel?.trim() || "",
       defaultRunAgent: normalizeOptionalValue(project.defaultRunAgent),
@@ -485,6 +498,7 @@ export const useProjectsPageModel = () => {
     setName(project.name);
     setKey(project.key);
     setDescription(project.description ?? "");
+    setRunPrependInstructions(project.runPrependInstructions ?? "");
     setEnvVars(project.envVars ?? []);
     setAllowedLegacyEnvVars(project.envVars ?? []);
     setRepositories(
@@ -604,11 +618,19 @@ export const useProjectsPageModel = () => {
       };
     }
 
+    if (runPrependInstructionsError()) {
+      return {
+        payload: null,
+        validationError: runPrependInstructionsError(),
+      };
+    }
+
     return {
       payload: {
         name: name().trim(),
         key: normalizeProjectKey(key()),
         description: description().trim() || undefined,
+        runPrependInstructions: runPrependInstructions().trim() || undefined,
         defaultRunProvider: defaultRunProvider().trim(),
         defaultRunModel: defaultRunModel().trim(),
         defaultRunAgent: defaultRunAgent().trim() || undefined,
@@ -1112,6 +1134,7 @@ export const useProjectsPageModel = () => {
     name,
     key,
     description,
+    runPrependInstructions,
     envVars,
     repositories,
     defaultRepoIndex,
@@ -1132,6 +1155,7 @@ export const useProjectsPageModel = () => {
     defaultRunModel,
     runDefaultsValidationError,
     projectEnvVarError,
+    runPrependInstructionsError,
     isLoadingProjectForEdit,
     isCloneModalOpen,
     touched,
@@ -1154,6 +1178,10 @@ export const useProjectsPageModel = () => {
     cloneRepositoryDestinationError,
     setDescription: (value: string) => {
       setDescription(value);
+      markProjectSettingsDirty();
+    },
+    setRunPrependInstructions: (value: string) => {
+      setRunPrependInstructions(value);
       markProjectSettingsDirty();
     },
     setTouched,
