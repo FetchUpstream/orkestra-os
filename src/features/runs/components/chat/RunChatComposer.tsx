@@ -181,7 +181,24 @@ const RunChatComposer: Component<RunChatComposerProps> = (props) => {
     editorRef.replaceChildren(...textToNodes(value));
   };
 
+  const pruneDeletedPastedBlocks = () => {
+    if (!editorRef) return;
+
+    const livePasteIds = new Set(
+      Array.from(editorRef.querySelectorAll<HTMLElement>("[data-paste-id]"))
+        .map((node) => node.dataset.pasteId)
+        .filter((id): id is string => Boolean(id)),
+    );
+
+    for (const id of pastedBlocks.keys()) {
+      if (!livePasteIds.has(id)) {
+        pastedBlocks.delete(id);
+      }
+    }
+  };
+
   const syncValueFromEditor = () => {
+    pruneDeletedPastedBlocks();
     const value = serializeComposer(editorRef, pastedBlocks);
     setCurrentValue(value);
     props.onInput(value);
@@ -279,10 +296,13 @@ const RunChatComposer: Component<RunChatComposerProps> = (props) => {
   };
 
   const onPaste: JSX.EventHandler<HTMLDivElement, ClipboardEvent> = (event) => {
-    const pastedText = event.clipboardData?.getData("text/plain") ?? "";
-    if (!pastedText || !editorRef) return;
+    if (!editorRef) return;
 
     event.preventDefault();
+
+    const pastedText = event.clipboardData?.getData("text/plain") ?? "";
+    if (!pastedText) return;
+
     const lineCount = countMeaningfulLines(pastedText);
 
     if (lineCount < 2) {

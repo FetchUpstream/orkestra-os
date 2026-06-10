@@ -126,6 +126,21 @@ describe("RunChatComposer", () => {
     expect(screen.queryByText("[Pasted 1 Lines]")).toBeNull();
   });
 
+
+  it("prevents native paste when clipboard plain text is empty", () => {
+    const editor = renderComposer();
+    const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEvent, "clipboardData", {
+      value: { getData: () => "" },
+    });
+    const preventDefault = vi.spyOn(pasteEvent, "preventDefault");
+
+    editor.dispatchEvent(pasteEvent);
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(editor.childNodes).toHaveLength(0);
+  });
+
   it("renders a two-line paste as a compact pasted-lines token", () => {
     const editor = renderComposer();
 
@@ -187,6 +202,28 @@ describe("RunChatComposer", () => {
     paste(editor, "a\nb");
     typeText(editor, " after");
     screen.getByText("[Pasted 2 Lines]").remove();
+    fireEvent.input(editor);
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onSubmit).toHaveBeenCalledWith("before  after");
+  });
+
+
+  it("prunes deleted pasted content from token state", () => {
+    const onSubmit = vi.fn();
+    const editor = renderComposer(onSubmit);
+
+    typeText(editor, "before ");
+    paste(editor, "sensitive\ncontent");
+    const token = screen.getByText("[Pasted 2 Lines]");
+    const pasteId = token.dataset.pasteId;
+    token.remove();
+    fireEvent.input(editor);
+    typeText(editor, " after");
+    const staleToken = document.createElement("span");
+    if (pasteId) staleToken.dataset.pasteId = pasteId;
+    staleToken.textContent = "[Pasted 2 Lines]";
+    editor.append(staleToken);
     fireEvent.input(editor);
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
