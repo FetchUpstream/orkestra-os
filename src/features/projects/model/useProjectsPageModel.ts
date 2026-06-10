@@ -707,7 +707,12 @@ export const useProjectsPageModel = () => {
           const currentSignature = currentPayload
             ? draftSignature(currentPayload)
             : null;
-          if (currentSignature === persistedSignature) {
+          if (currentSignature === nextSignature) {
+            lastPersistedDraftSignature = nextSignature;
+            setHasPendingProjectChanges(false);
+            if (shouldSkipAutosaveSignalUpdates(requestVersion)) return false;
+            setAutosaveState("saved");
+          } else if (currentSignature === persistedSignature) {
             if (shouldSkipAutosaveSignalUpdates(requestVersion)) return false;
             setAutosaveState("saved");
           }

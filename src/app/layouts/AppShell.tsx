@@ -245,20 +245,6 @@ const AppShellContent: Component<AppShellProps> = (props) => {
       mediaQuery.removeEventListener("change", handleMediaChange);
     });
 
-    try {
-      await refreshProjects();
-      const projectIdToPrime = boardProjectId() || projects()[0]?.id;
-      if (projectIdToPrime) {
-        primeRunSelectionOptionsCache(projectIdToPrime);
-      }
-    } catch (error) {
-      console.warn("Failed to load projects during startup", error);
-    } finally {
-      setHasLoadedProjects(true);
-    }
-
-    void runAppUpdateCheck({ silent: true });
-
     const onTaskDetailTopbarConfig = (event: Event) => {
       const customEvent = event as CustomEvent<TaskDetailTopbarConfig>;
       setTaskDetailTopbarConfig(customEvent.detail);
@@ -335,6 +321,20 @@ const AppShellContent: Component<AppShellProps> = (props) => {
       );
       window.removeEventListener("projects:updated", onProjectsUpdated);
     });
+
+    try {
+      await refreshProjects();
+      const projectIdToPrime = boardProjectId() || projects()[0]?.id;
+      if (projectIdToPrime) {
+        primeRunSelectionOptionsCache(projectIdToPrime);
+      }
+    } catch (error) {
+      console.warn("Failed to load projects during startup", error);
+    } finally {
+      setHasLoadedProjects(true);
+    }
+
+    void runAppUpdateCheck({ silent: true });
 
     try {
       const appWindow = getCurrentWindow();
