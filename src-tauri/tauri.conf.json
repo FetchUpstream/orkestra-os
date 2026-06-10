@@ -16,7 +16,8 @@
         "title": "Orkestra OS",
         "width": 800,
         "height": 600,
-        "maximized": true
+        "maximized": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {
