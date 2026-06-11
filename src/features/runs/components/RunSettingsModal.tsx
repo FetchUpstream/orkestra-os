@@ -78,6 +78,7 @@ const RunSourceBranchSelect: Component<{
   const [search, setSearch] = createSignal("");
   let containerRef: HTMLDivElement | undefined;
   let triggerRef: HTMLButtonElement | undefined;
+  let isPointerDownInside = false;
   const listboxId = createUniqueId();
 
   const filteredOptions = createMemo(() => {
@@ -113,6 +114,8 @@ const RunSourceBranchSelect: Component<{
   };
 
   const handlePointerDown = (event: PointerEvent) => {
+    if (!isOpen()) return;
+
     if (
       containerRef &&
       event.target instanceof Node &&
@@ -120,6 +123,13 @@ const RunSourceBranchSelect: Component<{
     ) {
       close();
     }
+  };
+
+  const markPointerDownInside = () => {
+    isPointerDownInside = true;
+    queueMicrotask(() => {
+      isPointerDownInside = false;
+    });
   };
 
   if (typeof document !== "undefined") {
@@ -135,8 +145,18 @@ const RunSourceBranchSelect: Component<{
         containerRef = element;
       }}
       class="relative"
-      onFocusOut={() => {
+      onPointerDown={markPointerDownInside}
+      onFocusOut={(event) => {
+        const nextFocusedElement = event.relatedTarget;
+        if (
+          nextFocusedElement instanceof Node &&
+          containerRef?.contains(nextFocusedElement)
+        ) {
+          return;
+        }
+
         queueMicrotask(() => {
+          if (isPointerDownInside) return;
           if (!containerRef?.contains(document.activeElement)) {
             close();
           }
@@ -176,7 +196,15 @@ const RunSourceBranchSelect: Component<{
         </span>
       </button>
       <Show when={isOpen()}>
-        <div class="run-source-branch-popover border-base-content/15 bg-base-100 absolute z-20 mt-1 w-full rounded-none border shadow-lg">
+        <div
+          class="run-source-branch-popover border-base-content/15 bg-base-100 absolute z-20 mt-1 w-full rounded-none border shadow-lg"
+          onPointerDown={(event) => {
+            markPointerDownInside();
+            event.stopPropagation();
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        >
           <div class="border-base-content/10 border-b p-2">
             <input
               type="search"
